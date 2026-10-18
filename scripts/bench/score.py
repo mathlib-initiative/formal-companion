@@ -33,7 +33,9 @@ rewrites the same file, whatever else the checkout committed in between.
 from __future__ import annotations
 
 import gzip
+import math
 import random
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -106,10 +108,20 @@ def load_runs(paths, run_ids: list[str]) -> tuple[dict[str, dict], dict[str, dic
             raise CfError(f"run {rid}'s receipt has no cost block",
                           hint="the observed model ids and the cost per article come from the "
                                "agents' transcripts: harvest again with --transcripts")
+        dollars(receipt["cost"].get("usd"), f"run {rid}'s receipt cost.usd")
         yamls[rid] = inputs.run_yaml(paths, rid)
         receipts[rid] = receipt
         shas[rid] = sha
     return yamls, receipts, shas
+
+
+def dollars(value, what: str) -> float:
+    """A finite, non-negative number of dollars, or refuse: a NaN or a missing sum is no cost."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
+            or value < 0:
+        raise CfError(f"{what} is {value!r}, not a finite non-negative number of dollars",
+                      hint="a cost the score cannot read is never read as $0")
+    return float(value)
 
 
 def check_arms(yamls: dict[str, dict], run_id: str) -> str:
@@ -170,7 +182,12 @@ def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: 
     for key in VERSION_PINS:
         found = sorted({str((y.get("versions") or {}).get(key)) for y in yamls.values()
                         if isinstance(y.get("versions"), dict) and (y.get("versions") or {}).get(key)})
-        versions[key] = overrides.get(key) or (",".join(found) if found else UNRECORDED)
+        recorded, given = ",".join(found), overrides.get(key)
+        if given and recorded and given != recorded:
+            raise CfError(f"--pin {key}={given}: the runs' run.yaml record {key} {recorded}",
+                          hint="--pin fills a version a run.yaml does not record; it never "
+                               "replaces one")
+        versions[key] = recorded or given or UNRECORDED
     gate = {}
     for rid in sorted(yamls):
         path = paths.gate_json(rid)
@@ -213,30 +230,51 @@ def score_name(split: str, mid: str) -> str:
 # the canary
 # --------------------------------------------------------------------------
 
+def _scan_report(doc: dict, where: str) -> dict:
+    """A host scan that read something: ``scanned`` a positive count, ``hits`` a list."""
+    scanned = doc.get("scanned")
+    if isinstance(scanned, bool) or not isinstance(scanned, int) or scanned <= 0 \
+            or not isinstance(doc.get("hits"), list):
+        raise CfError(f"{where} is not a canary scan that read anything ({{scanned: >0, hits: [...]}}, "
+                      f"got scanned {scanned!r})",
+                      hint="a scan of nothing is no check: re-run the host's scan, or pass "
+                           "--transcripts <dir> or --no-canary-check")
+    return doc
+
+
+def _read_transcript(path: Path) -> str:
+    try:
+        if path.suffix == ".gz":
+            with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
+                return handle.read()
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except (OSError, EOFError, zlib.error) as exc:
+        raise CfError(f"cannot read transcript {path} ({exc})",
+                      hint="an unread transcript is never a clean one: re-harvest it, or pass "
+                           "--no-canary-check") from None
+
+
 def canary_check(paths, canary: str, run_ids: list[str], *, transcripts: Path | None,
                  report: Path | None, skip: bool) -> dict:
     """Refuse when any transcript holds the bench's canary (section 8.4).
 
-    ``--transcripts`` scans a directory here; ``--canary-report`` reads one host
-    scan; with neither, every run's harvested ``runs/<run>/host/canary.json`` is
-    read, and a run without one leaves the check undone, which is refused unless
-    ``--no-canary-check`` says so.
+    ``--transcripts`` scans a directory (or one file) here; ``--canary-report``
+    reads one host scan; with neither, every run's harvested
+    ``runs/<run>/host/canary.json`` is read, and a run without one leaves the
+    check undone, which is refused unless ``--no-canary-check`` says so.  A check
+    that read nothing is refused, never passed: a missing path, an empty
+    directory, an unreadable transcript, a scan of zero files.
     """
     if transcripts is not None:
+        if not transcripts.exists():
+            raise CfError(f"--transcripts {transcripts}: no such file or directory")
         files = [transcripts] if transcripts.is_file() else sorted(
             p for p in transcripts.rglob("*") if p.is_file())
-        hits = []
-        for path in files:
-            try:
-                if path.suffix == ".gz":
-                    with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
-                        text = handle.read()
-                else:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            if canary in text:
-                hits.append(path.name)
+        if not files:
+            raise CfError(f"the canary scan read no transcript under {transcripts}",
+                          hint="point --transcripts at the harvested transcripts, or pass "
+                               "--no-canary-check")
+        hits = [path.name for path in files if canary in _read_transcript(path)]
         if hits:
             raise CfError(f"{len(hits)} transcript(s) hold the bench's label canary: "
                           + ", ".join(hits[:5]),
@@ -245,12 +283,12 @@ def canary_check(paths, canary: str, run_ids: list[str], *, transcripts: Path | 
         return {"ran": True, "basis": "transcripts", "scanned": len(files), "hits": 0}
     reports = {}
     if report is not None:
-        reports["--canary-report"] = inputs.canary_report(report)
+        reports["--canary-report"] = _scan_report(inputs.canary_report(report), str(report))
     else:
         for rid in run_ids:
             path = inputs.run_host_dir(paths, rid) / inputs.HOST_CANARY
             if path.is_file():
-                reports[rid] = inputs.canary_report(path)
+                reports[rid] = _scan_report(inputs.canary_report(path), str(path))
     if reports and (report is not None or len(reports) == len(run_ids)):
         hits = sorted(str(h) for doc in reports.values() for h in doc.get("hits") or [])
         if hits:
@@ -259,7 +297,7 @@ def canary_check(paths, canary: str, run_ids: list[str], *, transcripts: Path | 
                           hint="a label reached an agent: the run fails")
         return {"ran": True, "basis": "host reports" if report is None else "host report",
                 "reports": sorted(reports), "hits": 0,
-                "scanned": sum(int(d.get("scanned") or 0) for d in reports.values())}
+                "scanned": sum(int(d["scanned"]) for d in reports.values())}
     if skip:
         return {"ran": False, "basis": "--no-canary-check"}
     missing = sorted(set(run_ids) - set(reports))
@@ -274,7 +312,8 @@ def canary_check(paths, canary: str, run_ids: list[str], *, transcripts: Path | 
 # --------------------------------------------------------------------------
 
 def run_passages(paths, rows: list[dict], runs: dict[str, list[str]], articles: set[str],
-                 layers_sha: dict[str, str]) -> tuple[list[metrics.RunPassage], dict[str, str], dict]:
+                 layers_sha: dict[str, str], renderers_pinned: dict[str, str]
+                 ) -> tuple[list[metrics.RunPassage], dict[str, str], dict, list[str]]:
     """The scored run's passages in the split's articles, from its outcome rows.
 
     The outcome rows (``locate.outcomes``) carry one row per passage the locate
@@ -283,9 +322,12 @@ def run_passages(paths, rows: list[dict], runs: dict[str, list[str]], articles: 
     its sources.  The frozen inventory sets the inventory side: which articles it
     planned, landed, left unresolved, and from which rendering; and every
     ``formal_math`` passage of a covered article must have an outcome row, or the
-    locate run never planned it and the score is refused.
+    locate run never planned it and the score is refused.  Each inventory document
+    of a split article must name the layer and renderer it read, and they must be
+    the ones the bench pins; the renderers it names are the score's renderer pin.
     """
     landed: dict[str, str] = {}
+    rendered: dict[str, str] = {}
     unresolved: set[str] = set()
     frozen: dict[tuple[str, str], dict] = {}
     planned: set[str] = set()
@@ -297,15 +339,25 @@ def run_passages(paths, rows: list[dict], runs: dict[str, list[str]], articles: 
         for rel, doc in inputs.locate_documents(paths, inv_run):
             sid = str(doc.get("source_id") or "")
             if sid in articles:
-                landed[sid] = str(doc.get("layer_sha256") or "")
+                for key in ("layer_sha256", "renderer"):
+                    if not doc.get(key):
+                        raise CfError(f"{rel} of inventory run {inv_run} names no {key}",
+                                      hint="an inventory document says which rendering it read")
+                landed[sid] = str(doc["layer_sha256"])
+                rendered[sid] = str(doc["renderer"])
         for manifest in inputs.task_manifests(paths, inv_run):
             manifests_seen = True
             planned |= {str(d.get("source_id")) for d in manifest.get("documents") or []}
     for sid, layer in sorted(landed.items()):
-        if layers_sha.get(sid) and layer and layer != layers_sha[sid]:
+        if layers_sha.get(sid) and layer != layers_sha[sid]:
             raise CfError(f"the run read another rendering of {sid} (layer {layer[:12]}…, the "
                           f"bench pins {layers_sha[sid][:12]}…)",
                           hint="score a run planned from the bench's sourceset pin")
+        if renderers_pinned.get(sid) and rendered[sid] != renderers_pinned[sid]:
+            raise CfError(f"the run read another rendering of {sid} (renderer {rendered[sid]}, "
+                          f"the bench pins {renderers_pinned[sid]})",
+                          hint="a renderer change re-keys passages: score a run planned from the "
+                               "bench's sourceset pin")
     if manifests_seen:
         missing = sorted(articles - planned)
         if missing:
@@ -360,7 +412,7 @@ def run_passages(paths, rows: list[dict], runs: dict[str, list[str]], articles: 
                 "outcome_rows": len(by_key),
                 "missing_rows": sum(1 for r in by_key.values() if r.get("missing")),
                 "challenge_owed": {**owed, "total": sum(owed.values())}}
-    return out, state, coverage
+    return out, state, coverage, sorted(set(rendered.values()))
 
 
 # --------------------------------------------------------------------------
@@ -399,8 +451,9 @@ def article_costs(paths, path: Path | None, runs: dict[str, list[str]], yamls: d
         if missing:
             raise CfError(f"{path} has no cost for {len(missing)} article(s): " + ", ".join(missing[:5]))
         for a in articles:
-            total.add(cluster_of.get(a, "?"), float(per[a]), 1.0)
-            locate_only.add(cluster_of.get(a, "?"), float(per[a]), 1.0)
+            usd = dollars(per[a], f"{path}: the cost of {a}")
+            total.add(cluster_of.get(a, "?"), usd, 1.0)
+            locate_only.add(cluster_of.get(a, "?"), usd, 1.0)
         basis = "per-article costs (one figure for every stage)"
         by_stage = None
     else:
@@ -408,9 +461,9 @@ def article_costs(paths, path: Path | None, runs: dict[str, list[str]], yamls: d
         shares = {}
         for rid, receipt in sorted(receipts.items()):
             covered = _sources_of(paths, rid, yamls[rid]) or list(articles)
-            share = float(receipt["cost"].get("usd") or 0.0) / len(covered)
-            shares[rid] = {"usd": float(receipt["cost"].get("usd") or 0.0),
-                           "sources": len(covered), "share": round(share, 6)}
+            usd = dollars(receipt["cost"].get("usd"), f"run {rid}'s receipt cost.usd")
+            share = usd / len(covered)
+            shares[rid] = {"usd": usd, "sources": len(covered), "share": round(share, 6)}
             for a in set(covered) & set(articles):
                 charges[a][stage_of.get(rid, "locate")] += share
         for a in articles:
@@ -421,7 +474,7 @@ def article_costs(paths, path: Path | None, runs: dict[str, list[str]], yamls: d
                 by_stage[stage] += charges[a][stage]
         by_stage = {s: round(v / len(articles), 6) if articles else None for s, v in by_stage.items()}
         basis = "each run's receipt spread over the sources it covered"
-    info = {"usd_total": round(sum(float(r["cost"].get("usd") or 0.0) for r in receipts.values()), 6),
+    info = {"usd_total": round(sum(float(r["cost"]["usd"]) for r in receipts.values()), 6),
             "articles": len(articles), "basis": basis, "by_stage": by_stage}
     if path is None:
         info["runs"] = shares
@@ -456,6 +509,15 @@ def _audit(run: list[metrics.RunPassage], joined_items: set[tuple[str, str]], se
     return out
 
 
+def _strata(result: metrics.TierResult, clusters: list[str], replicates: int, seed: str) -> dict:
+    """``{stratum: {metric: bootstrap + by_cluster}}`` for every metric the tier stratified."""
+    return {key: {name: {**metrics.bootstrap(r.by_cluster, clusters, replicates=replicates,
+                                             seed=f"{seed}:{key}:{name}"),
+                         "by_cluster": r.by_cluster}
+                  for name, r in sorted(group.items())}
+            for key, group in sorted(result.strata.items())}
+
+
 def _gate_rejections(paths, all_runs: list[str], explicit: Path | None) -> dict:
     """Per run: the harvested ``runs/<run>/host/gate.jsonl`` (or ``--gate-log``), filtered to it."""
     out: dict[str, Any] = {}
@@ -482,7 +544,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
         raise CfError("the test split is scored only at checkpoints",
                       hint="pass --checkpoint when this is one (section 9, step 4)")
     version, manifest = gold_mod.latest_manifest(layout, gold_version)
-    gold_mod.verify_frozen(layout, manifest)
+    gold_mod.verify_frozen(layout, manifest, canary=bench["canary"])
     articles_in = sorted((manifest.get("splits") or {}).get(split) or [])
     if not articles_in:
         raise CfError(f"bench {layout.bench_id} has no {split} article")
@@ -505,30 +567,37 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
                       hint="the two G1 arms are never pooled: score each run as the arm it ran")
     arm = run_arm
     tools = tools_db(run_universe)
-    ablation = read_json(layout.ablation_json) if layout.ablation_json.is_file() else None
+    # the planted tier as the frozen manifest records it (verify_frozen checked its files)
+    p_tier = (manifest.get("tiers") or {}).get("P")
     planted = tools["kind"] == TOOLS_PLANTED
     if planted:
-        if ablation is None:
+        if not p_tier:
             raise CfError(f"run {run_id} searched a planted database, but bench "
-                          f"{layout.bench_id} has no planted tier",
-                          hint=f"cf bench freeze {layout.bench_id} --plant writes one")
-        if tools["sha256"] != ablation.get("corpus_sha256"):
+                          f"{layout.bench_id}'s gold has no planted tier",
+                          hint=f"cf bench freeze {layout.bench_id} --plant (--supersede) writes one")
+        if tools["sha256"] != p_tier.get("corpus_sha256"):
             raise CfError(f"run {run_id}'s tools database is not this bench's planted one "
-                          f"({tools['sha256'][:12]}… vs {str(ablation.get('corpus_sha256'))[:12]}…)",
+                          f"({tools['sha256'][:12]}… vs {str(p_tier.get('corpus_sha256'))[:12]}…)",
                           hint="plan the P run with this bench's gold/planted/corpus.sqlite")
         if split != "eval":
             raise CfError("a planted run is scored on eval, the split its ablation removed")
+    elif p_tier and tools["sha256"] == p_tier.get("corpus_sha256"):
+        raise CfError(f"run {run_id} searched this bench's planted database but records its "
+                      f"tools database as {tools['kind']!r}",
+                      hint="its run.yaml locate.universe.tools_corpus_db.kind must say planted")
+    ablation = read_json(layout.ablation_json) if planted else None
     canary = canary_check(paths, bench["canary"], all_runs, transcripts=transcripts,
                           report=canary_report, skip=no_canary_check)
     frame = {a["source_id"]: a for a in read_json(layout.frame_json)["articles"]}
     layers_sha = {sid: frame[sid].get("layer_sha256") for sid in articles_in}
+    run, state, coverage, renderers = run_passages(
+        paths, rows, runs, set(articles_in), layers_sha,
+        {sid: frame[sid].get("renderer") for sid in articles_in})
     pin_doc = pins(paths, yamls=yamls, receipts=receipts, receipt_shas=receipt_shas,
-                   locate_run=run_id, renderers=[frame[s].get("renderer") or UNRECORDED
-                                                 for s in articles_in],
+                   locate_run=run_id, renderers=renderers or [UNRECORDED],
                    manifest=manifest, tools=tools, challenge_runs=runs["challenge"],
                    overrides=pin_overrides or {})
     mid = measurement_id(pin_doc)
-    run, state, coverage = run_passages(paths, rows, runs, set(articles_in), layers_sha)
     sourceset = bench["sourceset"]["id"]
     layers = {sid: inputs.read_layer(paths, sourceset, sid, layers_sha[sid]) for sid in articles_in}
     cluster_of = {sid: cid for cid, members in (manifest.get("clusters") or {}).items()
@@ -556,11 +625,12 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
                       "metrics": metrics.summarise(p_result.ratios, clusters, replicates=replicates,
                                                    seed=f"{seed}:P"),
                       "memory_citations": citations,
-                      "ablation_sha256": ((manifest.get("tiers") or {}).get("P") or {}).get("ablation_sha256"),
+                      "ablation_sha256": p_tier.get("ablation_sha256"),
                       "note": "a planted run is scored on P alone: its workers searched an index "
                               "without the eval G1 modules"}
         per_cluster["P"] = {name: r.by_cluster for name, r in p_result.ratios.items()
                             if not name.startswith("fnf_cause:")}
+        strata_out["P"] = _strata(p_result, clusters, replicates, f"{seed}:P")
         positives["P"] = len(p_gold)
         all_misses.extend(p_result.misses)
     for tier in (() if planted else ("G1", "G3", "GX", "G4")):
@@ -586,12 +656,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
         positives[tier] = sum(1 for g in gold if g.status == vocab.STATUS_FORMALIZED)
         per_cluster[tier] = {name: r.by_cluster for name, r in result.ratios.items()
                              if not name.startswith("fnf_cause:")}
-        strata_out[tier] = {key: {name: {**metrics.bootstrap(r.by_cluster, clusters,
-                                                             replicates=replicates,
-                                                             seed=f"{seed}:{tier}:{key}:{name}"),
-                                         "by_cluster": r.by_cluster}
-                                  for name, r in sorted(group.items())}
-                            for key, group in sorted(result.strata.items())}
+        strata_out[tier] = _strata(result, clusters, replicates, f"{seed}:{tier}")
         all_misses.extend(result.misses)
     cost_total, cost_locate, cost_info = article_costs(paths, article_costs_path, runs, yamls,
                                                        receipts, articles_in, cluster_of)
@@ -628,7 +693,9 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
         "strata": strata_out,
         "cost": cost_info,
         "gate_rejections": gate_rej,
-        "misses": sorted(all_misses, key=lambda m: (m["tier"], m["gold_id"], m["kind"])),
+        "misses": sorted(all_misses, key=lambda m: (m["tier"], m["gold_id"] or "", m["kind"],
+                                                     str(m.get("run_item") or ""),
+                                                     str(m.get("declaration") or ""))),
         "audit": audit_summary,
         "bootstrap": {"replicates": replicates, "seed": seed, "unit": "article cluster",
                       "interval": "95% percentile, nearest rank"},

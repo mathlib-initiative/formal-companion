@@ -6,9 +6,11 @@ section 8 states.  Three rules shape everything here:
 
 * **Runs join gold by span overlap on the layer, never by id**: a gold passage
   and a run passage of one source join when they share at least four whole
-  layer words, one to one, greedily by overlap (ties broken by id, so the join
-  is a function of the data).  An item id is the run's own key and a gold span
-  is not a passage of any run, so an id join would be no join at all.
+  layer words, one to one across distinct passages, greedily by overlap (ties
+  broken by id, so the join is a function of the data).  Gold rows that are one
+  passage of the text (their spans share four words) may all join the run
+  passage that holds them.  An item id is the run's own key and a gold span is
+  not a passage of any run, so an id join would be no join at all.
 * **Never pooled**: every metric is computed per tier (and G1 per arm, which a
   score document already is), and every ratio is kept as a numerator and a
   denominator per article cluster, so an interval is a cluster bootstrap and a
@@ -26,10 +28,8 @@ from typing import Any, Iterable
 
 from cflib import vocab
 
-from .layout import overlap_words
+from .layout import MIN_OVERLAP_WORDS, overlap_words
 
-#: the join's floor: whole layer words two spans must share
-MIN_OVERLAP_WORDS = 4
 #: the k of locate recall@k
 RECALL_K = (1, 3, 5)
 #: the cause of a false-not-formalized miss -> its mechanical error code
@@ -155,7 +155,15 @@ def gold_passages(tier: str, rows: Iterable[dict]) -> list[GoldPassage]:
 
 def join(gold: list[GoldPassage], run: list[RunPassage],
          layers: dict[str, str]) -> dict[str, RunPassage]:
-    """``{gold id: run passage}``: one to one, at least four shared words, greedy by overlap."""
+    """``{gold id: run passage}``: at least four shared words, greedy by overlap.
+
+    One to one across distinct passages: a run passage already holding a gold
+    passage joins another only when the new gold span shares at least four words
+    with every gold span it holds -- two G1 entries anchored to one theorem are
+    one passage of the text, and a run passage that located both is no inventory
+    miss for either -- so two disjoint gold passages never share one large run
+    passage.
+    """
     pairs: list[tuple[int, str, str, int]] = []
     by_source: dict[str, list[tuple[int, RunPassage]]] = {}
     for index, passage in enumerate(run):
@@ -170,14 +178,18 @@ def join(gold: list[GoldPassage], run: list[RunPassage],
             if words >= MIN_OVERLAP_WORDS:
                 pairs.append((words, g.gold_id, passage.item, index))
     pairs.sort(key=lambda p: (-p[0], p[1], p[2]))
-    taken_gold: set[str] = set()
-    taken_run: set[int] = set()
+    by_id = {g.gold_id: g for g in gold}
+    held: dict[int, list[tuple[int, int]]] = {}
     out: dict[str, RunPassage] = {}
     for _words, gid, _item, index in pairs:
-        if gid in taken_gold or index in taken_run:
+        if gid in out:
             continue
-        taken_gold.add(gid)
-        taken_run.add(index)
+        g = by_id[gid]
+        layer = layers.get(g.source_id, "")
+        if any(overlap_words(layer, g.span, span) < MIN_OVERLAP_WORDS
+               for span in held.get(index, [])):
+            continue
+        held.setdefault(index, []).append(g.span)
         out[gid] = run[index]
     return out
 
@@ -329,38 +341,36 @@ def evaluate_tier(tier: str, gold: list[GoldPassage], run: list[RunPassage], *,
                   layers: dict[str, str], cluster_of: dict[str, str],
                   article_state: dict[str, str], assessment: dict[str, dict],
                   ablated: set[tuple[str, str]] | None = None) -> TierResult:
-    """Every metric one tier supports, per cluster."""
+    """Every metric one tier supports, per cluster, and per stratum for every metric."""
     ratios: dict[str, Ratio] = {}
-
-    def ratio(name: str) -> Ratio:
-        return ratios.setdefault(name, Ratio())
-
     strata: dict[str, dict[str, Ratio]] = {}
 
-    def stratum(key: str, name: str) -> Ratio:
-        return strata.setdefault(key, {}).setdefault(name, Ratio())
+    def count(name: str, cluster: str, keys: list[str], num: float, den: float = 1.0) -> None:
+        ratios.setdefault(name, Ratio()).add(cluster, num, den)
+        for key in keys:
+            strata.setdefault(key, {}).setdefault(name, Ratio()).add(cluster, num, den)
 
     confusion: dict[str, dict[str, int]] = {}
     misses: list[dict] = []
     passage_gold = [g for g in gold if g.level == "passage" and g.span is not None]
     joined = join(passage_gold, run, layers)
+    by_article: dict[str, list[RunPassage]] = {}
+    for passage in run:
+        by_article.setdefault(passage.source_id, []).append(passage)
+    if tier == "P":
+        _memory(count, misses, gold, joined, by_article, cluster_of, assessment, ablated or set())
+        return TierResult(ratios=ratios, confusion=confusion, misses=misses, joined=len(joined),
+                          gold=len(gold), strata=strata)
     for g in sorted(passage_gold, key=lambda x: x.gold_id):
         cluster = cluster_of.get(g.source_id, "?")
         r = joined.get(g.gold_id)
         state = article_state.get(g.source_id, "ran")
         keys = _strata_keys(g, assessment.get(g.source_id) or {})
-        if tier == "P":
-            # the planted arm: the gold declarations are gone from the index, so
-            # the only question is whether the run cited one anyway
-            _memory(ratio, misses, tier, g, r, cluster, ablated or set())
-            continue
         if g.status == vocab.STATUS_FORMALIZED:
             cause = fnf_cause(state, r)
-            ratio("fnf_rate").add(cluster, 1.0 if cause else 0.0)
-            for key in keys:
-                stratum(key, "fnf_rate").add(cluster, 1.0 if cause else 0.0)
+            count("fnf_rate", cluster, keys, 1.0 if cause else 0.0)
             if cause:
-                ratio(f"fnf_cause:{cause}").add(cluster, 1.0, 0.0)
+                ratios.setdefault(f"fnf_cause:{cause}", Ratio()).add(cluster, 1.0, 0.0)
                 misses.append({"gold_id": g.gold_id, "tier": tier, "source_id": g.source_id,
                                "span": list(g.span), "kind": "false_not_formalized",
                                "cause": cause, "code": error_code(cause, g, r),
@@ -368,69 +378,100 @@ def evaluate_tier(tier: str, gold: list[GoldPassage], run: list[RunPassage], *,
                                "run_status": r.status if r else None})
         if r is not None and r.status == vocab.STATUS_FORMALIZED and g.status is not None:
             over = g.status != vocab.STATUS_FORMALIZED
-            ratio("overclaim_rate").add(cluster, 1.0 if over else 0.0)
+            count("overclaim_rate", cluster, keys, 1.0 if over else 0.0)
             if over:
                 misses.append({"gold_id": g.gold_id, "tier": tier, "source_id": g.source_id,
                                "span": list(g.span), "kind": "overclaim",
                                "cause": f"gold {g.status}", "code": "E-WRONG-RELATION",
                                "run_item": r.item, "run_status": r.status})
         if r is not None and g.scope is not None:
-            ratio("scope_error_rate").add(cluster, 1.0 if r.scope != g.scope else 0.0)
+            count("scope_error_rate", cluster, keys, 1.0 if r.scope != g.scope else 0.0)
         if r is not None and r.scope == vocab.SCOPE_FORMAL_MATH:
-            unresolved = r.outcome == vocab.OUTCOME_UNRESOLVED or (r.outcome is not None and r.status is None)
-            ratio("unresolved_rate").add(cluster, 1.0 if unresolved else 0.0)
+            # no locate result (a gate failure, ``missing``) leaves a passage as unresolved
+            # as an unresolved outcome does: neither is ever counted resolved
+            unresolved = (r.outcome is None or r.outcome == vocab.OUTCOME_UNRESOLVED
+                          or r.status is None)
+            count("unresolved_rate", cluster, keys, 1.0 if unresolved else 0.0)
+        elif r is None and state in ("unresolved", "gate_failed") \
+                and g.scope == vocab.SCOPE_FORMAL_MATH:
+            # an unresolved or never-landed inventory is a miss, not an exclusion
+            count("unresolved_rate", cluster, keys, 1.0)
         if tier == "GX":
-            ratio("inventory_recall").add(cluster, 1.0 if r is not None else 0.0)
+            count("inventory_recall", cluster, keys, 1.0 if r is not None else 0.0)
         if tier == "G3" and g.scope == vocab.SCOPE_FORMAL_MATH:
-            ratio("inventory_recall").add(cluster, (1.0 if r is not None else 0.0) * g.weight, g.weight)
+            count("inventory_recall", cluster, keys, (1.0 if r is not None else 0.0) * g.weight,
+                  g.weight)
         if g.accept:
             for k in RECALL_K:
                 hit = r is not None and bool(set(r.located(k)) & g.accept)
-                ratio(f"recall_at_{k}").add(cluster, 1.0 if hit else 0.0)
-                if k == 1:
-                    for key in keys:
-                        stratum(key, "recall_at_1").add(cluster, 1.0 if hit else 0.0)
+                count(f"recall_at_{k}", cluster, keys, 1.0 if hit else 0.0)
             if r is not None and r.rank1() is not None:
-                ratio("precision_at_1").add(cluster, 1.0 if r.rank1() in g.accept else 0.0)
+                count("precision_at_1", cluster, keys, 1.0 if r.rank1() in g.accept else 0.0)
         if tier == "G3" and g.accept:
             for library in sorted({lib for lib, _ in g.accept}):
                 hit = r is not None and any(lib == library for lib, _ in r.located())
-                ratio("library_recall").add(cluster, 1.0 if hit else 0.0)
+                count("library_recall", cluster, keys, 1.0 if hit else 0.0)
         if r is not None and g.relations:
             for loc in r.locations:
                 key = (str(loc.get("library")), str(loc.get("declaration")))
                 if key in g.relations and loc.get("relation") in vocab.LOCATE_RELATIONS:
                     row = confusion.setdefault(g.relations[key], {})
                     row[loc["relation"]] = row.get(loc["relation"], 0) + 1
-    # G1 entries no passage could be anchored for: scored at article level only
+    # G1 entries no passage could be anchored for: scored at article level only, and
+    # like a passage, a false-not-formalized only when gold says formalized
     if tier == "G1":
-        by_article: dict[str, list[RunPassage]] = {}
-        for passage in run:
-            by_article.setdefault(passage.source_id, []).append(passage)
-        for g in sorted((x for x in gold if x.level == "article"), key=lambda x: x.gold_id):
+        for g in sorted((x for x in gold if x.level == "article"
+                         and x.status == vocab.STATUS_FORMALIZED), key=lambda x: x.gold_id):
             cluster = cluster_of.get(g.source_id, "?")
+            keys = _strata_keys(g, assessment.get(g.source_id) or {})
+            passages = by_article.get(g.source_id, [])
             hit = any(p.status == vocab.STATUS_FORMALIZED and set(p.located()) & g.accept
-                      for p in by_article.get(g.source_id, []))
-            ratio("article_fnf_rate").add(cluster, 0.0 if hit else 1.0)
+                      for p in passages)
+            count("article_fnf_rate", cluster, keys, 0.0 if hit else 1.0)
             if not hit:
+                found = any(set(p.located()) & g.accept for p in passages)
                 misses.append({"gold_id": g.gold_id, "tier": tier, "source_id": g.source_id,
                                "span": None, "kind": "false_not_formalized", "cause": "article_level",
-                               "code": "E-RETRIEVAL-MISS", "run_item": None, "run_status": None})
+                               "code": "E-WRONG-RELATION" if found else "E-RETRIEVAL-MISS",
+                               "run_item": None, "run_status": None})
     return TierResult(ratios=ratios, confusion=confusion, misses=misses, joined=len(joined),
                       gold=len(gold), strata=strata)
 
 
-def _memory(ratio, misses: list[dict], tier: str, g: GoldPassage, r: RunPassage | None,
-            cluster: str, ablated: set[tuple[str, str]]) -> None:
-    """P: a location at a declaration the planted index removed is ``E-MEMORY``."""
-    memory = [loc for loc in (r.locations if r else [])
-              if (str(loc.get("library")), str(loc.get("declaration"))) in ablated]
-    ratio("memory_rate").add(cluster, 1.0 if memory else 0.0)
-    for loc in memory:
-        misses.append({"gold_id": g.gold_id, "tier": tier, "source_id": g.source_id,
-                       "span": list(g.span) if g.span else None, "kind": "memory",
-                       "cause": "ablated declaration", "code": "E-MEMORY", "run_item": r.item,
-                       "declaration": f"{loc.get('library')}:{loc.get('declaration')}"})
+def _memory(count, misses: list[dict], gold: list[GoldPassage], joined: dict[str, RunPassage],
+            by_article: dict[str, list[RunPassage]], cluster_of: dict[str, str],
+            assessment: dict[str, dict], ablated: set[tuple[str, str]]) -> None:
+    """P: every location at a declaration the planted index removed is ``E-MEMORY``.
+
+    The question is whether the run cited a removed declaration at all -- the
+    planted index never showed it one -- so a citation counts wherever in the
+    article it sits, not only on the passage joined to a gold row.  A P gold
+    entry (passage or article level) is a memory hit when its joined passage
+    cites any removed declaration, or any passage of its article cites one of
+    its own accept set; every citation of a removed declaration is one miss,
+    attributed to the gold row joined to its passage, else the article's first.
+    """
+    def cited(p: RunPassage) -> list[tuple[str, str]]:
+        return [(str(loc.get("library")), str(loc.get("declaration"))) for loc in p.locations
+                if (str(loc.get("library")), str(loc.get("declaration"))) in ablated]
+
+    first_gold: dict[str, str] = {}
+    for g in sorted(gold, key=lambda x: x.gold_id):
+        first_gold.setdefault(g.source_id, g.gold_id)
+        r = joined.get(g.gold_id)
+        hit = bool(r is not None and cited(r)) or any(
+            key in g.accept for p in by_article.get(g.source_id, []) for key in cited(p))
+        count("memory_rate", cluster_of.get(g.source_id, "?"),
+              _strata_keys(g, assessment.get(g.source_id) or {}), 1.0 if hit else 0.0)
+    holder = {id(r): gid for gid, r in sorted(joined.items(), reverse=True)}
+    for sid in sorted(by_article):
+        for p in sorted(by_article[sid], key=lambda x: x.item):
+            for lib, name in cited(p):
+                misses.append({"gold_id": holder.get(id(p)) or first_gold.get(sid),
+                               "tier": "P", "source_id": sid,
+                               "span": list(p.span) if p.span else None, "kind": "memory",
+                               "cause": "ablated declaration", "code": "E-MEMORY",
+                               "run_item": p.item, "declaration": f"{lib}:{name}"})
 
 
 def _strata_keys(g: GoldPassage, assessment: dict) -> list[str]:

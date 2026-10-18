@@ -35,12 +35,11 @@ from typing import Any, Iterable
 from cflib.errors import CfError
 from cflib.yamlio import load_yaml
 
-from .layout import overlap_words, word_spans
+from .layout import MIN_OVERLAP_WORDS, curated_qid, overlap_words, word_spans
 
-_QID = re.compile(r"Q[1-9][0-9]*\Z")
 _INT = re.compile(r"[1-9][0-9]*\Z")
 #: the fewest words a sampled span holds -- the join's overlap floor
-MIN_SPAN_WORDS = 4
+MIN_SPAN_WORDS = MIN_OVERLAP_WORDS
 
 
 # --------------------------------------------------------------------------
@@ -107,12 +106,15 @@ def read_frame_list(path: Path) -> list[dict]:
 
 
 def read_qids(path: Path) -> set[str]:
-    """QIDs from a list file, or the QID keys of a curated mapping (Mathlib's ``1000.yaml``)."""
+    """QIDs from a list file, or the QID keys of a curated mapping (Mathlib's ``1000.yaml``).
+
+    A suffixed key (``Q4724004A``) names its base QID, as ``layout.curated_qid`` reads it.
+    """
     qids = set()
     for value in _list_file(path):
-        token = str(value.get("qid") if isinstance(value, dict) else value).strip()
-        if _QID.match(token):
-            qids.add(token)
+        qid = curated_qid(value.get("qid") if isinstance(value, dict) else value)
+        if qid:
+            qids.add(qid)
     return qids
 
 
@@ -305,13 +307,23 @@ def _section_of(sections: list[dict], start: int) -> tuple[list, str | None]:
 
 
 def span_frame(layer: str, paragraphs: list[dict], sections: list[dict]) -> list[dict]:
-    """The blocks a span may be drawn from: inside the layer, at least four words."""
-    out = []
+    """The blocks a span may be drawn from: inside the layer, at least four words, disjoint.
+
+    ``paragraphs.json`` blocks nest (an ``li`` holding a ``p``, a theorem box
+    holding one: references/locate-documents.md section 7); nested blocks are one
+    unit of the frame, the outermost, ``math`` when any of them is -- so the
+    frame's size ``M`` counts distinct units and ``pi_span = k/M`` is right.
+    """
+    blocks = []
     for block in paragraphs or []:
         a, b = (int(x) for x in block.get("span") or (0, 0))
-        if not (0 <= a < b <= len(layer)):
-            continue
-        if len(word_spans(layer, a, b)) < MIN_SPAN_WORDS:
+        if 0 <= a < b <= len(layer) and len(word_spans(layer, a, b)) >= MIN_SPAN_WORDS:
+            blocks.append((a, b, block))
+    out: list[dict] = []
+    for a, b, block in sorted(blocks, key=lambda x: (x[0], -x[1])):
+        outer = next((o for o in out if overlap_words(layer, tuple(o["span"]), (a, b))), None)
+        if outer is not None:
+            outer["math"] = outer["math"] or bool(block.get("math"))
             continue
         path, fragment = _section_of(sections, a)
         out.append({"span": [a, b], "section": block.get("section") or path,

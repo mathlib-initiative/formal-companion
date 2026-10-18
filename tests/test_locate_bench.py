@@ -717,21 +717,34 @@ class TestTheLabeler(unittest.TestCase):
             hit = g1[task["task_id"]]["accept"][0] if k % 2 == 0 else {"library": "alpha",
                                                                          "declaration": "Alpha.unrelated"}
             labels.append({"task_id": task["task_id"], "scope": "formal_math",
-                           "declarations": [dict(hit, relation="exactMatch")], "evidence": "e"})
+                           "declarations": [dict(hit, relation="exactMatch")], "evidence": "e",
+                           "hunters": [{"hunter": 1, "found": [f"{hit['library']}:{hit['declaration']}"]}]})
         self.run_transcribe(args, labels)
         cal = json.loads(self.lay.calibration_json.read_text())
         want = sum(1 for k in range(len(args["tasks"])) if k % 2 == 0)
         self.assertEqual((cal["found"], cal["total"]), (want, len(args["tasks"])))
         self.assertTrue(cal["tag_blind"])
+        # tag-blind end to end (review #97): no QID in the args, and an accept declaration
+        # the labeler added but no hunter found does not count
+        self.assertTrue(all(src["qid"] is None for src in args["sources"]))
+        for label in labels:
+            label["hunters"] = [{"hunter": 1, "found": []}]
+        self.run_transcribe(args, labels)
+        self.assertEqual(json.loads(self.lay.calibration_json.read_text())["found"], 0)
 
     def test_gx_needs_a_signature_and_g4_its_caps(self):
         args = self.emit("inventory")
-        labels = [{"task_id": t["task_id"], "source_id": t["source_id"],
+        labels = [{"task_id": t["task_id"], "source_id": t["source_id"], "enumerators": ["A", "B"],
                    "passages": [{"quote": self.world.quote(index_of(t["source_id"]), 1, 7),
                                  "passage_kind": "theorem", "scope": "formal_math",
                                  "from": ["A", "F"]}]} for t in args["tasks"]]
         with self.assertRaises(CfError):
             self.run_transcribe(args, labels)
+        # one enumerator is not the two-enumerator inventory GX is (review #107)
+        one = [dict(l, enumerators=["A"]) for l in labels]
+        with self.assertRaises(CfError) as ctx:
+            self.run_transcribe(args, one, "--signed-by", "the maintainer")
+        self.assertIn("not both A and B", str(ctx.exception))
         self.run_transcribe(args, labels, "--signed-by", "the maintainer")
         gx = gold_mod.read_labels(self.lay, "GX")
         self.assertEqual(len(gx), len(args["tasks"]))
@@ -824,6 +837,42 @@ process.stdout.write(JSON.stringify({ result, calls }))
         self.assertEqual(out["result"]["labels"], [])
         self.assertTrue(all("TAG-BLIND" in c["prompt"] for c in out["calls"]))
 
+    def test_calibrate_names_no_qid_and_its_labeler_adds_nothing_review_97(self):
+        args = {"mode": "calibrate", "bench": "b1", "digest": "d", "hunters": 1,
+                "universe": {"id": "u1", "libraries": [{"id": "mathlib", "commit": "a" * 40}]},
+                "sources": [{"source_id": "s1", "qid": "Q99999002", "title": "Widget"}],
+                "tasks": [{"task_id": "g1-x", "source_id": "s1", "span": [0, 4], "excerpt": "abcd"}]}
+        responses = {"hunt0:g1-x": {"task_id": "g1-x", "scope": "formal_math", "queries": ["rg"],
+                                    "candidates": []},
+                     "label:g1-x": {"task_id": "g1-x", "scope": "formal_math", "declarations": [],
+                                    "evidence": "e"}}
+        out = self.execute(args, responses)
+        prompts = {c["label"]: c["prompt"] for c in out["calls"]}
+        self.assertIn("TAG-BLIND", prompts["label:g1-x"])
+        self.assertIn("Add NO declaration", prompts["label:g1-x"])
+        self.assertFalse(any("Q99999002" in p for p in prompts.values()))
+
+    def test_anchor_keeps_the_asked_task_id_review_106(self):
+        args = {"mode": "anchor", "bench": "b1", "digest": "d",
+                "universe": {"id": "u1", "libraries": []}, "sources": [{"source_id": "s1"}],
+                "tasks": [{"task_id": "g1-a", "source_id": "s1", "declarations": []}]}
+        out = self.execute(args, {"anchor:g1-a": {"task_id": "g1-b", "quote": None, "relation": None,
+                                                  "passage_kind": "theorem", "evidence": "e"}})
+        self.assertEqual([l["task_id"] for l in out["result"]["labels"]], ["g1-a"])
+
+    def test_a_failed_enumerator_leaves_the_inventory_unlabelled_review_107(self):
+        args = {"mode": "inventory", "bench": "b1", "digest": "d",
+                "universe": {"id": "u1", "libraries": []}, "sources": [{"source_id": "s1"}],
+                "tasks": [{"task_id": "s1", "source_id": "s1", "finders": []}]}
+        merged = {"task_id": "s1", "passages": []}
+        one = self.execute(args, {"enum0:s1": {"task_id": "s1", "passages": []},
+                                  "inventory:s1": merged})
+        self.assertEqual(one["result"]["labels"], [])
+        both = self.execute(args, {"enum0:s1": {"task_id": "s1", "passages": []},
+                                   "enum1:s1": {"task_id": "s1", "passages": []},
+                                   "inventory:s1": merged})
+        self.assertEqual(both["result"]["labels"][0]["enumerators"], ["A", "B"])
+
 
 # ---------------------------------------------------------------------------
 # freeze
@@ -839,7 +888,8 @@ class TestFreeze(unittest.TestCase):
         self.assertEqual(man["manifest_sha256"], gold_mod.sha_of(gold_mod.manifest_body(man)))
         self.assertEqual(set(man["tiers"]), {"G1", "G3", "P"})
         self.assertTrue(man["labeler"]["workflow_sha256"]["label"])
-        self.assertIn("unchanged", cf(world, "bench", "freeze", "b1") + "unchanged")
+        self.assertIn("nothing changed", cf(world, "bench", "freeze", "b1"))
+        self.assertIn("nothing changed", cf(world, "bench", "freeze", "b1", "--plant"))
         # an edit of a frozen label file is refused by score's verification
         g3 = lay.label_file("G3")
         original = g3.read_text()
@@ -935,6 +985,18 @@ class TestScore(unittest.TestCase):
             with self.subTest(pin=name):
                 eval_run(self.world, run_id=f"loc-{name}", inventory_run=f"inv-{name}", **kw)
                 self.assertNotEqual(score(self.world, f"loc-{name}")["measurement_id"], first)
+        # --pin fills a version no run.yaml records (review #89), and never replaces one
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "loc1", "--no-canary-check", "--pin", "tend=1.0")
+        self.assertIn("record tend 0.9", str(ctx.exception))
+        from cflib.yamlio import read_yaml, write_yaml
+
+        for rid in ("inv1", "loc1"):
+            path = WorkspacePaths(self.world.root).run_yaml(rid)
+            doc = read_yaml(path)
+            doc["versions"].pop("tend")
+            write_yaml(path, doc)
+        self.assertEqual(score(self.world)["pins"]["tend"], "unrecorded")
         pinned = score(self.world, "loc1", "--no-canary-check", "--pin", "tend=1.0")
         self.assertNotEqual(pinned["measurement_id"], first)
         self.assertEqual(pinned["pins"]["tend"], "1.0")
@@ -1065,20 +1127,27 @@ class TestScore(unittest.TestCase):
 def score_doc(fnf_cells, *, models=("m1",), renderer=("web-html/1",), split="eval", arm="blind",
               cost=1.0, articles=10, positives=20, gold="g" * 64, overclaim=None, mid=None,
               strata=None, scorer="s" * 64, tools="full", challenge_runs=(), owed=0,
-              inventory=("inv1",), locate_cost=None):
+              inventory=("inv1",), locate_cost=None, pins=None, canary=True, seen_no=True):
     clusters = sorted(fnf_cells)
+    mid = mid or gold_mod.sha_of([fnf_cells, cost, models])
+    if seen_no:
+        strata = {"seen:no": {"fnf_rate": {"den": float(len(clusters)), "by_cluster": fnf_cells}},
+                  **(strata or {})}
     per_cluster = {"G3": {"fnf_rate": fnf_cells,
                           "overclaim_rate": overclaim or {c: [0.0, 1.0] for c in clusters}},
                    "cost": {"usd_per_article": {c: [cost, 1.0] for c in clusters}}}
     if locate_cost is not None:
         per_cluster["cost"]["usd_per_article_locate"] = {c: [locate_cost, 1.0] for c in clusters}
     return {"schema": "cf-bench-score/1", "bench": "b1", "split": split, "arm": arm,
-            "measurement_id": mid or gold_mod.sha_of([fnf_cells, cost, models]),
+            "measurement_id": mid, "run": f"loc-{mid[:8]}",
             "scorer": {"sha256": scorer, "files": 8},
-            "runs": {"inventory": list(inventory), "locate": ["loc"], "challenge": list(challenge_runs)},
+            "runs": {"inventory": list(inventory), "locate": [f"loc-{mid[:8]}"],
+                     "challenge": list(challenge_runs)},
             "pins": {"observed_models": {mm: 1 for mm in models}, "renderer": list(renderer),
                      "universe_sha256": "u", "tools_corpus_db": {"kind": tools, "sha256": "t"},
-                     "challenge_runs": list(challenge_runs)},
+                     "challenge_runs": list(challenge_runs),
+                     "receipts": {f"loc-{mid[:8]}": mid[:8] * 8}, **(pins or {})},
+            "canary_check": {"ran": canary},
             "gold_manifest": {"version": 1, "sha256": gold},
             "coverage": {"articles": articles, "total_positives": positives,
                          "challenge_owed": {"total": owed}},
@@ -1103,7 +1172,7 @@ class TestCompare(unittest.TestCase):
 
     def compare(self, base, cand, aa=None, **kw):
         return compare_mod.compare(self.lay, base, cand, claim=kw.pop("claim", "G3.fnf_rate"),
-                                   aa_path=aa, replicates=300, seed=1, **kw)
+                                   aa_path=aa, replicates=kw.pop("replicates", 1000), seed=1, **kw)
 
     def test_a_clear_gain_with_a_rejecting_aa_is_accepted_and_recorded_not_claimed(self):
         base = self.write("base", score_doc(self.base_cells))
@@ -1122,7 +1191,6 @@ class TestCompare(unittest.TestCase):
         self.assertEqual(entry3["alpha_j"], 0.05 / 4)
         ledger = [json.loads(l) for l in self.lay.ledger_jsonl.read_text().splitlines()]
         self.assertEqual(len(ledger), 3)
-        self.assertEqual(self.compare(base, claimed, aa, replication=True)["alpha_j"], 0.05)
 
     def test_no_aa_fails_and_an_aa_that_accepts_fails(self):
         base = self.write("base", score_doc(self.base_cells))
@@ -1200,7 +1268,7 @@ class TestCompare(unittest.TestCase):
         base = self.write("base", score_doc(self.base_cells))
         cand = self.write("cand", score_doc(self.better_cells))
         self.assertEqual(self.compare(base, cand)["differences"], [])
-        self.assertIn("baseline reused: every pin matches an earlier entry's baseline",
+        self.assertIn("baseline reused: an earlier entry compared this same baseline measurement",
                       self.compare(base, cand)["differences"])
 
     def test_the_cli_prints_the_decision(self):
@@ -1210,7 +1278,7 @@ class TestCompare(unittest.TestCase):
         base = self.write("base", score_doc(self.base_cells))
         cand = self.write("cand", score_doc(self.better_cells))
         out = cf(self.world, "bench", "compare", "b1", base, cand, "--claim", "G3.fnf_rate",
-                 "--bootstrap", 100)
+                 "--bootstrap", 1000)
         self.assertIn("REJECT", out)          # no A/A replicate
         self.assertIn("aa", out)
 
@@ -1551,6 +1619,547 @@ class TestTheRunSeams(unittest.TestCase):
                 if path.name != "gold.py":       # plant() edits its own copy of the database
                     self.assertNotIn("SELECT ", text)
                     self.assertNotIn("sqlite3.connect", text)
+
+
+# ---------------------------------------------------------------------------
+# the package review's findings: one regression test per finding (review id)
+# ---------------------------------------------------------------------------
+
+class TestReviewMetrics(unittest.TestCase):
+
+    def evaluate(self, tier, gold, run, *, state=None, ablated=None):
+        return m.evaluate_tier(tier, gold, run, layers={"s": LAYER, "t": LAYER},
+                               cluster_of={"s": "c1", "t": "c2"}, article_state=state or {},
+                               assessment={"s": {"importance": "high"}}, ablated=ablated)
+
+    def test_memory_is_counted_wherever_the_run_cites_a_removed_declaration_review_80(self):
+        gold = [gold_passage("g0", "s", spn(0), tier="P", accept={("mathlib", "W.gone")}),
+                gold_passage("g1", "t", None, tier="P", level="article",
+                             accept={("mathlib", "W.gone2")})]
+        run = [run_passage("s", "p5", spn(5), status="formalized",       # joins no gold passage
+                           locations=[("mathlib", "W.gone", "exactMatch")]),
+               run_passage("t", "p9", spn(9), status="formalized",
+                           locations=[("mathlib", "W.gone2", "exactMatch")])]
+        result = self.evaluate("P", gold, run, ablated={("mathlib", "W.gone"), ("mathlib", "W.gone2")})
+        rate = result.ratios["memory_rate"]
+        self.assertEqual((rate.num, rate.den), (2.0, 2.0))
+        self.assertEqual(sorted((x["gold_id"], x["declaration"]) for x in result.misses),
+                         [("g0", "mathlib:W.gone"), ("g1", "mathlib:W.gone2")])
+        self.assertIn("memory_rate", result.strata["importance:high"])
+
+    def test_no_locate_result_and_unresolved_articles_are_unresolved_review_83(self):
+        gold = [gold_passage("g0", "s", spn(0)), gold_passage("g1", "s", spn(1)),
+                gold_passage("g2", "t", spn(2))]
+        run = [run_passage("s", "p0", spn(0), outcome=None),
+               run_passage("s", "p1", spn(1), status="formalized")]
+        r = self.evaluate("G3", gold, run, state={"t": "unresolved"}).ratios["unresolved_rate"]
+        self.assertEqual((r.num, r.den), (2.0, 3.0))
+
+    def test_article_level_g1_counts_only_gold_formalized_review_84(self):
+        gold = [gold_passage("e0", "s", None, tier="G1", level="article", accept={("mathlib", "W.a")}),
+                gold_passage("e1", "s", None, tier="G1", level="article", status="partial",
+                             accept={("mathlib", "W.b")}),
+                gold_passage("e2", "t", None, tier="G1", level="article", status=None,
+                             accept={("mathlib", "W.c")})]
+        run = [run_passage("s", "p", spn(3), status="partial", locations=[("mathlib", "W.a", "hasPart")])]
+        result = self.evaluate("G1", gold, run)
+        r = result.ratios["article_fnf_rate"]
+        self.assertEqual((r.num, r.den), (1.0, 1.0))
+        self.assertEqual([x["code"] for x in result.misses], ["E-WRONG-RELATION"])
+
+    def test_two_gold_rows_of_one_passage_both_join_it_review_85(self):
+        gold = [gold_passage("g1-a", "s", spn(1), tier="G1", accept={("mathlib", "W.a")}),
+                gold_passage("g1-b", "s", spn(1), tier="G1", accept={("mathlib", "W.b")}),
+                gold_passage("g1-c", "s", spn(3), tier="G1", accept={("mathlib", "W.c")})]
+        whole = (spn(0)[0], spn(4)[1])
+        run = [run_passage("s", "p", whole, status="formalized",
+                           locations=[("mathlib", "W.a", "exactMatch"), ("mathlib", "W.b", "exactMatch")])]
+        joined = m.join(gold, run, {"s": LAYER})
+        self.assertEqual(sorted(joined), ["g1-a", "g1-b"])         # g1-c is another passage
+        r = self.evaluate("G1", gold[:2], run).ratios
+        self.assertEqual((r["fnf_rate"].num, r["recall_at_3"].num), (0.0, 2.0))
+
+    def test_every_metric_is_stratified_review_87(self):
+        gold = [gold_passage("g0", "s", spn(0), accept={("mathlib", "W.a")})]
+        run = [run_passage("s", "p0", spn(0), status="formalized",
+                           locations=[("mathlib", "W.a", "exactMatch")])]
+        strata = self.evaluate("G3", gold, run).strata["importance:high"]
+        self.assertLessEqual({"fnf_rate", "recall_at_1", "recall_at_3", "recall_at_5",
+                              "precision_at_1", "overclaim_rate", "scope_error_rate",
+                              "unresolved_rate", "inventory_recall", "library_recall"}, set(strata))
+
+
+class TestReviewDrawsAndGold(unittest.TestCase):
+
+    def test_a_suffixed_1000_yaml_key_joins_its_base_qid_review_41(self):
+        world = fx.World(scratch(self) / "ws")
+        path = world.write("inputs/1000x.yaml", "Q99999001X:\n  title: one\n  decl: Widget.mul_spanning\n"
+                                                "Q99999001A:\n  title: two\n  decl: Widget.spanning_one\n")
+        rows = gold_mod.read_curated_1000(path)
+        self.assertEqual([(r["key"], r["qid"]) for r in rows],
+                         [("Q99999001A", "Q99999001"), ("Q99999001X", "Q99999001")])
+        self.assertEqual(draw_mod.read_qids(path), {"Q99999001"})
+        conn = inputs.open_checked(world.paths, world.universe())
+        try:
+            resolved = gold_mod.resolve_g1([world.articles[world.sid(1)]["entry"]], conn,
+                                           library="mathlib", commit=fx.COMMIT_M,
+                                           lists=[("mathlib_1000", rows)], renames={},
+                                           tag_libraries=["mathlib"])
+        finally:
+            conn.close()
+        self.assertEqual(sorted(e for entry in resolved["entries"] for e in entry["evidence"]),
+                         ["mathlib_1000 Q99999001A", "mathlib_1000 Q99999001X"])
+
+    def test_nested_blocks_are_one_unit_of_the_span_frame_review_96(self):
+        layer = "alpha beta gamma delta epsilon. one two three four five six."
+        blocks = [{"span": [0, 31], "block": "li", "math": False},
+                  {"span": [0, 31], "block": "p", "math": True},          # the li's own p
+                  {"span": [32, 60], "block": "p"}]
+        frame = draw_mod.span_frame(layer, blocks, [])
+        self.assertEqual([(f["span"], f["block"], f["math"]) for f in frame],
+                         [([0, 31], "li", True), ([32, 60], "p", False)])
+        chosen = draw_mod.sample_spans("s", frame, 8, 1, 1.0)
+        draw_mod.check_spans_disjoint(layer, chosen)
+        self.assertEqual(chosen[0]["pi_span"], 1.0)
+
+    def test_twins_are_the_whole_image_review_99(self):
+        self.assertEqual(gold_mod.twins("mul_one"), ["add_zero"])
+        self.assertEqual(gold_mod.twins("mul_zero"), [])
+        self.assertEqual(gold_mod.twins("Prod.swap_swap"), [])
+        self.assertEqual(gold_mod.twins("Submonoid.mul_mem"), ["AddSubmonoid.add_mem"])
+        world = built(self)
+        world.build_universe(fx.DECLARATIONS + tuple(
+            ("mathlib", n, "Mathlib.Algebra.Group", "proved", None, ())
+            for n in ("mul_one", "add_zero", "mul_zero")))
+        path = world.write("inputs/1000m.yaml", "Q99999001:\n  title: one\n  decl: mul_one\n")
+        cf(world, "bench", "anchor", "b1", "--universe", fx.UNIVERSE, "--curated-1000", path)
+        doc = json.loads(layout_of(world).g1_resolved.read_text())
+        self.assertEqual([(a["declaration"], a["why"]) for e in doc["entries"]
+                          if "mathlib_1000" in e["via"] for a in e["accept"]],
+                         [("add_zero", "to_additive"), ("mul_one", "curated")])
+
+    def test_a_rename_widens_even_when_the_old_name_survives_review_100(self):
+        world = built(self)
+        world.build_universe(fx.DECLARATIONS + (
+            ("mathlib", "Widget.old_name", "Mathlib.Widget.Basic", "proved", None, ()),))
+        cf(world, "bench", "anchor", "b1", "--universe", fx.UNIVERSE, "--curated-1000",
+           world.curated_1000(), "--rename-table", world.renames())
+        doc = json.loads(layout_of(world).g1_resolved.read_text())
+        three = [e for e in doc["entries"] if e["source_id"] == world.sid(3)][0]
+        self.assertEqual([(a["declaration"], a["why"]) for a in three["accept"]],
+                         [("Widget.new_name", "renamed"), ("Widget.old_name", "curated")])
+
+    def test_a_refused_rebuild_writes_nothing_and_a_changed_sample_is_refused_review_95(self):
+        world = anchored(self)
+        lay = layout_of(world)
+        files = (lay.frame_json, lay.draw_json, lay.spans_json, lay.bench_yaml)
+        before = {p.name: p.read_bytes() for p in files}
+        same = {"--uniform": 6, "--curated": 3, "--spans-per-article": 2, "--seed": 7}
+        for change, needle in (({"--frame": world.frame_file([0, 1])}, "frame.json"),
+                               ({"--spans-per-article": 1}, "spans.json"),
+                               ({"--dev": 0.0, "--eval": 1.0}, "split fractions")):
+            flags = {"--frame": world.frame_file(), **same, **change}
+            if "--frame" in change:
+                flags["--frame"] = world.frame_file([0, 1])
+            with self.subTest(change=needle), self.assertRaises(CfError) as ctx:
+                cf(world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+                   "--curated-qids", world.curated_1000(),
+                   *[x for k, v in flags.items() for x in (k, v)])
+            self.assertIn("another draw", str(ctx.exception))
+            self.assertIn(needle, str(ctx.exception))
+            self.assertEqual({p.name: p.read_bytes() for p in files}, before)
+
+    def test_a_same_input_rebuild_keeps_what_anchoring_recorded_review_105(self):
+        world = anchored(self)
+        cf(world, "bench", "build", "b1", "--sourceset", fx.SOURCESET, "--frame", world.frame_file(),
+           "--curated-qids", world.curated_1000(), "--uniform", 6, "--curated", 3,
+           "--spans-per-article", 2, "--seed", 7)
+        bench = inputs_bench(world)
+        self.assertEqual((bench["library"], bench["state"]), ("mathlib", "anchored"))
+
+
+class TestReviewLabeler(unittest.TestCase):
+
+    def setUp(self):
+        self.world = anchored(self)
+        self.lay = layout_of(self.world)
+
+    def emit(self, mode):
+        cf(self.world, "bench", "anchor", "b1", "--emit-args", mode)
+        return json.loads(self.lay.label_args(mode).read_text())
+
+    def run_transcribe(self, args, labels, *extra):
+        path = self.world.root / "r.json"
+        path.write_text(json.dumps(fake_result(args, labels)))
+        return cf(self.world, "bench", "anchor", "b1", "--transcribe", path, *extra)
+
+    def anchor_label(self, task, words=6):
+        return {"task_id": task["task_id"], "quote": self.world.quote(index_of(task["source_id"]), 0, words),
+                "relation": "exactMatch", "passage_kind": "theorem", "evidence": "e"}
+
+    def test_a_quote_of_fewer_than_four_whole_words_scores_at_article_level_review_86(self):
+        args = self.emit("anchor")
+        labels = [self.anchor_label(t, 3 if k == 0 else 6) for k, t in enumerate(args["tasks"])]
+        self.run_transcribe(args, labels)
+        rows = {r["gold_id"]: r for r in gold_mod.read_labels(self.lay, "G1")}
+        first = rows[args["tasks"][0]["task_id"]]
+        self.assertEqual(first["level"], "article")
+        self.assertIn("whole layer word", first["anchor_problem"])
+
+    def test_a_partial_anchor_run_keeps_the_earlier_labels_review_93(self):
+        args = self.emit("anchor")
+        self.run_transcribe(args, [self.anchor_label(t) for t in args["tasks"]])
+        before = {r["gold_id"]: r for r in gold_mod.read_labels(self.lay, "G1")}
+        self.run_transcribe(args, [self.anchor_label(args["tasks"][0], 7)])
+        after = {r["gold_id"]: r for r in gold_mod.read_labels(self.lay, "G1")}
+        self.assertEqual(set(after), set(before))
+        for task in args["tasks"][1:]:
+            self.assertEqual(after[task["task_id"]], before[task["task_id"]])
+            self.assertEqual(after[task["task_id"]]["level"], "passage")
+
+    def test_a_partial_calibration_keeps_its_rows_and_reports_no_h_review_98(self):
+        args = self.emit("anchor")
+        self.run_transcribe(args, [self.anchor_label(t) for t in args["tasks"]])
+        cal_args = self.emit("calibrate")
+        g1 = {r["gold_id"]: r for r in gold_mod.read_labels(self.lay, "G1")}
+
+        def label(task, hit):
+            decl = g1[task["task_id"]]["accept"][0] if hit else {"library": "alpha",
+                                                                 "declaration": "Alpha.unrelated"}
+            return {"task_id": task["task_id"], "scope": "formal_math",
+                    "declarations": [dict(decl, relation="exactMatch")], "evidence": "e",
+                    "hunters": [{"hunter": 1, "found": [f"{decl['library']}:{decl['declaration']}"]}]}
+
+        tasks = cal_args["tasks"]
+        self.run_transcribe(cal_args, [label(t, True) for t in tasks[1:]])
+        cal = json.loads(self.lay.calibration_json.read_text())
+        self.assertEqual((cal["found"], cal["total"], cal["h"]), (len(tasks) - 1, len(tasks), None))
+        self.assertEqual(cal["unanswered"], [tasks[0]["task_id"]])
+        transcribe(self.world, "label", lambda t: {"task_id": t["task_id"], "scope": "non_math",
+                                                   "declarations": [], "evidence": "e"})
+        with self.assertRaises(CfError) as ctx:
+            cf(self.world, "bench", "freeze", "b1")
+        self.assertIn("h is not over the anchored G1 passages", str(ctx.exception))
+        self.run_transcribe(cal_args, [label(tasks[0], False)])
+        cal = json.loads(self.lay.calibration_json.read_text())
+        self.assertEqual((cal["found"], cal["total"]), (len(tasks) - 1, len(tasks)))
+        self.assertAlmostEqual(cal["h"], (len(tasks) - 1) / len(tasks))
+        cf(self.world, "bench", "freeze", "b1")
+
+    def test_the_manifest_names_the_labeler_that_wrote_the_rows_review_102_104(self):
+        args = self.emit("anchor")
+        self.run_transcribe(args, [self.anchor_label(t) for t in args["tasks"]])
+        transcribe(self.world, "label", lambda t: {"task_id": t["task_id"], "scope": "non_math",
+                                                   "declarations": [], "evidence": "e"})
+        sha = args["labeler"]["workflow_sha256"]
+        with mock.patch.object(gold_mod, "workflow_sha256", return_value="f" * 64):
+            self.emit("anchor")                       # re-emitted, never transcribed
+        cf(self.world, "bench", "freeze", "b1")
+        manifest = manifest_of(self.world)
+        self.assertEqual(manifest["labeler"]["workflow_sha256"]["anchor"], sha)
+        # a later checkout re-freezes unchanged gold as unchanged
+        with mock.patch("locate.export.skill_commit", return_value="9" * 40):
+            self.assertIn("nothing changed", cf(self.world, "bench", "freeze", "b1"))
+        # a partial transcription by another labeler is refused, not mixed in
+        with mock.patch.object(gold_mod, "workflow_sha256", return_value="f" * 64):
+            other = self.emit("anchor")
+            with self.assertRaises(CfError) as ctx:
+                self.run_transcribe(other, [self.anchor_label(other["tasks"][0])], "--supersede")
+        self.assertIn("another labeler", str(ctx.exception))
+
+    def test_re_resolving_g1_prunes_its_labels_and_freeze_wants_every_entry_review_103(self):
+        args = self.emit("anchor")
+        self.run_transcribe(args, [self.anchor_label(t) for t in args["tasks"][:1]])
+        transcribe(self.world, "label", lambda t: {"task_id": t["task_id"], "scope": "non_math",
+                                                   "declarations": [], "evidence": "e"})
+        with self.assertRaises(CfError) as ctx:
+            cf(self.world, "bench", "freeze", "b1")
+        self.assertIn("resolved entr(ies) with no label", str(ctx.exception))
+        small = self.world.write("inputs/1000s.yaml", "Q99999000:\n  title: zero\n  decl: Widget.spanning_zero\n")
+        cf(self.world, "bench", "anchor", "b1", "--universe", fx.UNIVERSE, "--curated-1000", small)
+        keep = {e["entry_id"] for e in json.loads(self.lay.g1_resolved.read_text())["entries"]}
+        self.assertTrue({r["gold_id"] for r in gold_mod.read_labels(self.lay, "G1")} <= keep)
+
+    def test_a_task_labelled_twice_is_refused_review_106(self):
+        args = self.emit("anchor")
+        label = self.anchor_label(args["tasks"][0])
+        with self.assertRaises(CfError) as ctx:
+            self.run_transcribe(args, [label, dict(label)])
+        self.assertIn("more than once", str(ctx.exception))
+
+
+class TestReviewScore(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.template = frozen_at(cls.tmp / "template")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        root = scratch(self) / "ws"
+        shutil.copytree(self.template.root, root)
+        self.world = clone_world(self.template, root)
+        self.eval = eval_run(self.world)
+
+    def test_a_canary_check_that_read_nothing_is_refused_review_79(self):
+        empty = scratch(self) / "empty"
+        empty.mkdir()
+        bad = scratch(self) / "bad"
+        bad.mkdir()
+        (bad / "a.jsonl.gz").write_bytes(b"not gzip at all")
+        for args, needle in (((("--transcripts", scratch(self) / "typo"),), "no such file"),
+                             ((("--transcripts", empty),), "read no transcript"),
+                             ((("--transcripts", bad),), "cannot read transcript")):
+            with self.subTest(needle=needle), self.assertRaises(CfError) as ctx:
+                score(self.world, "loc1", *args[0])
+            self.assertIn(needle, str(ctx.exception))
+        for doc in ({}, {"scanned": 0, "hits": []}, {"scanned": 3}):
+            report = self.world.write("inputs/scan.json", json.dumps(doc))
+            with self.subTest(doc=doc), self.assertRaises(CfError) as ctx:
+                score(self.world, "loc1", "--canary-report", report)
+            self.assertIn("read anything", str(ctx.exception))
+        unchecked = score(self.world, "loc1")
+        self.assertEqual(compare_mod.claimable(dict(unchecked, coverage={"articles": 500}))[0], False)
+
+    def test_the_planted_tier_and_the_canary_are_verified_review_81_94(self):
+        lay = layout_of(self.world)
+        doc = json.loads(lay.ablation_json.read_text())
+        frozen_planted = lay.planted_db.read_bytes()
+        doc["removed"] = []
+        lay.ablation_json.write_text(json.dumps(doc))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world)
+        self.assertIn("planted tier changed after freeze", str(ctx.exception))
+        shutil.copytree(self.template.root / "benches", self.world.root / "benches", dirs_exist_ok=True)
+        from cflib.yamlio import read_yaml, write_yaml
+
+        bench = read_yaml(lay.bench_yaml)
+        write_yaml(lay.bench_yaml, dict(bench, canary="cf-bench-canary-" + "0" * 32))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world)
+        self.assertIn("canary", str(ctx.exception))
+        write_yaml(lay.bench_yaml, bench)
+        # a refused freeze --plant leaves the frozen planted tier as it was
+        g3 = lay.label_file("G3")
+        g3.write_text(g3.read_text().replace('"theorem"', '"definition"', 1))
+        with self.assertRaises(CfError):
+            cf(self.world, "bench", "freeze", "b1", "--plant")
+        self.assertEqual(lay.planted_db.read_bytes(), frozen_planted)
+        self.assertFalse(lay.planted_dir.with_name("planted.staging").exists())
+
+    def test_spelling_variants_of_one_item_are_one_passage_review_90(self):
+        eval_run(self.world, run_id="loc-v", inventory_run="inv-v")
+        path = WorkspacePaths(self.world.root).locate_outcomes_jsonl("loc-v")
+        rows = [json.loads(l) for l in path.read_text().splitlines()]
+        for row in rows:
+            row["item"] = row["item"].replace("In-text #", "In-text#")
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        doc = score(self.world, "loc-v")
+        self.assertEqual(doc["coverage"]["run_passages"], len(rows))
+
+    def test_costs_that_are_not_dollars_are_refused_review_91(self):
+        for value in ("NaN", "-1", "\"twelve\""):
+            costs = self.world.write("inputs/costs.json",
+                                     "{" + ", ".join(f'"{s}": {value}' for s in self.eval) + "}")
+            with self.subTest(value=value), self.assertRaises(CfError) as ctx:
+                score(self.world, "loc1", "--no-canary-check", "--article-costs", costs)
+            self.assertIn("not a finite non-negative number of dollars", str(ctx.exception))
+        receipt = WorkspacePaths(self.world.root).receipt_json("loc1")
+        doc = json.loads(receipt.read_text())
+        doc["cost"].pop("usd")
+        receipt.write_text(json.dumps(doc))
+        with self.assertRaises(CfError):
+            score(self.world)
+
+    def test_the_renderer_pin_is_the_runs_review_115(self):
+        doc = score(self.world)
+        self.assertEqual(doc["pins"]["renderer"], ["web-html/1"])
+        eval_run(self.world, run_id="loc-r", inventory_run="inv-r")
+        path = self.world.root / "corpus" / "inv-r" / "t-inv" / f"{self.eval[0]}.json"
+        inv = json.loads(path.read_text())
+        path.write_text(json.dumps(dict(inv, renderer="web-html/2")))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "loc-r")
+        self.assertIn("renderer web-html/2", str(ctx.exception))
+        inv.pop("renderer")
+        path.write_text(json.dumps(inv))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "loc-r")
+        self.assertIn("names no renderer", str(ctx.exception))
+
+    def test_the_score_writes_strata_for_p_and_every_metric_review_87(self):
+        ablation = json.loads(layout_of(self.world).ablation_json.read_text())
+        passages = {sid: [fx.passage(self.world, index_of(sid), 0, f"In-text #{index_of(sid):08x}")]
+                    for sid in self.eval}
+        outs = [fx.outcome(self.world, index_of(sid), f"In-text #{index_of(sid):08x}",
+                           status="formalized", outcome_="located", run_id="locp2",
+                           inventory_run="invp2", k=0,
+                           locations=[("mathlib", ablation["removed"][0].split(":", 1)[1], "exactMatch")])
+                for sid in self.eval]
+        self.world.run("locp2", inventory_run="invp2", passages=passages, outcomes=outs,
+                       tools={"kind": "planted", "sha256": ablation["corpus_sha256"]})
+        doc = score(self.world, "locp2")
+        self.assertTrue(any("memory_rate" in group for group in doc["strata"]["P"].values()))
+        full = score(self.world)
+        names = {name for group in full["strata"]["G3"].values() for name in group}
+        self.assertIn("unresolved_rate", names)
+
+
+class TestReviewCompare(unittest.TestCase):
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=1)
+        self.lay = layout_of(self.world)
+        self.lay.root.mkdir(parents=True)
+        n = 40
+        self.base_cells = {f"c{i:02d}": [1.0 if i % 2 else 0.0, 1.0] for i in range(n)}
+        self.better_cells = {f"c{i:02d}": [1.0 if i % 8 == 1 else 0.0, 1.0] for i in range(n)}
+
+    def write(self, name, doc, lay=None) -> Path:
+        path = (lay or self.lay).root / f"{name}.json"
+        path.write_text(json.dumps(doc))
+        return path
+
+    def compare(self, base, cand, aa=None, lay=None, **kw):
+        return compare_mod.compare(lay or self.lay, base, cand, claim=kw.pop("claim", "G3.fnf_rate"),
+                                   aa_path=aa, replicates=kw.pop("replicates", 1000), seed=1, **kw)
+
+    def test_the_aa_must_be_a_distinct_replicate_of_the_baseline_review_109(self):
+        base = self.write("base", score_doc(self.base_cells))
+        cand = self.write("cand", score_doc(self.better_cells))
+        with self.assertRaises(CfError) as ctx:
+            self.compare(base, cand, base)
+        self.assertIn("own run", str(ctx.exception))
+        other = self.write("aa", score_doc(self.base_cells, mid="r",
+                                           pins={"skill_commit": {"loc-r": "9" * 40}}))
+        with self.assertRaises(CfError) as ctx:
+            self.compare(base, cand, other)
+        self.assertIn("skill_commit", str(ctx.exception))
+
+    def test_a_replication_names_another_benchs_accepted_claim_review_110(self):
+        base = self.write("base", score_doc(self.base_cells))
+        cand = self.write("cand", score_doc(self.better_cells, articles=150))
+        aa = self.write("aa", score_doc(self.base_cells, mid="r"))
+        first = self.compare(base, cand, aa)
+        self.assertEqual((first["decision"], first["claimed"]), ("accept", True))
+        original = {**first, "bench": "b1"}
+        with self.assertRaises(CfError) as ctx:          # within the same bench
+            self.compare(base, cand, aa, replication=original)
+        self.assertIn("another bench", str(ctx.exception))
+        fresh = BenchLayout(self.lay.root.parent / "b2", "b2")
+        fresh.root.mkdir()
+        docs = {name: dict(json.loads(path.read_text()), bench="b2")
+                for name, path in (("base", base), ("cand", cand), ("aa", aa))}
+        paths = {name: self.write(name, doc, fresh) for name, doc in docs.items()}
+        rep = self.compare(paths["base"], paths["cand"], paths["aa"], lay=fresh, replication=original)
+        self.assertEqual((rep["alpha_j"], rep["replicates"]), (0.05, {"bench": "b1",
+                                                                       "entry_id": first["entry_id"]}))
+        with self.assertRaises(CfError) as ctx:
+            self.compare(paths["base"], paths["cand"], paths["aa"], lay=fresh, replication=original)
+        self.assertIn("already replicates", str(ctx.exception))
+        self.assertEqual(compare_mod.replicated_entry(self.lay, first["entry_id"])["entry_id"],
+                         first["entry_id"])
+        parser = __import__("argparse").ArgumentParser()
+        from cfcmd import bench as bench_cmd
+
+        bench_cmd.register(parser.add_subparsers())
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            parser.parse_args(["bench", "compare", "b1", "a", "b", "--claim", "G3.fnf_rate",
+                               "--ledger", "x"])
+
+    def test_the_ledger_is_read_and_written_under_its_lock_review_111(self):
+        import fcntl
+        import os
+
+        base = self.write("base", score_doc(self.base_cells))
+        cand = self.write("cand", score_doc(self.better_cells))
+        seen = []
+        real = compare_mod.read_jsonl_rows
+
+        def probe(path):
+            fd = os.open(str(self.lay.ledger_jsonl) + ".lock", os.O_RDWR)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                seen.append("free")
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except BlockingIOError:
+                seen.append("held")
+            finally:
+                os.close(fd)
+            return real(path)
+
+        self.compare(base, cand)
+        with mock.patch.object(compare_mod, "read_jsonl_rows", side_effect=probe):
+            self.compare(base, cand)
+        self.assertEqual(seen, ["held"])
+        self.assertEqual(len(self.lay.ledger_jsonl.read_text().splitlines()), 2)
+
+    def test_safety_with_no_baseline_rate_is_judged_on_the_candidates_review_112(self):
+        base_doc = score_doc(self.base_cells)
+        del base_doc["per_cluster"]["G3"]["overclaim_rate"]
+        base = self.write("base", base_doc)
+        cand = self.write("cand", score_doc(self.better_cells,
+                                            overclaim={c: [1.0, 1.0] for c in self.base_cells}))
+        entry = self.compare(base, cand)
+        self.assertIn("safety", entry["failed"])
+        self.assertFalse(entry["conditions"]["safety"]["metrics"]["G3.overclaim_rate"]["ok"])
+
+    def test_a_zero_cost_baseline_is_not_a_pass_review_113(self):
+        base = self.write("base", score_doc(self.base_cells, cost=0.0))
+        dear = self.write("dear", score_doc(self.better_cells, cost=5.0))
+        self.assertIn("cost", self.compare(base, dear)["failed"])
+        free = self.write("free", score_doc(self.better_cells, cost=0.0))
+        self.assertNotIn("cost", self.compare(base, free)["failed"])
+
+    def test_strata_of_every_metric_and_the_unseen_stratum_are_held_review_114(self):
+        good = {"den": 40, "by_cluster": {c: [0.0, 1.0] for c in self.base_cells}}
+        bad = {"den": 40, "by_cluster": {c: [1.0, 1.0] for c in self.base_cells}}
+        recall = {c: [1.0 if i % 2 else 0.0, 1.0] for i, c in enumerate(sorted(self.base_cells))}
+        better = {c: [1.0, 1.0] for c in self.base_cells}
+
+        def doc(recall_cells, fnf_stratum, mid=None):
+            d = score_doc(self.base_cells, mid=mid,
+                          strata={"importance:high": {"fnf_rate": fnf_stratum}})
+            d["per_cluster"]["G3"]["recall_at_3"] = recall_cells
+            d["strata"]["G3"]["seen:no"]["recall_at_3"] = {"den": 40, "by_cluster": recall_cells}
+            return d
+
+        base = self.write("b", doc(recall, good, "b"))
+        cand = self.write("c", doc(better, bad, "c"))
+        entry = self.compare(base, cand, claim="G3.recall_at_3")
+        self.assertTrue(entry["conditions"]["claim"]["ok"])
+        self.assertIn("importance:high.fnf_rate", entry["conditions"]["strata"]["checked"])
+        self.assertIn("strata", entry["failed"])
+        no_unseen = self.write("nu", score_doc(self.better_cells, seen_no=False))
+        entry = self.compare(self.write("b2", score_doc(self.base_cells, seen_no=False)), no_unseen)
+        self.assertIn("claim_unseen", entry["failed"])
+
+    def test_planted_against_full_and_two_price_tables_review_116(self):
+        base = self.write("base", score_doc(self.base_cells, pins={"price_table_sha256": ["a" * 64]}))
+        planted = score_doc(self.better_cells, pins={"price_table_sha256": ["a" * 64]})
+        planted["tiers"] = {"P": {}}
+        with self.assertRaises(CfError):
+            self.compare(base, self.write("p", planted))
+        other = self.write("o", score_doc(self.better_cells, pins={"price_table_sha256": ["b" * 64],
+                                                                   "corpus_db_sha256": "z"}))
+        entry = self.compare(base, other)
+        self.assertEqual(entry["conditions"]["cost"]["why"],
+                         "the two runs were priced from different price tables")
+        self.assertIn("corpus_db_sha256 differs", entry["differences"])
+
+    def test_an_alpha_the_bootstrap_cannot_resolve_or_out_of_range_is_refused_review_117_118(self):
+        base = self.write("base", score_doc(self.base_cells))
+        cand = self.write("cand", score_doc(self.better_cells))
+        with self.assertRaises(CfError) as ctx:
+            self.compare(base, cand, replicates=100)
+        self.assertIn("--bootstrap", ctx.exception.hint or "")
+        for alpha in (1.0, 0.5, 0.0, -1.0):
+            with self.subTest(alpha=alpha), self.assertRaises(CfError):
+                self.compare(base, cand, alpha=alpha)
 
 
 def frozen_at(root: Path) -> fx.World:
