@@ -115,6 +115,42 @@ class TestAgentCall(unittest.TestCase):
         self.assertIn("TIMED OUT", proc.stderr)
         self.assertIn("not a verdict", proc.stderr)
 
+    def records(self) -> list[dict]:
+        return [json.loads(p.read_text()) for p in sorted((self.tmp / "usage").glob("*.json"))]
+
+    def test_t1_a_timed_out_call_leaves_a_record_with_what_is_known(self):
+        proc, _ = self.call("sleep 30\n", env={"CF_AGENT_TIMEOUT": "1s"}, task="t-7")
+        self.assertEqual(proc.returncode, 124, proc.stderr)
+        (record,) = self.records()
+        self.assertEqual((record["subtype"], record["is_error"], record["total_cost_usd"]),
+                         ("error_timeout", True, None))
+        call = record["cf_agent_call"]
+        self.assertEqual((call["outcome"], call["role"], call["task_id"], call["exit"],
+                          call["cost"]), ("timeout", "worker", "t-7", 124, "unknown"))
+        self.assertGreaterEqual(call["elapsed_s"], 1.0)
+        self.assertEqual(call["timeout_s"], 1.0)
+        self.assertGreaterEqual(record["duration_ms"], 1000)
+        self.assertIn("kept at", proc.stderr)
+        # the watchdog counts it as an unpriced call
+        from run import watchdog
+
+        got = watchdog.ledger(self.tmp / "usage")
+        self.assertEqual(got["unpriced_calls"], 1)
+
+    def test_t1_an_empty_or_prose_stdout_leaves_a_record_too(self):
+        proc, _ = self.call("exit 0\n", task="t-8")
+        self.assertEqual(proc.returncode, 75, proc.stderr)
+        proc, _ = self.call("printf 'not an envelope'\n", task="t-8")
+        outcomes = sorted(r["cf_agent_call"]["outcome"] for r in self.records())
+        self.assertEqual(outcomes, ["empty", "not_json"])
+        # the prose itself is kept beside its record, as before
+        self.assertEqual(len(list((self.tmp / "usage").glob("*.out"))), 1)
+
+    def test_t1_a_priced_envelope_gets_no_record(self):
+        proc, _ = self.call(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.records(), [SUCCESS])
+
     def test_a_signal_reaches_the_agent_and_frees_the_slot_after_it(self):
         """Review #62: TERM to the caller's group stops the agent before the slot is free."""
         pidfile = self.tmp / "agent.pid"
