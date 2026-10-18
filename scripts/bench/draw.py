@@ -29,7 +29,10 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8.3 and 8.5
   :func:`unrendered_drawn` names those that are not, which ``cf bench build``
   refuses with the list of sources to fetch and render, or -- asked to --
   :func:`exclude` removes from the bench, each recorded in ``excluded`` with
-  its inclusion probabilities and the reason, never silently.
+  its inclusion probabilities and the reason, never silently.  They must be
+  rendered by the CURRENT renderer, too: :func:`older_renderer_drawn` names
+  those that are not, which the build refuses with the step to a new sourceset
+  (a bench pinned to layers no run is planned on scores nothing).
 * **Clusters** are a union-find over the drawn articles: two articles are one
   cluster when they share an article QID or a gold accept-set declaration.
   Clustering runs again whenever gold changes (after anchoring, and at freeze).
@@ -277,6 +280,21 @@ def unrendered_drawn(frame: dict, drawn: dict) -> list[str]:
     """The drawn articles the pinned manifest holds unrendered, sorted."""
     rendered = {a["source_id"]: a["rendered"] for a in frame["articles"]}
     return sorted(r["source_id"] for r in drawn["articles"] if not rendered[r["source_id"]])
+
+
+def older_renderer_drawn(frame: dict, drawn: dict, renderer: str) -> dict[str, str]:
+    """``{source id: its renderer}`` of the drawn articles rendered by another renderer.
+
+    A bench pins each benched article's layer and renderer, and ``cf bench score``
+    refuses a run that read another rendering; a run can only be planned on the
+    current renderer's layers (``locate.inputs.check_source``), so a bench drawn
+    on an older renderer's layers is one no run can be scored against (field
+    defect: v0 was pinned to ``web-html/1``).
+    """
+    by_id = {a["source_id"]: a for a in frame["articles"]}
+    return {sid: str(by_id[sid].get("renderer")) for sid in sorted(
+        r["source_id"] for r in drawn["articles"])
+        if by_id[sid]["rendered"] and by_id[sid].get("renderer") != renderer}
 
 
 def exclude(drawn: dict, source_ids: Iterable[str], reason: str) -> dict:

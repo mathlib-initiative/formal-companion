@@ -44,6 +44,7 @@ from bench import score as score_mod
 from bench.layout import (BENCH_SCHEMA, CLUSTERS_SCHEMA, DRAW_SCHEMA, FRAME_SCHEMA, G1_RESOLVED_SCHEMA,
                           GOLD_SCHEMA, HOST_SCHEMA, LABEL_FILES, SPANS_SCHEMA, BenchLayout, now,
                           sha_of)
+from sources import render_html
 
 NAME = "bench"
 
@@ -333,6 +334,21 @@ def _build(ws, args) -> int:
                                  f"{args.sourceset} version {manifest.version}")
     draw_doc = {"schema": DRAW_SCHEMA, "bench": args.bench_id, **drawn}
     fractions = {"dev": args.dev, "eval": args.eval, "test": args.test}
+    older = draw_mod.older_renderer_drawn(frame, drawn, render_html.RENDERER)
+    if older:
+        # a run is planned only on the current renderer's layers, and a score refuses a run
+        # that read another rendering than the bench pins: nothing of this bench would score
+        raise CfError(
+            f"{len(older)} of the {len(drawn['articles'])} drawn article(s) were rendered by "
+            f"another renderer than {render_html.RENDERER}: "
+            + ", ".join(f"{sid} ({r})" for sid, r in list(older.items())[:10])
+            + (" …" if len(older) > 10 else "")
+            + "; no run can be planned on those layers, so no run could be scored on this bench",
+            hint=f"a recorded layer never changes: render the sources under "
+                 f"{render_html.RENDERER} in a new sourceset seeded from this one's bytes -- "
+                 f"`cf sourceset create <new id> --from {args.sourceset}`, then `cf sourceset "
+                 f"render <new id>` -- and build the bench on <new id> (the draw depends on the "
+                 f"frame and the seed alone, so it does not change)")
 
     def refuse_a_changed_draw(changed: list[str]) -> None:
         if changed:

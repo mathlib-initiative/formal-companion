@@ -109,6 +109,15 @@ manifest holds one unrendered, the build writes the drawn unrendered source ids 
 
 The list is removed by a build that finds every drawn article rendered.
 
+**A drawn article must be rendered by the current renderer** (`sources.render_html.RENDERER`).
+A run is planned only on the current renderer's layers (`locate.inputs.check_source`), and
+`cf bench score` refuses a run that read another rendering than the bench pins, so a bench
+drawn on an older renderer's layers could score nothing. The build refuses one, naming each
+drawn source and its renderer, before anything is written, with the step that settles it:
+`cf sourceset create <new id> --from <set>`, `cf sourceset render <new id>`, and the bench
+built on `<new id>` — whose draw is the same, since `--from` keeps every source id. An
+undrawn frame article of another renderer is only recorded (`renderer` in `frame.json`).
+
 ## 3. Clusters, splits, spans and the host
 
 **Clusters** are a union-find over the drawn articles: two articles are one cluster when they
