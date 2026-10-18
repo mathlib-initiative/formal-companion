@@ -10,7 +10,7 @@ A span of the source that states something: a definition, a theorem, a conjectur
 - `statement`: your informal restatement in one or two sentences, precise enough that a reader could check a Lean statement against it;
 - `concept`: always `null` (a passage's own Wikidata item is assigned by a validated method, never by a worker).
 
-**The deterministic finders' passages are already in your manifest** (`finders`: a theorem box, a bolded definition, the lead). Keep every one of them as a passage (`finder` set to the finder that proposed it), or drop it with a `skips` entry giving its exact `span` and a reason. Then add the passages the finders missed, with `finder: "model"`. Every paragraph of `paragraphs.json` marked `"math": true` must be covered by a passage span or a `skips` span: that floor is checked mechanically.
+**The deterministic finders' passages are already in your manifest** (`finders`: a theorem box, a bolded definition, the lead). Keep every one of them as a passage (`finder` set to the finder that proposed it), or drop it with a `skips` entry giving its exact `span` and a reason. **Finders that share a start are one passage**: when two finders propose the same `start` (a lead paragraph that opens on a bold term, say), write ONE passage there, with `finder` set to the first of them in the manifest — that one passage keeps them all, and two passages with one start cannot both get an id. Then add the passages the finders missed, with `finder: "model"`. Every paragraph of `paragraphs.json` marked `"math": true` must be covered by a passage span or a `skips` span: that floor is checked mechanically.
 
 ## The document
 Write `findings/$TEND_TASK_ID/<source-id>.json`, one per source of the task:
