@@ -24,8 +24,12 @@ validates -- nor a single rewritten file, so a sourceset is:
   views of one source, validated lazily against the shas its entry records
   (:meth:`Sourceset.source_problems`) -- never all twenty thousand at load.
 * ``state.json``: the sourceset-level state file locate writes instead of
-  ``companions/<name>/state.json``: the latest version and its counts, plus a
-  section per command that wrote one (:meth:`Sourceset.record_state`).
+  ``companions/<name>/state.json``: the latest version and its counts -- the
+  page counts by class and importance are of PAGES, one assessment per page, not
+  of sources, since an adopted revision beside an enumerated one is one page --
+  the last run of each command (``commands``), every run in order
+  (``history``, the newest :data:`MAX_HISTORY`), plus a section per command that
+  wrote one (:meth:`Sourceset.record_state`).
 
 Nothing here touches the network (``sources.wikinet`` does) or renders
 (``sources.render_html`` does).
@@ -57,7 +61,10 @@ DELTA_SCHEMA = "cf-sourceset-delta/1"
 MAX_DELTA_CHAIN = 64
 STATE_SCHEMA = "cf-sourceset-state/1"
 #: keys of state.json that are no section: the header, and what refresh_state owns
-_STATE_RESERVED = frozenset({"schema", "id", "family", "manifest", "counts", "updated_at"})
+_STATE_RESERVED = frozenset({"schema", "id", "family", "manifest", "counts", "updated_at",
+                             "commands", "history"})
+#: the run history keeps this many rows, newest last (older ones are counted)
+MAX_HISTORY = 1000
 #: a source directory's files whose shas an entry records
 SHA_FILES = {"raw_sha256": "source.raw.html", "html_sha256": "body.html",
              "layer_sha256": "layer.txt"}
@@ -456,7 +463,14 @@ class Sourceset:
 
     # -- state ---------------------------------------------------------
     def counts(self, manifest: Manifest) -> dict:
+        """The counts ``state.json`` carries: sources, and the pages they are revisions of.
+
+        ``by_class`` and ``by_importance`` count pages: each page once, by the
+        assessment of the source a run plans for it (``Manifest.preferred()``),
+        else of its highest revision that has one.
+        """
         entries = list(manifest)
+        assessments = page_assessments(manifest)
         return {
             "sources": len(entries),
             vocab.SOURCE_ORIGIN_ENUMERATED: sum(
@@ -464,13 +478,12 @@ class Sourceset:
             vocab.SOURCE_ORIGIN_ADOPTED: sum(1 for e in entries if is_adopted(e)),
             "fetched": sum(1 for e in entries if e.get("raw_sha256")),
             "rendered": sum(1 for e in entries if e.get("layer_sha256")),
-            "pages": len({e["pageid"] for e in entries}),
+            "pages": len(assessments),
             "by_class": dict(sorted(Counter(
-                str((e.get("assessment") or {}).get("class") or "none")
-                for e in entries).items())),
+                str((a or {}).get("class") or "none") for a in assessments.values()).items())),
             "by_importance": dict(sorted(Counter(
-                str((e.get("assessment") or {}).get("importance") or "none")
-                for e in entries).items())),
+                str((a or {}).get("importance") or "none")
+                for a in assessments.values()).items())),
         }
 
     def read_state(self) -> dict:
@@ -519,21 +532,55 @@ class Sourceset:
         return state
 
     def refresh_state(self, *, command: str, details: dict | None = None) -> dict:
-        """Write the latest version's pin and counts, and what ``command`` did."""
+        """Write the latest version's pin and counts, and what ``command`` did.
+
+        ``commands[command]`` is the last run of each command; ``history`` keeps
+        every run in order (the newest :data:`MAX_HISTORY`), so a no-op re-run
+        does not erase the record of the run that wrote a version.  Each row
+        says whether that run wrote one (``wrote_version``).
+        """
         manifest = self.latest()
         state = self.read_state()
         state.setdefault("schema", STATE_SCHEMA)
+        before = (state.get("manifest") or {}).get("version") \
+            if isinstance(state.get("manifest"), dict) else None
         state["id"] = self.id
         state["family"] = manifest.family
         state["manifest"] = {"version": manifest.version, "sha256": manifest.sha256}
         state["counts"] = self.counts(manifest)
+        now = state_mod.now()
+        row = {"at": now, "version": manifest.version,
+               "wrote_version": before != manifest.version, **(details or {})}
         commands = state.get("commands") if isinstance(state.get("commands"), dict) else {}
-        commands[command] = {"at": state_mod.now(), "version": manifest.version,
-                             **(details or {})}
+        commands[command] = row
         state["commands"] = commands
-        state["updated_at"] = state_mod.now()
+        history = state.get("history") if isinstance(state.get("history"), list) else []
+        history.append({"command": command, **row})
+        if len(history) > MAX_HISTORY:
+            state["history_dropped"] = int(state.get("history_dropped") or 0) + \
+                len(history) - MAX_HISTORY
+            history = history[-MAX_HISTORY:]
+        state["history"] = history
+        state["updated_at"] = now
         write_json(self.paths.sourceset_state_json(self.id), state, sort_keys=True)
         return state
+
+
+def page_assessments(manifest: Manifest) -> dict[int, dict | None]:
+    """``{pageid: assessment}``: one per page, the planned source's, else its newest one's."""
+    preferred = manifest.preferred()
+    by_page: dict[int, list[dict]] = {}
+    for entry in manifest.entries.values():
+        by_page.setdefault(entry["pageid"], []).append(entry)
+    out: dict[int, dict | None] = {}
+    for pageid, entries in by_page.items():
+        planned = manifest.entries[preferred[pageid]]
+        if planned.get("assessment"):
+            out[pageid] = planned["assessment"]
+            continue
+        rated = [e for e in entries if e.get("assessment")]
+        out[pageid] = max(rated, key=lambda e: e["revision"])["assessment"] if rated else None
+    return out
 
 
 def family_of(manifest: Manifest, workspace=None) -> registry_mod.SourceFamily:

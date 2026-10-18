@@ -6,7 +6,9 @@ reading findings, because every counting error in the audit so far ran toward
 "cleaner".  A number that is missing here means the stage has not run, not
 that it found nothing.
 
-It also prints the SOURCES table and the "unconfirmed sources" block: discovery
+It also prints the SOURCES table, the SOURCESETS table (locate's web sources,
+read from each ``sourcesets/<id>/state.json``) and the "unconfirmed sources"
+block: discovery
 writes what it learned about a source nobody had catalogued with
 ``confirmed: false``, and the only place that would otherwise be visible is a
 YAML file nobody reads.
@@ -41,6 +43,9 @@ COLUMNS = ["companion", "commit", "adapter", "sources", "anchor", "rows", "items
 
 SOURCE_COLUMNS = ["source", "sha", "offset", "conf", "items", "errata", "companions",
                   "role", "confirmed"]
+
+SOURCESET_COLUMNS = ["sourceset", "family", "version", "sources", "pages", "fetched",
+                     "rendered", "last command", "updated"]
 
 
 def register(subparsers) -> None:
@@ -81,6 +86,7 @@ def run(args) -> int:
         print(json.dumps({
             "workspace": _workspace_facts(workspace),
             "sources": _source_facts(workspace),
+            "sourcesets": _sourceset_facts(workspace),
             "companions": states,
             "not_onboarded": missing,
             "runs": _run_facts(workspace),
@@ -91,6 +97,7 @@ def run(args) -> int:
     log.info(f"workspace : {workspace.root}   ({facts['name']})")
     _print_git_guard(facts["git"])
     sources = _source_facts(workspace)
+    sourcesets = _sourceset_facts(workspace)
     if args.source:
         sources = [s for s in sources if s["id"] == args.source]
         if not sources:
@@ -110,6 +117,9 @@ def run(args) -> int:
             log.info("")
             log.info("next:  fix that file (it is written by cf, so this is a bug worth "
                      "reporting), then re-run `cf status`")
+        elif sourcesets:
+            log.info("sources   : none yet (no companion source; the web sources are in the "
+                     "sourcesets below)")
         else:
             log.info("sources   : none yet")
             log.info("")
@@ -157,6 +167,8 @@ def run(args) -> int:
             log.info(f"differential possible on {sid}: {', '.join(companions)}")
         if not shared and len(workspace.companions) > 1:
             log.info("no two companions share a source, so no differential is possible")
+
+    _print_sourcesets(sourcesets)
 
     if args.companion and args.companion not in states:
         raise CfError(f"companion {args.companion!r} has no state.json",
@@ -220,6 +232,66 @@ def run(args) -> int:
     if args.runs or args.verbose:
         _print_runs(workspace)
     return 0
+
+
+def _sourceset_facts(workspace) -> list[dict]:
+    """One row per sourceset, as its ``state.json`` records it (nothing is recounted)."""
+    root = workspace.paths.sourcesets_dir
+    out: list[dict] = []
+    if not root.is_dir():
+        return out
+    for directory in sorted(p for p in root.iterdir() if p.is_dir()):
+        try:
+            versions = workspace.paths.sourceset_manifests(directory.name)
+        except CfError:
+            continue
+        if not versions:
+            continue
+        path = workspace.paths.sourceset_state_json(directory.name)
+        try:
+            state = read_json(path, default={}) if path.exists() else {}
+        except Exception:  # noqa: BLE001 - status reports a broken file, never dies on it
+            state = None
+        state = state if isinstance(state, dict) else None
+        history = (state or {}).get("history") if isinstance((state or {}).get("history"),
+                                                            list) else []
+        last = history[-1] if history and isinstance(history[-1], dict) else {}
+        out.append({
+            "id": directory.name,
+            "family": (state or {}).get("family"),
+            "version": ((state or {}).get("manifest") or {}).get("version"),
+            "latest_on_disk": versions[-1][0],
+            "manifest_sha256": ((state or {}).get("manifest") or {}).get("sha256"),
+            "counts": (state or {}).get("counts") or {},
+            "last_command": last.get("command"),
+            "updated_at": (state or {}).get("updated_at"),
+            "state": "ok" if state else ("unreadable" if state is None and path.exists()
+                                         else "missing"),
+        })
+    return out
+
+
+def _print_sourcesets(sourcesets: list[dict]) -> None:
+    if not sourcesets:
+        return
+    log.info("")
+    rows = []
+    for ss in sourcesets:
+        c = ss["counts"]
+        rows.append([ss["id"], ss["family"] or "-",
+                     str(ss["version"]) if ss["version"] is not None else "-",
+                     c.get("sources", "-"), c.get("pages", "-"), c.get("fetched", "-"),
+                     c.get("rendered", "-"), ss["last_command"] or "-",
+                     ss["updated_at"] or "-"])
+    log.info(format_table(SOURCESET_COLUMNS, rows))
+    for ss in sourcesets:
+        if ss["state"] != "ok":
+            log.warn(f"sourceset {ss['id']}: state.json is {ss['state']} -- "
+                     f"cf sourceset status {ss['id']} --verify rewrites it")
+        elif ss["version"] != ss["latest_on_disk"]:
+            log.warn(f"sourceset {ss['id']}: state.json records version {ss['version']}, the "
+                     f"newest on disk is {ss['latest_on_disk']} -- a command was interrupted; "
+                     f"cf sourceset status {ss['id']} --verify")
 
 
 def _print_unconfirmed(workspace) -> None:

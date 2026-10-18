@@ -640,22 +640,25 @@ def _status(workspace, args) -> int:
     if args.verify:
         for e in manifest:
             problems.extend(ss.source_problems(e))
-    state = ss.refresh_state(command="status", details={
-        "verified": bool(args.verify), "problems": len(problems)})
+        # a verification is worth a row of the history; a plain status writes nothing
+        counts = ss.refresh_state(command="status", details={
+            "verified": True, "problems": len(problems)})["counts"]
+    else:
+        counts = ss.counts(manifest)
     report = {"id": ss.id, "family": manifest.family, "versions": ss.versions(),
-              "manifest": manifest.pin(), "counts": state["counts"],
+              "manifest": manifest.pin(), "counts": counts,
               "verified": bool(args.verify), "problems": problems}
     if args.as_json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        counts = state["counts"]
         log.info(f"sourceset {ss.id} ({manifest.family}): version {manifest.version} of "
                  f"{len(report['versions'])}, sha {manifest.sha256}")
         log.info(f"  {counts['sources']} source(s) over {counts['pages']} page(s): "
                  f"{counts['enumerated']} enumerated, {counts['adopted']} adopted, "
                  f"{counts['fetched']} fetched, {counts['rendered']} rendered")
-        log.info("  by class: " + ", ".join(f"{k} {v}" for k, v in counts["by_class"].items()))
-        log.info("  by importance: " + ", ".join(
+        log.info("  pages by class: " + ", ".join(
+            f"{k} {v}" for k, v in counts["by_class"].items()))
+        log.info("  pages by importance: " + ", ".join(
             f"{k} {v}" for k, v in counts["by_importance"].items()))
         if args.verify:
             if problems:
