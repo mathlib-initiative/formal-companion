@@ -470,6 +470,39 @@ class TestAPartlyRenderedSourceset(unittest.TestCase):
         self.assertFalse(lay.unrendered_list.exists())
 
 
+class TestABenchOnAnOlderRenderersLayers(unittest.TestCase):
+    """The field bench v0 was built on ``wpm``, every article rendered by ``web-html/1``.
+
+    A run is planned only on the current renderer's layers, and ``cf bench score``
+    refuses a run that read another rendering than the bench pins, so nothing of
+    that bench could ever be scored; the build took it without a word.
+    """
+
+    setUp = TestAPartlyRenderedSourceset.setUp
+    build = TestAPartlyRenderedSourceset.build
+
+    def test_a_drawn_article_of_another_renderer_is_refused_with_the_step(self):
+        from sources import render_html
+        old = sorted(self.drawn)[0]
+        self.world.change_entry(old, renderer="web-html/1")
+        with self.assertRaises(CfError) as ctx:
+            self.build()
+        self.assertIn(f"{old} (web-html/1)", str(ctx.exception))
+        self.assertIn(f"another renderer than {render_html.RENDERER}", str(ctx.exception))
+        self.assertIn(f"cf sourceset create <new id> --from {fx.SOURCESET}", ctx.exception.hint)
+        lay = layout_of(self.world)
+        for written in (lay.frame_json, lay.draw_json, lay.bench_yaml):
+            self.assertFalse(written.exists(), written)
+
+    def test_an_undrawn_one_is_only_recorded(self):
+        other = self.others[0]
+        self.world.change_entry(other, renderer="web-html/1")
+        self.build()
+        frame = json.loads(layout_of(self.world).frame_json.read_text())
+        self.assertEqual({a["source_id"]: a["renderer"] for a in frame["articles"]}[other],
+                         "web-html/1")
+
+
 class TestTheFrameReadsTheAdoptedRevision(unittest.TestCase):
     """A consumer-pinned page is read at its pin, even once a newer revision is rendered.
 
