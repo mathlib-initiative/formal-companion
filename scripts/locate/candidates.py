@@ -16,7 +16,11 @@ apart because only one of them binds gate rule 4:
 * **lexical** -- full-text retrieval over the article's terms: its title, its
   aliases where the sourceset knows them, and the lead's bold terms
   (``finders.json``'s ``bold_definition`` terms).  A hint for the worker, never
-  an obligation.
+  an obligation.  A bold term is queried only when it is one
+  (:func:`is_lexical_term`): at least :data:`MIN_TERM_LETTERS` letters, not
+  only a paragraph label (``cflib.vocab.is_bold_label``: "Proof.",
+  "Example:"), and not only stop words -- a bold "R" or "1'" matches half a
+  library and finds nothing.
 
 In the G1-blind arm (``blind``) ``curated`` is empty and the file says so, so
 the gate turns rule 4 off for that source (proposal section 8.1).
@@ -48,6 +52,26 @@ from . import inputs
 SCHEMA = "cf-locate-candidates/1"
 #: lexical hits kept per source by default
 DEFAULT_LIMIT = 20
+#: a bold term with fewer letters than this is a symbol, never a lexical query
+MIN_TERM_LETTERS = 3
+#: words that make no lexical query alone (a bold "if and only if" is no term to search)
+STOP_WORDS = frozenset({
+    "a", "an", "the", "and", "or", "nor", "but", "of", "in", "on", "at", "to", "for", "by",
+    "with", "as", "from", "into", "onto", "over", "under", "is", "are", "be", "been", "was",
+    "were", "if", "iff", "then", "else", "not", "no", "it", "its", "this", "that", "these",
+    "those", "such", "let", "where", "which", "who", "we", "all", "any", "some", "each",
+    "every", "only", "also", "so", "thus", "hence"})
+
+
+def is_lexical_term(term: str) -> bool:
+    """Is a bold term worth a lexical query: enough letters, no label, not only stop words?"""
+    text = " ".join(str(term or "").split())
+    if sum(1 for ch in text if ch.isalpha()) < MIN_TERM_LETTERS:
+        return False
+    if vocab.is_bold_label(text):
+        return False
+    words = [w for w in re.split(r"[^\w]+", text.casefold()) if w]
+    return any(w not in STOP_WORDS for w in words)
 
 
 def normalise_title(text: str) -> str:
@@ -213,7 +237,8 @@ def source_terms(entry: dict, view: inputs.SourceView) -> list[tuple[str, str]]:
     for alias in entry.get("aliases") or []:
         out.append((str(alias), "alias"))
     for finder in view.finders():
-        if finder.get("finder") == vocab.FINDER_BOLD_DEFINITION and finder.get("term"):
+        if finder.get("finder") == vocab.FINDER_BOLD_DEFINITION and finder.get("term") \
+                and is_lexical_term(str(finder["term"])):
             out.append((str(finder["term"]), "bold_term"))
     seen: set[str] = set()
     unique = []
