@@ -269,8 +269,14 @@ release has something to say.
 - `cf bench build | anchor | freeze | score | compare`, the locate benchmark
   (`docs/proposals/wikipedia-locate.md` §8 and §9; formats in
   `references/locate-bench.md`). `build` resolves a tier list against a pinned
-  sourceset (refusing an article it lacks or holds unrendered), draws the
-  uniform and curated samples with recorded inclusion probabilities, clusters
+  sourceset -- each page at the revision a run reads, a consumer's adopted pin
+  first -- refusing an article it lacks; draws the uniform and curated samples
+  over the whole frame with recorded inclusion probabilities, so only the drawn
+  articles need a render (a drawn unrendered one is refused with the list to
+  fetch and render, or, with `--exclude-unrendered`, recorded in `excluded` with
+  its probabilities); reads Mathlib's 1000.yaml (suffixed keys naming their base
+  QID) and 100.yaml (resolved through 1000.yaml, else by folded title) as
+  curated lists, one reader for the stratum and for G1; clusters
   articles by shared QIDs and G1 accept sets, splits by each cluster's hash and
   samples the G3 spans from `paragraphs.json`, writing a label-free host
   manifest. `anchor` resolves Mathlib's curated lists and the `@[wikidata]` tags

@@ -16,6 +16,7 @@ benches/<id>/bench.yaml               the bench's config and state (holds the ca
 benches/<id>/frame.json               the frame, resolved against the pinned sourceset
 benches/<id>/draw.json                the two draws with inclusion probabilities
 benches/<id>/clusters.json            article clusters and the split of each
+benches/<id>/unrendered.txt           drawn articles not yet rendered (only while there are any)
 benches/<id>/spans.json               the G3 span sample
 benches/<id>/host/bench-host.json     LABEL-FREE: article ids per split; the only thing a host gets
 benches/<id>/host/canaries.txt        the canary string, for a host-side transcript scan
@@ -38,18 +39,48 @@ stay local too.
 
 ## 2. The frame and the draws
 
-`cf bench build <id> --sourceset S --frame <file> [--curated-qids <file>] [--seed N]` reads:
+`cf bench build <id> --sourceset S --frame <file> [--curated-qids <file>]… [--seed N]` reads:
 
 - the **frame** file: page ids or source ids, one per line (`#` comments), or a JSON list of
   them or of `{"pageid"}`/`{"source_id"}` objects. Each row resolves to one source of the
-  pinned sourceset manifest (by page id: its highest rendered revision); a row the manifest
-  does not hold, or holds unrendered, is **refused by name**, because a frame that quietly
-  lost an article biases every inclusion probability;
-- the **curated QIDs**: a list, or any mapping keyed by QID (`$MATHLIB/docs/1000.yaml`).
+  pinned sourceset manifest: a source id is taken as given, and a page id resolves to the
+  source a run reads — the sourceset's own rule (`Manifest.preferred()`,
+  `references/locate-documents.md` §7): the page's adopted revision when a consumer pinned
+  it, else its highest enumerated revision — never the highest *rendered* one, which would
+  bench a newer revision than the pin as soon as both are rendered. The article's QID and
+  assessment are the page's: when the resolved entry has none, the one value the page's
+  other entries agree on is used, and `page_facts_from` names the entry it came from. A row
+  the manifest does not hold is **refused by name**, because a frame that quietly lost an
+  article biases every inclusion probability; a row it holds **unrendered stays in the frame**
+  (`rendered: false`, listed in `unrendered`) — the draw reads no layer, so the inclusion
+  probabilities are the whole frame's and only the drawn articles need a render; a second row
+  for a page already in the frame is a duplicate;
+- the **curated lists** (`--curated-qids`, repeatable; `scripts/bench/curated.py`, which
+  `cf bench anchor` reads its lists with too): Mathlib's `$MATHLIB/docs/1000.yaml` (QID →
+  `{title, decl | decls}`; a key with one capital-letter suffix, `Q180345X` or `Q4724004A`,
+  names its base QID and keeps its own name), its `$MATHLIB/docs/100.yaml` (theorem number →
+  `{title, decl | decls, authors, links, note}`, no QID), or a plain list of QIDs (one per
+  line, or a JSON list). A 100.yaml entry resolves to QIDs, in order, through its own
+  `wikidata` field, a declaration it shares with a 1000.yaml entry given in the same call, or
+  its folded title equal to a 1000.yaml entry's; resolved or not, it also names the article
+  whose folded title is its own (NFKD without combining marks, curly quotes straightened,
+  dashes hyphens, case folded, a leading "the " dropped). Nothing is fetched: a title only
+  Wikipedia's redirects could resolve is the operator's to supply, as a QID in a plain list.
+  A mapping key that is neither a QID nor a number is refused; a plain-list value that is not
+  a QID is reported in the file's `rejected`, never read; the 100.yaml entries that name no
+  frame article are listed in `curated_lists.unmatched_100` and counted by the build, so a
+  list that matched nothing says so.
 
 `frame.json`: `{schema: cf-bench-frame/1, bench, sourceset: {id, version, manifest_sha256},
-frame_file_sha256, curated_file_sha256, articles: [{source_id, pageid, revision, title,
-wikidata, assessment, layer_sha256, renderer, curated}], N, N_curated, duplicates}`.
+frame_file_sha256, articles: [{source_id, pageid, revision, title, wikidata, assessment,
+layer_sha256, renderer, rendered, revision_basis, page_facts_from, curated, curated_via}], N,
+N_curated, N_adopted, N_rendered, unrendered, duplicates, curated_lists: {files: [{name, sha256,
+kind, entries, qids, rejected,
+resolved, title_only}], qids, unmatched_100: [{list, key, title, qids}]}}`. `revision_basis` is
+`adopted`, `enumerated` or `source_id` (the frame file named the source); `curated_via` names
+the entries that make an article curated (`mathlib_1000 Q180345X`, `mathlib_100 #57`,
+`qid_list Q42`); a file's `kind` is `mathlib_1000`, `mathlib_100` or `qid_list`, and
+`resolved` (100.yaml only) counts its entries by how they got a QID.
 
 `draw.json`: two simple random samples without replacement, each from its own seeded
 generator (`random.Random("<seed>:uniform")`, `"<seed>:curated"`): `uniform` (n of the whole
@@ -58,6 +89,23 @@ independent, so an article can be in both, and each row records `pi_uniform = n/
 `pi_curated = n_c/N_c` (0 off the curated stratum) and
 `pi = 1 - (1 - pi_uniform)(1 - pi_curated)`. A draw larger than its stratum takes all of it and
 says `short: true`.
+
+**A drawn article must be rendered** (its spans are drawn from its layer). When the pinned
+manifest holds one unrendered, the build writes the drawn unrendered source ids to
+`benches/<id>/unrendered.txt` and either:
+
+- **refuses** (the default), naming them and the step that settles it: fetch and render
+  exactly the listed sources (`cf sourceset fetch`, then `cf sourceset render --source <id>`)
+  and build again with the newer manifest; the draw depends on the frame and the seed alone,
+  and source ids order by page id, so the same pages are drawn whichever revision each page
+  resolves to; or
+- with `--exclude-unrendered`, **benches the rest**: `articles` loses the excluded rows, which
+  move, with their `pi_uniform`, `pi_curated`, `pi`, `in_uniform`, `in_curated` and a
+  `reason`, to `excluded` (a key the file carries only then); `uniform.drawn` and
+  `curated.drawn` stay as drawn, and the gold manifest carries `excluded` too, so a score of
+  the rest says what was drawn and not benched, and with what probability.
+
+The list is removed by a build that finds every drawn article rendered.
 
 ## 3. Clusters, splits, spans and the host
 
@@ -79,7 +127,10 @@ alone; the shares hold in expectation, and `cf bench build` prints what it got.
 
 **The G3 span sample** (`spans.json`, `cf-bench-spans/1`) draws `--spans-per-article` (8)
 blocks of each drawn article's `paragraphs.json` uniformly with `random.Random("<seed>:spans:<source
-id>")`, among the blocks inside the layer that hold at least four words (so a span can join);
+id>")`, among the blocks inside the layer that hold at least four words (so a span can join)
+and that no other such block contains: blocks nest (an `li` holding a `p`, a displayed formula
+inside a paragraph), so the units are the outermost blocks, disjoint and covering every block's
+text, two blocks with one span are one unit, and two that overlap without nesting are refused;
 each carries its section path from `paragraphs.json` (or `sections.json`), its fragment,
 `pi_span = k/M` and the article's `pi`. Its id is `g3-` + 12 hex of sha256 over `source id \n
 start \n end`. It reads no run.
@@ -95,9 +146,12 @@ gold, a build that would change the draw is refused (a new draw is a new bench i
 `cf bench anchor <id> --universe U --curated-1000 <file> [--curated-100 <file>] [--rename-table
 <file>] [--library L]` resolves, mechanically:
 
-- a `1000.yaml` entry (QID → `{title, decl | decls}`) matches the drawn articles with that QID;
-  a `100.yaml` entry (number → `{title, decl | decls}`, no QID) matches by case- and
-  space-folded title; an entry with no declaration is counted, not used;
+- the lists are read as §2 reads them: a `1000.yaml` entry (QID → `{title, decl | decls}`,
+  a suffixed key naming its base QID) matches the drawn articles with that QID; a `100.yaml`
+  entry (number → `{title, decl | decls}`, no QID) matches the drawn articles its resolved
+  QIDs name and the one whose folded title is its own, and its `evidence` says which
+  (`mathlib_100 57 (by title)`, `mathlib_100 7 (QID from a declaration shared with
+  1000.yaml)`); an entry with no declaration is counted, not used;
 - every drawn article's QID is looked up in `corpus.sqlite`'s tag table (`wikidata`) for the
   named libraries (default: the universe's library whose `brain_lib` is `Mathlib`);
 - each declaration is resolved in the exact table at the universe's commit, following the
@@ -191,6 +245,8 @@ a run's.
  "sourceset": {"id": "wpm", "version": 3, "manifest_sha256": "<hex>"},
  "universe": {"id": "u1", "sha256": "<hex>"}, "library": "mathlib",
  "frame_sha256": "<hex>", "draw_sha256": "<hex>", "spans_sha256": "<hex>",
+ "excluded": [{"source_id": "enwiki-1009-2010", "reason": "not rendered in sourceset wpm version 3",
+               "pi": 0.04}],
  "clusters_sha256": "<hex>", "clusters": {"c-…": ["enwiki-1001-2002"]},
  "splits": {"dev": ["…"], "eval": ["…"], "test": []},
  "tiers": {"G1": {"file": "gold/g1.jsonl", "sha256": "<hex>", "rows": 20, "positives": 18,
@@ -334,7 +390,7 @@ From other packages, by `references/locate-documents.md`, through `scripts/bench
 
 | file | fields |
 |---|---|
-| `sourcesets/<id>/manifest-<n>.jsonl` (§7) | header `schema`; entries `source_id, pageid, revision, title, wikidata, assessment, layer_sha256, renderer` |
+| `sourcesets/<id>/manifest-<n>.jsonl` (§7) | header `schema`; entries `source_id, pageid, revision, title, wikidata, assessment, origin, adopted_from, layer_sha256, renderer`; which source of a page is read is `Manifest.preferred()` of `scripts/sources/sourceset.py`, called, not copied |
 | `sourcesets/<id>/sources/<source>/layer.txt`, `paragraphs.json`, `sections.json`, `finders.json` (§7) | the layer (sha checked), block `span`/`section`/`block`, section `path`/`fragment`/`span`, finder `finder`/`span` |
 | `corpora/<u>/universe.yaml` (§8) | `libraries[].id, repo, commit, brain_lib`, `universe_sha256` |
 | `corpora/<u>/corpus.sqlite` (§8) | `decls(library, commit_sha, name, module, path, line, proof_status, statement, signature)`, `tags(decl_id, tag, value)`, `libraries(id, commit_sha)`, `decls_fts` (P only) |
