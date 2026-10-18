@@ -311,6 +311,7 @@ class TestTheInlinedVocabularyIsCflibs(unittest.TestCase):
         self.assertEqual(vl.UNRESOLVED_BY, {"worker", vocab.UNRESOLVED_ATTEMPT_CAP})
         self.assertEqual(set().union(*vl.CHALLENGE_COMBOS.values()), vocab.CHALLENGE_ACTIONS)
         self.assertEqual(set(vl.CHALLENGE_COMBOS), vocab.CHALLENGE_TARGETS)
+        self.assertEqual(vl.CHALLENGE_COMBOS[vocab.COVERAGE_TARGET], vocab.COVERAGE_ACTIONS)
 
     def test_the_gate_imports_no_cflib(self):
         import ast

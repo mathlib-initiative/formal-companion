@@ -194,7 +194,8 @@ FINDERS = frozenset({"theorem_box", "bold_definition", "lead", "model"})
 DETERMINISTIC_FINDERS = frozenset({"theorem_box", "bold_definition", "lead"})
 CONFIDENCES = frozenset({"high", "medium", "low"})
 CANDIDATE_VERDICTS = frozenset({"accepted", "rejected"})
-CHALLENGE_TARGETS = frozenset({"location", "absence", "unresolved", "scope", "prominence"})
+CHALLENGE_TARGETS = frozenset({"location", "absence", "unresolved", "scope", "prominence",
+                               "coverage"})
 CHALLENGE_ACTIONS = frozenset({"confirm", "uphold", "downgrade", "refute", "overturn"})
 #: which actions a target admits (references/locate-documents.md section 4)
 CHALLENGE_COMBOS = {
@@ -203,6 +204,8 @@ CHALLENGE_COMBOS = {
     "unresolved": frozenset({"uphold", "overturn"}),
     "scope": frozenset({"uphold", "overturn"}),
     "prominence": frozenset({"uphold", "overturn"}),
+    # a passage's coverage claim (cflib.vocab.COVERAGE_ACTIONS): refuted by default
+    "coverage": frozenset({"confirm", "refute"}),
 }
 UNRESOLVED_BY = frozenset({"worker", "attempt_cap"})
 MAX_LOCATIONS_PER_PASSAGE = 5

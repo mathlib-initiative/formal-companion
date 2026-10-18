@@ -310,16 +310,31 @@ once per passage after challenge and stamped on all its records):
 
 | status | when |
 |---|---|
-| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` theorem. definition passage: `exactMatch` or `closeMatch` to a `definition` |
-| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage |
-| `partial` | only `hasPart` or `narrowMatch` (or `broadMatch` to a definition) |
+| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` theorem; `exactMatch` or `closeMatch` to a data declaration that states the theorem (a `definition` without the `statement` flag: an equivalence, an isomorphism, a structure-valued construction — the Chinese remainder theorem as a `RingEquiv`); a survived coverage claim whose every part is `proved`. definition passage: `exactMatch` or `closeMatch` to a `definition`; a survived coverage claim whose every part is a `definition` or `proved` |
+| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or a theorem passage's survived coverage claim whose every part is proved or unproved (`statement_only`, `wanted`, `axiom_dependent`) and not every one proved |
+| `partial` | only `hasPart` or `narrowMatch` (or `broadMatch` to a definition), with no coverage claim that upgrades them |
 | `not_formalized` | a checked absence, possibly with `relatedMatch` locations |
 | *(none)* | unresolved; also only `relatedMatch` locations and no checked absence (what a challenge that downgrades a passage's one location leaves) |
 
+A **coverage claim** is a located passage's statement that its `hasPart`
+locations, at least two, together state every clause with no hypothesis
+stronger than the passage's (`references/locate-documents.md` §3). Every
+claim is challenged, whatever the passage's prominence (§5), and only one
+whose challenge is `survived` counts; a refute removes it and leaves its parts
+`hasPart`. The best status over all the evidence wins. The data row and the
+coverage rows are the maintainer's decision D1 of 2026-10-18 ("D1: yes.
+Formalized when the hasPart locations together cover every clause (challenger
+confirms coverage), and when an exact/closeMatch is to an equivalence or data
+declaration that states the theorem (e.g. CRT's RingEquiv). Update vocab and
+WikiLean's parity table."); before it, both were `partial`.
+
 Built as `cflib.vocab.derive_status`, which refuses a contradiction (an
 absence beside a location that counts; the `statement` flag on a `proved`
-declaration) rather than mapping it; the cases this table does not name are
-decided in `references/vocabulary.md` §1.11.
+declaration; a coverage claim whose parts are not the passage's `hasPart`
+locations) rather than mapping it; the cases this table does not name are
+decided in `references/vocabulary.md` §1.11, and the shared parity table
+`tests/data/locate/status-parity.json` holds every row's cases for a
+consumer's own implementation.
 
 ### 2.7 The records
 

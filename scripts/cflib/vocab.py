@@ -508,11 +508,26 @@ CANDIDATE_VIA = frozenset({"wikidata_tag", "mathlib_1000", "mathlib_100", "docst
 TAG_KINDS = frozenset({"wikidata", "stacks", "kerodon", "wikipedia"})
 #: What a challenge verdict judges, and what it does (section 5).  ``confirm`` and
 #: ``uphold`` keep the record (``survived``); ``downgrade``, ``refute`` and
-#: ``overturn`` change it (``downgraded``).
-CHALLENGE_TARGETS = frozenset({"location", "absence", "unresolved", "scope", "prominence"})
+#: ``overturn`` change it (``downgraded``).  ``coverage`` is a passage's coverage
+#: claim (:data:`COVERAGE_TARGET`, the maintainer's decision D1).
+COVERAGE_TARGET = "coverage"
+CHALLENGE_TARGETS = frozenset({"location", "absence", "unresolved", "scope", "prominence",
+                               COVERAGE_TARGET})
 CHALLENGE_KEEP = frozenset({"confirm", "uphold"})
 CHALLENGE_CHANGE = frozenset({"downgrade", "refute", "overturn"})
 CHALLENGE_ACTIONS = CHALLENGE_KEEP | CHALLENGE_CHANGE
+#: The coverage claim (the maintainer's decision D1, 2026-10-18; references/
+#: vocabulary.md section 1.11): a located passage that says several things may
+#: claim that its ``hasPart`` locations TOGETHER state every clause, with no
+#: hypothesis stronger than the passage's.  ``{"complete": true, "parts": [ranks],
+#: "note": "<one sentence>"}`` in a locate document, at least
+#: ``MIN_COVERAGE_PARTS`` parts, every one a ``hasPart`` location of the passage.
+#: Every claim is challenged whatever the passage's prominence -- refuted by
+#: default, ``confirm`` or ``refute`` (``COVERAGE_ACTIONS``) -- because it upgrades
+#: a status; a refute removes the claim and leaves its parts ``hasPart``.  Only a
+#: claim whose challenge is ``survived`` counts in :func:`derive_status`.
+MIN_COVERAGE_PARTS = 2
+COVERAGE_ACTIONS = frozenset({"confirm", "refute"})
 #: an absence's receipt lists at least this many distinct queries (gate rule 5)
 MIN_ABSENCE_QUERIES = 3
 #: a locate task carries at most this many formal_math passages (section 3, L3b)
@@ -716,6 +731,14 @@ _UNFINISHED = frozenset({PROOF_WANTED, PROOF_STATEMENT_ONLY, PROOF_AXIOM_DEPENDE
 #: have: ``decide_proof_status`` gives a definition every status but ``proved``,
 #: which is a declaration whose type IS a ``Prop`` -- a theorem, not a definition.
 _STATEMENT_PROOF_STATUSES = frozenset({PROOF_DEFINITION}) | _UNFINISHED
+#: the relations that say a declaration states the passage itself
+_STATES = frozenset({EXACT_MATCH, CLOSE_MATCH})
+#: a survived coverage claim's parts, by the row that judges them (decision D1):
+#: a theorem row is formalized when every part is ``proved`` and statement_only
+#: when every part is proved or bears the statement unproved; a definition row is
+#: formalized when every part is a ``definition`` or ``proved``
+_COVERAGE_THEOREM_PARTS = frozenset({PROOF_PROVED}) | _UNFINISHED
+_COVERAGE_DEFINITION_PARTS = frozenset({PROOF_DEFINITION, PROOF_PROVED})
 
 
 def _theorem_row(relation: str, proof_status: str, statement: bool) -> str:
@@ -729,8 +752,13 @@ def _theorem_row(relation: str, proof_status: str, statement: bool) -> str:
         return STATUS_FORMALIZED
     if proof_status in _UNFINISHED:
         return STATUS_STATEMENT_ONLY
-    # data: the table's "broadMatch to a definition" is partial; an exact or
-    # close match to data is not in the table and is decided the same way
+    # DATA (a definition without the statement flag): an exact or close match is
+    # an equivalence, isomorphism, bijection or structure-valued construction that
+    # states the theorem -- the Chinese remainder theorem as a RingEquiv -- and
+    # formalizes it (the maintainer's decision D1); the table's "broadMatch to a
+    # definition" stays partial
+    if relation in _STATES:
+        return STATUS_FORMALIZED
     return STATUS_PARTIAL
 
 
@@ -753,50 +781,130 @@ def _field(location, name: str, default=None):
     return getattr(location, name, default)
 
 
-def derive_status(passage_kind: str, locations: Iterable, absent: bool) -> str | None:
+def _coverage_parts(coverage, by_key: dict) -> list[tuple[str, bool]]:
+    """A coverage claim's parts as ``(proof_status, statement)``, or refuse the claim.
+
+    The claim is a mapping (or an object) with ``complete`` (``True``), ``parts``
+    (the ``location_key`` of each part: at least ``MIN_COVERAGE_PARTS``, distinct)
+    and ``challenge`` (``CHALLENGE_VERDICTS``, or ``None`` while it is owed).  Every
+    part must be one of the passage's locations, and a ``hasPart`` one: a claim
+    naming anything else says nothing a record can carry.
+    """
+    if _field(coverage, "complete") is not True:
+        raise CfError(f"a coverage claim says complete: true, not "
+                      f"{_field(coverage, 'complete')!r}",
+                      hint="a passage claims coverage only when its parts state every clause; "
+                           "otherwise it carries no claim")
+    challenge = _field(coverage, "challenge")
+    if challenge is not None:
+        check(str(challenge), CHALLENGE_VERDICTS, "coverage challenge")
+    parts = _field(coverage, "parts")
+    if not isinstance(parts, (list, tuple)) or not all(isinstance(p, str) and p
+                                                       for p in parts):
+        raise CfError(f"a coverage claim's parts are the location keys of its parts, not "
+                      f"{parts!r}")
+    if len(set(parts)) != len(parts) or len(parts) < MIN_COVERAGE_PARTS:
+        raise CfError(f"a coverage claim names at least {MIN_COVERAGE_PARTS} distinct parts, "
+                      f"not {len(set(parts))}",
+                      hint="one hasPart location stating the whole passage is an exactMatch")
+    out = []
+    for key in parts:
+        location = by_key.get(key)
+        if location is None or _field(location, "relation") != HAS_PART:
+            raise CfError(f"coverage part {key[:12]} is not a hasPart location of the passage",
+                          hint="a coverage claim names its passage's hasPart locations only; "
+                               "a challenge that refutes or downgrades a part leaves the claim "
+                               "to be challenged again")
+        out.append((str(_field(location, "proof_status") or ""),
+                    bool(_field(location, "statement", False))))
+    return out
+
+
+def _coverage_status(passage_kind: str, parts: list[tuple[str, bool]]) -> str | None:
+    """What a SURVIVED coverage claim gives a passage, or None when it upgrades nothing.
+
+    The maintainer's decision D1 (references/vocabulary.md section 1.11): the
+    theorem row -- theorem and conjecture passages, and an example's or an
+    ``other`` passage's -- is ``formalized`` when every part is ``proved``, and
+    ``statement_only`` when every part is proved or states its clause unproved
+    (``statement_only``, ``wanted``, ``axiom_dependent``) and one does; the
+    definition row of a definition, construction or notation passage is
+    ``formalized`` when every part is a ``definition`` or ``proved``.  Anything
+    else -- a data part of a theorem passage, an unfinished part of a definition
+    passage -- upgrades nothing.
+    """
+    statuses = {status for status, _statement in parts}
+    rows = []
+    if passage_kind in THEOREM_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
+        if statuses == {PROOF_PROVED}:
+            rows.append(STATUS_FORMALIZED)
+        elif statuses <= _COVERAGE_THEOREM_PARTS:
+            rows.append(STATUS_STATEMENT_ONLY)
+    if passage_kind in DEFINITION_PASSAGE_KINDS and statuses <= _COVERAGE_DEFINITION_PARTS:
+        rows.append(STATUS_FORMALIZED)
+    return min(rows, key=_STATUS_RANK.__getitem__) if rows else None
+
+
+def derive_status(passage_kind: str, locations: Iterable, absent: bool,
+                  coverage=None) -> str | None:
     """A passage's derived status: the Literature Links ``status`` of its records.
 
     docs/proposals/wikipedia-locate.md section 2.6, computed once per passage
     after challenge.  ``locations`` are the passage's surviving locations, each
     a mapping (or an object) with ``relation`` (``LOCATE_RELATIONS``),
-    ``proof_status`` (``PROOF_STATUSES``, joined from the library index) and
-    an optional ``statement`` flag (the declaration is a ``Prop``-valued
-    definition).  ``absent`` says the passage has a checked absence.
+    ``proof_status`` (``PROOF_STATUSES``, joined from the library index), an
+    optional ``statement`` flag (the declaration is a ``Prop``-valued
+    definition) and, for a location a coverage claim names, its
+    ``location_key``.  ``absent`` says the passage has a checked absence.
+    ``coverage`` is the passage's coverage claim, or ``None`` (the default: the
+    three-argument call is unchanged) -- ``{complete: true, parts: [location
+    key, ...], challenge}``, its parts ``hasPart`` locations of ``locations``.
 
     * ``formalized`` -- a theorem or conjecture passage with an ``exactMatch``,
-      ``closeMatch`` or ``broadMatch`` to a ``proved`` declaration; a
-      definition passage with an ``exactMatch`` or ``closeMatch`` to a
-      ``definition``;
+      ``closeMatch`` or ``broadMatch`` to a ``proved`` declaration, or an
+      ``exactMatch`` or ``closeMatch`` to DATA (a ``definition`` without the
+      ``statement`` flag: an equivalence, an isomorphism, a structure-valued
+      construction that states the theorem); a definition passage with an
+      ``exactMatch`` or ``closeMatch`` to a ``definition``; and either, with a
+      coverage claim whose challenge is ``survived``, when every part is
+      ``proved`` (a theorem passage) or every part is a ``definition`` or
+      ``proved`` (a definition passage);
     * ``statement_only`` -- the best such location is ``statement_only``,
       ``wanted`` or ``axiom_dependent``, or is a ``Prop``-valued definition
-      stating a theorem passage;
+      stating a theorem passage; or a theorem passage's survived coverage claim
+      whose parts are each proved or unproved, and not all proved;
     * ``partial`` -- only ``hasPart`` or ``narrowMatch``, or ``broadMatch`` to a
-      definition;
+      definition, with no coverage claim that upgrades them;
     * ``not_formalized`` -- a checked absence, possibly beside ``relatedMatch``
       locations;
     * ``None`` -- unresolved: no location that counts and no absence.  It is
       never ``not_formalized``.
 
-    ``relatedMatch`` never counts towards a status.  Four cases the table does
-    not name are decided here, each conservatively (references/vocabulary.md
-    section 1.11): a theorem passage matched exactly to DATA is ``partial``, as
-    its ``broadMatch`` is; a definition passage matched exactly to a proved
-    theorem is ``partial``; an example or ``other`` passage takes the better of
-    the two rows; and a passage whose only locations are ``relatedMatch``, with
-    no checked absence, is ``None`` -- the state a challenge leaves when it
-    downgrades a passage's one location to ``relatedMatch``: nothing says it is
-    formalized and nobody checked that it is absent, so it counts as
-    unresolved (a miss for the safety metric, never ``not_formalized``).
+    The best status over all the evidence wins.  ``relatedMatch`` never counts
+    towards a status, and a coverage claim that is not ``survived`` (owed,
+    pending, not required, sampled out, or downgraded -- a refute removes the
+    claim) upgrades nothing.  The cases neither table names are decided here,
+    each conservatively (references/vocabulary.md section 1.11): a definition
+    passage matched exactly to a proved theorem is ``partial``; an example or
+    ``other`` passage takes the better of the two rows; and a passage whose
+    only locations are ``relatedMatch``, with no checked absence, is ``None``
+    -- the state a challenge leaves when it downgrades a passage's one
+    location to ``relatedMatch``: nothing says it is formalized and nobody
+    checked that it is absent, so it counts as unresolved (a miss for the
+    safety metric, never ``not_formalized``).
 
     Refused (``CfError``), because no consistent record can say them: a checked
     absence beside a location that counts; a ``statement`` flag on a ``proved``
     declaration (``decide_proof_status`` gives a ``Prop``-valued definition every
-    status but ``proved``); a ``statement`` that is not a bool; and any value
+    status but ``proved``); a ``statement`` that is not a bool; a coverage claim
+    that is not ``complete: true``, names fewer than two distinct parts, or names
+    a part that is not one of the passage's ``hasPart`` locations; and any value
     outside the vocabulary.
     """
     check(passage_kind, PASSAGE_KINDS, "passage kind")
     best: str | None = None
     counted: list[str] = []
+    by_key: dict = {}
     for location in locations:
         relation = check(str(_field(location, "relation") or ""), LOCATE_RELATIONS,
                          "location relation")
@@ -814,6 +922,9 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool) -> str |
                           hint="the flag marks a Prop-valued DEFINITION, whose proof_status "
                                "is definition, wanted, statement_only or axiom_dependent; "
                                "re-join proof_status and the flag from the library index")
+        key = _field(location, "location_key")
+        if isinstance(key, str) and key:
+            by_key[key] = location
         if relation == RELATED_MATCH:
             continue
         rows = []
@@ -829,6 +940,13 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool) -> str |
         raise CfError(f"a checked absence beside a {counted[0]} location",
                       hint="an absence may sit beside relatedMatch locations only; "
                            "drop the absence or downgrade the location")
+    if coverage is not None:
+        parts = _coverage_parts(coverage, by_key)
+        if _field(coverage, "challenge") == CHALLENGE_SURVIVED:
+            status = _coverage_status(passage_kind, parts)
+            if status is not None and (best is None
+                                       or _STATUS_RANK[status] < _STATUS_RANK[best]):
+                best = status
     if best is not None:
         return best
     return STATUS_NOT_FORMALIZED if absent else None
