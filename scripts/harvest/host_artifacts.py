@@ -8,9 +8,10 @@ three files the bench and ``cf campaign status`` read stayed on the host:
 * the gate's own log, ``<log_dir>/gate.jsonl`` -- ``log_dir`` is the host
   ``gate.json``'s, under the tend root -- one line per worker call;
 * for a campaign shard, the sequencer's usage export
-  ``<campaign dir>/usage-<k>.jsonl``, the only usage record left once it has
-  pruned that shard's transcripts;
-* for a campaign shard, the sequencer's canary scan ``<campaign dir>/canary-<k>.json``.
+  ``<campaign dir>/usage-<run-id>.jsonl``, the only usage record left once it
+  has pruned that shard's transcripts;
+* for a campaign shard, the sequencer's canary scan
+  ``<campaign dir>/canary-<run-id>.json``.
 
 They land in ``runs/<run>/host/`` (``WorkspacePaths.run_host_dir``), never under
 ``corpus/<run>/``, whose tree is the receipt's manifest.  A file the host does
@@ -37,13 +38,14 @@ USAGE = "usage.jsonl"
 CANARY = "canary.json"
 
 
-def campaign_shard(workspace, run_id: str, data: dict) -> tuple[str, int, str] | None:
-    """``(campaign id, shard index, host campaign dir)`` for a shard, else None.
+def campaign_shard(workspace, run_id: str, data: dict) -> tuple[str, str] | None:
+    """``(campaign id, host campaign dir)`` for a shard, else None.
 
     The campaign comes from the shard's ``run.yaml`` (``locate.campaign``, which
-    ``cf campaign plan`` stamps), the index from that campaign's
-    ``campaign.yaml``, and the directory from the rendered sequencer's record,
-    or ``<remote_root>/campaigns/<id>`` when it was never rendered.
+    ``cf campaign plan`` stamps) and must list the run among its shards; the
+    directory is the rendered sequencer's record, or
+    ``<remote_root>/campaigns/<id>`` when it was never rendered.  The
+    sequencer keys its files by run id, never by position.
     """
     block = data.get("locate") if isinstance(data.get("locate"), dict) else {}
     campaign_id = str(block.get("campaign") or "")
@@ -53,16 +55,14 @@ def campaign_shard(workspace, run_id: str, data: dict) -> tuple[str, int, str] |
     doc = read_yaml(path) if path.exists() else None
     if not isinstance(doc, dict):
         return None
-    index = next((int(s.get("index")) for s in doc.get("shards") or []
-                  if isinstance(s, dict) and s.get("run_id") == run_id and s.get("index")), 0)
-    if not index:
+    if not any(isinstance(s, dict) and s.get("run_id") == run_id for s in doc.get("shards") or []):
         return None
     sequencer = doc.get("sequencer") if isinstance(doc.get("sequencer"), dict) else {}
     host = data.get("host") if isinstance(data.get("host"), dict) else {}
     host_dir = str(sequencer.get("host_dir") or "")
     if not host_dir and host.get("remote_root"):
         host_dir = f"{str(host['remote_root']).rstrip('/')}/campaigns/{campaign_id}"
-    return (campaign_id, index, host_dir) if host_dir else None
+    return (campaign_id, host_dir) if host_dir else None
 
 
 def remote_files(workspace, run_id: str, data: dict) -> list[dict]:
@@ -77,11 +77,11 @@ def remote_files(workspace, run_id: str, data: dict) -> list[dict]:
         out.append({"name": GATE_LOG, "remote": f"{log_dir.rstrip('/')}/gate.jsonl"})
     shard = campaign_shard(workspace, run_id, data)
     if shard:
-        campaign_id, index, host_dir = shard
-        out.append({"name": USAGE, "remote": f"{host_dir}/usage-{index}.jsonl",
-                    "campaign": campaign_id, "shard": index})
-        out.append({"name": CANARY, "remote": f"{host_dir}/canary-{index}.json",
-                    "campaign": campaign_id, "shard": index})
+        campaign_id, host_dir = shard
+        out.append({"name": USAGE, "remote": f"{host_dir}/usage-{run_id}.jsonl",
+                    "campaign": campaign_id})
+        out.append({"name": CANARY, "remote": f"{host_dir}/canary-{run_id}.json",
+                    "campaign": campaign_id})
     return out
 
 
@@ -116,7 +116,7 @@ def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
     try:
         for f in files:
             row = {"remote": f["remote"], "fetched": False}
-            row.update({k: f[k] for k in ("campaign", "shard") if k in f})
+            row.update({k: f[k] for k in ("campaign",) if k in f})
             target = incoming / f["name"]
             proc = runner(rsync_argv(ssh_host, f["remote"], target), text=True,
                           capture_output=True)

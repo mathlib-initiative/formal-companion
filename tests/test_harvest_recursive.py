@@ -257,7 +257,7 @@ class TestHostArtifactsComeHome(unittest.TestCase):
                                              "by_rule": {}}) + "\n", encoding="utf-8")
         state = self.remote / "campaigns" / "c-1"
         state.mkdir(parents=True)
-        (state / "usage-2.jsonl").write_text(json.dumps(
+        (state / "usage-r-1.jsonl").write_text(json.dumps(
             {"model": "claude-opus-5", "usage": {"input": 1000, "output": 2000,
                                                  "cache_write": 0, "cache_read": 0}}) + "\n",
             encoding="utf-8")
@@ -314,8 +314,8 @@ class TestHostArtifactsComeHome(unittest.TestCase):
         out = self.out.getvalue()
         self.assertIn("host artifact gate.jsonl", out)
         self.assertIn(f"{self.gate_log}", out)
-        self.assertIn("usage-2.jsonl", out)
-        self.assertIn("canary-2.json", out)
+        self.assertIn("usage-r-1.jsonl", out)
+        self.assertIn("canary-r-1.json", out)
         self.assertFalse((self.ws / "runs" / "r-1" / "host").exists())
 
     def test_the_artifacts_land_beside_the_corpus_and_price_it(self):
@@ -332,11 +332,10 @@ class TestHostArtifactsComeHome(unittest.TestCase):
         arts = receipt["host_artifacts"]
         self.assertTrue(arts["gate.jsonl"]["fetched"])
         self.assertEqual(arts["gate.jsonl"]["sha256"], hashing.sha256_file(self.gate_log))
-        self.assertEqual((arts["usage.jsonl"]["campaign"], arts["usage.jsonl"]["shard"]),
-                         ("c-1", 2))
+        self.assertEqual(arts["usage.jsonl"]["campaign"], "c-1")
         self.assertEqual(arts["canary.json"], {"remote": str(self.remote / "campaigns" / "c-1"
-                                                             / "canary-2.json"),
-                                               "fetched": False, "campaign": "c-1", "shard": 2,
+                                                             / "canary-r-1.json"),
+                                               "fetched": False, "campaign": "c-1",
                                                "reason": "absent on the host"})
         self.assertIsNotNone(receipt["cost"])
         self.assertTrue(receipt["cost"]["source"]["path"].endswith("usage.jsonl"))
