@@ -13,6 +13,11 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8.3 and 8.5
   it, so an adopted revision recorded without them stays in its stratum.  An
   article the manifest does not hold, or holds unrendered, is refused by name:
   a frame that silently lost an article would bias every inclusion probability.
+* **The curated stratum** is the frame articles a curated list names
+  (``bench.curated``: a 1000.yaml QID, suffixed keys included; a 100.yaml entry
+  by its resolved QIDs or its folded title; a plain QID list).  Each article
+  records the entries that name it, and the 100.yaml entries that name no frame
+  article are listed in the frame, so a list that matched nothing says so.
 * **The draws** are two simple random samples without replacement, each with
   its own seeded generator: ``uniform`` from the whole frame and ``curated``
   from the frame articles whose QID a curated list names.  They are drawn
@@ -42,9 +47,9 @@ from cflib.errors import CfError
 from cflib.yamlio import load_yaml
 
 from . import inputs
+from .curated import CuratedLists
 from .layout import overlap_words, word_spans
 
-_QID = re.compile(r"Q[1-9][0-9]*\Z")
 _INT = re.compile(r"[1-9][0-9]*\Z")
 #: the fewest words a sampled span holds -- the join's overlap floor
 MIN_SPAN_WORDS = 4
@@ -113,16 +118,6 @@ def read_frame_list(path: Path) -> list[dict]:
     return out
 
 
-def read_qids(path: Path) -> set[str]:
-    """QIDs from a list file, or the QID keys of a curated mapping (Mathlib's ``1000.yaml``)."""
-    qids = set()
-    for value in _list_file(path):
-        token = str(value.get("qid") if isinstance(value, dict) else value).strip()
-        if _QID.match(token):
-            qids.add(token)
-    return qids
-
-
 # --------------------------------------------------------------------------
 # the frame
 # --------------------------------------------------------------------------
@@ -144,8 +139,15 @@ def _page_fact(entry: dict, others: list[dict], key: str) -> tuple[Any, str | No
     return own, None
 
 
-def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
-    """Resolve every frame row to the source of the pinned manifest a run reads."""
+def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str]) -> dict:
+    """Resolve every frame row to the source of the pinned manifest a run reads.
+
+    ``curated`` is the curated lists (``bench.curated.read_lists``), or a bare
+    set of QIDs; an article is curated when an entry names it
+    (:meth:`CuratedLists.matches`), and ``curated_via`` says which.
+    """
+    if not isinstance(curated, CuratedLists):
+        curated = CuratedLists.from_qids(curated or ())
     preferred = manifest.preferred()
     pages = manifest.page_entries()
     articles: dict[str, dict] = {}
@@ -177,6 +179,7 @@ def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
         qid, qid_from = _page_fact(entry, others, "wikidata")
         assessment, assessment_from = _page_fact(entry, others, "assessment")
         qid = qid or None
+        via = curated.matches({"wikidata": qid, "title": entry.get("title")})
         articles[sid] = {
             "source_id": sid, "pageid": pageid, "revision": entry.get("revision"),
             "title": entry.get("title"), "wikidata": qid,
@@ -185,7 +188,7 @@ def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
             "revision_basis": basis,
             "page_facts_from": ({"wikidata": qid_from, "assessment": assessment_from}
                                 if qid_from or assessment_from else None),
-            "curated": bool(qid and qid in curated),
+            "curated": bool(via), "curated_via": [e.label for e in via],
         }
         if pageid is not None:
             seen_pages[int(pageid)] = sid
@@ -200,7 +203,9 @@ def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
     return {"articles": ordered, "N": len(ordered),
             "N_curated": sum(1 for a in ordered if a["curated"]),
             "N_adopted": sum(1 for a in ordered if a["revision_basis"] == "adopted"),
-            "duplicates": sorted(duplicate)}
+            "duplicates": sorted(duplicate),
+            "curated_lists": {"files": curated.files, "qids": len(curated.qids),
+                              "unmatched_100": curated.unmatched(ordered)}}
 
 
 # --------------------------------------------------------------------------

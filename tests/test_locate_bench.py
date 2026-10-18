@@ -41,13 +41,14 @@ except ImportError:  # pragma: no cover
 
 import cf as cf_main  # noqa: E402
 from bench import compare as compare_mod  # noqa: E402
+from bench import curated as curated_mod  # noqa: E402
 from bench import draw as draw_mod  # noqa: E402
 from bench import gold as gold_mod  # noqa: E402
 from bench import inputs  # noqa: E402
 from bench import metrics as m  # noqa: E402
 from bench import score as score_mod  # noqa: E402
 from bench.layout import BenchLayout, overlap_words  # noqa: E402
-from cflib import vocab  # noqa: E402
+from cflib import vocab, yamlio  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
 
@@ -202,15 +203,154 @@ class TestTheFrameAndTheDraws(unittest.TestCase):
         self.assertTrue(all(r["pi_uniform"] == 1.0 for r in short["articles"]))
 
     def test_the_curated_qids_read_a_mapping_or_a_list(self):
-        self.assertIn("Q99999000", draw_mod.read_qids(self.world.curated_1000()))
+        self.assertIn("Q99999000", curated_mod.read_lists([self.world.curated_1000()]).qids)
         listed = self.world.write("inputs/qids.txt", "# curated\nQ1\nQ22\nnot-a-qid\n")
-        self.assertEqual(draw_mod.read_qids(listed), {"Q1", "Q22"})
+        lists = curated_mod.read_lists([listed])
+        self.assertEqual(lists.qids, {"Q1", "Q22"})
+        self.assertEqual(lists.files[0]["rejected"], ["not-a-qid"])   # reported, never read
         frame = self.world.write("inputs/frame.json", json.dumps([1001, {"source_id": "x"}]))
         self.assertEqual(draw_mod.read_frame_list(frame), [{"pageid": 1001}, {"source_id": "x"}])
 
 
 def frame_curated(frame: dict, sid: str) -> bool:
     return next(a for a in frame["articles"] if a["source_id"] == sid)["curated"]
+
+
+#: Mathlib's 1000.yaml shape, reduced: a suffixed key beside its base (Q99999003X), two
+#: suffixed keys whose base is no key (Q99999004A/B), and an entry with no declaration
+CURATED_1000 = """# synthetic, in the shape of $MATHLIB/docs/1000.yaml
+Q99999001:
+  title: Widget lemma 1
+  decls:
+    - Widget.mul_spanning
+    - Widget.shared_name
+  authors: A. Author
+
+Q99999003:
+  title: Widget lemma 3
+
+Q99999003X:
+  title: Widget lemma 3, the strong form
+  decl: Widget.conj_three
+
+Q99999004A:
+  title: Widget lemma 4, first half
+  decl: Widget.spanning_zero
+
+Q99999004B:
+  title: Widget lemma 4, second half
+"""
+
+#: Mathlib's 100.yaml shape, reduced: numbered keys, padded colons, links whose
+#: values hold colons, curly quotes, no QID anywhere
+CURATED_100 = """# synthetic, in the shape of $MATHLIB/docs/100.yaml
+#
+# See yaml_check.py for documentation about the allowed fields in this file.
+
+1:
+  title  : The Law of Widgets
+  decls  :
+    - Widget.shared_name
+  authors: A. Author (first) and B. Author (second)
+2:
+  title  : The Widget Lemma 2
+  decl   : Widget.tagged_two
+  authors: C. Author
+3:
+  title  : Gadget’s Rule – Widget Form
+  authors: D. Author
+  links  :
+    result : https://example.org/gadget/blob/0000000/Gadget.lean#L1-L9
+    website: https://example.org/gadget
+4:
+  title  : A Theorem Nobody Benched
+  decl   : Widget.spanning_one
+  note   : "listed, with no article in the frame"
+"""
+
+
+class TestCuratedLists(unittest.TestCase):
+    """Mathlib's two lists as they really are, reduced to synthetic entries.
+
+    The field case: a suffixed 1000.yaml key was dropped with the QIDs only it
+    names, and 100.yaml -- keyed by number, no QID -- was read as zero QIDs
+    without a word, so the curated stratum lost every article only 100.yaml names.
+    """
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=6)
+        self.world.change_entry(self.world.sid(3), title="Gadget's rule - widget form")
+        self.p1000 = self.world.write("inputs/1000.yaml", CURATED_1000)
+        self.p100 = self.world.write("inputs/100.yaml", CURATED_100)
+        self.manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+
+    def test_a_suffixed_key_names_its_base_qid(self):
+        lists = curated_mod.read_lists([self.p1000])
+        self.assertEqual(lists.qids, {"Q99999001", "Q99999003", "Q99999004"})
+        keys = {e.key: e.qids for e in lists.entries}
+        self.assertEqual(keys["Q99999004A"], ["Q99999004"])
+        self.assertEqual(keys["Q99999003X"], ["Q99999003"])
+        bad = self.world.write("inputs/bad.yaml", "Q1:\n  title: a\nWidget:\n  title: b\n")
+        with self.assertRaises(CfError) as ctx:
+            curated_mod.read_lists([bad])
+        self.assertIn("'Widget'", str(ctx.exception))
+
+    def test_100_yaml_resolves_through_1000_yaml_and_matches_by_title(self):
+        for pyyaml in (True, False):
+            with self.subTest(pyyaml=pyyaml), mock.patch.object(
+                    yamlio, "_pyyaml", yamlio._pyyaml if pyyaml else None):
+                lists = curated_mod.read_lists([self.p1000, self.p100])
+                by_key = {e.key: e for e in lists.of_list(curated_mod.LIST_100)}
+                self.assertEqual(sorted(by_key), ["1", "2", "3", "4"])
+                self.assertEqual(by_key["1"].qids, ["Q99999001"])        # a shared declaration
+                self.assertEqual(by_key["1"].method, "a declaration shared with 1000.yaml")
+                self.assertEqual(by_key["2"].qids, [])                   # by title only
+                record = next(f for f in lists.files if f["kind"] == curated_mod.LIST_100)
+                self.assertEqual((record["entries"], record["title_only"]), (4, 3))
+                frame = draw_mod.build_frame([{"pageid": 1001 + i} for i in range(6)],
+                                             self.manifest, lists)
+                via = {a["source_id"]: a["curated_via"] for a in frame["articles"]}
+                w = self.world
+                self.assertEqual(via[w.sid(1)], ["mathlib_1000 Q99999001", "mathlib_100 #1"])
+                self.assertEqual(via[w.sid(2)], ["mathlib_100 #2"])          # "The Widget Lemma 2"
+                self.assertIn("mathlib_100 #3", via[w.sid(3)])               # curly quote, en dash
+                self.assertEqual(via[w.sid(4)], ["mathlib_1000 Q99999004A",
+                                                 "mathlib_1000 Q99999004B"])
+                self.assertEqual(via[w.sid(0)], [])
+                self.assertEqual([u["key"] for u in frame["curated_lists"]["unmatched_100"]], ["4"])
+                self.assertEqual(frame["N_curated"], 4)
+
+    def test_100_yaml_alone_is_never_zero_qids_without_a_word(self):
+        lists = curated_mod.read_lists([self.p100])
+        frame = draw_mod.build_frame([{"pageid": 1001 + i} for i in range(6)], self.manifest, lists)
+        self.assertEqual({a["source_id"] for a in frame["articles"] if a["curated"]},
+                         {self.world.sid(2), self.world.sid(3)})
+        self.assertEqual([u["key"] for u in frame["curated_lists"]["unmatched_100"]], ["1", "4"])
+        out = cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+                 "--frame", self.world.frame_file(), "--curated-qids", self.p100,
+                 "--uniform", 2, "--curated", 2, "--seed", 3)
+        self.assertIn("2 entr(ies) name no frame article", out)
+        self.assertIn("4 matched by title only", out)      # nothing to resolve through
+        doc = json.loads(layout_of(self.world).frame_json.read_text())
+        self.assertEqual(doc["curated_lists"]["files"][0]["kind"], "mathlib_100")
+
+    def test_the_anchor_reads_the_same_lists(self):
+        cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+           "--frame", self.world.frame_file(), "--curated-qids", self.p1000,
+           "--curated-qids", self.p100, "--uniform", 6, "--curated", 0, "--seed", 3)
+        cf(self.world, "bench", "anchor", "b1", "--universe", fx.UNIVERSE,
+           "--curated-1000", self.p1000, "--curated-100", self.p100)
+        doc = json.loads(layout_of(self.world).g1_resolved.read_text())
+        evidence = {e["source_id"]: e["evidence"] for e in doc["entries"]}
+        w = self.world
+        self.assertIn("mathlib_1000 Q99999003X", evidence[w.sid(3)])   # no crash on the suffix
+        self.assertIn("mathlib_1000 Q99999004A", evidence[w.sid(4)])
+        self.assertIn("mathlib_100 2 (by title)", evidence[w.sid(2)])
+        self.assertEqual(doc["unmatched"], {"mathlib_100": 1})
+        self.assertEqual(doc["listed_without_declarations"], {"mathlib_1000": 2, "mathlib_100": 1})
+
+    def test_the_list_names_are_the_vocabularys(self):
+        self.assertLessEqual({curated_mod.LIST_1000, curated_mod.LIST_100}, vocab.CANDIDATE_VIA)
 
 
 class TestTheFrameReadsTheAdoptedRevision(unittest.TestCase):

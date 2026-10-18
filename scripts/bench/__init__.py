@@ -7,6 +7,9 @@ the file formats references/locate-bench.md defines.  ``cf bench`` (one module,
 * :mod:`bench.draw` -- the frame, the seeded draws with their inclusion
   probabilities, article clusters and the split by cluster hash, the G3 span
   sample (section 8.5);
+* :mod:`bench.curated` -- Mathlib's 1000.yaml and 100.yaml and plain QID
+  lists, read one way for the frame's curated stratum and for G1 (sections
+  8.1 and 8.5);
 * :mod:`bench.gold` -- G1 resolution and anchoring, the frozen labeler's
   emit/transcribe (G1 relations, G3 blind labels, the hunter recall *h*, GX
   inventories), G4 spot checks, the planted index and the gold manifest
