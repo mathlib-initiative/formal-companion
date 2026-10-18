@@ -399,8 +399,10 @@ What every record carries beyond §2.7's example:
   "parts": [<location_key>, …], "challenge": <value>}`, each part the
   `location_key` of one of the passage's `hasPart` records; a refuted claim is
   not exported, and a claim whose parts are not the passage's `hasPart`
-  locations is refused (`records.coverage_problem`). The claim's note is not
-  exported.
+  locations, or whose challenge is none of the record challenge values, is
+  refused (`records.coverage_problem`). The claim carries those three keys
+  and no others (`records.coverage_ext`; the note is not exported), and the
+  outcomes derive the passage's `status` from that same projection.
 - A location's lean end names its declaration's `module` (in `location`) and
   carries `library`, `path` (the repository-relative `.lean` file) and `line`
   (>= 1) in its extension, **always**: a location whose index row lacks any of
@@ -1241,8 +1243,9 @@ not a complete gated harvest named in a warning) and
 the declaration's `module`, `path`, `line`, `end_line` and `kind`), and a
 `proof_status` a document wrote is ignored and named; `status` is
 `cflib.vocab.derive_status` over the surviving locations, the absence and the
-coverage claim; an unresolved passage has `status: null` (one that carries locations anyway is
-named as a problem). A passage whose challenge is still owed carries
+coverage claim as its records carry it (`records.coverage_ext`: no note, and
+no claim at all while it is owed); an unresolved passage has `status: null`
+(one that carries locations anyway is named as a problem). A passage whose challenge is still owed carries
 `challenge: null`, and the export refuses it (hard rule 5). A row also carries
 `span`, `head_words`, `section`, `source_sha`, `layer_sha256`, `reason`,
 `unresolved_by` (`worker` — the default — or `attempt_cap`), `refuted` (the

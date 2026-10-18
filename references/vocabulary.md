@@ -271,8 +271,10 @@ challenge sample re-judges. `RELATION_STRENGTH` orders the relations for a chall
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
 absent, coverage=None)`, each location giving its `relation`, `proof_status`, optional `statement`
-flag and, when a coverage claim names it, its `location_key`; `coverage` is the passage's coverage
-claim (below) or `None`, and the three-argument call is the one it always was:
+flag and, when a coverage claim names it, its `location_key` (distinct: one key on two locations is
+refused); `coverage` is the passage's coverage claim exactly as a record carries it (below:
+`COVERAGE_RECORD_KEYS`, `complete` · `parts` · `challenge`, the challenge a `CHALLENGE_VERDICTS`
+value) or `None`, and the three-argument call is the one it always was:
 
 | status | when |
 |---|---|
@@ -283,9 +285,10 @@ claim (below) or `None`, and the three-argument call is the one it always was:
 | none (`None`) | unresolved: no location that counts and no absence — including a passage whose only locations are `relatedMatch` |
 
 The best status over all the evidence wins (`formalized` > `statement_only` > `partial` >
-`not_formalized`). A coverage claim whose challenge is anything but `survived` — owed,
-`challenge_pending`, `not_required`, `sampled_out`, `downgraded` — upgrades nothing, and a refuted
-claim is removed by the outcomes before the status is derived.
+`not_formalized`). A coverage claim whose challenge is anything but `survived` —
+`challenge_pending`, `not_required`, `sampled_out`, `downgraded` — upgrades nothing; a refuted
+claim is removed by the outcomes before the status is derived, and an owed claim (no challenge has
+judged it yet, so it has no challenge value) is passed as no claim, which gives the same status.
 
 **The maintainer's decision D1** (2026-10-18), verbatim:
 
@@ -311,7 +314,25 @@ whatever the passage's prominence — refuted by default, target `coverage` (`CO
 actions `confirm` or `refute` (`COVERAGE_ACTIONS`) — because it upgrades a status: `confirm` makes
 it `survived`, `refute` removes the claim and leaves its parts `hasPart`. An exported record
 carries it as `extensions[‹locate›].coverage = {"complete": true, "parts": [<location_key>, …],
-"challenge": <value>}`.
+"challenge": <value>}` — those three keys (`COVERAGE_RECORD_KEYS`) and no others, on every record
+of the passage, the note left out — and `outcomes` derives the status from that same projection
+(`records.coverage_ext`), so a record's status is the one its claim gives.
+
+**Parity, round 2** (2026-10-18). Run against the consumer's own implementation, the shared table
+agreed on every status an exported record set can carry, and `derive_status` differed on three
+inputs no export produces; each is now refused here as the consumer refuses it, by the record
+shape of part A of the agreed specification:
+
+- a claim whose challenge is `null` (owed; case C14, which round 1 expected `partial`): part A's
+  record carries "<challenge value>", and part B.1's list of claims that upgrade nothing ("pending,
+  not_required, sampled_out, refuted, absent") is read with A — a refuted claim is removed and an
+  absent one is no claim, so neither reaches the function as a claim, and `refuted` is no
+  challenge value (X11);
+- a claim with a key beside `complete`, `parts` and `challenge` (a `note`: X12; a claim missing
+  `challenge`: X13): the outcomes' row keeps the note, and they pass the record's projection;
+- one `location_key` on two locations, whichever relation comes last (X14, X15) and with no claim
+  at all (X16): a key is the sha-256 of source, item, library, commit and declaration, and gate
+  rule 6 admits one location per declaration, so no run produces one.
 
 Read literally until the maintainer says otherwise (each is a parity case marked with its
 question):
@@ -347,10 +368,12 @@ the conservative way, until the maintainer says otherwise:
 Refused (`CfError`), because no consistent record says them: a checked absence beside a location
 that counts; the `statement` flag on a `proved` declaration (`decide_proof_status` gives a
 `Prop`-valued definition every status but `proved`, which is a theorem's); a `statement` that is
-not a bool (absent or `null` is `false`); a coverage claim that is not `complete: true`, names
-fewer than two distinct parts, or names a part that is not one of the passage's `hasPart`
-locations (a part a challenge refuted or downgraded: the claim is then challenged again), whatever
-its challenge; and any value outside these sets.
+not a bool (absent or `null` is `false`); one `location_key` on two locations; a coverage claim
+that is not `complete: true`, names fewer than two distinct parts, or names a part that is not one
+of the passage's `hasPart` locations (a part a challenge refuted or downgraded: the claim is then
+challenged again), whatever its challenge; a coverage claim with no challenge value (owed) or with
+a key outside `COVERAGE_RECORD_KEYS`; and any value outside these sets — a `refuted` challenge
+among them.
 
 **Challenge verdicts** (`CHALLENGE_VERDICTS`, the proposal's §5): every record leaves a workspace with one.
 
@@ -391,7 +414,8 @@ record no verdict judged.
 | `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
 
 Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
-`MIN_COVERAGE_PARTS` (2 distinct `hasPart` parts in a coverage claim),
+`MIN_COVERAGE_PARTS` (2 distinct `hasPart` parts in a coverage claim), `COVERAGE_RECORD_KEYS`
+(`complete` · `parts` · `challenge`, the keys of a record's claim and of `derive_status`'s),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
 task), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
 `EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), the record set's

@@ -47,6 +47,15 @@ release has something to say.
   claim as `extensions[‹locate›].coverage`. `vocab.derive_status` takes the claim
   as an optional fourth argument; `tests/data/locate/status-parity.json` is the
   parity table a consumer's own derivation runs.
+- `vocab.derive_status` takes the coverage claim exactly as a record carries it
+  (`COVERAGE_RECORD_KEYS`: `complete`, `parts`, `challenge`) and refuses what no
+  record says, as the consumer's derivation does: a claim with no challenge value
+  (an owed claim, which the outcomes now pass as no claim — the same status), a
+  claim with any other key (its note), and one `location_key` on two locations.
+  The outcomes derive the status from the export's own projection
+  (`records.coverage_ext`), and the export refuses a claim whose challenge is
+  none of the record values. Parity case C14 is refused (round 1 expected
+  `partial`) and X11–X16 are new.
 - A record set's `set_id` and `sourceset.id` are tokens of the consumer's grammar
   (`cflib.vocab.RECORDSET_TOKEN`: letters, digits and `._:-`, at most 128): the
   export refuses any other before a file is written, and `cf sourceset create`

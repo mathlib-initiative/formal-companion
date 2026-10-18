@@ -78,10 +78,14 @@ CONTEXT_CHARS = 32
 MAX_LOCATIONS = 5
 NO_MATCH = "noMatch"
 NOT_FORMALIZED = "not_formalized"
-#: ``cflib.vocab.CLOSE_MATCH``, ``HAS_PART``, ``MIN_COVERAGE_PARTS`` and ``PROMINENCE``
+#: ``cflib.vocab.CLOSE_MATCH``, ``HAS_PART``, ``MIN_COVERAGE_PARTS``,
+#: ``COVERAGE_RECORD_KEYS``, ``CHALLENGE_VERDICTS`` and ``PROMINENCE``
 CLOSE_MATCH = "closeMatch"
 HAS_PART = "hasPart"
 MIN_COVERAGE_PARTS = 2
+COVERAGE_KEYS = frozenset({"complete", "parts", "challenge"})
+CHALLENGES = frozenset({"survived", "downgraded", "not_required", "sampled_out",
+                        "challenge_pending"})
 PROMINENCES = frozenset({"subject", "central", "supporting"})
 #: the keys of a receipt candidate (references/locate-documents.md section 3), the only
 #: ones its sidecar carries
@@ -242,10 +246,21 @@ def _record_ext(passage: Mapping[str, Any], universe: Mapping[str, Any], **extra
         ext["prominence"] = str(passage["prominence"])
     claim = passage.get("coverage")
     if claim:
-        ext["coverage"] = {"complete": True, "parts": [str(k) for k in claim["parts"]],
-                           "challenge": str(claim.get("challenge"))}
+        ext["coverage"] = coverage_ext(claim)
     ext.update({k: v for k, v in extra.items() if v is not None})
     return ext
+
+
+def coverage_ext(claim: Mapping[str, Any]) -> dict:
+    """A coverage claim as a record carries it: ``{complete, parts, challenge}``.
+
+    Exactly the keys ``COVERAGE_KEYS`` -- the claim's ``note`` is not exported --
+    with the parts' location keys in the claim's order.  The outcomes derive the
+    passage's status from this same projection (``cflib.vocab.derive_status``), so
+    the status a record carries is the one its claim gives.
+    """
+    return {"complete": True, "parts": [str(k) for k in claim["parts"]],
+            "challenge": str(claim.get("challenge"))}
 
 
 def coverage_problem(passage: Mapping[str, Any]) -> str | None:
@@ -253,7 +268,8 @@ def coverage_problem(passage: Mapping[str, Any]) -> str | None:
 
     A claim (the maintainer's decision D1) names at least ``MIN_COVERAGE_PARTS``
     distinct parts, each the ``location_key`` of one of the passage's ``hasPart``
-    locations, and carries its challenge value (hard rule 5).
+    locations, and carries its challenge value (hard rule 5), one of
+    ``CHALLENGES``: a refuted claim is removed, never exported as ``refuted``.
     """
     claim = passage.get("coverage")
     if not claim:
@@ -272,6 +288,9 @@ def coverage_problem(passage: Mapping[str, Any]) -> str | None:
     if not claim.get("challenge"):
         return (f"{passage.get('item')}: the coverage claim has no challenge value (hard rule 5: "
                 "nothing leaves the workspace without one)")
+    if claim.get("challenge") not in CHALLENGES:
+        return (f"{passage.get('item')}: the coverage claim's challenge "
+                f"{claim.get('challenge')!r} is not one of {', '.join(sorted(CHALLENGES))}")
     return None
 
 

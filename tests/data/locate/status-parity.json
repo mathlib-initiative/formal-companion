@@ -1190,7 +1190,6 @@
      "k2"
     ]
    },
-   "expected": "partial",
    "id": "C14",
    "locations": [
     {
@@ -1207,7 +1206,8 @@
     }
    ],
    "passage_kind": "theorem",
-   "rule": "B.1 not survived: owed (null) upgrades nothing",
+   "refused": true,
+   "rule": "refused: an owed claim (challenge null) is no record's claim -- A's record shape carries a challenge value, and an owed claim upgrades nothing, so its holder passes no claim (parity round 1 expected partial)",
    "table": "new"
   },
   {
@@ -2195,6 +2195,191 @@
    "refused": true,
    "rule": "refused: a part that is an exactMatch location",
    "table": "new"
+  },
+  {
+   "absent": false,
+   "coverage": {
+    "challenge": "refuted",
+    "complete": true,
+    "parts": [
+     "k1",
+     "k2"
+    ]
+   },
+   "id": "X11",
+   "locations": [
+    {
+     "location_key": "k1",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    },
+    {
+     "location_key": "k2",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    }
+   ],
+   "passage_kind": "theorem",
+   "refused": true,
+   "rule": "refused: challenge 'refuted' is no record challenge value (A: a refute removes the claim and its parts stay hasPart)",
+   "table": "new"
+  },
+  {
+   "absent": false,
+   "coverage": {
+    "challenge": "survived",
+    "complete": true,
+    "note": "the two parts state both clauses",
+    "parts": [
+     "k1",
+     "k2"
+    ]
+   },
+   "id": "X12",
+   "locations": [
+    {
+     "location_key": "k1",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    },
+    {
+     "location_key": "k2",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    }
+   ],
+   "passage_kind": "theorem",
+   "refused": true,
+   "rule": "refused: a claim with a key beside complete, parts and challenge (A's record shape; the note is not exported)",
+   "table": "new"
+  },
+  {
+   "absent": false,
+   "coverage": {
+    "complete": true,
+    "parts": [
+     "k1",
+     "k2"
+    ]
+   },
+   "id": "X13",
+   "locations": [
+    {
+     "location_key": "k1",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    },
+    {
+     "location_key": "k2",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    }
+   ],
+   "passage_kind": "theorem",
+   "refused": true,
+   "rule": "refused: a claim with no challenge key (A's record shape)",
+   "table": "new"
+  },
+  {
+   "absent": false,
+   "coverage": {
+    "challenge": "survived",
+    "complete": true,
+    "parts": [
+     "k1",
+     "k2"
+    ]
+   },
+   "id": "X14",
+   "locations": [
+    {
+     "location_key": "k2",
+     "proof_status": "proved",
+     "relation": "relatedMatch",
+     "statement": false
+    },
+    {
+     "location_key": "k1",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    },
+    {
+     "location_key": "k2",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    }
+   ],
+   "passage_kind": "theorem",
+   "refused": true,
+   "rule": "refused: one location_key on two locations, the hasPart one last",
+   "table": "new"
+  },
+  {
+   "absent": false,
+   "coverage": {
+    "challenge": "survived",
+    "complete": true,
+    "parts": [
+     "k1",
+     "k2"
+    ]
+   },
+   "id": "X15",
+   "locations": [
+    {
+     "location_key": "k1",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    },
+    {
+     "location_key": "k2",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    },
+    {
+     "location_key": "k2",
+     "proof_status": "proved",
+     "relation": "relatedMatch",
+     "statement": false
+    }
+   ],
+   "passage_kind": "theorem",
+   "refused": true,
+   "rule": "refused: one location_key on two locations, the hasPart one first",
+   "table": "new"
+  },
+  {
+   "absent": false,
+   "coverage": null,
+   "id": "X16",
+   "locations": [
+    {
+     "location_key": "k1",
+     "proof_status": "proved",
+     "relation": "hasPart",
+     "statement": false
+    },
+    {
+     "location_key": "k1",
+     "proof_status": "proved",
+     "relation": "exactMatch",
+     "statement": false
+    }
+   ],
+   "passage_kind": "theorem",
+   "refused": true,
+   "rule": "refused: one location_key on two locations, with no claim",
+   "table": "new"
   }
  ],
  "decision": {
@@ -2204,9 +2389,10 @@
  },
  "fields": {
   "absent": "the passage has a checked absence",
-  "coverage": "null, or the passage's coverage claim as an exported record carries it (extensions[locate].coverage): complete, parts (location keys of hasPart locations), challenge (null while owed)",
+  "coverage": "null, or the passage's coverage claim as an exported record carries it (extensions[locate].coverage): exactly complete, parts (location keys of hasPart locations) and challenge (a record challenge value; a claim no challenge judged yet is passed as no claim)",
   "expected": "the derived status, or null for no status (unresolved)",
   "locations": "the passage's surviving locations after challenge: location_key, relation, proof_status (joined from the library index), statement (the Prop-valued definition flag)",
+  "locations[].location_key": "distinct within a case: a key on two locations is refused",
   "passage_kind": "the passage's kind (cflib.vocab.PASSAGE_KINDS)",
   "question": "a case whose expectation is the literal reading of the decision, which the maintainer has not confirmed (references/vocabulary.md section 1.11 of the skill, questions Q1-Q3)",
   "refused": "true when the inputs are a contradiction the function refuses"
