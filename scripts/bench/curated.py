@@ -115,6 +115,8 @@ class CuratedLists:
 
     entries: list[Entry] = field(default_factory=list)
     files: list[dict] = field(default_factory=list)
+    #: ``(by QID, by folded title)`` entry indexes; built on the first match, after resolution
+    _by: tuple | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
     def from_qids(cls, qids: Iterable[str]) -> "CuratedLists":
@@ -126,11 +128,24 @@ class CuratedLists:
 
     def matches(self, article: dict) -> list[Entry]:
         """The entries that name this article: by its QID, or (100.yaml) by its title."""
+        by_qid, by_title = self._index()
         qid = article.get("wikidata")
         title = fold_title(article.get("title"))
-        return [e for e in self.entries
-                if (qid and qid in e.qids) or (title and e.matches_by_title
-                                               and fold_title(e.title) == title)]
+        hits = set(by_qid.get(qid, ()) if qid else ()) | set(by_title.get(title, ()) if title else ())
+        return [self.entries[i] for i in sorted(hits)]
+
+    def _index(self) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+        """``({qid: [entry index]}, {folded title: [entry index]})`` over the read lists."""
+        if self._by is None:
+            by_qid: dict[str, list[int]] = {}
+            by_title: dict[str, list[int]] = {}
+            for i, e in enumerate(self.entries):
+                for q in e.qids:
+                    by_qid.setdefault(q, []).append(i)
+                if e.matches_by_title:
+                    by_title.setdefault(fold_title(e.title), []).append(i)
+            self._by = (by_qid, by_title)
+        return self._by
 
     def unmatched(self, articles: Iterable[dict], lists: Iterable[str] = (LIST_100,)) -> list[dict]:
         """Entries of these lists that name none of ``articles``, by key and title."""
@@ -276,6 +291,7 @@ def read_lists(paths: Iterable[Path], *, kinds: Iterable[str] | None = None) -> 
         per_file.append(({"name": path.name, "sha256": inputs.sha256_file(path), "kind": detected,
                           "entries": len(entries), "rejected": rejected}, entries))
     resolve_100(lists.of_list(LIST_100), lists.of_list(LIST_1000))
+    lists._by = None                       # the QIDs changed: index after resolution
     for record, entries in per_file:
         record["qids"] = len({q for e in entries for q in e.qids})
         if record["kind"] == LIST_100:
