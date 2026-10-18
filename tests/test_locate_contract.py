@@ -394,6 +394,11 @@ class TestEveryHostCopyOfTheVocabularyIsPinned(unittest.TestCase):
         # restated by 568905a (the record set's prominence and closeMatch-note rules)
         self.assertEqual(records.PROMINENCES, vocab.PROMINENCE)
         self.assertEqual(records.CLOSE_MATCH, vocab.CLOSE_MATCH)
+        # restated by the coverage claim (the maintainer's decision D1)
+        self.assertEqual(records.HAS_PART, vocab.HAS_PART)
+        self.assertEqual(records.MIN_COVERAGE_PARTS, vocab.MIN_COVERAGE_PARTS)
+        self.assertEqual(records.COVERAGE_KEYS, vocab.COVERAGE_RECORD_KEYS)
+        self.assertEqual(records.CHALLENGES, vocab.CHALLENGE_VERDICTS)
 
     def test_the_workspace_side_reads_cflib(self):
         from harvest import harvest

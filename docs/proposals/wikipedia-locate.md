@@ -330,9 +330,11 @@ WikiLean's parity table."); before it, both were `partial`.
 
 Built as `cflib.vocab.derive_status`, which refuses a contradiction (an
 absence beside a location that counts; the `statement` flag on a `proved`
-declaration; a coverage claim whose parts are not the passage's `hasPart`
-locations) rather than mapping it; the cases this table does not name are
-decided in `references/vocabulary.md` §1.11, and the shared parity table
+declaration; one `location_key` on two locations; a coverage claim whose parts
+are not the passage's `hasPart` locations, or that is not the record's
+`{complete, parts, challenge}` with a challenge value) rather than mapping it;
+the cases this table does not name are decided in `references/vocabulary.md`
+§1.11, and the shared parity table
 `tests/data/locate/status-parity.json` holds every row's cases for a
 consumer's own implementation.
 

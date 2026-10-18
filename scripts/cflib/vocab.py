@@ -528,6 +528,11 @@ CHALLENGE_ACTIONS = CHALLENGE_KEEP | CHALLENGE_CHANGE
 #: claim whose challenge is ``survived`` counts in :func:`derive_status`.
 MIN_COVERAGE_PARTS = 2
 COVERAGE_ACTIONS = frozenset({"confirm", "refute"})
+#: the keys of a coverage claim as a record carries it (``extensions[locate].coverage``,
+#: its parts the ``location_key`` of each and its challenge one of ``CHALLENGE_VERDICTS``)
+#: and :func:`derive_status` reads it -- these and no others: the claim's note is not
+#: exported, and an owed claim, with no challenge value yet, is no record's claim
+COVERAGE_RECORD_KEYS = frozenset({"complete", "parts", "challenge"})
 #: an absence's receipt lists at least this many distinct queries (gate rule 5)
 MIN_ABSENCE_QUERIES = 3
 #: a locate task carries at most this many formal_math passages (section 3, L3b)
@@ -784,20 +789,37 @@ def _field(location, name: str, default=None):
 def _coverage_parts(coverage, by_key: dict) -> list[tuple[str, bool]]:
     """A coverage claim's parts as ``(proof_status, statement)``, or refuse the claim.
 
-    The claim is a mapping (or an object) with ``complete`` (``True``), ``parts``
-    (the ``location_key`` of each part: at least ``MIN_COVERAGE_PARTS``, distinct)
-    and ``challenge`` (``CHALLENGE_VERDICTS``, or ``None`` while it is owed).  Every
-    part must be one of the passage's locations, and a ``hasPart`` one: a claim
-    naming anything else says nothing a record can carry.
+    The claim is the one a record carries: a mapping with exactly the keys
+    ``COVERAGE_RECORD_KEYS`` (or an object with those attributes) -- ``complete``
+    (``True``), ``parts`` (the ``location_key`` of each part: at least
+    ``MIN_COVERAGE_PARTS``, distinct) and ``challenge`` (one of
+    ``CHALLENGE_VERDICTS``).  A claim no challenge has judged yet (owed) has no
+    challenge value and is no record's claim: its holder passes none, since it
+    upgrades nothing.  Every part must be one of the passage's locations, and a
+    ``hasPart`` one: a claim naming anything else says nothing a record can carry.
     """
+    if isinstance(coverage, (list, tuple, set, str, bytes)):
+        raise CfError(f"a passage's coverage claim is one {{complete, parts, challenge}} "
+                      f"object, not a {type(coverage).__name__}",
+                      hint="a passage carries at most one claim")
+    if isinstance(coverage, dict):
+        extra = sorted(set(coverage) - COVERAGE_RECORD_KEYS)
+        if extra:
+            raise CfError(f"a coverage claim is {{complete, parts, challenge}}; unexpected "
+                          f"{', '.join(map(str, extra))}",
+                          hint="the claim's note is not exported; a record carries the "
+                               "three keys and no others")
     if _field(coverage, "complete") is not True:
         raise CfError(f"a coverage claim says complete: true, not "
                       f"{_field(coverage, 'complete')!r}",
                       hint="a passage claims coverage only when its parts state every clause; "
                            "otherwise it carries no claim")
     challenge = _field(coverage, "challenge")
-    if challenge is not None:
-        check(str(challenge), CHALLENGE_VERDICTS, "coverage challenge")
+    if challenge is None or not isinstance(challenge, str):
+        raise CfError(f"a coverage claim carries its challenge value, not {challenge!r}",
+                      hint="an owed claim (no challenge judged it yet) upgrades nothing and is "
+                           "never exported: pass no claim until it has one")
+    check(challenge, CHALLENGE_VERDICTS, "coverage challenge")
     parts = _field(coverage, "parts")
     if not isinstance(parts, (list, tuple)) or not all(isinstance(p, str) and p
                                                        for p in parts):
@@ -857,8 +879,11 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
     definition) and, for a location a coverage claim names, its
     ``location_key``.  ``absent`` says the passage has a checked absence.
     ``coverage`` is the passage's coverage claim, or ``None`` (the default: the
-    three-argument call is unchanged) -- ``{complete: true, parts: [location
-    key, ...], challenge}``, its parts ``hasPart`` locations of ``locations``.
+    three-argument call is unchanged) -- exactly the claim a record carries,
+    ``{complete: true, parts: [location key, ...], challenge}``, its parts
+    ``hasPart`` locations of ``locations`` and its challenge one of
+    ``CHALLENGE_VERDICTS``.  A claim no challenge has judged yet (owed) is not
+    passed: it upgrades nothing, and no record carries it.
 
     * ``formalized`` -- a theorem or conjecture passage with an ``exactMatch``,
       ``closeMatch`` or ``broadMatch`` to a ``proved`` declaration, or an
@@ -881,13 +906,14 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
       never ``not_formalized``.
 
     The best status over all the evidence wins.  ``relatedMatch`` never counts
-    towards a status, and a coverage claim that is not ``survived`` (owed,
-    pending, not required, sampled out, or downgraded -- a refute removes the
-    claim) upgrades nothing.  The cases neither table names are decided here,
-    each conservatively (references/vocabulary.md section 1.11): a definition
-    passage matched exactly to a proved theorem is ``partial``; an example or
-    ``other`` passage takes the better of the two rows; and a passage whose
-    only locations are ``relatedMatch``, with no checked absence, is ``None``
+    towards a status, and a coverage claim that is not ``survived`` (pending,
+    not required, sampled out, or downgraded; an owed claim is not passed and a
+    refute removes the claim) upgrades nothing.  The cases neither table names
+    are decided here, each conservatively (references/vocabulary.md section
+    1.11): a definition passage matched exactly to a proved theorem is
+    ``partial``; an example or ``other`` passage takes the better of the two
+    rows; and a passage whose only locations are ``relatedMatch``, with no
+    checked absence, is ``None``
     -- the state a challenge leaves when it downgrades a passage's one
     location to ``relatedMatch``: nothing says it is formalized and nobody
     checked that it is absent, so it counts as unresolved (a miss for the
@@ -896,10 +922,13 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
     Refused (``CfError``), because no consistent record can say them: a checked
     absence beside a location that counts; a ``statement`` flag on a ``proved``
     declaration (``decide_proof_status`` gives a ``Prop``-valued definition every
-    status but ``proved``); a ``statement`` that is not a bool; a coverage claim
-    that is not ``complete: true``, names fewer than two distinct parts, or names
-    a part that is not one of the passage's ``hasPart`` locations; and any value
-    outside the vocabulary.
+    status but ``proved``); a ``statement`` that is not a bool; one
+    ``location_key`` on two locations; a coverage claim that is not ``complete:
+    true``, names fewer than two distinct parts, names a part that is not one of
+    the passage's ``hasPart`` locations, has no challenge value (``None``: owed)
+    or a key outside ``COVERAGE_RECORD_KEYS`` (a ``note``: the record format has
+    none); and any value outside the vocabulary -- a ``refuted`` challenge
+    among them, since a refute removes the claim.
     """
     check(passage_kind, PASSAGE_KINDS, "passage kind")
     best: str | None = None
@@ -924,6 +953,10 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
                                "re-join proof_status and the flag from the library index")
         key = _field(location, "location_key")
         if isinstance(key, str) and key:
+            if key in by_key:
+                raise CfError(f"location_key {key[:12]} appears twice in the passage's locations",
+                              hint="a location_key names one declaration at one commit, and a "
+                                   "passage has one location per declaration (gate rule 6)")
             by_key[key] = location
         if relation == RELATED_MATCH:
             continue

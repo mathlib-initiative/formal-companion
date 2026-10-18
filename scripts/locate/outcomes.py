@@ -995,9 +995,14 @@ def _derive(row: dict, problems: list[str]) -> None:
         row["status"] = None
         return
     joined = [l for l in row["locations"] if l.get("proof_status")]
-    coverage = row.get("coverage")
-    if row.get("coverage_lapsed") or len(joined) != len(row["locations"]):
-        coverage = None             # named as a problem already, or not joined at all
+    # the claim as its records will carry it (records.coverage_ext), so the status is the
+    # one the exported claim gives; an owed claim (no challenge value) is no record's
+    # claim and upgrades nothing, and a lapsed one is named as a problem already
+    claim = row.get("coverage")
+    coverage = None
+    if claim is not None and claim.get("challenge") is not None \
+            and not row.get("coverage_lapsed") and len(joined) == len(row["locations"]):
+        coverage = records.coverage_ext(claim)
     try:
         row["status"] = vocab.derive_status(row["passage_kind"] or vocab.PASSAGE_OTHER,
                                             joined, row["absence"] is not None, coverage)

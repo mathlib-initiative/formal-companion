@@ -97,13 +97,28 @@ class TestTheParityTable(unittest.TestCase):
         self.assertLessEqual(vocab.LOCATE_RELATIONS, {l["relation"] for l in locations})
         self.assertEqual({l["proof_status"] for l in locations}, vocab.PROOF_STATUS_SET)
         self.assertEqual({l["statement"] for l in locations}, {True, False})
-        challenges = {c["coverage"]["challenge"] for c in cases if c["coverage"]}
+        challenges = {c["coverage"].get("challenge") for c in cases if c["coverage"]}
         self.assertLessEqual(vocab.CHALLENGE_VERDICTS | {None}, challenges)
         self.assertEqual({c["absent"] for c in cases}, {True, False})
         self.assertEqual({c["coverage"] is None for c in cases}, {True, False})
         expected = {c.get("expected") for c in cases if not c.get("refused")}
         self.assertEqual(expected, set(vocab.DERIVED_STATUSES) | {None})
         self.assertEqual({c["table"] for c in cases}, {"old", "new"})
+
+    def test_what_no_record_carries_is_refused(self):
+        """Parity round 2: an owed claim, a claim beside its note, one key twice."""
+        cases = self.doc["cases"]
+        owed = [c for c in cases if c["coverage"] and c["coverage"].get("challenge") is None]
+        noted = [c for c in cases
+                 if c["coverage"] and set(c["coverage"]) - vocab.COVERAGE_RECORD_KEYS]
+        twice = [c for c in cases if len({l["location_key"] for l in c["locations"]})
+                 != len(c["locations"])]
+        for found in (owed, noted, twice):
+            self.assertTrue(found)
+            for case in found:
+                with self.subTest(case=case["id"]):
+                    self.assertTrue(case.get("refused"))
+        self.assertIn("C14", {c["id"] for c in owed})
 
     def test_an_open_reading_is_documented(self):
         for question in sorted({c["question"] for c in self.doc["cases"] if c.get("question")}):
@@ -123,10 +138,18 @@ class TestTheCoverageArgument(unittest.TestCase):
         parts = [loc("a", "hasPart", "proved"), loc("b", "hasPart", "proved")]
         self.assertEqual(vocab.derive_status("theorem", parts, False, claim("ab")),
                          "formalized")
-        for value in sorted(vocab.CHALLENGE_VERDICTS - {vocab.CHALLENGE_SURVIVED}) + [None]:
+        for value in sorted(vocab.CHALLENGE_VERDICTS - {vocab.CHALLENGE_SURVIVED}):
             with self.subTest(challenge=value):
                 self.assertEqual(vocab.derive_status("theorem", parts, False,
                                                      claim("ab", value)), "partial")
+
+    def test_an_owed_claim_is_no_records_claim(self):
+        """Parity round 2, C14: a claim with no challenge value is refused, as the
+        consumer refuses it; its holder passes no claim, which gives the same status."""
+        parts = [loc("a", "hasPart", "proved"), loc("b", "hasPart", "proved")]
+        with self.assertRaisesRegex(CfError, "carries its challenge value"):
+            vocab.derive_status("theorem", parts, False, claim("ab", None))
+        self.assertEqual(vocab.derive_status("theorem", parts, False, None), "partial")
 
     def test_objects_work_as_well_as_mappings(self):
         class Part:
@@ -150,10 +173,43 @@ class TestTheCoverageArgument(unittest.TestCase):
         for bad in ({"complete": True, "parts": "ab", "challenge": "survived"},
                     {"complete": True, "parts": ["a", 2], "challenge": "survived"},
                     {"complete": "true", "parts": ["a", "b"], "challenge": "survived"},
-                    {"parts": ["a", "b"], "challenge": "survived"}):
+                    {"parts": ["a", "b"], "challenge": "survived"},
+                    {"complete": True, "parts": ["a", "b"]},
+                    {"complete": True, "parts": ["a", "b"], "challenge": 1},
+                    [claim("ab"), claim("ab")]):
             with self.subTest(claim=bad):
                 with self.assertRaises(CfError):
                     vocab.derive_status("theorem", parts, False, bad)
+
+    def test_the_claim_is_the_records_three_keys(self):
+        """Parity round 2, A14: the record format's claim, and no note beside it."""
+        parts = [loc("a", "hasPart", "proved"), loc("b", "hasPart", "proved")]
+        self.assertEqual(vocab.COVERAGE_RECORD_KEYS, {"complete", "parts", "challenge"})
+        with self.assertRaisesRegex(CfError, "unexpected note"):
+            vocab.derive_status("theorem", parts, False, dict(claim("ab"), note="both halves"))
+
+    def test_a_refuted_claim_is_not_one(self):
+        """A refute removes the claim: ``refuted`` is no challenge value."""
+        parts = [loc("a", "hasPart", "proved"), loc("b", "hasPart", "proved")]
+        with self.assertRaisesRegex(CfError, "invalid coverage challenge: 'refuted'"):
+            vocab.derive_status("theorem", parts, False, claim("ab", "refuted"))
+
+    def test_one_location_key_on_two_locations_is_refused(self):
+        """Parity round 2, A15/A15b: whichever comes last, and with no claim at all."""
+        for locations in ([loc("b", "relatedMatch", "proved"), loc("a", "hasPart", "proved"),
+                           loc("b", "hasPart", "proved")],
+                          [loc("a", "hasPart", "proved"), loc("b", "hasPart", "proved"),
+                           loc("b", "relatedMatch", "proved")]):
+            with self.subTest(order=[l["relation"] for l in locations]):
+                with self.assertRaisesRegex(CfError, "appears twice"):
+                    vocab.derive_status("theorem", locations, False, claim("ab"))
+        with self.assertRaisesRegex(CfError, "appears twice"):
+            vocab.derive_status("theorem", [loc("a", "hasPart", "proved"),
+                                            loc("a", "exactMatch", "proved")], False)
+        # locations with no key (the bench's gold declarations) are not compared
+        bare = {"relation": "exactMatch", "proof_status": "proved"}
+        self.assertEqual(vocab.derive_status("theorem", [bare, dict(bare)], False),
+                         "formalized")
 
     def test_the_constants(self):
         self.assertEqual(vocab.COVERAGE_TARGET, "coverage")
@@ -161,7 +217,8 @@ class TestTheCoverageArgument(unittest.TestCase):
         self.assertEqual(vocab.MIN_COVERAGE_PARTS, 2)
         self.assertEqual(vocab.COVERAGE_ACTIONS, {"confirm", "refute"})
         self.assertLessEqual(vocab.COVERAGE_ACTIONS, vocab.CHALLENGE_ACTIONS)
-        for name in ("COVERAGE_TARGET", "MIN_COVERAGE_PARTS", "COVERAGE_ACTIONS"):
+        for name in ("COVERAGE_TARGET", "MIN_COVERAGE_PARTS", "COVERAGE_ACTIONS",
+                     "COVERAGE_RECORD_KEYS"):
             with self.subTest(name=name):
                 self.assertIn(f"`{name}`", VOCABULARY_MD)
 
@@ -440,6 +497,60 @@ class TestTheClaimReader(unittest.TestCase):
                 claim, why = self.read(**kwargs)
                 self.assertIsNone(claim)
                 self.assertIn(needle, why)
+
+
+class TestTheStatusReadsTheRecordsClaim(unittest.TestCase):
+    """Parity round 2: the outcomes derive the status from the claim the records carry.
+
+    ``records.coverage_ext`` is the one projection: the export writes it, and
+    ``outcomes._derive`` hands it to ``derive_status`` -- so the claim's note, which
+    the workspace keeps and no record carries, cannot change a status, and an owed
+    claim (no challenge value) is passed as no claim.
+    """
+
+    @staticmethod
+    def row(challenge="survived", **extra):
+        locations = [{"location_key": k, "relation": "hasPart", "proof_status": "proved",
+                      "statement": False, "challenge": "survived", "rank": r}
+                     for r, k in enumerate(("a" * 64, "b" * 64), 1)]
+        return {"source_id": "s", "item": "In-text #0a1b2c3d", "passage_kind": "theorem",
+                "outcome": "located", "missing": False, "locations": locations,
+                "refuted": [], "absence": None, "coverage_refuted": None,
+                "coverage": {"complete": True, "parts": ["a" * 64, "b" * 64],
+                             "note": "the two halves state both clauses",
+                             "challenge": challenge}, **extra}
+
+    def derive(self, row):
+        problems = []
+        outcomes._derive(row, problems)
+        return row["status"], problems
+
+    def test_the_projection_is_the_three_keys(self):
+        claim = self.row()["coverage"]
+        self.assertEqual(records.coverage_ext(claim),
+                         {"complete": True, "parts": claim["parts"], "challenge": "survived"})
+        self.assertEqual(set(records.coverage_ext(claim)), vocab.COVERAGE_RECORD_KEYS)
+
+    def test_a_survived_claim_with_its_note_formalizes(self):
+        self.assertEqual(self.derive(self.row()), ("formalized", []))
+
+    def test_an_owed_claim_upgrades_nothing_and_is_no_problem_here(self):
+        row = self.row(challenge=None)
+        self.assertEqual(self.derive(row), ("partial", []))
+        self.assertIsNone(row["challenge"])          # the export refuses it as owed
+
+    def test_a_lapsed_claim_upgrades_nothing(self):
+        self.assertEqual(self.derive(self.row(coverage_lapsed=True)), ("partial", []))
+
+    def test_the_export_refuses_a_claim_the_consumer_refuses(self):
+        row = self.row()
+        passage = {"item": row["item"], "locations": row["locations"],
+                   "coverage": dict(row["coverage"])}
+        self.assertIsNone(records.coverage_problem(passage))
+        for value, needle in ((None, "no challenge value"), ("refuted", "is not one of")):
+            with self.subTest(challenge=value):
+                passage["coverage"]["challenge"] = value
+                self.assertIn(needle, records.coverage_problem(passage))
 
 
 class TestTheBatches(unittest.TestCase):
