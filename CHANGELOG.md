@@ -296,6 +296,15 @@ release has something to say.
   alpha-spending), claiming a decision only past 150 eval articles or 400 gold
   positives, and records it in the loop ledger. `cflib.vocab` gains the
   labeler's modes. `cf score` is unchanged.
+- `tests/e2e/locate_synthetic.py`, the locate flow end to end on synthetic inputs,
+  run by the suite as `tests/test_e2e_locate_synthetic.py`: a universe through
+  `cf corpus`, a sourceset through `cf sourceset` from the recorded answers, L2,
+  the three `cf plan-locate` presets, documents written as a worker writes them
+  and judged by the STAGED gate and `passage_ids.py` (a copy of the planned
+  root's `gate/`, `python3 -I`, a bare environment) -- good ones passed, bad
+  ones refused by rule -- then `cf harvest`, `cf tally --locate`, `cf export
+  literature-links` and `cf bench build | anchor | freeze | score` over what
+  the earlier stages wrote.
 - The shared interfaces the locate packages meet at (integration wave 1). The corpus's
   read API (`scripts/corpus/query.py`) is what every consumer calls instead of a
   private reader: `check_universe` refuses a database built for another state of the

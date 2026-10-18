@@ -312,3 +312,12 @@ by `CF_TML` and `CF_MT` (plus the optional `CF_BASELINE_CORPUS`) — it defaults
 no path of its own and says what to set — and, unless `--offline`, network access
 for the errata fetch. Its generated
 fixtures are gitignored.
+
+`tests/e2e/locate_synthetic.py` is the same for locate, on synthetic inputs and
+with nothing outside the checkout: a universe through `cf corpus`, a sourceset
+through `cf sourceset` from the recorded answers in `tests/data/locate/wiki`, L2,
+the three `cf plan-locate` presets, the staged gate and `passage_ids.py` run from
+a copy of the planned root's `gate/` with `python3 -I`, then harvest, the locate
+tally, the Literature Links export and the bench. Run it with `python3
+tests/e2e/locate_synthetic.py [<scratch dir>]`; the suite runs it too, as
+`tests/test_e2e_locate_synthetic.py`.
