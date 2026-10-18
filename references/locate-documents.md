@@ -692,6 +692,20 @@ seeded sourceset appears whole or not at all — it is built in
 change to any view, the layout of a view's file included, is a new renderer
 id: `tests/test_locate_sources.py` pins every view of a synthetic page to it.
 
+**Another renderer's source is refused wherever locate would read it.** A
+manifest entry whose layer sha is recorded under any renderer id but
+`web-html/3` — `/1`, `/2`, an id this checkout does not know, or none — carries
+another rule's layer, offsets and passage ids, however consistent its own files
+are (`locate.inputs.check_renderer`, which `locate.inputs.check_source` runs
+first). `cf locate candidates` stops at it by name; `cf plan-locate` refuses it
+before it writes anything, so no task document and no `gate.json` pins it; the
+export refuses it per source in its report. Each refusal names the source, its
+renderer and the `create --from` step above. `cf bench build` refuses a drawn
+article of another renderer (an undrawn frame article of one is only recorded),
+and `cf bench score` refuses a run that read another rendering than the one its
+bench pinned. The gate is not one of them: it holds a run's
+documents to that run's own pins, which only the planner writes.
+
 Offsets are code-point offsets. A passage's `span` is a layer span; its id is
 computed on the head text at `HeadMap.to_head(span[0])` (§2 of the proposal,
 `references/vocabulary.md` §4), and a passage may not start inside a formula.
