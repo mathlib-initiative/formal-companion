@@ -328,7 +328,7 @@ a run's.
   freeze without `--plant` carries the last manifest's P over, verified.
 - **A P run** (proposal §8.1; the tools database of references/locate-documents.md §9): plan an
   eval locate run whose workers search the planted file while the gate and the outcomes check the
-  full `corpus.sqlite` -- the planner's tools-database option of cf plan-locate, naming
+  full `corpus.sqlite` -- `cf plan-locate --preset locate --tools-corpus-db <file>`, naming
   `benches/<id>/gold/planted/corpus.sqlite`, which records `run.yaml`
   `locate.universe.tools_corpus_db: {kind: planted, sha256}`. A citation of a removed declaration
   then passes gate rule 3 (the full database holds it) and lands in the outcome rows as a

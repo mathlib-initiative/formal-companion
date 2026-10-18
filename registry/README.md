@@ -182,8 +182,8 @@ and CC BY-SA attribution is), and the permalink `{pageid}` and `{revision}`, of
 which it must name `{revision}`. The free-text caps apply as for an entry, with
 `attribution` capped at 40 words. A registry entry whose id is a web source id
 of a known family is refused: it is a sourceset row, not an edition. **Nothing
-here fetches**: the fetcher a family will use is *not implemented* (`CLAUDE.md`
-§3 names it as a network exception).
+here fetches**: the fetcher a family uses is `scripts/sources/wikinet.py`, under
+`cf sourceset fetch --execute` (`CLAUDE.md` §3 names it as the network exception).
 
 ## What ships today
 

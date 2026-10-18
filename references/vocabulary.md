@@ -193,10 +193,13 @@ keys (`x_ledger_verdict`).
 
 ### 1.11 Locate — where a source is formalized, in any library
 
-The vocabulary of `docs/proposals/wikipedia-locate.md`, in `cflib.vocab`'s locate block. **Only
-the vocabulary is built** (with `vocab.derive_status`, `vocab.decide_proof_status`, the
-`In-text #<hex>` item of §4 and the head hash in `scripts/cflib/passages.py`); the planner,
-presets, gate, renderer, sourcesets and export that use it are not implemented. The extension
+The vocabulary of `docs/proposals/wikipedia-locate.md`, in `cflib.vocab`'s locate block, with
+`vocab.derive_status`, `vocab.decide_proof_status`, the `In-text #<hex>` item of §4 and the head
+hash in `scripts/cflib/passages.py`. The stages that use it are `scripts/sources/` (the renderer
+and sourcesets), `scripts/corpus/` (universes and `corpus.sqlite`), `scripts/locate/` (candidates,
+the planner, outcomes and the export), `scripts/gate/verify_locate.py` and `scripts/bench/`; the
+host-side copies of these values (the gate, the bridge helpers) are pinned to this block by
+tests. The extension
 namespace of every locate record is `org.mathlib-initiative.formal-companion.locate`
 (`LOCATE_EXTENSION`).
 
@@ -261,7 +264,9 @@ direction, subject the passage, object the declaration.
 `noMatch` (`NO_MATCH`) is the relation of an **absence** record only — one `lean` end per universe
 library, no `location` — never of a location. At most `MAX_LOCATIONS_PER_PASSAGE` (5) locations per
 passage, ranked. `WEAK_RELATIONS` (`relatedMatch`, `narrowMatch`, `hasPart`) are the ones the
-challenge sample re-judges.
+challenge sample re-judges. `RELATION_STRENGTH` orders the relations for a challenge's
+`downgrade`, which must name a strictly weaker one: `exactMatch` > `closeMatch` > `broadMatch` >
+`narrowMatch` = `hasPart` > `relatedMatch`.
 
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,

@@ -664,6 +664,25 @@ def spn(k):
     return (start, end)
 
 
+class TestTheLabelersQuote(unittest.TestCase):
+    """A quote is anchored only from its object form, and a wrong shape is named as one."""
+
+    LAYER = "Every widget has a lemma. The widget lemma states that every widget is round."
+
+    def test_an_object_quote_anchors(self):
+        span, why = gold_mod._anchor_quote(self.LAYER, {"exact": "The widget lemma states that"})
+        self.assertEqual(why, "")
+        self.assertEqual(self.LAYER[span[0]:span[1]], "The widget lemma states that")
+
+    def test_a_bare_string_is_named_not_read_as_no_quote(self):
+        span, why = gold_mod._anchor_quote(self.LAYER, "The widget lemma states that")
+        self.assertIsNone(span)
+        self.assertIn("is a str, not an object", why)
+
+    def test_no_quote(self):
+        self.assertEqual(gold_mod._anchor_quote(self.LAYER, None), (None, "the labeler gave no quote"))
+
+
 class TestTheMetrics(unittest.TestCase):
 
     def evaluate(self, tier, gold, run, *, state=None, ablated=None):

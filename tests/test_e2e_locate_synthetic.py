@@ -1,15 +1,12 @@
-"""The locate flow end to end, as one suite test: tests/e2e/locate_synthetic.py.
+"""The synthetic locate campaign end to end, as one test of the suite.
 
-New code.  The script chains the real commands of every locate package --
-``cf corpus``, ``cf sourceset``, ``cf locate candidates``, ``cf plan-locate`` for
-the three presets, the staged gate and ``passage_ids.py`` run from a copy of
-the planned root's ``gate/`` with ``python3 -I``, ``cf harvest``, ``cf tally
---locate``, ``cf export literature-links`` and ``cf bench`` -- over synthetic
-inputs (references/locate-documents.md sections 7-10, references/locate-bench.md).
-The packages' own tests each build the stage before theirs from the documented
-format; this test is the one where an artifact a stage writes is the one the
-next stage reads.  It needs nothing outside the checkout and the recorded
-answers under ``tests/data/locate/wiki``.
+New code, for the locate integration (docs/proposals/wikipedia-locate.md
+sections 2-9; references/locate-documents.md).  The driver is
+tests/e2e/locate_synthetic/driver.py, which also runs on its own; here it
+runs every stage in a temporary directory -- the universe, the sourceset, L2,
+the three presets with the staged out-of-tree gate over good and bad
+documents, the harvests, the tally, the sealed export and the bench score --
+and each stage's own checks read the artifacts it wrote.
 """
 from __future__ import annotations
 
@@ -18,7 +15,7 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
-import io
+import importlib.util
 import shutil
 import sys
 import tempfile
@@ -26,21 +23,43 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-if str(HERE / "e2e") not in sys.path:
-    sys.path.insert(0, str(HERE / "e2e"))
+DRIVER = HERE / "e2e" / "locate_synthetic" / "driver.py"
 
-import locate_synthetic  # noqa: E402
+# Loaded by path under its own name: a bare ``import`` would need the driver's
+# directory on sys.path, and a module name there shadows the stage packages.
+_spec = importlib.util.spec_from_file_location("locate_synthetic_driver", DRIVER)
+pipeline = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = pipeline
+_spec.loader.exec_module(pipeline)
 
 
-class TestTheLocateFlowEndToEnd(unittest.TestCase):
+@unittest.skipUnless(shutil.which("git"), "the ownership stage needs git")
+class TestTheSyntheticLocateCampaign(unittest.TestCase):
 
-    def test_every_stage_reads_what_the_one_before_wrote(self):
-        scratch = Path(tempfile.mkdtemp(prefix="cf-locate-e2e-")).resolve()
-        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
-        out = io.StringIO()
-        flow = locate_synthetic.main(scratch, out=out)
-        self.assertEqual(flow.failed, 0, out.getvalue())
-        self.assertGreaterEqual(flow.passed, 45, out.getvalue())
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp(prefix="cf-locate-e2e-"))
+        cls.pipe = pipeline.Pipeline(cls.root)
+        for name in pipeline.STAGES:
+            getattr(cls.pipe, name)()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def test_every_stage_ran(self):
+        commands = " ".join(self.pipe.log)
+        for needle in ("corpus build-db", "sourceset render", "locate candidates",
+                       "--preset locate-inventory", "--preset locate ", "--preset locate-challenge",
+                       "tally --locate", "export literature-links", "bench score"):
+            with self.subTest(stage=needle):
+                self.assertIn(needle, commands)
+
+    def test_the_score_is_pinned_and_measured(self):
+        score = self.pipe.score
+        self.assertRegex(score["measurement_id"], r"^[0-9a-f]{64}$")
+        self.assertEqual(score["tiers"]["G1"]["metrics"]["fnf_rate"]["value"], 0)
+        self.assertEqual(score["split"], "eval")
 
 
 if __name__ == "__main__":
