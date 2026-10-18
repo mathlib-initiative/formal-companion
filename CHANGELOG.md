@@ -35,6 +35,11 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- A challenge's prominence overturn to `subject` or `central` reopens the
+  passage: each of its records no verdict judged becomes `challenge_pending`
+  (a new `CHALLENGE_VERDICTS` value, exported, read as unchallenged) instead of
+  keeping `not_required`; the second smoke had exported two central absences
+  nobody hunted.
 - `cf harvest` fetches a locate run's host artifacts by asking the host
   whether each is there (`ssh test -f`) and copying it with a plain `rsync -a`:
   `--ignore-missing-args` is rsync 3.1's, macOS's 2.6.9 rejected it, and the

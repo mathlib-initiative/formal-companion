@@ -206,7 +206,9 @@ A locate task carries at most eight passages of one frozen inventory.
   A verdict names its record by string `item` (and string `location_key` for a
   location).
 - A record of the run not named by any challenge task is `not_required` or
-  `sampled_out`, as the challenge plan said.
+  `sampled_out`, as the challenge plan said — `challenge_pending` when a
+  prominence overturn to `subject` or `central` put it under a rule that
+  requires it (§10).
 
 ## 5. Candidates file (L2)
 
@@ -1135,8 +1137,13 @@ out has `outcome: null`. A passage answered in another task's document than its
 own is ignored there, and a declaration listed twice keeps its best rank. The
 passage's `challenge` is one value over its records — its locations, the
 refuted ones included, and its passage-level and prominence records: owed when
-any is owed, else `downgraded` when any changed, else `survived` when any was
-judged, else `sampled_out` or `not_required`.
+any is owed, else `challenge_pending` when any is, else `downgraded` when any
+changed, else `survived` when any was judged, else `sampled_out` or
+`not_required`. A prominence overturn to `subject` or `central` reopens the
+passage: §5 refutes such a passage's locations and hunts its absence, so each
+of its records no verdict judged (planned `not_required` or `sampled_out` under
+`supporting`) becomes `challenge_pending` — exported as it is, read by a
+consumer as unchallenged, never as "no rule applied".
 
 A challenge run is applied only to a locate run its plan's `challenged_runs`
 names, only through the plan records whose `run_id` is that run, and a verdict

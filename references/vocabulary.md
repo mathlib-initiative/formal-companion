@@ -313,6 +313,10 @@ not a bool (absent or `null` is `false`); and any value outside these sets.
 | `downgraded` | challenged, and the relation or the outcome was weakened |
 | `not_required` | outside every challenge rule |
 | `sampled_out` | inside the stratified sample's frame, and not drawn |
+| `challenge_pending` | a rule now requires it and no challenge judged it: the passage's prominence was overturned to `subject` or `central` after its records were planned under `supporting`, so its unjudged locations, absence or unresolved outcome are refuted-by-default or hunted records nobody refuted or hunted. Exported as it is; a consumer reads it as unchallenged |
+
+`CHALLENGE_UNJUDGED` is `not_required` · `sampled_out` · `challenge_pending`: the values of a
+record no verdict judged.
 
 **The values the locate documents carry** (`references/locate-documents.md`, every one in
 `cflib.vocab`'s locate block):

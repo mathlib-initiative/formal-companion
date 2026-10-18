@@ -404,15 +404,19 @@ def run_passages(paths, rows: list[dict], runs: dict[str, list[str]], articles: 
             outcome=row.get("outcome"), status=row.get("status"),
             locations=list(row.get("locations") or []), receipt=receipts.get(key)))
     owed = {"located": 0, "absent": 0, "unresolved": 0}
+    pending = 0
     for row in by_key.values():
         if row.get("outcome") in owed and row.get("challenge") is None:
             owed[row["outcome"]] += 1
+        pending += row.get("challenge") == vocab.CHALLENGE_PENDING
     coverage = {"basis": ("inventory task manifests" if manifests_seen
                           else "assumed: the inventory has no task manifest"),
                 "inventory_planned": len(planned) if manifests_seen else None,
                 "outcome_rows": len(by_key),
                 "missing_rows": sum(1 for r in by_key.values() if r.get("missing")),
-                "challenge_owed": {**owed, "total": sum(owed.values())}}
+                "challenge_owed": {**owed, "total": sum(owed.values())},
+                # a passage a prominence overturn left unjudged under its new rule
+                "challenge_pending": pending}
     return out, state, coverage, sorted(set(rendered.values()))
 
 

@@ -366,7 +366,9 @@ A location:
 - `location_key` = sha256(source_id, clean(item), library, commit,
   declaration) — run-free, for idempotent upserts by consumers. The run-scoped
   `finding_id` stays in the ledger.
-- `challenge` ∈ {`survived`, `downgraded`, `not_required`, `sampled_out`}.
+- `challenge` ∈ {`survived`, `downgraded`, `not_required`, `sampled_out`,
+  `challenge_pending`}; the last is a record a prominence overturn put under
+  a rule (§5) after its challenge ran, read as unchallenged.
 - At most **K = 5** locations per passage, ranked.
 
 An absence is one record with `relation: "noMatch"`, `status:
@@ -467,7 +469,9 @@ re-runs forty-nine others:
 - a stratified sample of `non_math`/`expository` scopes, `supporting`
   demotions and weak relations (`relatedMatch`, `narrowMatch`, `hasPart`) is
   re-judged;
-- everything else is `not_required` or `sampled_out`, and says so.
+- everything else is `not_required` or `sampled_out`, and says so; a passage
+  whose prominence the challenge overturned to `subject` or `central` has its
+  unjudged records marked `challenge_pending`, never left `not_required`.
 
 Hard rule 5 applies per record: nothing leaves the workspace without a
 `challenge` value.
