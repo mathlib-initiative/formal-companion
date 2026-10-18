@@ -336,7 +336,9 @@ one value: the sha256 of the receipt file's exact bytes.
 `universe_sha256`, `frozen` (the `YYYY-MM-DD` it was frozen; the export refuses a
 universe without one), `libraries` — a **list** sorted by id, each `{"id",
 "brain_lib", "repo", "commit"` (40 hex)`, "toolchain", "roots": [...], "licence"`
-(`{"spdx"}` or null)`, "display_name"}`, where `display_name` is the library's
+(`{"spdx"}`, never null: the export refuses a universe with a library that records
+no licence, naming it and the `cf corpus add … --licence <SPDX id>` that records
+it)`, "display_name"}`, where `display_name` is the library's
 `brain_lib`, the one name the universe gives it — and `excluded`, `[{"id",
 "reason"}]`. Nothing the universe does not define (no index paths, no host
 instructions).
@@ -633,7 +635,11 @@ drivers' indexes is made, ingested, built and searched.
 `universe.yaml` is the proposal's §2.3 shape, written by `cf corpus`
 (`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
 a document names as `library`), `brain_lib`, `repo`, a 40-hex `commit`,
-`toolchain`, `roots`, `licence`, `conventions` and, once ingested, `index: {path,
+`toolchain`, `roots`, `licence` (`{spdx}`: an SPDX id or expression; null while a
+library pinned without `--licence` has none, and a re-add with `--licence` records
+it, since the licence is outside `universe_sha256`; a re-add naming another
+licence or another `brain_lib` than the row records is refused), `conventions`
+and, once ingested, `index: {path,
 sha256, declarations}` — and `published_index: {schema, reason, accepted}` when that
 index is one the library publishes itself, accepted by name with `cf corpus ingest
 --accept-published <reason>` because neither the probe nor its canary checked it —

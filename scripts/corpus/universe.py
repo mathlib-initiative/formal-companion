@@ -7,8 +7,9 @@ shape references/locate-documents.md section 8 fixes.  One file per universe,
 
 * ``libraries`` -- one row per library: the universe-local ``id`` a document
   names as ``library``, ``brain_lib``, ``repo``, ``commit``, ``toolchain``,
-  ``roots``, ``licence``, ``conventions`` and, once ingested, ``index: {path,
-  sha256, declarations}``;
+  ``roots``, ``licence`` (``{spdx}``, or null until a re-add records it: the
+  export refuses a library with none), ``conventions`` and, once ingested,
+  ``index: {path, sha256, declarations}``;
 * ``published_index`` on a library row -- the recorded acceptance of an index
   the library publishes itself, which the probe and its canary never checked;
 * ``host`` on a library row -- ``{kind, ref, options}``, the rest of the line the
@@ -57,6 +58,9 @@ TOOLCHAIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._+
 _MODULE = r"[A-Za-z_][A-Za-z0-9_'!?]*(?:\.[A-Za-z_][A-Za-z0-9_'!?]*)*"
 ROOT_GLOB = re.compile(rf"{_MODULE}(?:\.\+|\.\*)?\Z")
 _TOOLCHAIN_PREFIX = "leanprover/lean4:"
+#: an SPDX licence id or expression, as a row's ``licence: {spdx: ...}`` carries it
+#: (``Apache-2.0``, ``MIT OR Apache-2.0``, ``LicenseRef-x``): a record set names it
+SPDX = re.compile(r"[A-Za-z0-9(][A-Za-z0-9.+:() -]{0,99}\Z")
 
 #: the order the keys of one library row are written in
 LIBRARY_KEYS = ("id", "brain_lib", "repo", "commit", "toolchain", "roots", "licence",
@@ -242,7 +246,14 @@ class Universe:
         universe is frozen, and a new pin is a new universe.  ``host`` (the
         driver line's kind, ref and options, see the module docstring) is set or
         replaced on a re-add: it says how the pin is built, not what is pinned.
+
+        ``licence`` may be left out when a library is pinned (the export refuses
+        a library without one, by name) and recorded by a later re-add: it is
+        outside ``universe_sha256``, so the pins and indexes stay valid.  A
+        re-add that names another licence or another ``brain_lib`` than the row
+        records is refused, never silently ignored.
         """
+        licence = str(licence).strip() if licence is not None else None
         row = {"id": library_id, "brain_lib": brain_lib or library_id, "repo": repo,
                "commit": commit, "toolchain": toolchain, "roots": list(roots),
                "licence": {"spdx": licence} if licence else None,
@@ -263,6 +274,20 @@ class Universe:
                 raise CfError(f"library {library_id!r} is already pinned at "
                               f"{str(existing.get('commit'))[:12]} ({existing.get('repo')})",
                               hint="a universe is frozen: make a new universe for a new pin")
+            if brain_lib and existing.get("brain_lib") != brain_lib:
+                raise CfError(f"library {library_id!r} already records brain_lib "
+                              f"{existing.get('brain_lib')!r}, not {brain_lib!r}",
+                              hint="a brain_lib token names the library to its consumer; a "
+                                   "universe is frozen, so make a new universe for a new one")
+            recorded = existing.get("licence")
+            if row["licence"] is not None and recorded != row["licence"]:
+                if recorded:
+                    raise CfError(f"library {library_id!r} already records licence "
+                                  f"{(recorded or {}).get('spdx')!r}, not {licence!r}",
+                                  hint="a recorded licence is not replaced by a re-add; if it "
+                                       "was recorded wrong, correct `licence:` in universe.yaml "
+                                       "(it is outside universe_sha256)")
+                existing["licence"] = row["licence"]
             if host is not None:
                 existing["host"] = row["host"]
             return existing
@@ -447,6 +472,13 @@ def _library_problems(lib: dict) -> list[str]:
         problems.append(f"repo {lib.get('repo')!r} is not an https repository URL")
     if not COMMIT.match(str(lib.get("commit") or "")):
         problems.append(f"commit {lib.get('commit')!r} is not 40 lowercase hex digits")
+    licence = lib.get("licence")
+    if licence is not None and not (isinstance(licence, dict) and set(licence) == {"spdx"}
+                                    and isinstance(licence["spdx"], str)
+                                    and licence["spdx"] == licence["spdx"].strip()
+                                    and SPDX.match(licence["spdx"])):
+        problems.append(f"licence {licence!r} is not {{spdx: <SPDX id>}} (e.g. --licence "
+                        f"Apache-2.0)")
     if not TOOLCHAIN.match(str(lib.get("toolchain") or "")):
         problems.append(f"toolchain {lib.get('toolchain')!r} is not an elan toolchain such as "
                         f"leanprover/lean4:v4.34.0")

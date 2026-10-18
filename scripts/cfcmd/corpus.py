@@ -84,7 +84,9 @@ def register(subparsers) -> None:
     add.add_argument("--toolchain", help="the lean-toolchain, e.g. leanprover/lean4:v4.34.0")
     add.add_argument("--roots", nargs="+", default=None, help="root modules")
     add.add_argument("--brain-lib", default=None, help="the consumer's library token (default: the id)")
-    add.add_argument("--licence", default=None, help="SPDX licence id")
+    add.add_argument("--licence", default=None,
+                     help="SPDX licence id; a record set needs it, and a re-add records a "
+                          "missing one")
     add.add_argument("--conventions", default=None, metavar="FILE",
                      help="the library's conventions file, copied to conventions/<library>.md")
     add.add_argument("--exclude", default=None, metavar="REASON",
@@ -254,6 +256,10 @@ def _add(paths, args) -> int:
           + (f", ref {host['ref']}" if host["ref"] != row["commit"] else "")
           + (f", options {';'.join(f'{k}={v}' for k, v in host['options'].items())}"
              if host["options"] else ""))
+    if not row.get("licence"):
+        print(f"  note: {row['id']} records no licence; a record set names every library's, so "
+              f"`cf export literature-links` refuses this universe until a re-add with "
+              f"--licence <SPDX id> records it")
     if not universe.canary_passed(row["toolchain"]):
         print(f"  note: no passed canary for Lean {lean_version(row['toolchain'])} yet; "
               f"`cf corpus probe-command {universe.id} --canary --toolchain {row['toolchain']}` "
