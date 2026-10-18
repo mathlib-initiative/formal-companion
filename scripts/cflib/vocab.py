@@ -555,8 +555,21 @@ INDEX_FLAG_PUBLISHED_STATUS = "published_status"
 INDEX_FLAGS = frozenset({INDEX_FLAG_IS_PROP_UNKNOWN, INDEX_FLAG_PUBLISHED_STATUS})
 
 # --- the benchmark (sections 8 and 9)
-#: the gold tiers, never pooled
-BENCH_TIERS = frozenset({"G1", "G3", "GX", "G4", "P"})
+#: the gold tiers, never pooled, in the order a score and a comparison report them
+BENCH_TIER_ORDER = ("G1", "G3", "GX", "G4", "P")
+BENCH_TIERS = frozenset(BENCH_TIER_ORDER)
+#: the tiers whose gold is labelled (a label file each); P's gold is the planted ablation
+BENCH_LABELLED_TIERS = ("G1", "G3", "GX", "G4")
+#: the tiers a pre-registered claim may come from (G1 only in the blind arm)
+BENCH_CLAIM_TIERS = ("G1", "G3", "P")
+#: the kinds of database a locate run's workers search (references/locate-documents.md
+#: section 9): the full ``corpus.sqlite``, the G1-blind ``corpus.blind.sqlite``, a
+#: planted (module-ablated) one for the P tier; written into candidates files
+#: (``corpus_db.kind``), gate.json and run.yaml (``tools_corpus_db.kind``) and score pins
+TOOLS_DB_FULL = "full"
+TOOLS_DB_BLIND = "blind"
+TOOLS_DB_PLANTED = "planted"
+TOOLS_DB_KINDS = (TOOLS_DB_FULL, TOOLS_DB_BLIND, TOOLS_DB_PLANTED)
 #: G1 is scored in two arms that are never pooled (section 8.1)
 BENCH_ARM_ASSISTED = "assisted"
 BENCH_ARM_BLIND = "blind"

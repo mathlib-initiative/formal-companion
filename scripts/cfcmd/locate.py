@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cflib import log
+from cflib import log, vocab
 from cflib.errors import CfError
 from cflib.workspace import from_args
 
@@ -73,7 +73,7 @@ def run(args) -> int:
     # one row per universe AND database kind, so the blind arm's run never overwrites the
     # assisted one's record; a --source run says it covered only those sources
     kind = result["corpus_db"]["kind"]
-    key = args.universe if kind == "full" else f"{args.universe}/{Path(result['dir']).name}"
+    key = args.universe if kind == vocab.TOOLS_DB_FULL else f"{args.universe}/{Path(result['dir']).name}"
     ss_state.record(ws.paths, args.sourceset, "candidates", key, {
         "manifest": result["sourceset"], "universe_sha256": result["universe"]["sha256"],
         "corpus_db": result["corpus_db"], "blind": result["blind"], "dir": result["dir"],

@@ -64,9 +64,10 @@ COST_MAX_INCREASE = 0.20
 DEFAULT_ALPHA = 0.05
 #: the fewest bootstrap draws that may lie below the bound an alpha asks for
 MIN_TAIL_DRAWS = 10
-#: the tiers a pre-registered metric may come from (G1 only in the blind arm)
-CLAIM_TIERS = ("G1", "G3", "P")
-TIERS = ("G1", "G3", "GX", "G4", "P")
+#: the tiers a pre-registered metric may come from (G1 only in the blind arm), and every
+#: tier in its reporting order: cflib.vocab's (CLAUDE.md section 4: one vocabulary)
+CLAIM_TIERS = vocab.BENCH_CLAIM_TIERS
+TIERS = vocab.BENCH_TIER_ORDER
 #: the pins that say how a run was configured: noted when two scores differ, refused
 #: between a baseline and its A/A replicate (corpus_db_sha256 is a recorded pin only:
 #: a rebuild of one universe state is not byte-identical, references/locate-documents.md)
@@ -96,7 +97,8 @@ def _values(pin) -> Any:
 
 
 def _planted(doc: dict) -> bool:
-    return ((doc.get("pins") or {}).get("tools_corpus_db") or {}).get("kind") == "planted" \
+    return ((doc.get("pins") or {}).get("tools_corpus_db") or {}).get("kind") == \
+        vocab.TOOLS_DB_PLANTED \
         or "P" in (doc.get("tiers") or {})
 
 
@@ -120,8 +122,8 @@ def refuse_incomparable(base: dict, cand: dict) -> list[str]:
         raise CfError(f"the scores were computed by two scorers ({str(b_scorer)[:12]}… and "
                       f"{str(c_scorer)[:12]}…)",
                       hint="re-score both runs with this checkout's cf bench score")
-    b_tools = ((base["pins"].get("tools_corpus_db") or {}).get("kind")) or "full"
-    c_tools = ((cand["pins"].get("tools_corpus_db") or {}).get("kind")) or "full"
+    b_tools = ((base["pins"].get("tools_corpus_db") or {}).get("kind")) or vocab.TOOLS_DB_FULL
+    c_tools = ((cand["pins"].get("tools_corpus_db") or {}).get("kind")) or vocab.TOOLS_DB_FULL
     if b_tools != c_tools or _planted(base) != _planted(cand):
         raise CfError(f"the workers searched a {b_tools} and a {c_tools} database",
                       hint="a planted (P) or blind tools database is its own measurement: "
