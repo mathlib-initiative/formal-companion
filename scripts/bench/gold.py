@@ -4,8 +4,10 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8.1 and 8.4
 in the formats references/locate-bench.md sections 4 to 7 fix.
 
 **G1** (maintainer-curated positives) starts mechanical: each curated entry --
-a Mathlib ``1000.yaml`` QID, a ``100.yaml`` title, an ``@[wikidata]`` tag in the
-universe's tag table -- names declarations; each is resolved at the universe's
+a Mathlib ``1000.yaml`` QID (a suffixed key names its base QID), a ``100.yaml``
+entry by the QIDs 1000.yaml settles for it or by its folded title (both read by
+``bench.curated``, the reader the build's curated stratum uses), an
+``@[wikidata]`` tag in the universe's tag table -- names declarations; each is resolved at the universe's
 commit through the rename table (else dropped with the reason), and the accept
 set is widened with the ``to_additive`` twins and renames that exist at the pin.
 Anchoring a resolved entry to a passage, and adjudicating its relation once,
@@ -42,6 +44,7 @@ from cflib.jsonio import read_json, write_json
 from cflib.paths import skill_root
 from cflib.yamlio import load_yaml
 
+from . import curated as curated_mod
 from . import inputs
 from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GOLD_SCHEMA,
                      LABEL_ARGS_SCHEMA, LABEL_FILES, LABEL_RESULT_SCHEMA, SPEND_SCHEMA,
@@ -62,7 +65,6 @@ MAX_EXCERPT_CHARS = 4000
 #: the relations that make a gold declaration count towards ``formalized``
 COUNTING = frozenset(vocab.LOCATE_RELATIONS - {vocab.RELATED_MATCH})
 
-_QID = re.compile(r"Q[1-9][0-9]*\Z")
 
 
 def new_canary() -> str:
@@ -90,43 +92,25 @@ def _yaml_or_json(path: Path) -> Any:
     return load_yaml(text, where=str(path))
 
 
-def _decls_of(entry: dict) -> list[str]:
-    out = []
-    if isinstance(entry.get("decl"), str):
-        out.append(entry["decl"])
-    for name in entry.get("decls") or []:
-        if isinstance(name, str):
-            out.append(name)
-    return [n.strip() for n in out if n and n.strip()]
+def read_curated_lists(path_1000: Path | None, path_100: Path | None) -> list[tuple[str, list[dict]]]:
+    """``[(via, rows)]`` of the curated lists ``cf bench anchor`` was given.
 
-
-def read_curated_1000(path: Path) -> list[dict]:
-    """Mathlib's ``$MATHLIB/docs/1000.yaml`` shape: QID -> ``{title, decl | decls, ...}``."""
-    data = _yaml_or_json(path)
-    if not isinstance(data, dict):
-        raise CfError(f"{path} is not a mapping keyed by Wikidata QID")
-    out = []
-    for key in sorted(data, key=str):
-        entry = data[key] if isinstance(data[key], dict) else {}
-        qid = str(key).strip()
-        if not _QID.match(qid):
-            raise CfError(f"{path}: key {key!r} is not a Wikidata QID")
-        out.append({"key": qid, "qid": qid, "title": entry.get("title"),
-                    "declarations": _decls_of(entry)})
-    return out
-
-
-def read_curated_100(path: Path) -> list[dict]:
-    """Mathlib's ``$MATHLIB/docs/100.yaml`` shape: number -> ``{title, decl | decls, ...}``; no QID."""
-    data = _yaml_or_json(path)
-    if not isinstance(data, dict):
-        raise CfError(f"{path} is not a mapping keyed by theorem number")
-    out = []
-    for key in sorted(data, key=lambda k: (len(str(k)), str(k))):
-        entry = data[key] if isinstance(data[key], dict) else {}
-        out.append({"key": str(key), "qid": None, "title": entry.get("title"),
-                    "declarations": _decls_of(entry)})
-    return out
+    Read by ``bench.curated`` -- the reader ``cf bench build`` draws its curated
+    stratum with -- so a suffixed 1000.yaml key names its base QID, and a
+    100.yaml entry carries the QIDs 1000.yaml settles for it and matches by its
+    folded title as well.  Each row is ``{key, qids, title, declarations,
+    by_title, method}``.
+    """
+    paths, kinds = [], []
+    for path, kind in ((path_1000, curated_mod.LIST_1000), (path_100, curated_mod.LIST_100)):
+        if path:
+            paths.append(path)
+            kinds.append(kind)
+    lists = curated_mod.read_lists(paths, kinds=kinds)
+    return [(kind, [{"key": e.key, "qids": list(e.qids), "title": e.title,
+                     "declarations": list(e.declarations), "by_title": e.matches_by_title,
+                     "method": e.method} for e in lists.of_list(kind)])
+            for kind in kinds]
 
 
 def read_rename_table(path: Path | None) -> dict[str, str]:
@@ -152,10 +136,6 @@ def read_rename_table(path: Path | None) -> dict[str, str]:
             raise CfError(f"{path}:{number}: a rename line is `old new` or `old -> new`")
         out[parts[0]] = parts[1]
     return out
-
-
-def normalized_title(title: str | None) -> str:
-    return " ".join(str(title or "").casefold().split())
 
 
 # --------------------------------------------------------------------------
@@ -226,7 +206,7 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
     for a in articles:
         if a.get("wikidata"):
             by_qid.setdefault(a["wikidata"], []).append(a)
-        by_title.setdefault(normalized_title(a.get("title")), []).append(a)
+        by_title.setdefault(curated_mod.fold_title(a.get("title")), []).append(a)
     claims: list[dict] = []
     unmatched: dict[str, int] = {}
     no_declarations: dict[str, int] = {}
@@ -235,18 +215,25 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
             if not row["declarations"]:
                 no_declarations[via] = no_declarations.get(via, 0) + 1
                 continue
-            if row.get("qid"):
-                matched = by_qid.get(row["qid"], [])
-            else:
-                matched = by_title.get(normalized_title(row.get("title")), [])
+            matched: dict[str, tuple[dict, str]] = {}
+            for qid in row.get("qids") or ([row["qid"]] if row.get("qid") else []):
+                for a in by_qid.get(qid, []):
+                    matched.setdefault(a["source_id"], (a, row.get("method") or ""))
+            if row.get("by_title"):
+                for a in by_title.get(curated_mod.fold_title(row.get("title")), []):
+                    matched.setdefault(a["source_id"], (a, "title"))
             if not matched:
                 unmatched[via] = unmatched.get(via, 0) + 1
                 continue
-            for article in matched:
+            for sid in sorted(matched):
+                article, how = matched[sid]
+                evidence = f"{via} {row['key']}"
+                if via == curated_mod.LIST_100:
+                    evidence += f" ({'by title' if how == 'title' else 'QID from ' + how})"
                 claims.append({"source_id": article["source_id"], "qid": article.get("wikidata"),
                                "title": article.get("title"), "via": via, "key": row["key"],
                                "declarations": [(library, d) for d in row["declarations"]],
-                               "evidence": f"{via} {row['key']}"})
+                               "evidence": evidence})
     libraries = sorted(set(tag_libraries) | {library})
     for article in articles:
         qid = article.get("wikidata")

@@ -54,6 +54,7 @@ class World:
 
     def __init__(self, root: Path, articles: int = 6):
         self.root = write_workspace(root)
+        self.pages = articles
         self.articles: dict[str, dict] = {}
         entries = []
         for i in range(articles):
@@ -92,14 +93,47 @@ class World:
                      "renderer": "web-html/1"}
             entries.append(entry)
             self.articles[sid] = {"entry": entry, "layer": layer, "spans": spans, "index": i}
+        self.entries = {e["source_id"]: e for e in entries}
+        self.write_manifest()
+        self.build_universe()
+
+    def write_manifest(self) -> None:
+        """manifest-1.jsonl from ``self.entries`` (a test's sourceset has one version)."""
         header = {"schema": "cf-sourceset/1", "id": SOURCESET, "version": 1, "family": "enwiki",
                   "previous_sha256": None, "created": "2026-10-17T00:00:00Z",
-                  "sources": len(entries)}
+                  "sources": len(self.entries)}
         manifest = self.root / "sourcesets" / SOURCESET / "manifest-1.jsonl"
-        manifest.write_text("".join(canonical(x) + "\n" for x in [header, *sorted(
-            entries, key=lambda e: e["source_id"])]), encoding="utf-8")
+        manifest.write_text("".join(canonical(x) + "\n" for x in [header, *(
+            self.entries[k] for k in sorted(self.entries))]), encoding="utf-8")
         self.manifest_sha = hashlib.sha256(manifest.read_bytes()).hexdigest()
-        self.build_universe()
+
+    def add_revision(self, i: int, revision: int, *, rendered: bool = True, **fields) -> str:
+        """Another revision of article ``i``'s page: its entry with ``fields`` changed.
+
+        A rendered one gets a copy of article ``i``'s files (the same layer); an
+        unrendered one has no directory and null ``raw``/``html``/``layer`` shas.
+        """
+        base = self.articles[self.sid(i)]
+        pageid = base["entry"]["pageid"]
+        sid = f"enwiki-{pageid}-{revision}"
+        entry = {**base["entry"], "source_id": sid, "revision": revision, **fields}
+        if rendered:
+            src = self.root / "sourcesets" / SOURCESET / "sources" / self.sid(i)
+            dst = src.parent / sid
+            dst.mkdir(parents=True)
+            for f in src.iterdir():
+                (dst / f.name).write_bytes(f.read_bytes())
+        else:
+            entry.update(raw_sha256=None, html_sha256=None, layer_sha256=None, renderer=None)
+        self.entries[sid] = entry
+        self.articles[sid] = {**base, "entry": entry}
+        self.write_manifest()
+        return sid
+
+    def change_entry(self, sid: str, **fields) -> None:
+        """Rewrite one manifest entry's fields (``None`` makes a field null)."""
+        self.entries[sid].update(fields)
+        self.write_manifest()
 
     # -- the universe ---------------------------------------------------------
     def build_universe(self, declarations: list[tuple] | None = None) -> None:
@@ -194,7 +228,7 @@ class World:
         return path
 
     def frame_file(self, ids: list[int] | None = None) -> Path:
-        ids = list(range(len(self.articles))) if ids is None else ids
+        ids = list(range(self.pages)) if ids is None else ids
         return self.write("inputs/tier-a.txt", "".join(f"{1001 + i}\n" for i in ids))
 
     def curated_1000(self) -> Path:

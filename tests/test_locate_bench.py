@@ -41,13 +41,14 @@ except ImportError:  # pragma: no cover
 
 import cf as cf_main  # noqa: E402
 from bench import compare as compare_mod  # noqa: E402
+from bench import curated as curated_mod  # noqa: E402
 from bench import draw as draw_mod  # noqa: E402
 from bench import gold as gold_mod  # noqa: E402
 from bench import inputs  # noqa: E402
 from bench import metrics as m  # noqa: E402
 from bench import score as score_mod  # noqa: E402
 from bench.layout import BenchLayout, overlap_words  # noqa: E402
-from cflib import vocab  # noqa: E402
+from cflib import vocab, yamlio  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
 
@@ -175,14 +176,16 @@ class TestTheFrameAndTheDraws(unittest.TestCase):
         self.assertEqual(frame["N_curated"], 3)          # article 5 shares article 0's QID
         self.assertTrue(all(a["layer_sha256"] for a in frame["articles"]))
 
-    def test_an_article_the_manifest_lacks_or_holds_unrendered_is_refused_by_name(self):
+    def test_an_article_the_manifest_lacks_is_refused_by_name_and_an_unrendered_one_listed(self):
         with self.assertRaises(CfError) as ctx:
             self.frame([{"pageid": 1001}, {"pageid": 4242}])
         self.assertIn("pageid 4242", str(ctx.exception))
         self.manifest.entries[self.world.sid(1)]["layer_sha256"] = None
-        with self.assertRaises(CfError) as ctx:
-            self.frame([{"pageid": 1002}])
-        self.assertIn(self.world.sid(1), str(ctx.exception))
+        frame = self.frame([{"pageid": 1001}, {"pageid": 1002}])
+        self.assertEqual(frame["N"], 2)
+        self.assertEqual((frame["N_rendered"], frame["unrendered"]), (1, [self.world.sid(1)]))
+        self.assertFalse(next(a for a in frame["articles"]
+                              if a["source_id"] == self.world.sid(1))["rendered"])
 
     def test_the_draws_are_a_function_of_the_seed_with_their_probabilities(self):
         frame = self.frame()
@@ -202,15 +205,291 @@ class TestTheFrameAndTheDraws(unittest.TestCase):
         self.assertTrue(all(r["pi_uniform"] == 1.0 for r in short["articles"]))
 
     def test_the_curated_qids_read_a_mapping_or_a_list(self):
-        self.assertIn("Q99999000", draw_mod.read_qids(self.world.curated_1000()))
+        self.assertIn("Q99999000", curated_mod.read_lists([self.world.curated_1000()]).qids)
         listed = self.world.write("inputs/qids.txt", "# curated\nQ1\nQ22\nnot-a-qid\n")
-        self.assertEqual(draw_mod.read_qids(listed), {"Q1", "Q22"})
+        lists = curated_mod.read_lists([listed])
+        self.assertEqual(lists.qids, {"Q1", "Q22"})
+        self.assertEqual(lists.files[0]["rejected"], ["not-a-qid"])   # reported, never read
         frame = self.world.write("inputs/frame.json", json.dumps([1001, {"source_id": "x"}]))
         self.assertEqual(draw_mod.read_frame_list(frame), [{"pageid": 1001}, {"source_id": "x"}])
 
 
 def frame_curated(frame: dict, sid: str) -> bool:
     return next(a for a in frame["articles"] if a["source_id"] == sid)["curated"]
+
+
+#: Mathlib's 1000.yaml shape, reduced: a suffixed key beside its base (Q99999003X), two
+#: suffixed keys whose base is no key (Q99999004A/B), and an entry with no declaration
+CURATED_1000 = """# synthetic, in the shape of $MATHLIB/docs/1000.yaml
+Q99999001:
+  title: Widget lemma 1
+  decls:
+    - Widget.mul_spanning
+    - Widget.shared_name
+  authors: A. Author
+
+Q99999003:
+  title: Widget lemma 3
+
+Q99999003X:
+  title: Widget lemma 3, the strong form
+  decl: Widget.conj_three
+
+Q99999004A:
+  title: Widget lemma 4, first half
+  decl: Widget.spanning_zero
+
+Q99999004B:
+  title: Widget lemma 4, second half
+"""
+
+#: Mathlib's 100.yaml shape, reduced: numbered keys, padded colons, links whose
+#: values hold colons, curly quotes, no QID anywhere
+CURATED_100 = """# synthetic, in the shape of $MATHLIB/docs/100.yaml
+#
+# See yaml_check.py for documentation about the allowed fields in this file.
+
+1:
+  title  : The Law of Widgets
+  decls  :
+    - Widget.shared_name
+  authors: A. Author (first) and B. Author (second)
+2:
+  title  : The Widget Lemma 2
+  decl   : Widget.tagged_two
+  authors: C. Author
+3:
+  title  : Gadget’s Rule – Widget Form
+  authors: D. Author
+  links  :
+    result : https://example.org/gadget/blob/0000000/Gadget.lean#L1-L9
+    website: https://example.org/gadget
+4:
+  title  : A Theorem Nobody Benched
+  decl   : Widget.spanning_one
+  note   : "listed, with no article in the frame"
+"""
+
+
+class TestCuratedLists(unittest.TestCase):
+    """Mathlib's two lists as they really are, reduced to synthetic entries.
+
+    The field case: a suffixed 1000.yaml key was dropped with the QIDs only it
+    names, and 100.yaml -- keyed by number, no QID -- was read as zero QIDs
+    without a word, so the curated stratum lost every article only 100.yaml names.
+    """
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=6)
+        self.world.change_entry(self.world.sid(3), title="Gadget's rule - widget form")
+        self.p1000 = self.world.write("inputs/1000.yaml", CURATED_1000)
+        self.p100 = self.world.write("inputs/100.yaml", CURATED_100)
+        self.manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+
+    def test_a_suffixed_key_names_its_base_qid(self):
+        lists = curated_mod.read_lists([self.p1000])
+        self.assertEqual(lists.qids, {"Q99999001", "Q99999003", "Q99999004"})
+        keys = {e.key: e.qids for e in lists.entries}
+        self.assertEqual(keys["Q99999004A"], ["Q99999004"])
+        self.assertEqual(keys["Q99999003X"], ["Q99999003"])
+        bad = self.world.write("inputs/bad.yaml", "Q1:\n  title: a\nWidget:\n  title: b\n")
+        with self.assertRaises(CfError) as ctx:
+            curated_mod.read_lists([bad])
+        self.assertIn("'Widget'", str(ctx.exception))
+
+    def test_100_yaml_resolves_through_1000_yaml_and_matches_by_title(self):
+        for pyyaml in (True, False):
+            with self.subTest(pyyaml=pyyaml), mock.patch.object(
+                    yamlio, "_pyyaml", yamlio._pyyaml if pyyaml else None):
+                lists = curated_mod.read_lists([self.p1000, self.p100])
+                by_key = {e.key: e for e in lists.of_list(curated_mod.LIST_100)}
+                self.assertEqual(sorted(by_key), ["1", "2", "3", "4"])
+                self.assertEqual(by_key["1"].qids, ["Q99999001"])        # a shared declaration
+                self.assertEqual(by_key["1"].method, "a declaration shared with 1000.yaml")
+                self.assertEqual(by_key["2"].qids, [])                   # by title only
+                record = next(f for f in lists.files if f["kind"] == curated_mod.LIST_100)
+                self.assertEqual((record["entries"], record["title_only"]), (4, 3))
+                frame = draw_mod.build_frame([{"pageid": 1001 + i} for i in range(6)],
+                                             self.manifest, lists)
+                via = {a["source_id"]: a["curated_via"] for a in frame["articles"]}
+                w = self.world
+                self.assertEqual(via[w.sid(1)], ["mathlib_1000 Q99999001", "mathlib_100 #1"])
+                self.assertEqual(via[w.sid(2)], ["mathlib_100 #2"])          # "The Widget Lemma 2"
+                self.assertIn("mathlib_100 #3", via[w.sid(3)])               # curly quote, en dash
+                self.assertEqual(via[w.sid(4)], ["mathlib_1000 Q99999004A",
+                                                 "mathlib_1000 Q99999004B"])
+                self.assertEqual(via[w.sid(0)], [])
+                self.assertEqual([u["key"] for u in frame["curated_lists"]["unmatched_100"]], ["4"])
+                self.assertEqual(frame["N_curated"], 4)
+
+    def test_100_yaml_alone_is_never_zero_qids_without_a_word(self):
+        lists = curated_mod.read_lists([self.p100])
+        frame = draw_mod.build_frame([{"pageid": 1001 + i} for i in range(6)], self.manifest, lists)
+        self.assertEqual({a["source_id"] for a in frame["articles"] if a["curated"]},
+                         {self.world.sid(2), self.world.sid(3)})
+        self.assertEqual([u["key"] for u in frame["curated_lists"]["unmatched_100"]], ["1", "4"])
+        out = cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+                 "--frame", self.world.frame_file(), "--curated-qids", self.p100,
+                 "--uniform", 2, "--curated", 2, "--seed", 3)
+        self.assertIn("2 entr(ies) name no frame article", out)
+        self.assertIn("4 matched by title only", out)      # nothing to resolve through
+        doc = json.loads(layout_of(self.world).frame_json.read_text())
+        self.assertEqual(doc["curated_lists"]["files"][0]["kind"], "mathlib_100")
+
+    def test_the_anchor_reads_the_same_lists(self):
+        cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+           "--frame", self.world.frame_file(), "--curated-qids", self.p1000,
+           "--curated-qids", self.p100, "--uniform", 6, "--curated", 0, "--seed", 3)
+        cf(self.world, "bench", "anchor", "b1", "--universe", fx.UNIVERSE,
+           "--curated-1000", self.p1000, "--curated-100", self.p100)
+        doc = json.loads(layout_of(self.world).g1_resolved.read_text())
+        evidence = {e["source_id"]: e["evidence"] for e in doc["entries"]}
+        w = self.world
+        self.assertIn("mathlib_1000 Q99999003X", evidence[w.sid(3)])   # no crash on the suffix
+        self.assertIn("mathlib_1000 Q99999004A", evidence[w.sid(4)])
+        self.assertIn("mathlib_100 2 (by title)", evidence[w.sid(2)])
+        self.assertEqual(doc["unmatched"], {"mathlib_100": 1})
+        self.assertEqual(doc["listed_without_declarations"], {"mathlib_1000": 2, "mathlib_100": 1})
+
+    def test_the_list_names_are_the_vocabularys(self):
+        self.assertLessEqual({curated_mod.LIST_1000, curated_mod.LIST_100}, vocab.CANDIDATE_VIA)
+
+
+class TestAPartlyRenderedSourceset(unittest.TestCase):
+    """The bench builds from a sourceset rendered only where the draw landed.
+
+    The field case, reduced: a frame of every Tier A article, of which only the
+    drawn ones (and a few more) were fetched and rendered.  The build refused
+    every unrendered frame article, so it needed the whole tier rendered first.
+    """
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=6)
+        manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+        frame = draw_mod.build_frame([{"pageid": 1001 + i} for i in range(6)], manifest,
+                                     curated_mod.read_lists([self.world.curated_1000()]))
+        self.drawn = {r["source_id"] for r in
+                      draw_mod.draw(frame, uniform=2, curated=1, seed=5)["articles"]}
+        self.assertLess(len(self.drawn), 6)
+        self.others = sorted(set(self.world.entries) - self.drawn)
+
+    def build(self, *extra):
+        return cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+                  "--frame", self.world.frame_file(), "--curated-qids", self.world.curated_1000(),
+                  "--uniform", 2, "--curated", 1, "--spans-per-article", 2, "--seed", 5, *extra)
+
+    def unrender(self, sid):
+        keys = ("raw_sha256", "html_sha256", "layer_sha256", "renderer")
+        self.rendered = getattr(self, "rendered", {})
+        self.rendered[sid] = {k: self.world.entries[sid][k] for k in keys}
+        self.world.change_entry(sid, **{k: None for k in keys})
+
+    def test_only_the_drawn_articles_need_a_render_and_pi_is_the_whole_frames(self):
+        for sid in self.others:
+            self.unrender(sid)
+        out = self.build()
+        lay = layout_of(self.world)
+        frame = json.loads(lay.frame_json.read_text())
+        draw = json.loads(lay.draw_json.read_text())
+        self.assertEqual(frame["N"], 6)
+        self.assertEqual(sorted(frame["unrendered"]), self.others)
+        self.assertEqual({r["source_id"] for r in draw["articles"]}, self.drawn)
+        self.assertTrue(all(r["pi_uniform"] == 2 / 6 for r in draw["articles"]))
+        self.assertNotIn("excluded", draw)
+        self.assertIn(f"{6 - len(self.others)} rendered, {len(self.others)} not yet", out)
+        self.assertFalse(lay.unrendered_list.exists())
+
+    def test_a_drawn_unrendered_article_is_refused_with_the_step_that_fetches_it(self):
+        gone = sorted(self.drawn)[0]
+        self.unrender(gone)
+        with self.assertRaises(CfError) as ctx:
+            self.build()
+        lay = layout_of(self.world)
+        self.assertIn(gone, str(ctx.exception))
+        self.assertIn("cf sourceset fetch", ctx.exception.hint)
+        self.assertIn("cf sourceset render", ctx.exception.hint)
+        self.assertIn("--exclude-unrendered", ctx.exception.hint)
+        self.assertEqual(lay.unrendered_list.read_text(), f"{gone}\n")
+        for written in (lay.frame_json, lay.draw_json, lay.bench_yaml):
+            self.assertFalse(written.exists(), written)
+
+    def test_or_excluded_with_its_inclusion_probabilities(self):
+        gone = sorted(self.drawn)[0]
+        self.unrender(gone)
+        out = self.build("--exclude-unrendered")
+        lay = layout_of(self.world)
+        draw = json.loads(lay.draw_json.read_text())
+        self.assertEqual([r["source_id"] for r in draw["excluded"]], [gone])
+        row = draw["excluded"][0]
+        self.assertIn("not rendered", row["reason"])
+        self.assertGreater(row["pi"], 0.0)
+        self.assertEqual({r["source_id"] for r in draw["articles"]}, self.drawn - {gone})
+        self.assertIn(gone, sorted(draw["uniform"]["drawn"] + draw["curated"]["drawn"]))
+        host = json.loads(lay.host_manifest.read_text())["articles"]
+        self.assertNotIn(gone, sum(host.values(), []))
+        spans = json.loads(lay.spans_json.read_text())["spans"]
+        self.assertNotIn(gone, {s["source_id"] for s in spans})
+        self.assertIn("excluded : 1 drawn article(s)", out)
+        # rendered later: the same draw, nothing excluded, the list gone
+        self.world.change_entry(gone, **self.rendered[gone])
+        self.build()
+        again = json.loads(lay.draw_json.read_text())
+        self.assertEqual({r["source_id"] for r in again["articles"]}, self.drawn)
+        self.assertNotIn("excluded", again)
+        self.assertFalse(lay.unrendered_list.exists())
+
+
+class TestTheFrameReadsTheAdoptedRevision(unittest.TestCase):
+    """A consumer-pinned page is read at its pin, even once a newer revision is rendered.
+
+    The field case, reduced: a page enumerated at its latest revision and a
+    consumer's older pin adopted beside it, both rendered.  A frame that took
+    the highest rendered revision benched the newer one, which no run reads.
+    """
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=3)
+        w = self.world
+        # page 1001: the enumerated latest (2002) and an adopted older pin (1990),
+        # recorded, as adopt can, without the page's QID and assessment
+        self.pin0 = w.add_revision(0, 1990, origin="adopted", wikidata=None, assessment=None,
+                                   adopted_from={"consumer": "c", "pins_sha256": "9" * 64})
+        # page 1002: the consumer pinned the enumerated revision itself (2003), and a
+        # newer enumerated revision (2100) was rendered later
+        self.newer1 = w.add_revision(1, 2100)
+        w.change_entry(w.sid(1), adopted_from={"consumer": "c", "pins_sha256": "9" * 64})
+
+    def test_a_page_id_resolves_to_the_adopted_revision_with_the_pages_facts(self):
+        manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+        frame = draw_mod.build_frame([{"pageid": 1001}, {"pageid": 1002}, {"pageid": 1003}],
+                                     manifest, {"Q99999000"})
+        by_page = {a["pageid"]: a for a in frame["articles"]}
+        self.assertEqual(by_page[1001]["source_id"], self.pin0)
+        self.assertEqual(by_page[1001]["revision_basis"], "adopted")
+        self.assertEqual(by_page[1001]["wikidata"], "Q99999000")
+        self.assertEqual(by_page[1001]["assessment"], {"class": "B", "importance": "mid"})
+        self.assertEqual(by_page[1001]["page_facts_from"],
+                         {"wikidata": self.world.sid(0), "assessment": self.world.sid(0)})
+        self.assertTrue(by_page[1001]["curated"])
+        self.assertEqual(by_page[1002]["source_id"], self.world.sid(1))
+        self.assertEqual(by_page[1002]["revision_basis"], "adopted")
+        self.assertEqual(by_page[1003]["revision_basis"], "enumerated")
+        self.assertEqual(frame["N_adopted"], 2)
+
+    def test_an_unrendered_pin_is_not_replaced_by_a_rendered_revision(self):
+        self.world.change_entry(self.pin0, layer_sha256=None, renderer=None)
+        manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+        frame = draw_mod.build_frame([{"pageid": 1001}], manifest, set())
+        self.assertEqual(frame["unrendered"], [self.pin0])     # the pin, waiting for its render
+
+    def test_the_build_benches_the_pins(self):
+        cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+           "--frame", self.world.frame_file(), "--uniform", 3, "--curated", 0, "--seed", 7)
+        lay = layout_of(self.world)
+        drawn = {r["source_id"] for r in json.loads(lay.draw_json.read_text())["articles"]}
+        self.assertEqual(drawn, {self.pin0, self.world.sid(1), self.world.sid(2)})
+        host = json.loads(lay.host_manifest.read_text())["articles"]
+        self.assertNotIn(self.newer1, sum(host.values(), []))
 
 
 class TestClustersAndSplits(unittest.TestCase):
@@ -260,6 +539,27 @@ class TestSpanSample(unittest.TestCase):
         self.assertAlmostEqual(a[0]["pi_span"], 0.5)
         self.assertTrue(a[0]["span_id"].startswith("g3-"))
         self.assertEqual(len(draw_mod.sample_spans("s1", frame, 8, 3, 0.5)), 2)
+
+    def test_nested_blocks_are_one_unit_the_outermost(self):
+        # the field case, reduced: a displayed formula inside a paragraph, an item of a
+        # nested list, a theorem box around its paragraph -- all blocks of their own
+        layer = ("one two three four five six seven. "                    # p [0, 34] holds
+                 "alpha beta gamma delta epsilon zeta eta theta iota. "   # p [35, 86] holds math
+                 "w x y z v u t s.")                                       # li [87, 103]
+        paragraphs = [{"span": [0, 34], "block": "theorem_box"}, {"span": [0, 34], "block": "p"},
+                      {"span": [35, 86], "block": "p", "math": True},
+                      {"span": [52, 70], "block": "math", "math": True},
+                      {"span": [87, 103], "block": "li"}, {"span": [91, 103], "block": "li"}]
+        frame = draw_mod.span_frame(layer, paragraphs, [])
+        self.assertEqual([(f["span"], f["block"]) for f in frame],
+                         [([0, 34], "theorem_box"), ([35, 86], "p"), ([87, 103], "li")])
+        spans = draw_mod.sample_spans("s1", frame, 8, 3, 1.0)
+        self.assertEqual(len(spans), 3)
+        draw_mod.check_spans_disjoint(layer, spans)
+        self.assertTrue(all(s["pi_span"] == 1.0 for s in spans))
+        with self.assertRaises(CfError) as ctx:
+            draw_mod.span_frame(layer, paragraphs + [{"span": [60, 100], "block": "dd"}], [])
+        self.assertIn("overlap without nesting", str(ctx.exception))
 
     def test_the_build_samples_spans_and_writes_a_label_free_host_manifest(self):
         world = built(self)
@@ -627,10 +927,12 @@ class TestTheLabeler(unittest.TestCase):
         cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET, "--frame",
            self.world.frame_file(), "--curated-qids", self.world.curated_1000(), "--uniform", 6,
            "--curated", 3, "--spans-per-article", 2, "--seed", 7)          # same inputs: fine
+        frame_before = layout_of(self.world).frame_json.read_bytes()
         with self.assertRaises(CfError) as ctx:
             cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET, "--frame",
                self.world.frame_file(), "--uniform", 2, "--seed", 8)
         self.assertIn("another draw", str(ctx.exception))
+        self.assertEqual(layout_of(self.world).frame_json.read_bytes(), frame_before)
 
     def test_calibration_measures_h_tag_blind(self):
         transcribe(self.world, "anchor", lambda t: {

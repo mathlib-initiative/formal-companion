@@ -4,7 +4,8 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8 and 9 (the
 formats are references/locate-bench.md).  ``cf score`` is a different
 measurement and is untouched.
 
-    cf bench build <id> --sourceset S --frame tier-a.txt --curated-qids 1000.yaml --seed 7
+    cf bench build <id> --sourceset S --frame tier-a.txt --curated-qids 1000.yaml \
+        --curated-qids 100.yaml --seed 7
     cf bench anchor <id> --universe u1 --curated-1000 1000.yaml --curated-100 100.yaml
     cf bench anchor <id> --emit-args anchor        # then run the labeler Workflow
     cf bench anchor <id> --transcribe result.json
@@ -28,12 +29,13 @@ from pathlib import Path
 
 from cflib import vocab
 from cflib.errors import CfError
-from cflib.jsonio import read_json, write_json
+from cflib.jsonio import atomic_write, read_json, write_json
 from cflib.paths import skill_root
 from cflib.workspace import from_args
 from cflib.yamlio import read_yaml, write_yaml
 
 from bench import compare as compare_mod
+from bench import curated as curated_mod
 from bench import draw as draw_mod
 from bench import gold as gold_mod
 from bench import inputs
@@ -59,8 +61,10 @@ def register(subparsers) -> None:
                    help="the sourceset manifest version to pin (default: the latest)")
     b.add_argument("--frame", required=True, type=Path,
                    help="the tier list: page ids or source ids, one per line, or a JSON list")
-    b.add_argument("--curated-qids", type=Path, default=None,
-                   help="QIDs with curated gold (a list, or a mapping keyed by QID such as 1000.yaml)")
+    b.add_argument("--curated-qids", type=Path, action="append", default=[], metavar="FILE",
+                   help="a curated list: Mathlib's 1000.yaml (keyed by QID, suffixed keys "
+                        "included), its 100.yaml (numbered; resolved through a 1000.yaml given "
+                        "with it, else matched by title), or a plain list of QIDs; repeatable")
     b.add_argument("--uniform", type=int, default=40, help="articles drawn uniformly (default 40)")
     b.add_argument("--curated", type=int, default=40,
                    help="articles drawn from the frame's curated QIDs (default 40)")
@@ -70,6 +74,10 @@ def register(subparsers) -> None:
     b.add_argument("--eval", type=float, default=0.5, help="share in eval (default 0.5)")
     b.add_argument("--test", type=float, default=0.0, help="share in test (default 0: no test split)")
     b.add_argument("--seed", type=int, default=0, help="the seed every draw is a function of")
+    b.add_argument("--exclude-unrendered", action="store_true",
+                   help="bench the drawn articles that are rendered and record the others in "
+                        "draw.json's excluded, with their inclusion probabilities (by default "
+                        "the build refuses and lists the sources to fetch and render)")
 
     a = sub.add_parser("anchor", help="G1 resolution, the frozen labeler's emit and transcribe "
                                       "(G1 anchors, G3 blind labels, h, GX), and G4 spot checks")
@@ -231,6 +239,32 @@ def _skill_root() -> str:
 # build
 # --------------------------------------------------------------------------
 
+def _print_curated(lists: dict) -> None:
+    """What each curated list contributed, and what it could not place -- never silent."""
+    if not lists["files"]:
+        print("  curated  : no curated list (--curated-qids): the curated draw is empty")
+        return
+    for f in lists["files"]:
+        line = f"  curated  : {f['name']} ({f['kind']}): {f['entries']} entr(ies), {f['qids']} QID(s)"
+        if f["kind"] == curated_mod.LIST_100:
+            line += f", {f['title_only']} matched by title only (no QID)"
+        if f["rejected"]:
+            line += (f"; {len(f['rejected'])} value(s) are not QIDs and were not read: "
+                     + ", ".join(f["rejected"][:5]) + (" …" if len(f["rejected"]) > 5 else ""))
+        print(line)
+    if lists["unmatched_100"]:
+        print(f"  100.yaml : {len(lists['unmatched_100'])} entr(ies) name no frame article "
+              f"(frame.json curated_lists.unmatched_100); one the frame should hold is settled "
+              f"by its QID in a plain list")
+
+
+def _unrendered_step(sourceset: str, listed: Path) -> str:
+    """The named step that makes the drawn articles benchable: fetch and render exactly them."""
+    return (f"fetch and render exactly the sources listed in {listed} -- cf sourceset fetch "
+            f"{sourceset}, then cf sourceset render {sourceset} --source <id> for each -- and "
+            f"build again: the draw depends on the frame and the seed alone, so it does not change")
+
+
 def _build(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
@@ -242,19 +276,33 @@ def _build(ws, args) -> int:
     old_draw = layout.draw_json.read_bytes() if layout.draw_json.is_file() else None
     manifest = inputs.load_manifest(paths, args.sourceset, args.manifest_version)
     rows = draw_mod.read_frame_list(args.frame)
-    curated = draw_mod.read_qids(args.curated_qids) if args.curated_qids else set()
+    curated = curated_mod.read_lists(args.curated_qids)
     frame = draw_mod.build_frame(rows, manifest, curated)
-    write_json(layout.frame_json, {"schema": FRAME_SCHEMA, "bench": args.bench_id,
-                                   "sourceset": manifest.pin,
-                                   "frame_file_sha256": inputs.sha256_file(args.frame),
-                                   "curated_file_sha256": (inputs.sha256_file(args.curated_qids)
-                                                           if args.curated_qids else None),
-                                   **frame}, sort_keys=True)
+    frame_doc = {"schema": FRAME_SCHEMA, "bench": args.bench_id, "sourceset": manifest.pin,
+                 "frame_file_sha256": inputs.sha256_file(args.frame), **frame}
     drawn = draw_mod.draw(frame, uniform=args.uniform, curated=args.curated, seed=args.seed)
+    # the draw reads no layer; the drawn articles' spans do (section 8.5 step 3)
+    unrendered = draw_mod.unrendered_drawn(frame, drawn)
+    if unrendered and args.exclude_unrendered:
+        drawn = draw_mod.exclude(drawn, unrendered, reason=f"not rendered in sourceset "
+                                 f"{args.sourceset} version {manifest.version}")
     draw_doc = {"schema": DRAW_SCHEMA, "bench": args.bench_id, **drawn}
     if had_gold and old_draw is not None and json.loads(old_draw) != draw_doc:
         raise CfError(f"bench {args.bench_id} already holds gold labelled for another draw",
                       hint="a new draw is a new bench: build it under a new id")
+    if unrendered:
+        atomic_write(layout.unrendered_list, "".join(f"{sid}\n" for sid in unrendered))
+        if not args.exclude_unrendered:
+            raise CfError(
+                f"{len(unrendered)} of the {len(drawn['articles'])} drawn article(s) are not rendered "
+                f"in sourceset {args.sourceset} version {manifest.version}: "
+                + ", ".join(unrendered[:10]) + (" …" if len(unrendered) > 10 else ""),
+                hint=_unrendered_step(args.sourceset, layout.unrendered_list)
+                + "; or pass --exclude-unrendered to bench the rest, each excluded article "
+                  "recorded in draw.json with its inclusion probabilities")
+    elif layout.unrendered_list.is_file():
+        layout.unrendered_list.unlink()
+    write_json(layout.frame_json, frame_doc, sort_keys=True)
     write_json(layout.draw_json, draw_doc, sort_keys=True)
     bench = {"schema": BENCH_SCHEMA, "id": args.bench_id,
              "created": (previous or {}).get("created") or now(),
@@ -279,14 +327,22 @@ def _build(ws, args) -> int:
         spans.extend(chosen)
     write_json(layout.spans_json, {"schema": SPANS_SCHEMA, "bench": args.bench_id,
                                    "per_article": args.spans_per_article, "spans": spans,
-                                   "drawn_from": "paragraphs.json blocks with at least four words, "
-                                                 "sectioned by sections.json; no run"},
+                                   "drawn_from": "the outermost paragraphs.json blocks with at least "
+                                                 "four words, sectioned by sections.json; no run"},
                sort_keys=True)
     clusters = _recluster(paths, layout, bench)
     counts = {s: sum(1 for v in clusters["articles"].values() if v == s) for s in ("dev", "eval", "test")}
     print(f"built bench {args.bench_id}: frame {frame['N']} article(s) ({frame['N_curated']} curated), "
           f"drawn {len(articles)} ({drawn['uniform']['n']} uniform, {drawn['curated']['n']} curated), "
           f"{len(clusters['clusters'])} cluster(s), {len(spans)} G3 span(s)")
+    if frame["unrendered"]:
+        print(f"  frame    : {frame['N_rendered']} rendered, {len(frame['unrendered'])} not yet "
+              f"(frame.json unrendered); the draw is the whole frame's, so only drawn ones must be")
+    if drawn.get("excluded"):
+        print(f"  excluded : {len(drawn['excluded'])} drawn article(s) not rendered, benched without "
+              f"them (draw.json excluded, each with its inclusion probabilities; "
+              f"{layout.unrendered_list} lists them)")
+    _print_curated(frame["curated_lists"])
     print(f"  splits   : dev {counts['dev']}, eval {counts['eval']}, test {counts['test']}")
     print(f"  host     : {layout.host_manifest} (label-free)")
     print(f"  next     : cf bench anchor {args.bench_id} --universe <id> --curated-1000 <file>")
@@ -322,11 +378,7 @@ def _anchor(ws, args) -> int:
         if resolving:
             library = _library(universe, args.library)
             commit = inputs.libraries(universe)[library]["commit"]
-            lists = []
-            if args.curated_1000:
-                lists.append(("mathlib_1000", gold_mod.read_curated_1000(args.curated_1000)))
-            if args.curated_100:
-                lists.append(("mathlib_100", gold_mod.read_curated_100(args.curated_100)))
+            lists = gold_mod.read_curated_lists(args.curated_1000, args.curated_100)
             resolved = gold_mod.resolve_g1(list(articles.values()), conn, library=library,
                                            commit=commit, lists=lists,
                                            renames=gold_mod.read_rename_table(args.rename_table),
@@ -487,6 +539,8 @@ def _freeze(ws, args) -> int:
         "library": bench.get("library"),
         "frame_sha256": inputs.sha256_file(layout.frame_json),
         "draw_sha256": inputs.sha256_file(layout.draw_json),
+        "excluded": [{"source_id": r["source_id"], "reason": r["reason"], "pi": r["pi"]}
+                     for r in read_json(layout.draw_json).get("excluded") or []],
         "spans_sha256": inputs.sha256_file(layout.spans_json),
         "clusters_sha256": inputs.sha256_file(layout.clusters_json),
         "clusters": clusters["clusters"],
