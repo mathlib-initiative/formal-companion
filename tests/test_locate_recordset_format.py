@@ -383,6 +383,37 @@ class TestARepositoryTheConsumerCannotLink(_Exported):
         self.assertFalse(self.paths.export_dir("set-1").exists())
 
 
+class TestADisplayNameOnlyWhenItIsOne(_Exported):
+    """R2-F: ``display_name`` was always ``brain_lib``, which has no grammar; the review's
+    BrainLib variant (``--brain-lib 'Beta!'``) exported cleanly and the consumer refused
+    the whole set over ``libraries[1]: display_name``.  The contract lets it be null."""
+
+    def test_r2_a_brain_lib_outside_the_display_grammar_exports_a_null_name(self):
+        self.challenge()
+        from corpus.universe import Universe
+
+        path = self.paths.universe_yaml(F.U)
+        universe = Universe.load(path)
+        universe.library("beta")["brain_lib"] = "Beta!"
+        universe.save()
+        code, out, err = self.export()
+        self.assertEqual(code, 0, out + err)
+        uni = read_json(self.paths.export_dir("set-1") / "universe.json")
+        names = {lib["id"]: (lib["brain_lib"], lib["display_name"]) for lib in uni["libraries"]}
+        self.assertEqual(names, {"alpha": ("Alpha", "Alpha"), "beta": ("Beta!", None)})
+        for lib in uni["libraries"]:
+            self.assertEqual(set(lib), UNIVERSE_LIBRARY_KEYS)
+
+    def test_r2_the_display_grammar_is_the_consumers(self):
+        for name in ("Mathlib", "FF.AdicModules", "Lean core (Init, Std)", "A & B: x/y+z's_-",
+                     "a\u00b7b", "x" * 100):
+            with self.subTest(name=name):
+                self.assertTrue(export_mod.DISPLAY_NAME_RE.fullmatch(name))
+        for name in ("Beta!", "", "x" * 101, "Ma\u200bthlib", "\uff2dathlib", "a\tb", "a;b"):
+            with self.subTest(name=name):
+                self.assertIsNone(export_mod.DISPLAY_NAME_RE.fullmatch(name))
+
+
 class TestTheRecords(_Exported):
 
     def test_m7_every_record_carries_its_passages_section_and_prominence(self):

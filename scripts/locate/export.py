@@ -68,6 +68,7 @@ does not name.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
@@ -96,6 +97,11 @@ SEAL_KEYS = ("schema", "set_id", "campaign", "universe", "sourceset", "skill_com
 #: starting ``run:`` (that prefix is a run token's); the grammar of ``set_id`` and
 #: ``sourceset.id`` too (``cflib.vocab.RECORDSET_TOKEN``, the one definition)
 CAMPAIGN_ID_RE = vocab.RECORDSET_TOKEN
+#: a library's ``display_name`` the consumer shows: printable ASCII letters, digits,
+#: spaces and ``,.()/+:'&_-`` or a middle dot, at most 100 -- no invisible or look-alike
+#: character (its consumer refuses the whole set over any other, and the contract
+#: lets the name be null instead)
+DISPLAY_NAME_RE = re.compile(r"[A-Za-z0-9 ,.()\u00b7/+:'&_-]{1,100}")
 #: a run id inside a run token: letters, digits and ``._-``, at most 64
 #: (``cflib.vocab.RUN_TOKEN_ID``, which ``cf plan-locate`` checks a run id against)
 TOKEN_RUN_ID_RE = vocab.RUN_TOKEN_ID
@@ -169,8 +175,11 @@ def _universe_json(universe: inputs.Universe) -> dict:
     Each library: ``id``, ``brain_lib``, ``repo``, ``commit``, ``toolchain``,
     ``roots``, ``licence`` (``{spdx}``: a library with none is refused, by name,
     with the re-add that records it) and ``display_name`` -- the
-    library's ``brain_lib``, the one name the universe gives it.  ``excluded`` is
-    ``[{id, reason}]``.  Sorted by id; nothing the universe does not define.
+    library's ``brain_lib``, the one name the universe gives it, when that is a
+    display name (:data:`DISPLAY_NAME_RE`), else null: ``brain_lib`` has no grammar
+    of its own, and the consumer refuses the whole set over a display name outside
+    its own.  ``excluded`` is ``[{id, reason}]``.  Sorted by id; nothing the
+    universe does not define.
     """
     frozen = str(universe.owner.frozen or "")
     if not frozen:
@@ -195,7 +204,8 @@ def _universe_json(universe: inputs.Universe) -> dict:
         libs.append({"id": lid, "brain_lib": name, "repo": lib.get("repo"),
                      "commit": lib["commit"], "toolchain": lib.get("toolchain"),
                      "roots": [str(r) for r in lib.get("roots") or []],
-                     "licence": lib.get("licence"), "display_name": name})
+                     "licence": lib.get("licence"),
+                     "display_name": name if DISPLAY_NAME_RE.fullmatch(name) else None})
     excluded = [{"id": str(row.get("id")), "reason": str(row.get("reason") or "")}
                 for row in sorted(universe.excluded, key=lambda r: str(r.get("id")))]
     return {"id": universe.id, "universe_sha256": universe.sha256, "frozen": frozen,

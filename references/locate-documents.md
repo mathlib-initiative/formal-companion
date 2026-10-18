@@ -339,7 +339,11 @@ universe without one), `libraries` — a **list** sorted by id, each `{"id",
 (`{"spdx"}`, never null: the export refuses a universe with a library that records
 no licence, naming it and the `cf corpus add … --licence <SPDX id>` that records
 it)`, "display_name"}`, where `display_name` is the library's
-`brain_lib`, the one name the universe gives it — and `excluded`, `[{"id",
+`brain_lib`, the one name the universe gives it, when that is a display name the
+consumer shows (printable ASCII letters, digits, spaces and `,.()/+:'&_-` or `·`,
+at most 100: `export.DISPLAY_NAME_RE`), and null otherwise (`brain_lib` has no
+grammar, and a consumer refuses a set whose display name could read as another
+library's) — and `excluded`, `[{"id",
 "reason"}]`. Nothing the universe does not define (no index paths, no host
 instructions).
 
