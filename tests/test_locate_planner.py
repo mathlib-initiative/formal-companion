@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -255,7 +256,8 @@ class TestPlanInventory(Campaign):
                      "vendor/literature_links.manifest.json"):
             self.assertTrue((gate_dir / name).is_file(), name)
         self.assertFalse(list(gate_dir.rglob("__pycache__")))
-        self.assertFalse((gate_dir / "verify_findings.py").exists())
+        # the gate imports verify_findings' change-set reader (field defect P2)
+        self.assertTrue((gate_dir / "verify_findings.py").is_file())
         cfg = (self.paths.tend_root("inv-1") / "config.yaml").read_text()
         self.assertIn(f"{gate_dir}/verify_locate.py, --gate-config", cfg)
         self.assertIn("--changed-files", cfg)
@@ -346,6 +348,154 @@ class TestPlanInventory(Campaign):
         doc = read_yaml(self.paths.run_yaml("inv-r"))
         self.assertEqual(doc["budget"]["max_cost"], 50.0)
         self.assertFalse(doc["consent"]["given"])
+
+
+class TestTheStagedGateRunsAlone(Campaign):
+    """P2: the gate directory plan-locate stages is the whole of what runs on the host.
+
+    The field case: ``runs/<run>/tend-root/gate/`` had no ``verify_findings.py``,
+    which the gate imports, so every call died with ``ModuleNotFoundError`` and
+    Python's exit 1 -- the code the worker reads as "your document is wrong".
+    The tests that ran the gate ran it from ``scripts/gate/``, where the missing
+    module sat beside it.  Here the staged directory is copied to a fresh place
+    outside this checkout (a stand-in for ``<remote_root>/<run>-gate``) and run
+    with ``python3 -I``, a bare environment and a scratch working directory.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.staged = self.paths.tend_root("inv-1") / "gate"
+        away = Path(tempfile.mkdtemp(prefix="cf-host-")).resolve()
+        self.addCleanup(shutil.rmtree, away, ignore_errors=True)
+        self.assertFalse(str(away).startswith(str(SKILL)))
+        self.host = away / "inv-1-gate"
+        shutil.copytree(self.staged, self.host)
+        self.cwd = away / "worktree"
+        docs = F.inventory_documents(F.manifest_entries(self.paths))
+        self.doc_rel = sorted(docs)[0]
+        self.doc = docs[self.doc_rel]
+        self.write(self.doc)
+
+    def write(self, doc: dict) -> Path:
+        path = self.cwd / self.doc_rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        return path
+
+    def isolated(self, script: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-I", str(self.host / script), *argv],
+                              capture_output=True, text=True, cwd=str(self.cwd),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(self.cwd)}, timeout=120)
+
+    def gate(self, *argv: str) -> subprocess.CompletedProcess:
+        return self.isolated("verify_locate.py", "--gate-config", str(self.host / "gate.json"),
+                             *argv)
+
+    def test_every_import_resolves_inside_the_directory(self):
+        import ast
+
+        from gate import verify_locate as vl
+
+        local = {p.stem for p in self.host.glob("*.py")}
+        self.assertLessEqual({m[:-3] for m in vl.GATE_MODULES}, local)
+        vendored = {p.name for p in (self.host / "vendor").iterdir() if p.is_dir()}
+        self.assertEqual(vendored, {"literature_links", "formal_companion_annotations"})
+        for path in sorted(self.host.rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and not node.level:
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    top = name.split(".")[0]
+                    with self.subTest(file=path.name, module=name):
+                        self.assertTrue(top in sys.stdlib_module_names or top in local
+                                        or top in vendored, f"{path.name} imports {name}")
+                        self.assertNotEqual(top, "cflib")
+
+    def test_the_gate_runs_with_python_dash_I_and_nothing_else(self):
+        proc = self.gate("--self-check")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("OK: gate self-check", proc.stdout)
+        self.assertIn(str(self.host / "vendor"), proc.stdout)      # its own copy, not ours
+        proc = self.gate("--findings", self.doc_rel)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("OK: 1 locate document(s) validated", proc.stdout)
+        bad = json.loads(json.dumps(self.doc))
+        bad["passages"][0]["quote"]["exact"] = "a sentence this layer never held"
+        self.write(bad)
+        proc = self.gate("--findings", self.doc_rel)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("VALIDATION FAILED", proc.stderr)
+
+    def test_a_directory_missing_a_module_is_broken_not_a_verdict(self):
+        for module in ("verify_findings.py", "locate_text.py"):
+            with self.subTest(module=module):
+                shutil.copy2(self.staged / module, self.host / module)
+                (self.host / module).unlink()
+                for argv in (("--findings", self.doc_rel), ("--self-check",)):
+                    proc = self.gate(*argv)
+                    self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+                    self.assertIn("the gate could not run", proc.stderr)
+                    self.assertNotIn("Traceback", proc.stderr)
+                    self.assertNotIn("VALIDATION FAILED", proc.stderr)
+                    self.assertEqual(proc.stdout.splitlines()[-1],
+                                     "ownership: not checked (the gate could not run)")
+                shutil.copy2(self.staged / module, self.host / module)
+
+    def test_a_crash_inside_the_gate_is_exit_3(self):
+        cfg = json.loads((self.host / "gate.json").read_text(encoding="utf-8"))
+        cfg["max_locations"] = "five"           # int() raises inside GateConfig
+        (self.host / "gate.json").write_text(json.dumps(cfg), encoding="utf-8")
+        proc = self.gate("--findings", self.doc_rel)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("the gate itself failed", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_the_self_check_names_what_is_missing(self):
+        shutil.rmtree(self.host / "vendor" / "literature_links")
+        proc = self.gate("--self-check")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("literature_links", proc.stderr)
+
+    def test_the_workers_tools_run_from_it_too(self):
+        for script in ("passage_ids.py", "corpus_search.py", "corpus_show.py"):
+            with self.subTest(script=script):
+                proc = self.isolated(script, "--help")
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = subprocess.run([sys.executable, "-I", "-c",
+                               "import sys; sys.path.insert(0, sys.argv[1]); import locate_records",
+                               str(self.host)], capture_output=True, text=True,
+                              cwd=str(self.cwd), env={"PATH": "/usr/bin:/bin"}, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_checkout_without_a_gate_file_refuses_to_plan(self):
+        from locate import tend_root as ltr
+
+        with unittest.mock.patch.object(ltr, "GATE_FILES",
+                                        ltr.GATE_FILES + ((("scripts", "gate", "nope.py"),
+                                                           "nope.py"),)):
+            with self.assertRaises(CfError) as caught:
+                ltr.stage(layout_host={}, layout_local={}, preset=lp.get("locate-inventory"),
+                          run_id="x", gate_config={}, prompts={}, tasks=[], model=None,
+                          agent=None, allow_sandbox_bypass=False, context={})
+        self.assertIn("nope.py", str(caught.exception))
+
+    def test_cf_runs_verify_stage_runs_the_self_check_isolated(self):
+        from run import remote
+
+        host = {"name": "examplebox", "ssh": "examplebox", "remote_root": "/srv/cf",
+                "tend_cmd": "uv run"}
+        names = {"entrypoint": "inv-1", "tend_root": "inv-1-tend", "gate": "inv-1-gate"}
+        steps = remote.plan_commands(host=host, run_id="inv-1", run={}, entries=[], names=names,
+                                     budget={}, concurrency={"workers": 1, "reviewers": 1},
+                                     locate={})
+        verify = [s["argv"][-1] for s in steps if s["stage"] == "verify"]
+        self.assertIn("python3 -I /srv/cf/inv-1-gate/verify_locate.py --gate-config "
+                      "/srv/cf/inv-1-gate/gate.json --self-check", verify)
+        self.assertFalse([c for c in verify if c.startswith("test -f")])
 
 
 class TestPlanLocate(Campaign):

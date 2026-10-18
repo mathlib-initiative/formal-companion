@@ -18,10 +18,13 @@ its contract:
   documents; 3 the gate could not run (no or unreadable gate.json, a vendored
   package that is not the pinned release, a layer, formula list or paragraph
   table missing or not the pinned bytes, an unreadable corpus.sqlite, a
-  missing task-manifest directory, a change set git cannot read safely).
+  missing task-manifest directory, a change set git cannot read safely, a
+  gate directory missing one of its own modules, a crash of the gate itself).
   Every infrastructure failure arrives as 3, never as the interpreter's 1 out
   of a traceback, because the worker's prompt says 1 means "your documents
-  are wrong".
+  are wrong"; an exit 1 always comes with a ``VALIDATION FAILED`` list.
+  ``--self-check`` validates nothing and says whether the gate can run, which
+  is what ``cf run``'s verify stage asks of the host, under ``python3 -I``.
 
 **Only the task's own documents.**  The v1 gate validated every findings file
 of the root on every call, which made it O(N) per call.  This one validates
@@ -87,12 +90,38 @@ VENDOR = HERE / "vendor" if (HERE / "vendor").is_dir() else HERE.parent.parent /
 if str(VENDOR) not in sys.path:
     sys.path.insert(0, str(VENDOR))
 
-import locate_text as lt  # noqa: E402
-import verify_findings as vf  # noqa: E402
-
 EXIT_OK = 0
 EXIT_REJECTED = 1
 EXIT_GATE_BROKEN = 3
+
+#: what a gate directory must hold beside this file, besides gate.json, tasks/
+#: and vendor/ (scripts/locate/tend_root.py stages them; a test pins the two)
+GATE_MODULES = ("locate_text.py", "verify_findings.py")
+
+
+def _broken_at_import(exc: BaseException) -> None:
+    """A gate directory that cannot import its own modules is broken, never a verdict.
+
+    Python reports an ``ImportError`` that escapes as exit 1, which is exactly
+    the code the worker's prompt reads as "your documents are wrong": a gate
+    directory staged without ``verify_findings.py`` sent every worker back to
+    rework a sound document (field defect P2).  Run as a script, this exits 3
+    with the gate's own FAIL line; imported, it re-raises.
+    """
+    if __name__ != "__main__":
+        raise exc
+    print(f"FAIL: the gate directory {HERE} is incomplete ({exc}); it must hold "
+          f"{', '.join(GATE_MODULES)} and vendor/ beside the gate — the gate could not run: "
+          "this is not a finding of yours", file=sys.stderr)
+    print("ownership: not checked (the gate could not run)")
+    raise SystemExit(EXIT_GATE_BROKEN)
+
+
+try:
+    import locate_text as lt  # noqa: E402
+    import verify_findings as vf  # noqa: E402
+except ImportError as _exc:  # pragma: no cover - exercised as a script, in a subprocess
+    _broken_at_import(_exc)
 
 GATE_SCHEMA = "cf-gate-locate/1"
 DOCUMENT_SCHEMA = "cf-locate/1"
@@ -1402,7 +1431,45 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     return result
 
 
+def self_check(cfg: GateConfig) -> str:
+    """Everything this gate needs before a document reaches it; a summary, or :class:`GateBroken`.
+
+    ``cf run``'s verify stage runs ``--self-check`` on the host, with
+    ``python3 -I`` from the gate directory alone, before any agent starts: the
+    gate's own modules imported (or the import guard above exited 3 already),
+    both vendored packages the pinned releases, ``literature_links`` importable,
+    and the task manifests, the sources and ``corpus.sqlite`` where gate.json
+    says they are.  A gate directory staged without one of its modules used to
+    surface only as every worker's first validation failing (field defect P2).
+    """
+    verify_vendor(cfg)
+    _literature_links()
+    if not cfg.tasks_dir.is_dir():
+        raise GateBroken(f"the task manifests directory {cfg.tasks_dir} is missing")
+    manifests = sum(1 for p in cfg.tasks_dir.glob("*.json") if p.is_file())
+    if not manifests:
+        raise GateBroken(f"{cfg.tasks_dir} holds no task manifest")
+    if not cfg.sources_dir.is_dir():
+        raise GateBroken(f"the sources directory {cfg.sources_dir} is missing")
+    if cfg.corpus_db is not None and not cfg.corpus_db.is_file():
+        raise GateBroken(f"corpus.sqlite is missing at {cfg.corpus_db}")
+    return (f"OK: gate self-check: {cfg.mode} run {cfg.run_id}, {manifests} task manifest(s), "
+            f"{len(cfg.sources)} pinned source(s), the vendored packages are the pinned releases "
+            f"and import from {VENDOR}")
+
+
 def main(argv: list[str] | None = None) -> int:
+    """The CLI; any failure of the gate itself is exit 3, never the interpreter's 1."""
+    try:
+        return _main(argv)
+    except Exception as exc:  # noqa: BLE001 - a crash of the gate is not a verdict
+        print(f"FAIL: the gate itself failed ({type(exc).__name__}: {exc}) — the gate could not "
+              "run: this is not a finding of yours", file=sys.stderr)
+        print("ownership: not checked (the gate could not run)")
+        return EXIT_GATE_BROKEN
+
+
+def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gate-config", default=str(HERE / "gate.json"),
@@ -1423,6 +1490,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--allow-empty", action="store_true",
                     help="with --changed-files: tolerate a change set with no document")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--self-check", action="store_true",
+                    help="check that this gate can run (its modules, the vendored packages, the "
+                         "task manifests, the sources, corpus.sqlite) and validate nothing")
     args = ap.parse_args(argv)
 
     gate_path = pathlib.Path(args.gate_config).expanduser()
@@ -1430,6 +1500,10 @@ def main(argv: list[str] | None = None) -> int:
         if not gate_path.is_file():
             raise GateBroken(f"gate config missing at {gate_path}")
         cfg = GateConfig.load(gate_path)
+        if args.self_check:
+            print(self_check(cfg))
+            print("ownership: not checked (--self-check validates no document)")
+            return EXIT_OK
     except GateBroken as exc:
         print(f"FAIL: {exc} — the gate could not run: this is not a finding of yours",
               file=sys.stderr)

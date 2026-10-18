@@ -594,10 +594,18 @@ like a faithfulness run:
   needs no `cflib`), the two host tools of §8, and `vendor/` with both vendored
   packages and their manifests, whose shas the gate verifies at start.
 
+  The directory is self-contained: every module these files import is the
+  standard library or another file of the directory, so the gate runs as
+  `python3 -I <gate>/verify_locate.py` with nothing else on the path, and a
+  checkout missing one of them refuses to plan.
+
   The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
   <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's
-  validation and pre-merge commands, `--findings <file>` for one document, or
-  `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus. It
+  validation and pre-merge commands, `--findings <file>` for one document,
+  `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus, or
+  `--self-check`, which validates nothing and exits 0 or 3 (its modules, the
+  vendored pins, the task manifests, the sources and `corpus.sqlite`) and is
+  what `cf run`'s verify stage runs on the host, under `python3 -I`. It
   validates only the documents the change set touched (or names), loads only
   the sources, candidates files and task manifests those documents name, exits
   0 / 1 (rejected) / 3 (could not run) like `verify_findings.py`, prefixes each
