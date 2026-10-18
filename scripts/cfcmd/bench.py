@@ -283,6 +283,13 @@ def _build(ws, args) -> int:
     drawn = draw_mod.draw(frame, uniform=args.uniform, curated=args.curated, seed=args.seed)
     # the draw reads no layer; the drawn articles' spans do (section 8.5 step 3)
     unrendered = draw_mod.unrendered_drawn(frame, drawn)
+    if unrendered and args.exclude_unrendered:
+        drawn = draw_mod.exclude(drawn, unrendered, reason=f"not rendered in sourceset "
+                                 f"{args.sourceset} version {manifest.version}")
+    draw_doc = {"schema": DRAW_SCHEMA, "bench": args.bench_id, **drawn}
+    if had_gold and old_draw is not None and json.loads(old_draw) != draw_doc:
+        raise CfError(f"bench {args.bench_id} already holds gold labelled for another draw",
+                      hint="a new draw is a new bench: build it under a new id")
     if unrendered:
         atomic_write(layout.unrendered_list, "".join(f"{sid}\n" for sid in unrendered))
         if not args.exclude_unrendered:
@@ -293,14 +300,8 @@ def _build(ws, args) -> int:
                 hint=_unrendered_step(args.sourceset, layout.unrendered_list)
                 + "; or pass --exclude-unrendered to bench the rest, each excluded article "
                   "recorded in draw.json with its inclusion probabilities")
-        drawn = draw_mod.exclude(drawn, unrendered, reason=f"not rendered in sourceset "
-                                 f"{args.sourceset} version {manifest.version}")
     elif layout.unrendered_list.is_file():
         layout.unrendered_list.unlink()
-    draw_doc = {"schema": DRAW_SCHEMA, "bench": args.bench_id, **drawn}
-    if had_gold and old_draw is not None and json.loads(old_draw) != draw_doc:
-        raise CfError(f"bench {args.bench_id} already holds gold labelled for another draw",
-                      hint="a new draw is a new bench: build it under a new id")
     write_json(layout.frame_json, frame_doc, sort_keys=True)
     write_json(layout.draw_json, draw_doc, sort_keys=True)
     bench = {"schema": BENCH_SCHEMA, "id": args.bench_id,
