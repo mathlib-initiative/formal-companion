@@ -17,8 +17,10 @@ Three steps, in this order, each a function of what landed:
    ``survived``; ``downgrade``, ``refute`` and ``overturn`` change it and make
    the affected records ``downgraded``).  A record the challenge plan did not
    require keeps the value the plan recorded (``not_required``,
-   ``sampled_out``); a record it required and no verdict judged has challenge
-   ``None`` -- owed, which the export refuses (hard rule 5).
+   ``sampled_out``) -- unless a prominence overturn to ``subject`` or
+   ``central`` put it under a rule that requires it, which makes it
+   ``challenge_pending``; a record the plan required and no verdict judged has
+   challenge ``None`` -- owed, which the export refuses (hard rule 5).
 3. **Status.**  ``proof_status`` and the ``statement`` flag are joined from
    ``corpus.sqlite`` (never read from a document) with ``corpus.query.
    declaration``, and ``cflib.vocab.derive_status`` computes the passage's
@@ -347,7 +349,9 @@ def _passage_challenge(row: dict) -> str | None:
     Its locations' (the refuted ones included: a refutation is a judged record),
     its absence's or unresolved outcome's, and its prominence record's when a
     plan named one: owed (``None``) when any of them is owed, else
-    ``downgraded`` when any changed, else ``survived`` when any was judged.
+    ``challenge_pending`` when a rule now requires one nobody judged
+    (:func:`_reopen`), else ``downgraded`` when any changed, else ``survived``
+    when any was judged.
     """
     values = [loc.get("challenge") for loc in [*row["locations"], *(row.get("refuted") or [])]]
     if row.get("record_challenge", "unset") != "unset":
@@ -356,6 +360,8 @@ def _passage_challenge(row: dict) -> str | None:
         values.append(row.get("prominence_challenge"))
     if not values or any(v is None for v in values):
         return None
+    if vocab.CHALLENGE_PENDING in values:
+        return vocab.CHALLENGE_PENDING
     if row.get("passage_challenge_override"):
         return row["passage_challenge_override"]
     if vocab.CHALLENGE_DOWNGRADED in values:
@@ -735,6 +741,30 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
             if verdict.get("prominence") in vocab.PROMINENCE:
                 row["prominence"] = verdict["prominence"]
             row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
+            if row["prominence"] in vocab.REFUTE_BY_DEFAULT_PROMINENCE:
+                _reopen(row)
+
+
+def _reopen(row: dict) -> None:
+    """A prominence overturned to ``subject``/``central`` reopens the passage's records.
+
+    The challenge plan judged the passage's records under ``supporting``: its
+    locations were sampled or not required, its absence or unresolved outcome
+    was not hunted.  Under the new prominence section 5 refutes every location
+    by default and hunts the absence, so each record no verdict judged
+    (``not_required``, ``sampled_out``) becomes ``challenge_pending`` -- never
+    left ``not_required``, which a consumer would read as "no rule applied"
+    (field defect CH2: two central absences exported that nobody hunted).  A
+    record a verdict judged keeps its value.
+    """
+    for loc in row["locations"]:
+        if loc.get("challenge") in vocab.CHALLENGE_UNJUDGED:
+            loc["challenge"] = vocab.CHALLENGE_PENDING
+    if row.get("record_challenge", "unset") in vocab.CHALLENGE_UNJUDGED:
+        row["record_challenge"] = vocab.CHALLENGE_PENDING
+    if row.get("absence") is not None and \
+            row["absence"].get("challenge") in vocab.CHALLENGE_UNJUDGED:
+        row["absence"]["challenge"] = vocab.CHALLENGE_PENDING
 
 
 #: the longest note a downgrade's witness lends a closeMatch, in characters

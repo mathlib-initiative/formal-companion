@@ -400,13 +400,21 @@ CHALLENGE_SURVIVED = "survived"
 CHALLENGE_DOWNGRADED = "downgraded"
 CHALLENGE_NOT_REQUIRED = "not_required"
 CHALLENGE_SAMPLED_OUT = "sampled_out"
+CHALLENGE_PENDING = "challenge_pending"
 #: ``survived``: challenged and confirmed with a quoted witness;
 #: ``downgraded``: challenged, and the relation (or outcome) was weakened;
 #: ``not_required``: outside every challenge rule; ``sampled_out``: inside the
-#: stratified sample's frame, not drawn.  Nothing leaves a workspace without one
-#: (hard rule 5, per record).
+#: stratified sample's frame, not drawn; ``challenge_pending``: a rule now
+#: requires it and no challenge judged it -- the passage's prominence was
+#: overturned to ``subject`` or ``central`` after its records were planned
+#: under ``supporting`` (a consumer reads it as unchallenged).  Nothing leaves a
+#: workspace without one (hard rule 5, per record).
 CHALLENGE_VERDICTS = frozenset({CHALLENGE_SURVIVED, CHALLENGE_DOWNGRADED,
-                                CHALLENGE_NOT_REQUIRED, CHALLENGE_SAMPLED_OUT})
+                                CHALLENGE_NOT_REQUIRED, CHALLENGE_SAMPLED_OUT,
+                                CHALLENGE_PENDING})
+#: the values of a record no challenge judged
+CHALLENGE_UNJUDGED = frozenset({CHALLENGE_NOT_REQUIRED, CHALLENGE_SAMPLED_OUT,
+                                CHALLENGE_PENDING})
 #: the relations a stratified challenge sample re-judges as weak (section 5)
 WEAK_RELATIONS = frozenset({RELATED_MATCH, NARROW_MATCH, HAS_PART})
 
