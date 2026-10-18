@@ -601,6 +601,62 @@ class TestEnvelopesPriceTheRun(_HostHarvest):
         self.assertEqual(block["usd_by_model"], {"claude-opus-5": 0.5, "claude-sonnet-5": 1.5})
 
 
+class TestTheTendRootRunYamlNames(_HostHarvest):
+    """R2-L: every real locate run takes host_tend_root's run.yaml branch.
+
+    The smoke's three run.yaml files carry ``host.remote_root`` and
+    ``remote.tend_root``, so ``host_tend_root`` returns from its first branch; the
+    fixture above has no ``remote:`` block and reaches only the gate-log-parent
+    fallback.  A mutant that broke the run.yaml branch passed every harvest test,
+    and the field-shaped reproduction then harvested complete with envelopes
+    'absent on the host' and ``cost: None`` -- the original field symptom.  Here the
+    gate log is NOT under the tend root, so only the run.yaml branch finds the
+    envelopes.
+    """
+
+    TEND = "r-1-tendroot"
+
+    def setUp(self):
+        super().setUp()
+        (self.remote / "campaigns" / "c-1" / "usage-r-1.jsonl").unlink()
+        run_yaml = self.ws / "runs" / "r-1" / "run.yaml"
+        run_yaml.write_text(run_yaml.read_text(encoding="utf-8")
+                            + f"remote:\n  tend_root: {self.TEND}\n  entrypoint: r-1\n",
+                            encoding="utf-8")
+        usage = self.remote / self.TEND / "usage"
+        _envelope(usage, "t-loc-0001.worker.20261018T090000Z.11.json", 4.67)
+        _envelope(usage, "t-loc-0001.reviewer.20261018T091300Z.12.json", 0.54,
+                  tokens=(10, 200, 0, 5000))
+
+    def test_r2_the_envelopes_come_from_the_tend_root_run_yaml_names(self):
+        code, out = self.harvest("--execute")
+        self.assertEqual(code, 0, out)
+        receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
+        arts = receipt["host_artifacts"]["envelopes"]
+        self.assertEqual(arts["remote"], f"{self.remote}/{self.TEND}/usage")
+        self.assertEqual((arts["fetched"], arts["files"]), (True, 2))
+        self.assertEqual(receipt["cost"]["basis"], "envelopes")
+        self.assertAlmostEqual(receipt["cost"]["usd"], 5.21)
+        self.assertEqual(receipt["host_artifacts"]["gate.jsonl"]["remote"], str(self.gate_log))
+
+    def test_r2_host_tend_root_reads_a_relative_and_an_absolute_tend_root(self):
+        from harvest.host_artifacts import host_tend_root
+
+        host = {"host": {"remote_root": "/home/u/locate/"}}
+        self.assertEqual(host_tend_root({**host, "remote": {"tend_root": "loc-1-tend"}}),
+                         "/home/u/locate/loc-1-tend")
+        self.assertEqual(host_tend_root({**host, "remote": {"tend_root": "/loc-1-tend/"}},
+                                        "/elsewhere/gate-log"), "/loc-1-tend")
+        self.assertEqual(host_tend_root({**host, "remote": {"tend_root": "sub/loc-1-tend/"}},
+                                        "/elsewhere/gate-log"), "/home/u/locate/sub/loc-1-tend")
+        # no remote.tend_root (or no remote_root): the gate log's parent, else nothing
+        self.assertEqual(host_tend_root(host, "/srv/t/gate-log/"), "/srv/t")
+        self.assertEqual(host_tend_root({"remote": {"tend_root": "x"}}, "/srv/t/gate-log"),
+                         "/srv/t")
+        self.assertEqual(host_tend_root(host, "/srv/t/logs"), "")
+        self.assertEqual(host_tend_root({}, ""), "")
+
+
 class TestNestedCorporaAreCounted(unittest.TestCase):
     """Status, monitor and tally read a nested locate corpus as one (#56, #57)."""
 
