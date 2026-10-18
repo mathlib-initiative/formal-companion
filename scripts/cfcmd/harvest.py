@@ -106,6 +106,11 @@ def run(args) -> int:
     if receipt["missing"] or receipt["sha_mismatched"] or receipt.get("sha_unverified"):
         log.warn("harvest INCOMPLETE: the corpus is not the whole corpus, so every number "
                  "derived from it is a lower bound. Re-run the missing tasks, then `cf harvest` again.")
+    if receipt.get("host_artifacts_missing"):
+        log.warn(f"harvest INCOMPLETE: the host artifact(s) "
+                 f"{', '.join(receipt['host_artifacts_missing'])} did not come home (the reason "
+                 f"is on the host: line above), so the run's record of its gate calls is not "
+                 f"here. Fix the transfer and run `cf harvest {args.run_id}` again.")
     if not ((receipt.get("gate") or {"ok": True}).get("ok", True)):
         log.warn("harvest REFUSED the gate: the findings above do not validate against "
                  "gate.local.json. Fix or re-run them; the receipt is not complete.")

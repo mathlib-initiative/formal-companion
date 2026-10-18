@@ -220,6 +220,33 @@ if not os.path.exists(src):
 shutil.copy2(src, dst)
 """
 FAKE_SSH = '#!/bin/sh\nshift\nexec /bin/bash -c "$*"\n'
+#: macOS's /usr/bin/rsync 2.6.9 (protocol 29): no --ignore-missing-args (rsync 3.1)
+FAKE_RSYNC_269 = """#!{python}
+import os, re, shutil, sys
+#: long options rsync 3.x added, which 2.6.9 answers with a usage error
+NEWER = ("--ignore-missing-args", "--delete-missing-args", "--info", "--debug", "--chown",
+         "--usermap", "--groupmap", "--preallocate", "--append-verify", "--outbuf",
+         "--remote-option", "--protect-args")
+for a in sys.argv[1:]:
+    if a.split("=", 1)[0] in NEWER:
+        sys.stderr.write(f"rsync: {{a}}: unknown option\\n")
+        sys.stderr.write("rsync error: syntax or usage error (code 1) at main.c(1443)\\n")
+        sys.exit(1)
+args = [a for a in sys.argv[1:] if not a.startswith("-")]
+src, dst = re.sub(r"^[A-Za-z0-9_.-]+:", "", args[-2]), args[-1]
+if src.endswith("/"):
+    for here, dirs, files in os.walk(src):
+        for name in files:
+            if name.endswith(".json"):
+                rel = os.path.relpath(os.path.join(here, name), src)
+                os.makedirs(os.path.dirname(os.path.join(dst, rel)), exist_ok=True)
+                shutil.copy2(os.path.join(here, name), os.path.join(dst, rel))
+    sys.exit(0)
+if not os.path.exists(src):
+    sys.stderr.write(f"rsync: link_stat {{src}} failed: No such file or directory\\n")
+    sys.exit(23)
+shutil.copy2(src, dst)
+"""
 
 
 class TestTheHarvestRegateWritesNoGateLog(unittest.TestCase):
@@ -240,6 +267,8 @@ class TestHostArtifactsComeHome(unittest.TestCase):
     """`cf harvest <locate run> --execute` brings the gate log, the usage export and
     the canary scan to runs/<run>/host/, prices from the usage export, and moves
     the sourceset's row for the run to harvested (D3, D5; #43, #58, #68)."""
+
+    RSYNC = FAKE_RSYNC
 
     def setUp(self):
         from cflib.workspace import Workspace
@@ -263,7 +292,7 @@ class TestHostArtifactsComeHome(unittest.TestCase):
             encoding="utf-8")
         self.bin = root / "fakebin"
         self.bin.mkdir()
-        (self.bin / "rsync").write_text(FAKE_RSYNC.format(python=sys.executable))
+        (self.bin / "rsync").write_text(self.RSYNC.format(python=sys.executable))
         (self.bin / "ssh").write_text(FAKE_SSH)
         for name in ("rsync", "ssh"):
             (self.bin / name).chmod(0o755)
@@ -336,7 +365,10 @@ class TestHostArtifactsComeHome(unittest.TestCase):
         self.assertEqual(arts["canary.json"], {"remote": str(self.remote / "campaigns" / "c-1"
                                                              / "canary-r-1.json"),
                                                "fetched": False, "campaign": "c-1",
+                                               "expected": False,
                                                "reason": "absent on the host"})
+        self.assertEqual(receipt["host_artifacts_missing"], [])
+        self.assertTrue(arts["gate.jsonl"]["expected"])
         self.assertIsNotNone(receipt["cost"])
         self.assertTrue(receipt["cost"]["source"]["path"].endswith("usage.jsonl"))
         self.assertGreater(receipt["cost"]["usd"], 0)
@@ -371,6 +403,78 @@ class TestHostArtifactsComeHome(unittest.TestCase):
         receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
         self.assertEqual(receipt["cost"]["source"]["files"]["usage_export"], 1)
         self.assertFalse(receipt["cost"]["source"]["path"].endswith("host/usage.jsonl"))
+
+
+class TestHostArtifactsUnderRsync269(TestHostArtifactsComeHome):
+    """Field defect H1: the operator's laptop runs macOS's rsync 2.6.9, which rejects
+    ``--ignore-missing-args``; the gate log was never fetched and the harvest still
+    said COMPLETE.  Every test above runs again under that rsync, and these pin the
+    rest: the host is asked whether a file is there, and a missing gate log -- the
+    one EXPECTED artifact -- fails the harvest."""
+
+    RSYNC = FAKE_RSYNC_269
+
+    def test_h1_the_fetch_passes_no_option_rsync_2_6_9_rejects(self):
+        from harvest import host_artifacts
+
+        argv = host_artifacts.rsync_argv("examplebox", "/r/gate-log/gate.jsonl", Path("/l"))
+        self.assertEqual(argv, ["rsync", "-a", "examplebox:/r/gate-log/gate.jsonl", "/l"])
+        self.assertEqual(host_artifacts.exists_argv("examplebox", "/r/a b.json"),
+                         ["ssh", "examplebox", "test -f '/r/a b.json'"])
+
+    def test_h1_the_real_rsync_takes_the_argv_when_it_is_2_6(self):
+        """On a machine whose rsync is 2.6.x (macOS), the argv itself, run for real."""
+        import shutil as _shutil
+        import subprocess as _subprocess
+        from harvest import host_artifacts
+
+        rsync = _shutil.which("rsync")
+        if not rsync:
+            self.skipTest("no rsync on PATH")
+        version = _subprocess.run([rsync, "--version"], capture_output=True, text=True).stdout
+        if " version 2.6." not in version:
+            self.skipTest("the local rsync is not 2.6.x")
+        dst = self.fx.root / "real-copy.jsonl"
+        argv = host_artifacts.rsync_argv("examplebox", str(self.gate_log), dst)
+        argv[-2] = str(self.gate_log)            # a local source: no host to reach
+        proc = _subprocess.run([rsync, *argv[1:]], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(dst.read_text(), self.gate_log.read_text())
+
+    def test_h1_a_gate_log_missing_on_the_host_fails_the_harvest(self):
+        self.gate_log.unlink()
+        code, out = self.harvest("--execute")
+        self.assertEqual(code, 1, out)
+        receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
+        self.assertFalse(receipt["complete"])
+        self.assertEqual(receipt["host_artifacts_missing"], ["gate.jsonl"])
+        self.assertEqual(receipt["host_artifacts"]["gate.jsonl"]["reason"], "absent on the host")
+        self.assertIn("INCOMPLETE", out)
+        self.assertIn("host: gate.jsonl MISSING (expected", out)
+        self.assertFalse((self.ws / "runs" / "r-1" / "host" / "gate.jsonl").exists())
+
+    def test_h1_a_host_that_cannot_be_asked_is_not_an_absence(self):
+        (self.bin / "ssh").write_text('#!/bin/sh\ncase "$2" in test*) '
+                                      'echo "ssh: connect to host examplebox: Connection '
+                                      'refused" >&2; exit 255;; esac\nshift\n'
+                                      'exec /bin/bash -c "$*"\n')
+        code, out = self.harvest("--execute")
+        self.assertEqual(code, 1, out)
+        receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
+        row = receipt["host_artifacts"]["gate.jsonl"]
+        self.assertFalse(row["fetched"])
+        self.assertIn("could not ask the host", row["reason"])
+        self.assertIn("Connection refused", row["reason"])
+        self.assertEqual(receipt["host_artifacts_missing"], ["gate.jsonl"])
+
+    def test_h1_a_previous_copy_does_not_make_a_failed_fetch_complete(self):
+        self.assertEqual(self.harvest("--execute")[0], 0)
+        self.gate_log.unlink()
+        code, out = self.harvest("--execute")
+        self.assertEqual(code, 1, out)
+        receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
+        self.assertIn("kept_previous", receipt["host_artifacts"]["gate.jsonl"])
+        self.assertFalse(receipt["complete"])
 
 
 class TestNestedCorporaAreCounted(unittest.TestCase):
