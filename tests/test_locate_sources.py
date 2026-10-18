@@ -2000,5 +2000,45 @@ class TestFieldS9S10S12TheStateAndTheStatus(_FieldCase):
         self.assertEqual(row["version"], row["latest_on_disk"])
 
 
+class TestFieldS2FetchASelection(_FieldCase):
+    """S2: a pilot of 80 articles meant fetching all 30k sources, or a script."""
+
+    def test_s2_only_the_selected_sources_are_fetched(self):
+        self.enumerate()
+        code, out = self.fetch("--source", "enwiki-1002-2003")
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertEqual({e["source_id"] for e in m if e["raw_sha256"]}, {"enwiki-1002-2003"})
+        self.assertEqual(self.ss.read_state()["commands"]["fetch"]["selected"], 1)
+        pick = _scratch(self) / "pick.txt"
+        pick.write_text("# the pilot\n1003   # a page id: the source a run plans\n"
+                        "enwiki-1002-2003\n\n")
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--select", str(pick))
+        self.assertEqual(code, 0, out)                       # the dry run counts what is left
+        self.assertIn("1 source(s) of wpm have no bytes yet of the 2 selected", out)
+        code, out = self.fetch("--select", str(pick))
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertEqual({e["source_id"] for e in m if e["raw_sha256"]},
+                         {"enwiki-1002-2003", "enwiki-1003-2004"})
+        self.assertIsNone(m.get("enwiki-1001-2002")["raw_sha256"])
+        as_json = _scratch(self) / "pick.json"
+        as_json.write_text(json.dumps(["enwiki-1001-2002"]))
+        code, out = self.fetch("--select", str(as_json))
+        self.assertEqual(code, 0, out)
+        self.assertIsNotNone(self.ss.latest().get("enwiki-1001-2002")["raw_sha256"])
+
+    def test_s2_a_selection_naming_nothing_held_is_refused_before_any_request(self):
+        self.enumerate()
+        pick = _scratch(self) / "pick.txt"
+        pick.write_text("enwiki-9999-1\n4242\n")
+        empty = _scratch(self)
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--select", str(pick),
+                       "--fixtures", str(empty))
+        self.assertEqual(code, 2, out)
+        self.assertIn("holds no source or page enwiki-9999-1, 4242", out)
+        self.assertEqual(self.ss.latest().version, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
