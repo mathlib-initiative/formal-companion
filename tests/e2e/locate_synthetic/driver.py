@@ -6,8 +6,13 @@ the shipped producer, not a fixture of the next stage's format:
 
     universe   cf corpus init / add / ingest --canary / ingest / build-db
                over a synthetic probe index and a synthetic library checkout
-    sourceset  cf sourceset create / enumerate-wikiproject / fetch / render
-               over the recorded synthetic API responses in tests/data/locate/wiki
+    sourceset  cf sourceset create / adopt / render over a producer's delivery:
+               pins.jsonl and the response bytes written over the recorded
+               synthetic parse responses in tests/data/locate/wiki, each row
+               with the fixed fetch and the producer's layer sha (computed here
+               with this skill's own renderer); a delivery whose layer sha is
+               not this renderer's layer is refused by render
+               (references/locate-documents.md section 7)
     L2         cf locate candidates with a synthetic 1000.yaml-shaped list
     L3a        cf plan-locate --preset locate-inventory; a worker's documents
                filled by the staged passage_ids.py; the STAGED gate (out of
@@ -46,6 +51,18 @@ import cf as cf_main  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 
 WIKI_FIXTURES = SKILL / "tests" / "data" / "locate" / "wiki"
+#: the synthetic pages a producer delivers, with their metadata as a producer's
+#: catalog spells it (importance capitalised, as the PageAssessments listing
+#: gives it; adopt lower-cases it on the way in)
+PAGES = (
+    (1001, 2002, {"title": "Widget lemma", "wikidata": "Q99999001",
+                  "assessment": {"class": "B", "importance": "High"}}),
+    (1002, 2003, {"title": "Gadget theorem", "wikidata": "Q99999002",
+                  "assessment": {"class": "Start", "importance": "Mid"}}),
+    (1003, 2004, {"title": "Sprocket", "wikidata": None,
+                  "assessment": {"class": "Stub", "importance": "Low"}}),
+)
+CONSUMER = "wikilean"
 TOOLCHAIN = "leanprover/lean4:v4.34.0"
 SS = "wpm"
 U = "u1"
@@ -249,20 +266,97 @@ class Pipeline:
         self.universe_sha = uni.sha256()
 
     # ------------------------------------------------------------- sourceset
+    def pins(self, directory: Path) -> Path:
+        """A producer's delivery: each page's response bytes and ``pins.jsonl``.
+
+        The bytes are the recorded ``action=parse`` responses (each recording's
+        query is checked to BE the fixed fetch of its revision, so the row's
+        ``fetch`` claim is true), and ``layer_sha256`` is the sha of the text
+        layer of those bytes as this skill's own renderer computes it -- what a
+        producer whose layer conforms would record.
+        """
+        from sources import render_html, websource
+        directory.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for pageid, revision, meta in PAGES:
+            recorded = self.read_json(WIKI_FIXTURES / f"parse-{revision}.json")
+            check(recorded.get("query") == {**websource.PARSE_PARAMS, "oldid": str(revision)},
+                  f"the recording of revision {revision} is not the fixed fetch")
+            raw = json.dumps(recorded["json"], ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":")).encode("utf-8")
+            name = f"{pageid}-{revision}.json"
+            (directory / name).write_bytes(raw)
+            layer = render_html.render(render_html.canonical_body(raw)).layer
+            rows.append({"pageid": pageid, "revision": revision, "bytes": name, **meta,
+                         "fetch": websource.fetch_block(),
+                         "layer_sha256": hashlib.sha256(layer.encode("utf-8")).hexdigest()})
+        path = directory / "pins.jsonl"
+        path.write_text("".join(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n"
+                                for r in rows), encoding="utf-8")
+        return path
+
     def sourceset(self) -> None:
         self.cf("sourceset", "create", SS, "--family", "enwiki")
-        self.cf("sourceset", "enumerate-wikiproject", SS, "--project", "Mathematics",
-                "--fixtures", str(WIKI_FIXTURES), "--execute")
-        self.cf("sourceset", "fetch", SS, "--fixtures", str(WIKI_FIXTURES), "--execute")
+        pins = self.pins(self.made / "delivery")
+        self.cf("sourceset", "adopt", SS, "--from", str(pins), "--consumer", CONSUMER)
         self.cf("sourceset", "render", SS)
         code, out = self.cf("sourceset", "status", SS, "--json", "--verify")
         status = json.loads(out)
         self.sourceset_status = status
+        check(status["counts"]["adopted"] == status["counts"]["rendered"] == len(PAGES),
+              f"the delivery was not adopted and rendered whole: {status['counts']}")
         paths = cf_main_paths(self.ws)
+        from sources import websource
+        from sources.sourceset import Sourceset
+        manifest = Sourceset.open(paths, SS).latest()
+        for entry in manifest:
+            sid = entry["source_id"]
+            check(entry["origin"] == "adopted" and entry["fetch"] == websource.fetch_block(),
+                  f"{sid} is not an adopted fixed fetch: {entry}")
+            check(entry["adopted_from"].get("layer_sha256") == entry["layer_sha256"],
+                  f"{sid}: the rendered layer is not the producer's: {entry}")
+        check(manifest.get(WIDGET)["assessment"] == {"class": "B", "importance": "high"},
+              f"the widget's assessment was not normalised: {manifest.get(WIDGET)}")
         layer = paths.sourceset_source_dir(SS, WIDGET) / "layer.txt"
         check(layer.is_file(), f"render wrote no layer for {WIDGET}")
         self.layer_widget = layer.read_text(encoding="utf-8")
         check("spanning gadget" in self.layer_widget, "the widget layer lost its text")
+        self._sourceset_refusals(pins)
+
+    def _sourceset_refusals(self, pins: Path) -> None:
+        """A delivery whose layer sha is not this renderer's layer of its bytes is not rendered."""
+        rows = [json.loads(line) for line in pins.read_text(encoding="utf-8").splitlines()]
+        rows[0]["layer_sha256"] = hashlib.sha256(b"a producer whose layer differs").hexdigest()
+        wrong = pins.with_name("pins-wrong-layer.jsonl")
+        wrong.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows),
+                         encoding="utf-8")
+        self.cf("sourceset", "create", "wpm-parity", "--family", "enwiki")
+        self.cf("sourceset", "adopt", "wpm-parity", "--from", str(wrong), "--consumer", CONSUMER)
+        code, out = self.cf("sourceset", "render", "wpm-parity", ok=False)
+        check(code == 1, f"render took a layer that is not the producer's (exit {code}):\n{out}")
+        paths = cf_main_paths(self.ws)
+        from sources.sourceset import Sourceset
+        ss = Sourceset.open(paths, "wpm-parity")
+        manifest = ss.latest()
+        check(manifest.get(WIDGET)["layer_sha256"] is None
+              and not (ss.source_dir(WIDGET) / "layer.txt").exists(),
+              f"the refused {WIDGET} was rendered anyway: {manifest.get(WIDGET)}")
+        check(all(e["layer_sha256"] for e in manifest if e["source_id"] != WIDGET),
+              "a refused source stopped the others from rendering")
+        render_state = ss.read_state()["commands"]["render"]
+        check(render_state.get("not_the_producers_layer") == [WIDGET],
+              f"the render state does not name the refusal: {render_state}")
+        self.parity_refusal = render_state
+        # the refusal stands past a render that does not visit it, and the
+        # acceptance check names it
+        others = [e["source_id"] for e in manifest if e["source_id"] != WIDGET]
+        self.cf("sourceset", "render", "wpm-parity", "--source", others[0])
+        code, out = self.cf("sourceset", "status", "wpm-parity", "--json", "--verify", ok=False)
+        report = json.loads(out)
+        check(code == 1 and report["producer_layer"]["refused"] == [WIDGET]
+              and any(p.startswith(f"{WIDGET}: render refused it") for p in report["problems"]),
+              f"status --verify does not name the standing refusal (exit {code}): {report}")
+        self.parity_status = report
 
     # ------------------------------------------------------------------- L2
     def candidates(self) -> None:
