@@ -35,6 +35,19 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- One relation order for a challenge's `downgrade`, `cflib.vocab.RELATION_STRENGTH`
+  (`exactMatch` > `closeMatch` > `broadMatch` > `narrowMatch` = `hasPart` >
+  `relatedMatch`, the order `references/locate-documents.md` §4 states). The
+  outcomes used to rank `broadMatch` level with `narrowMatch` and `hasPart`, so a
+  broad-to-narrow downgrade the gate passed was ignored and its record owed
+  again. The gate keeps its inlined copy, now pinned by a test. The locate
+  prompts state rule 4 as the gate checks it: a curated hit is answered by a
+  location whose relation counts, or by a reasoned rejection, and an `accepted`
+  candidate must be a location. `cf tally` records in a companion's
+  `state.json` only the runs it counted, never a locate run it left out. The
+  bench transcriber names a quote of the wrong shape instead of reporting it
+  as no quote. The synthetic locate end-to-end test
+  (`tests/e2e/locate_synthetic/`) runs every stage in the suite.
 - The locate planner meets the other locate packages through their owners
   (`references/locate-documents.md` §5, §6, §9, §10): the sourceset through
   `sources.sourceset.Sourceset` (one source per page, `Manifest.preferred()`;
@@ -392,15 +405,12 @@ release has something to say.
   alpha-spending), claiming a decision only past 150 eval articles or 400 gold
   positives, and records it in the loop ledger. `cflib.vocab` gains the
   labeler's modes. `cf score` is unchanged.
-- `tests/e2e/locate_synthetic.py`, the locate flow end to end on synthetic inputs,
-  run by the suite as `tests/test_e2e_locate_synthetic.py`: a universe through
-  `cf corpus`, a sourceset through `cf sourceset` from the recorded answers, L2,
-  the three `cf plan-locate` presets, documents written as a worker writes them
-  and judged by the STAGED gate and `passage_ids.py` (a copy of the planned
-  root's `gate/`, `python3 -I`, a bare environment) -- good ones passed, bad
-  ones refused by rule -- then `cf harvest`, `cf tally --locate`, `cf export
-  literature-links` and `cf bench build | anchor | freeze | score` over what
-  the earlier stages wrote.
+- The synthetic end-to-end driver runs every staged tool as the run host does:
+  the gate and `passage_ids.py` from a copy of the planned root's `gate/` with
+  `python3 -I`, a bare environment and a scratch working directory, so a gate
+  directory missing a module fails it (field defect P2); each bad document
+  must be refused as a verdict under the rule it breaks, and the inventory's
+  are written under their own task, where rule 7 used to refuse them first.
 - The shared interfaces the locate packages meet at (integration wave 1). The corpus's
   read API (`scripts/corpus/query.py`) is what every consumer calls instead of a
   private reader: `check_universe` refuses a database built for another state of the
@@ -457,8 +467,7 @@ release has something to say.
   source shares, the gate on a host included; its head id is
   `cflib.passages`' frozen rule restated in lockstep, which a test pins.
 - The foundation of locate (`docs/proposals/wikipedia-locate.md`, milestone
-  L-M0, vocabulary and keys only; every stage that uses them is not
-  implemented). `cflib.vocab` gains the three locate run modes
+  L-M0: the vocabulary and the keys the stages above were then built on). `cflib.vocab` gains the three locate run modes
   (`locate-inventory`, `locate`, `locate-challenge`) with their kinds
   (`PASSAGE`, `LOCATION`, `ABSENCE`, `UNRESOLVED`), the relations,
   `noMatch`, passage kinds, prominence, scopes, proof statuses with
@@ -492,8 +501,8 @@ release has something to say.
   workspace overlay may add a family; over a confirmed shipped one it keeps
   `confirmed` and the curated `licence_class` and `licence`, and the shadow
   is reported by `Registry.validate()` and `cf status`.
-  `CLAUDE.md` §3 names the Wikipedia fetcher, not implemented, as the next
-  network exception.
+  `CLAUDE.md` §3 names the Wikipedia fetcher (`scripts/sources/wikinet.py`)
+  as a network exception.
 - Verso hovers in the overlay viewer. `build_site.py` cuts each card's
   statement out of the built site's Verso pages (`tools/verso_extract.py`),
   a tagged example's by its tag comment on its module's page, and writes

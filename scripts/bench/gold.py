@@ -565,6 +565,9 @@ def _anchor_quote(layer: str, quote: Any) -> tuple[list[int] | None, str]:
     """
     from gate import locate_text
 
+    if quote is not None and not isinstance(quote, dict):
+        return None, (f"the labeler's quote is a {type(quote).__name__}, not an object "
+                      "{exact, prefix, suffix}")
     if not isinstance(quote, dict) or not str(quote.get("exact") or "").strip():
         return None, "the labeler gave no quote"
     hits = locate_text.find_quote(layer, quote.get("exact"), quote.get("prefix") or "",

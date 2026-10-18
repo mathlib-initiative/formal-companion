@@ -9,9 +9,11 @@ convention.
 The locate block at the end is new code too, for the inverse question --
 where is a source formalized, in any library -- and implements the vocabulary
 of docs/proposals/wikipedia-locate.md sections 2.2, 2.4, 2.6, 2.7, 5 and 10
-(documented in references/vocabulary.md section 1.11).  Only the vocabulary,
-:func:`derive_status` and :func:`decide_proof_status` are built; the stages
-that use them are not.
+(documented in references/vocabulary.md section 1.11), with
+:func:`derive_status` and :func:`decide_proof_status`.  The locate stages --
+scripts/sources, scripts/corpus, scripts/locate, scripts/gate/verify_locate.py
+and scripts/bench -- import their values from here; the copies a host-side
+script must inline are pinned to these by tests.
 """
 from __future__ import annotations
 
@@ -87,7 +89,7 @@ SINGLE_SOURCE = "single-source"
 ATTACK_VAC = "attack:vac"
 ATTACK_HUNT = "attack:hunt"
 #: the three locate presets (L3a inventory, L3b locate, L5 challenge); planned
-#: by the locate planner, which is not implemented
+#: by `cf plan-locate` (scripts/locate/plan.py)
 LOCATE_INVENTORY = "locate-inventory"
 LOCATE = "locate"
 LOCATE_CHALLENGE = "locate-challenge"
@@ -368,6 +370,14 @@ RELATED_MATCH = "relatedMatch"
 #: but it states something else.
 LOCATE_RELATIONS = frozenset({EXACT_MATCH, CLOSE_MATCH, BROAD_MATCH, NARROW_MATCH,
                               HAS_PART, RELATED_MATCH})
+#: how strong a relation is, strongest first (a lower number is stronger): a
+#: challenge's ``downgrade`` names a relation of a strictly higher number than the
+#: record's.  ``broadMatch`` stands above ``narrowMatch`` and ``hasPart`` because
+#: :func:`derive_status` counts it for a theorem and them only as ``partial``
+#: (references/locate-documents.md section 4).  The gate inlines a copy, pinned by
+#: tests/test_locate_contract.py.
+RELATION_STRENGTH = {EXACT_MATCH: 0, CLOSE_MATCH: 1, BROAD_MATCH: 2, NARROW_MATCH: 3,
+                     HAS_PART: 3, RELATED_MATCH: 4}
 #: The relation of an ABSENCE record, the spec's checked-absence form: one
 #: ``lean`` end per universe library and no ``location``.  Never a location's.
 NO_MATCH = "noMatch"

@@ -10,7 +10,7 @@ No host address, account or profile name appears in this file. They live in `wor
 
 **Contents** — §0 the two tools this needs · §1 the topology · §2 preconditions ·
 §3 `cf plan-run` · §4 `cf run` · §5 monitoring · §6 failure modes · §7 `cf harvest` ·
-§8 the local fallback · §9 what stays manual · §10 sources.
+§8 the local fallback · §9 a locate root · §10 what stays manual · §11 sources.
 
 ---
 
@@ -180,7 +180,10 @@ agents genuinely read the book and the Lean. At 8 workers that is ~8–12 h for 
 limit is the hosted-session cap and the review loop, not CPU.
 
 **Hard cap: 16 concurrent hosted sessions per account, across workspaces.** 8 workers + 5 reviewers
-leaves three. Above the cap you get 409s.
+leaves three. Above the cap the API answers 409. The bridges now take one of 15 per-user `flock`
+slots before every agent call (`CF_SLOT_DIR`, `CF_SLOTS`) and wait for a free one rather than
+failing, so roots on one Unix user cannot together pass the cap; an empty or 409 envelope still
+exits 75 so tend retries the same worktree.
 
 ## 6. Failure modes you will actually meet
 
@@ -190,7 +193,8 @@ leaves three. Above the cap you get 409s.
 | a task loops, repeating a rejected mistake | the bridge re-ran the original prompt on rework | the shipped bridge appends the reviewer's feedback from `.tend/discussion.md` |
 | the gate fails on every task | the book text is missing at the configured path | intended: the gate fails closed. Check the book directory before blaming the run |
 | `aggregate usage: input=0` | agents run inside hosted sessions | expected; watch the gateway, not the orchestrator |
-| 409s when starting | the session cap | lower concurrency, or wait for the other workspace |
+| 409s when starting | the session cap, reached from another Unix user or account | the bridge exits 75 and tend retries; lower concurrency, or wait for the other workspace |
+| an agent call never returns | a hung session | every call runs under `timeout ${CF_AGENT_TIMEOUT:-45m}`; expiry exits 124, an infrastructure failure tend retries, never a verdict |
 | the disk fills minutes after launch | one worktree per ready task | see §2.6 |
 | a run dies | the orchestrator resumes from its sqlite state (`worker_running` → pending) | re-`tend run --root` with the same root; `run.yaml` records the exact command |
 
@@ -230,7 +234,75 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
   is why turning it off here is worse than turning it off on the server path, where
   `validation_commands` and `pre_merge_validation_commands` have already run it per task.
 
-## 9. What stays manual, permanently
+## 9. A locate root
+
+A locate run (`cf plan-locate`; `docs/proposals/wikipedia-locate.md` §3, §6) uses the same tend
+root, bridge and harvest, with these differences:
+
+- **One task, its own directory.** A task writes `findings/<task-id>/<source-id>.json`, one
+  document per source its manifest (`gate/tasks/<task-id>.json`) names, and changes nothing else
+  but `tasks/<task-id>.yaml`. The gate is `gate/verify_locate.py`, invoked by tend's validation
+  commands with `--changed-files --base <branch>`; it reads only the documents the change set
+  touched and only the sources, candidates and manifest they name. Its last line names the
+  ownership rule that judged the change set: the task id from `--task-id`/`TEND_TASK_ID`, the
+  task id recovered from `<tend-root>/orchestrator.sqlite` (opened read-only and immutable,
+  **with an assumed schema**: read that line on the smoke task, as for §4 step 5), or the
+  single-stem rule.
+- **What travels.** `cf run` sends only the run's own sources (their rendered directories),
+  `corpus.sqlite` (and the database the workers search, when the run is blind or planted) and the
+  candidates directory, and checks the database's sha once at the verify stage. **A locate run
+  needs a spend cap**: `cf run --execute` refuses one without a `budget.max_cost`, and has no
+  `--no-budget-cap` escape for it.
+- **The host-side directories**, all in the tend root and outside every worktree: `usage/` (each
+  agent call's JSON envelope, a cost cross-check), `attempts/<task-id>.json` (genuine reviewer
+  rejections only; the third makes the worker bridge write `UNRESOLVED` documents with
+  `unresolved.by: attempt_cap`, which the reviewer bridge approves mechanically), `gate-log/gate.jsonl`
+  (one line per gate call, by rule).
+- **The worker's tools.** The worker allowlist adds the two corpus host tools by absolute path,
+  pinned to the run's database (`CF_EXTRA_TOOLS`), and an inventory worker's passage-id tool.
+- **Bringing it home.** `cf harvest <run-id>` lands `corpus/<run-id>/<task-id>/<source-id>.json`,
+  re-gates the whole corpus out of tree with `gate.local.json`, counts `UNRESOLVED` documents and
+  attempt-capped ones separately in the receipt, and also brings the host's gate log (and, for a
+  campaign shard, its usage export and canary scan) to `runs/<run-id>/host/`. Then
+  `cf tally --locate --run <run-id>`.
+- **What travels, for a blind or planted run.** The gate always checks the full `corpus.sqlite`
+  (`gate.json` `corpus_db`); the workers search the tools database (`tools_corpus_db`: the full one,
+  `corpus.blind.sqlite` for `--blind`, or a planted file given to `cf plan-locate --tools-corpus-db`).
+  `cf run` transfers the tools database too when it is another file, and checks both shas at the
+  verify stage. A P run of the bench is planned that way with the bench's planted database
+  (`references/locate-bench.md` §7).
+- **Shards.** More than 500 tasks is a campaign:
+  1. Run a **pilot** first: a small locate run taken to the smoke stage with `cf run <pilot>
+     --i-have-consent --execute`, watched through worker → gate → reviewer → merge, then raised
+     with `--stage raise --smoke-verified --execute`, which records `run.smoke_verified`. Read its
+     p90 cost per merged task and gate-failure rate from its harvest.
+  2. Plan each shard with `cf plan-locate` (each with its own `--max-cost`), then
+     `cf campaign plan <id> --shard <r1> --shard <r2> … --host <alias> --pilot <pilot>` with the
+     pilot's p90s. `cf campaign plan` stamps `locate.campaign` into each shard's `run.yaml` and
+     refuses a shard stamped by another campaign. Give `--transcript-dirs` (or set
+     `hosts.<alias>.transcript_dirs` in `workspace.yaml`) to have each shard's transcripts exported
+     and pruned, and `--canaries <host path>` to have them scanned for the bench's label canaries.
+  3. Take every shard through `cf run <shard> --i-have-consent --execute --stage verify`, which
+     transfers and verifies it and launches nothing. `cf campaign render <id>` refuses a campaign
+     without a smoke-verified pilot.
+  4. Copy `campaigns/<id>/` to the host and start its `sequencer.sh` there (under `nohup` or a
+     terminal multiplexer). It takes a lock (`sequencer.lock`), so a second start exits 3. It refuses
+     a root that already has a live `tend run`, keys its state by run id, and runs shard k+1 only
+     after shard k's `tend run` ends. Beside each shard its model-free watchdog drains the root
+     (`tend-control drain`) when the shard's spend passes its cap, or when the gate-failure rate or the
+     cost per merged task passes the configured multiple of the pilot's p90. After each shard it
+     scans that shard's transcripts for canaries (`canary_scan.py` writes
+     `{"scanned": N, "hits": [<file>, …], "canaries": K}`), exports their usage and prunes them;
+     a canary hit or a failed scan keeps them. A drain, a canary hit or an unreadable watchdog record
+     stops the campaign. `CF_TEND_CMD`, `CF_TRANSCRIPT_DIRS`, `CF_CANARIES` and `CF_WATCH_INTERVAL`
+     override what was rendered.
+  5. Harvest each shard as it finishes (`cf harvest <shard> --execute`); `cf campaign status <id>`
+     reads the shards' receipts.
+
+  The sequencer needs, on the host: bash 4.4 or later (`mapfile -d`), GNU `comm` (with `-z`),
+  `flock`, `pgrep`, `python3` and rsync.
+
+## 10. What stays manual, permanently
 
 - ssh access and any credential or login on the host;
 - the hosted-agent profile login;
@@ -248,7 +320,7 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
 
 ---
 
-## 10. Sources
+## 11. Sources
 
 | claim | source |
 |---|---|

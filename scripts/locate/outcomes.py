@@ -62,9 +62,8 @@ from . import inputs
 
 CHALLENGE_PLAN_SCHEMA = "cf-locate-challenge-plan/1"
 #: a relation's strength, strongest first: a ``downgrade`` names a WEAKER one
-#: (references/locate-documents.md section 4)
-RELATION_STRENGTH = {vocab.EXACT_MATCH: 0, vocab.CLOSE_MATCH: 1, vocab.BROAD_MATCH: 2,
-                     vocab.NARROW_MATCH: 2, vocab.HAS_PART: 2, vocab.RELATED_MATCH: 3}
+#: (references/locate-documents.md section 4); one order, the gate's too
+RELATION_STRENGTH = vocab.RELATION_STRENGTH
 
 
 def decl_token(library: str, declaration: str, commit: str) -> str:
