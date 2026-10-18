@@ -586,11 +586,19 @@ def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], l
                             "tools read; the gate still checks against corpus.sqlite")
         entry["sha256"] = tools_r.get("sha256")
         entries.append(entry)
-    if remote.get("candidates_dir") and local.get("candidates_dir"):
-        entries.append(_entry("candidates", Path(local["candidates_dir"]),
-                              str(remote["candidates_dir"]).rstrip("/") + "/",
-                              flags=READONLY_CHMOD + ["--delete"],
-                              note="L2: the curated hits gate rule 4 reads itself"))
+    if remote.get("candidates_dir") and local.get("candidates_dir") and not remote.get("blind"):
+        # THIS run's sources' candidates files only, never the directory: it is
+        # the sourceset's, shared by every run of it.  The blind arm reads none.
+        files = [Path(local["candidates_dir"]) / f"{sid}.json"
+                 for sid in sorted(remote.get("sources") or {})]
+        entry = _entry("candidates", files, str(remote["candidates_dir"]).rstrip("/") + "/",
+                       flags=READONLY_CHMOD,
+                       note="L2: the curated hits gate rule 4 reads itself, for this run's "
+                            "sources")
+        # the directory an earlier transfer left read-only: opened for the
+        # rsync's rename, and closed again after it
+        entry["lock_dir"] = True
+        entries.append(entry)
     return entries, warnings
 
 

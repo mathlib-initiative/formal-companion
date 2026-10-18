@@ -667,8 +667,9 @@ like a faithfulness run:
   the watchdog read that key. It sends the run's source layers (only with
   `--include-source-text`, and then `run.sources_transferred` names them),
   `corpus.sqlite`, the tools database when gate.json's `tools_corpus_db` names
-  another file, and the candidates; the verify stage checks each database
-  against its pinned sha256 once. The frozen inventory is not sent: nothing on
+  another file, and this run's sources' candidates files (never the
+  sourceset's whole directory, and none in the blind arm); the verify stage
+  checks each database against its pinned sha256 once. The frozen inventory is not sent: nothing on
   the host reads it, and its passages reach the workers and the gate in the task
   manifests. The preflight prints `tend-version:`, `agentbox-version:` and
   `agent-cli-version:` lines (the CLI the run's `bridge` launches; `unknown`
