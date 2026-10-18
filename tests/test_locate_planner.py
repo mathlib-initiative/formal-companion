@@ -1141,6 +1141,50 @@ class TestEveryRootStagesTheBridgeHelpers(unittest.TestCase):
         self.assertIn("gate file missing", str(caught.exception))
 
 
+class TestFieldS5TheInventoryPlansConceptArticles(unittest.TestCase):
+    """S5: plan-locate read no flag, so every redirect stub, disambiguation page, list and
+    biography of a rendered sourceset became a paid locate task.  Here W2's entry
+    recorded no flags (as every entry of a sourceset enumerated before the flags
+    existed does) and its assessment class says Redirect."""
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.paths = F.make_workspace(self.root)
+        with mock.patch.dict(F.ARTICLES[F.W2], {"assessment": {"class": "Redirect",
+                                                               "importance": "NA"}}):
+            F.write_sourceset(self.paths)
+        F.write_universe(self.paths)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U)
+        self.assertEqual(code, 0, out + err)
+        self.assertIsNone(F.manifest_entries(self.paths)[F.W2].get("flags"))
+
+    def plan(self, run_id: str, *extra: str) -> tuple[dict, str]:
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", run_id, *extra)
+        self.assertEqual(code, 0, out + err)
+        return read_yaml(self.paths.run_yaml(run_id)), out + err
+
+    def test_a_page_its_class_flags_is_left_out_and_named(self):
+        doc, out = self.plan("inv-1")
+        self.assertEqual(doc["locate"]["source_ids"], [F.W1])
+        self.assertEqual(doc["locate"]["skipped"][F.W2], "no concept article (redirect)")
+        self.assertIn("--include-flagged plans them", out)
+        # nobody asked Wikidata about W1: a biography would pass as a concept article
+        self.assertTrue(any("no biography flag" in w and "flag-biographies wpm --execute" in w
+                            for w in doc["warnings"]), doc["warnings"])
+
+    def test_asked_for_or_named_it_is_planned(self):
+        doc, _out = self.plan("inv-2", "--include-flagged")
+        self.assertEqual(doc["locate"]["source_ids"], [F.W1, F.W2])
+        doc, _out = self.plan("inv-3", "--source", F.W2)
+        self.assertEqual(doc["locate"]["source_ids"], [F.W2])
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate", "--sourceset", F.SS,
+                            "--universe", F.U, "--inventory-run", "inv-2", "--include-flagged")
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("belongs to the locate-inventory preset", out + err)
+
+
 class TestPlanLocate(Campaign):
 
     def test_tasks_carry_the_frozen_formal_math_passages(self):

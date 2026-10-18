@@ -14,7 +14,8 @@ Three things are fixed and live only here:
   entry records, so two fetches of one revision with different parameters can
   never pass for one source;
 * the manifest entry's fields (:data:`ENTRY_FIELDS`) and what each may hold
-  (:func:`entry_problems`), the page flags among them (:func:`page_flags`);
+  (:func:`entry_problems`), the page flags among them (:func:`page_flags`), and
+  what an entry's flags say when it recorded none (:func:`effective_flags`);
 * the revision permalink, from the family's ``revision_url`` template in the
   registry -- built from the page id and revision, so it survives a page move.
 """
@@ -197,9 +198,39 @@ def merged_flags(old: dict | None, new: dict) -> dict:
     return out
 
 
+def effective_flags(entry: dict) -> dict:
+    """The entry's ``flags``, each one it has not determined read off its own record.
+
+    An entry carries no flags (``flags`` null) when it was enumerated before
+    the flags were recorded, or seeded by ``create --from`` from such a
+    sourceset; its recorded assessment class and title still say what
+    :func:`page_flags` would: a Redirect or Disambig class, a List class or a
+    "List of" title (field defect S5: a whole sourceset of null flags was
+    fetched and planned stubs and all).  A determined flag is kept as recorded;
+    ``biography`` stays undetermined until ``cf sourceset flag-biographies``.
+    Nothing here is written back: the manifest keeps what was recorded.
+    """
+    derived = page_flags(title=entry.get("title"), assessment=entry.get("assessment"))
+    return merged_flags(entry.get("flags"), derived)
+
+
 def concept_page(entry: dict) -> bool:
-    """No flag of the entry's page says it is not a concept article (an unknown one does not)."""
-    return not any((entry.get("flags") or {}).values())
+    """No flag of the entry's page says it is not a concept article (an unknown one does not).
+
+    The flags are :func:`effective_flags`: a null flag the entry's own
+    assessment class settles is settled by it.
+    """
+    return not any(effective_flags(entry).values())
+
+
+def no_article(entry: dict) -> bool:
+    """Is the entry's page a redirect or a disambiguation page (:func:`effective_flags`)?
+
+    What a plain ``cf sourceset fetch`` leaves out: such a page's bytes are a
+    stub, no article.
+    """
+    flags = effective_flags(entry)
+    return bool(flags.get(vocab.PAGE_FLAG_REDIRECT) or flags.get(vocab.PAGE_FLAG_DISAMBIGUATION))
 
 
 def entry_problems(record: Any) -> list[str]:

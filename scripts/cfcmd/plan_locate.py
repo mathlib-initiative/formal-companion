@@ -58,7 +58,11 @@ def register(subparsers) -> None:
                    help="the sourceset version to pin (default: the newest)")
     p.add_argument("--universe", required=True, help="the universe id")
     p.add_argument("--source", dest="sources", action="append", default=[],
-                   help="plan only this source (repeatable; default: every rendered source)")
+                   help="plan only this source (repeatable; default: every rendered source "
+                        "of a concept article)")
+    p.add_argument("--include-flagged", action="store_true",
+                   help="locate-inventory: also plan the pages flagged as no concept article "
+                        "(redirect, disambiguation, list, biography; left out by default)")
     p.add_argument("--inventory-run", default=None,
                    help="locate: the harvested, gated inventory run whose passages are frozen")
     p.add_argument("--challenge-of", dest="challenge_of", action="append", default=[],
@@ -105,6 +109,9 @@ def _check_mode_flags(args) -> None:
                       hint="pass --inventory-run <the harvested locate-inventory run>")
     if args.preset != vocab.LOCATE and (args.inventory_run or args.subject_only):
         raise CfError("--inventory-run and --subject-only belong to the locate preset")
+    if args.preset != vocab.LOCATE_INVENTORY and args.include_flagged:
+        raise CfError("--include-flagged belongs to the locate-inventory preset",
+                      hint="a locate run plans the sources its frozen inventory holds")
     if args.preset == vocab.LOCATE_CHALLENGE and not args.challenge_of:
         raise CfError("a challenge judges harvested locate runs",
                       hint="pass --challenge-of <run-id> (repeatable)")
@@ -171,8 +178,20 @@ def run(args) -> int:
     skipped: dict[str, str] = {}
     challenge_doc = None
     if preset.mode == vocab.LOCATE_INVENTORY:
-        source_ids, unrendered = lplan.select_sources(manifest, args.sources)
+        source_ids, unrendered, flagged = lplan.select_sources(
+            manifest, args.sources, include_flagged=args.include_flagged)
         skipped.update({s: "not rendered" for s in unrendered})
+        skipped.update(flagged)
+        if flagged:
+            warnings.append(f"{len(flagged)} source(s) are no concept article and are not "
+                            f"planned (run.yaml locate.skipped names each; --include-flagged "
+                            f"plans them)")
+        unasked = lplan.undetermined_biographies(manifest, source_ids)
+        if unasked:
+            warnings.append(f"{len(unasked)} planned source(s) have no biography flag yet, so a "
+                            f"biography among them is planned as a concept article: `cf "
+                            f"sourceset flag-biographies {args.sourceset} --execute` asks "
+                            f"Wikidata, then re-plan")
         candidates(paths, args.sourceset, universe, tools_db, source_ids, blind=args.blind)
         tasks = lplan.inventory_tasks(paths, manifest, source_ids)
     elif preset.mode == vocab.LOCATE:

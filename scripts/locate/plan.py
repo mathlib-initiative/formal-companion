@@ -5,8 +5,10 @@ L5), 5, 6 (Roots) and 7 in the layout of references/locate-documents.md
 section 9.  A locate run is scoped to a SOURCESET pinned at one manifest
 version and to one UNIVERSE, never to a companion:
 
-* ``locate-inventory`` -- one task per rendered source, its deterministic
-  finders' passages pre-filled in the task manifest;
+* ``locate-inventory`` -- one task per rendered source of a concept article
+  (a redirect, disambiguation page, list or biography is left out and named,
+  unless asked for), its deterministic finders' passages pre-filled in the
+  task manifest;
 * ``locate`` -- tasks of at most ``cflib.vocab.MAX_PASSAGES_PER_LOCATE_TASK``
   ``formal_math`` passages of a FROZEN inventory (the gated documents of an
   inventory run), one source per task; ``subject_only`` is the article-level
@@ -41,7 +43,7 @@ from cflib.paths import WorkspacePaths, skill_root, templates_dir
 from plan.make_tasks import tend_priority
 from plan.render import render_file
 
-from sources import render_html
+from sources import render_html, websource
 from sources.sourceset import Manifest
 
 from . import challenge_plan as cplan, inputs, outcomes as outcomes_mod
@@ -162,12 +164,19 @@ def _document_pin(entry: dict) -> dict:
             "layer_sha256": entry["layer_sha256"], "renderer": entry["renderer"]}
 
 
-def select_sources(manifest: Manifest, wanted: Iterable[str]) -> tuple[list[str], list[str]]:
-    """``(source ids to plan, source ids skipped as unrendered)``: one source per page.
+def select_sources(manifest: Manifest, wanted: Iterable[str], *,
+                   include_flagged: bool = False) -> tuple[list[str], list[str], dict[str, str]]:
+    """``(source ids to plan, unrendered ones, {flagged one: why})``: one source per page.
 
     The page's source is the one ``Manifest.preferred()`` names; with no
-    ``--source`` every page's is planned once it is rendered.  A named source
-    must be its page's preferred one, and rendered.
+    ``--source`` every page's is planned once it is rendered, unless its page is
+    no concept article (``sources.websource.concept_page``: a redirect, a
+    disambiguation page, a list or a biography, by the flags the entry recorded
+    or, where it recorded none, by its own assessment class -- field defect S5:
+    a fleet over a sourceset of null flags planned every stub and list as a paid
+    task).  Those are left out and named, or planned with ``include_flagged``.
+    A named source must be its page's preferred one, and rendered; it is
+    planned whatever its flags say.
     """
     wanted = list(dict.fromkeys(wanted))
     unknown = [s for s in wanted if s not in manifest.entries]
@@ -189,10 +198,25 @@ def select_sources(manifest: Manifest, wanted: Iterable[str]) -> tuple[list[str]
             raise CfError(f"not rendered in version {manifest.version}: " + ", ".join(bare[:5]),
                           hint=f"render it: `cf sourceset render {manifest.sourceset_id} "
                                f"--source {bare[0]}`")
-        return sorted(wanted), []
+        return sorted(wanted), [], {}
     ids = sorted(preferred.values())
+    flagged: dict[str, str] = {}
+    if not include_flagged:
+        for sid in ids:
+            flags = websource.effective_flags(manifest.entries[sid])
+            true = sorted(name for name, value in flags.items() if value)
+            if true:
+                flagged[sid] = f"no concept article ({', '.join(true)})"
+    ids = [s for s in ids if s not in flagged]
     return ([s for s in ids if inputs.rendered(manifest.entries[s])],
-            [s for s in ids if not inputs.rendered(manifest.entries[s])])
+            [s for s in ids if not inputs.rendered(manifest.entries[s])], flagged)
+
+
+def undetermined_biographies(manifest: Manifest, source_ids: Iterable[str]) -> list[str]:
+    """The planned sources whose page nobody asked Wikidata about (``biography`` null)."""
+    return [s for s in source_ids
+            if websource.effective_flags(manifest.entries[s]).get(vocab.PAGE_FLAG_BIOGRAPHY)
+            is None]
 
 
 def _priority(entry: dict, *, hot: bool = False) -> str:

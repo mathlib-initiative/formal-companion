@@ -865,18 +865,28 @@ def _fetch(workspace, args) -> int:
         todo = [e for e in base if not e.get("raw_sha256")]
         pinned = [e for e in todo if not is_adopted(e) and e["pageid"] in adopted_pages]
         todo = [e for e in todo if e not in pinned]
-        # a redirect or a disambiguation page is no article: its stub is not fetched
+        # a redirect or a disambiguation page is no article: its stub is not fetched.
+        # The flags are the effective ones: an entry that recorded none (enumerated
+        # before the flags existed, or seeded from such a sourceset) is judged by
+        # its own assessment class, as the enumeration would flag it (S5)
         no_article = []
         if not args.include_flagged:
-            no_article = [e for e in todo if (e.get("flags") or {}).get("redirect")
-                          or (e.get("flags") or {}).get("disambiguation")]
+            no_article = [e for e in todo if websource.no_article(e)]
             todo = [e for e in todo if e not in no_article]
+    unflagged = sum(1 for e in todo if not e.get("flags"))
     if args.limit is not None:
         todo = todo[:max(0, args.limit)]
     transport = _transport(args, base.family, workspace)
+    if unflagged and selected is None:
+        log.warn(f"{unflagged} source(s) to fetch carry no page flags, so only their assessment "
+                 f"class says which are redirects or disambiguation pages: `cf sourceset "
+                 f"enumerate-wikiproject {ss.id} --project <P> --execute` fills the flags from "
+                 f"the page info first")
     if transport is None:
         log.info(f"dry run: {len(todo)} source(s) of {ss.id} have no bytes yet"
-                 + (f" of the {len(selected)} selected" if selected is not None else ""))
+                 + (f" of the {len(selected)} selected" if selected is not None else "")
+                 + (f"; {len(no_article)} redirect or disambiguation page(s) left out "
+                    f"(--include-flagged fetches them)" if no_article else ""))
         if todo:
             first = wikinet.request_url(fam.site, websource.parse_params(todo[0]["revision"]))
             log.info(f"  first request: {first}")
