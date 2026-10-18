@@ -12,6 +12,7 @@ shards' receipts back.  Nothing here contacts a host.
 """
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
 from pathlib import Path
@@ -30,6 +31,20 @@ from . import manifest
 #: a root holds at most this many tasks (proposal section 6, Roots)
 MAX_ROOT_TASKS = vocab.MAX_TASKS_PER_ROOT
 CAMPAIGN_VERSION = 1
+#: a campaign id names a directory here and on the host and is written into a
+#: shell script: nothing a shell would expand
+CAMPAIGN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+#: the host-side tools render copies beside the sequencer
+HOST_TOOLS = (("run", "watchdog.py"), ("cost", "usage.py"), ("run", "canary_scan.py"))
+
+
+def check_campaign_id(campaign_id: str) -> str:
+    if not CAMPAIGN_ID.match(str(campaign_id or "")):
+        raise CfError(f"campaign id {campaign_id!r} is not letters, digits, '.', '_' and '-' "
+                      f"(starting with a letter or digit)",
+                      hint="the id names a directory on the host and is written into the "
+                           "sequencer script; pick a plain one, e.g. wpm-tier-a")
+    return campaign_id
 
 
 def _run_doc(workspace, run_id: str) -> dict:
@@ -76,10 +91,42 @@ def shard_record(workspace, run_id: str, index: int, host_alias: str) -> dict:
             "reviewers": int(concurrency.get("reviewers") or 4)}
 
 
+def _stamp(workspace, campaign_id: str, run_id: str) -> None:
+    """Record ``locate.campaign: <id>`` in the shard's run.yaml (the export seals it)."""
+    path = workspace.paths.run_yaml(run_id)
+    data = _run_doc(workspace, run_id)
+    block = data.get("locate") if isinstance(data.get("locate"), dict) else {}
+    if block.get("campaign") == campaign_id:
+        return
+    block["campaign"] = campaign_id
+    data["locate"] = block
+    write_yaml(path, data)
+
+
+def _pilot(workspace, pilot: str) -> str:
+    """A run that passed its smoke test (run.yaml ``run.smoke_verified``), or a refusal."""
+    data = _run_doc(workspace, pilot)
+    block = data.get("run") if isinstance(data.get("run"), dict) else {}
+    if not block.get("smoke_verified"):
+        raise CfError(f"pilot {pilot!r} records no passed smoke test (run.smoke_verified)",
+                      hint="the sequencer launches every shard at full concurrency, so the "
+                           "pilot must have gone worker -> gate -> reviewer -> merge first: "
+                           f"`cf run {pilot} --host <host> --i-have-consent --stage raise "
+                           "--smoke-verified --execute`")
+    return pilot
+
+
 def plan(workspace, campaign_id: str, shards: list[str], *, host: str,
          p90_cost_per_task: float | None = None, p90_gate_failure_rate: float | None = None,
-         multiple: float = 2.0, min_tasks: int = 5) -> tuple[Path, dict]:
-    """Write ``campaigns/<id>/campaign.yaml``; idempotent for the same arguments."""
+         multiple: float = 2.0, min_tasks: int = 5, pilot: str | None = None,
+         transcript_dirs: str | None = None, canaries: str | None = None) -> tuple[Path, dict]:
+    """Write ``campaigns/<id>/campaign.yaml`` and stamp each shard's run.yaml.
+
+    Idempotent for the same arguments.  A shard already stamped with another
+    campaign is refused, and so is a re-plan of a rendered campaign that does
+    not keep its shards, in order, as a prefix of the new list.
+    """
+    check_campaign_id(campaign_id)
     if not shards:
         raise CfError("a campaign needs at least one shard", hint="pass --shard <run-id>, in order")
     if len(set(shards)) != len(shards):
@@ -89,8 +136,20 @@ def plan(workspace, campaign_id: str, shards: list[str], *, host: str,
                       hint="the watchdog drains at a MULTIPLE of the p90, e.g. 2")
     workspace.check_host(host)
     rows = [shard_record(workspace, run_id, i, host) for i, run_id in enumerate(shards, 1)]
+    for run_id in shards:
+        stamped = (_run_doc(workspace, run_id).get("locate") or {}).get("campaign")
+        if stamped and stamped != campaign_id:
+            raise CfError(f"shard {run_id!r} belongs to campaign {stamped!r}",
+                          hint="a shard runs in one campaign; plan another run for this one")
     path = workspace.paths.campaign_yaml(campaign_id)
     previous = read_yaml(path) if path.exists() else {}
+    previous = previous if isinstance(previous, dict) else {}
+    before = [str(s.get("run_id")) for s in previous.get("shards") or [] if isinstance(s, dict)]
+    if previous.get("sequencer") and before != list(shards)[:len(before)]:
+        raise CfError(f"campaign {campaign_id!r} was rendered with shards {before}; a re-plan "
+                      f"may only append to them", hint="plan a new campaign id for another order")
+    if pilot:
+        _pilot(workspace, pilot)
     doc = {
         "version": CAMPAIGN_VERSION,
         "id": campaign_id,
@@ -102,14 +161,21 @@ def plan(workspace, campaign_id: str, shards: list[str], *, host: str,
         "watchdog": {"p90_cost_per_task": p90_cost_per_task,
                      "p90_gate_failure_rate": p90_gate_failure_rate,
                      "multiple": multiple, "min_tasks": min_tasks},
-        "sequencer": (previous or {}).get("sequencer"),
+        "pilot": pilot or previous.get("pilot"),
+        "transcript_dirs": transcript_dirs if transcript_dirs is not None
+        else previous.get("transcript_dirs"),
+        "canaries": canaries if canaries is not None else previous.get("canaries"),
+        "sequencer": previous.get("sequencer"),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     write_yaml(path, doc, header=f"# campaign.yaml -- {campaign_id}\n")
+    for run_id in shards:
+        _stamp(workspace, campaign_id, run_id)
     return path, doc
 
 
 def load(workspace, campaign_id: str) -> dict:
+    check_campaign_id(campaign_id)
     path = workspace.paths.campaign_yaml(campaign_id)
     if not path.exists():
         raise CfError(f"no campaign {campaign_id!r} ({path})",
@@ -136,6 +202,12 @@ def render(workspace, campaign_id: str) -> dict:
 
     doc = load(workspace, campaign_id)
     host = manifest.resolve_host(workspace, str(doc["host"]))
+    if not doc.get("pilot"):
+        raise CfError(f"campaign {campaign_id!r} records no smoke-tested pilot",
+                      hint="the sequencer launches every shard at full concurrency without a "
+                           "smoke test of its own: re-plan with `cf campaign plan "
+                           f"{campaign_id} --shard <run-id> --host {doc['host']} --pilot <run-id>`")
+    _pilot(workspace, str(doc["pilot"]))
     root = host["remote_root"]
     lines = []
     for shard in doc["shards"]:
@@ -145,9 +217,12 @@ def render(workspace, campaign_id: str) -> dict:
                 f"{root}/{names['entrypoint']}", f"{float(shard['max_cost']):g}",
                 str(shard["workers"]), str(shard["reviewers"])]
         lines.append("run_shard " + " ".join(shlex.quote(a) for a in args) + " || exit $?")
+    transcript_dirs = str(doc.get("transcript_dirs") or host.get("transcript_dirs") or "")
     ctx = {"campaign_id": campaign_id, "host": doc["host"],
            "tend_cmd_quoted": shlex.quote(host.get("tend_cmd") or ""),
-           "state_dir": f"{root}/campaigns/{campaign_id}",
+           "state_dir_quoted": shlex.quote(f"{root}/campaigns/{campaign_id}"),
+           "transcript_dirs_quoted": shlex.quote(transcript_dirs),
+           "canaries_quoted": shlex.quote(str(doc.get("canaries") or "")),
            "multiple": doc["watchdog"].get("multiple"),
            "watchdog_flags": _watchdog_flags(doc.get("watchdog") or {}),
            "shard_lines": "\n".join(lines)}
@@ -157,20 +232,20 @@ def render(workspace, campaign_id: str) -> dict:
     sequencer = out / "sequencer.sh"
     sequencer.write_text(text, encoding="utf-8")
     sequencer.chmod(0o755)
-    for src in (skill_root() / "scripts" / "run" / "watchdog.py",
-                skill_root() / "scripts" / "cost" / "usage.py"):
-        shutil.copy2(src, out / src.name)
+    for package, name in HOST_TOOLS:
+        shutil.copy2(skill_root() / "scripts" / package / name, out / name)
     record = {"path": str(sequencer), "sha256": sha256_file(sequencer),
               "host_dir": f"{root}/campaigns/{campaign_id}"}
     doc["sequencer"] = record
     write_yaml(workspace.paths.campaign_yaml(campaign_id), doc,
                header=f"# campaign.yaml -- {campaign_id}\n")
-    return {"dir": str(out), "sequencer": record,
+    script = shlex.quote(f"{record['host_dir']}/sequencer.sh")
+    return {"dir": str(out), "sequencer": record, "transcript_dirs": transcript_dirs,
+            "canaries": str(doc.get("canaries") or ""),
             "transfer": " ".join(["rsync", "-a", shlex.quote(str(out) + "/"),
                                   shlex.quote(f"{host['ssh']}:{record['host_dir']}/")]),
             "start": " ".join(["ssh", shlex.quote(host["ssh"]),
-                               shlex.quote(f"nohup {record['host_dir']}/sequencer.sh "
-                                           f"</dev/null >/dev/null 2>&1 &")])}
+                               shlex.quote(f"nohup {script} </dev/null >/dev/null 2>&1 &")])}
 
 
 def status(workspace, campaign_id: str) -> dict:
@@ -184,11 +259,15 @@ def status(workspace, campaign_id: str) -> dict:
         receipt = read_json(receipt_path, default=None) if receipt_path.exists() else None
         locate = (receipt or {}).get("locate") or {}
         cost = (receipt or {}).get("cost") or {}
+        # three states, never two: a receipt with no gate block was never gated
+        # (`cf harvest --no-gate`), which is not a gate that failed
+        gate = (receipt or {}).get("gate")
+        gated = isinstance(gate, dict) and bool(gate)
         row = {"index": shard["index"], "run_id": shard["run_id"], "mode": shard.get("mode"),
                "tasks": shard["tasks"], "max_cost": shard["max_cost"],
                "harvested": receipt is not None,
                "complete": bool((receipt or {}).get("complete")),
-               "gate_ok": bool(((receipt or {}).get("gate") or {}).get("ok")),
+               "gated": gated, "gate_ok": bool(gated and gate.get("ok")),
                "documents": locate.get("documents", 0),
                "unresolved_documents": locate.get("unresolved_documents", 0),
                "attempt_capped": locate.get("attempt_capped_documents", 0),

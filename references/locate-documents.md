@@ -673,7 +673,8 @@ like a faithfulness run:
   manifests. The preflight prints `tend-version:`, `agentbox-version:` and
   `agent-cli-version:` lines (the CLI the run's `bridge` launches; `unknown`
   when a probe finds none), and an executed preflight records them at the top
-  level as `versions: {tend, agentbox, agent_cli}`.
+  level as `versions: {tend, agentbox, agent_cli}`. `cf campaign plan` adds
+  `campaign: <id>` to a shard's `locate` block (§11).
 
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
 JSON envelope per agent call, `<task-id>.<role>.<UTC stamp>.<pid>.json`, kept as
@@ -722,16 +723,16 @@ rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
 | local file | from the host |
 |---|---|
 | `gate.jsonl` | `<log_dir>/gate.jsonl`, `log_dir` being the host `gate.json`'s (the tend root's `gate-log/`) |
-| `usage.jsonl` | a campaign shard only: the sequencer's `<campaign dir>/usage-<k>.jsonl` (§11) |
-| `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<k>.json` (§11) |
+| `usage.jsonl` | a campaign shard only: the sequencer's `<campaign dir>/usage-<run-id>.jsonl` (§11) |
+| `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<run-id>.json` (§11) |
 
-A shard is a run whose `run.yaml` carries `locate.campaign`; `k` is its `index`
-in that campaign's `campaign.yaml`, and the campaign directory is the rendered
+A shard is a run whose `run.yaml` carries `locate.campaign` and which that
+campaign's `campaign.yaml` lists; the campaign directory is the rendered
 sequencer's `host_dir`. Each file is one `rsync -a --ignore-missing-args` and
 lands only once it arrived whole; the dry run prints those commands with the
 findings ones. The receipt records `host_artifacts: {<local name>: {remote,
 fetched, path, sha256, bytes} | {remote, fetched: false, reason,
-kept_previous?}}` (a shard's rows also carry `campaign` and `shard`); a file the
+kept_previous?}}` (a shard's rows also carry `campaign`); a file the
 host lacks is `absent on the host`, never a failed harvest. With no
 `--transcripts`, a landed `usage.jsonl` is what the receipt's `cost` block
 prices. The harvest then merges `runs.<run-id>` of the sourceset's
@@ -804,22 +805,49 @@ shards:                       # in the order they run
 tasks: 480
 max_cost: 120.0               # the sum of the shards' caps
 watchdog: {p90_cost_per_task: 4.1, p90_gate_failure_rate: 0.12, multiple: 2.0, min_tasks: 5}
+pilot: wpm-pilot              # a run whose run.yaml records run.smoke_verified: true
+transcript_dirs: <host dir>   # colon-separated; else hosts.<host>.transcript_dirs
+canaries: <host path>         # the bench's canaries.txt on the host, or null
 sequencer: {path: …/host/sequencer.sh, sha256: <hex>, host_dir: <remote root>/campaigns/<id>}
 ```
 
+A campaign id is letters, digits, `.`, `_` and `-`, starting with a letter or
+digit. `plan` stamps `locate.campaign: <id>` into each shard's `run.yaml` (the
+export seals it) and refuses a shard stamped with another campaign; once the
+campaign is rendered a re-plan may only append shards. `render` refuses a
+campaign whose `pilot` is missing or records no passed smoke test, since the
+sequencer launches each shard at full concurrency with no smoke test of its
+own. Each shard goes through `cf run <shard> --stage verify` first — transfer
+and verify, nothing launched; a shard smoke-tested with `cf run` keeps its own
+tend run going.
+
 `render` writes `campaigns/<id>/host/`: `sequencer.sh` (from
 `templates/campaign/sequencer.sh.tmpl`, shell, no cflib) beside copies of
-`scripts/run/watchdog.py` and `scripts/cost/usage.py`, and prints the rsync and
-start commands. On the host the sequencer runs each shard's `tend run` in order —
-shard k+1 starts when shard k's ends — with the watchdog beside it, exports the
-shard's usage from `CF_TRANSCRIPT_DIRS` and then prunes the transcripts that
-shard wrote, keeps its state in `<remote root>/campaigns/<id>/` (`shard-<k>.done`,
-`usage-<k>.jsonl`, `sequencer.log`), and writes `STOPPED` and stops the moment a
-watchdog drains a shard. The watchdog (model-free, stdlib) drains the root with
+`scripts/run/watchdog.py`, `scripts/cost/usage.py` and
+`scripts/run/canary_scan.py`, and prints the rsync and start commands (every
+path in them shell-quoted). On the host one sequencer at a time holds the
+campaign (`flock` on `sequencer.lock`); it runs each shard's `tend run` in order
+— shard k+1 starts when shard k's ends — refusing a root that already has a live
+tend run, with the watchdog beside it. After each shard it takes the
+transcripts that appeared under `CF_TRANSCRIPT_DIRS` (default: campaign.yaml's)
+since the shard started — the directories' listing before and after, never a
+file that was already there — scans them for `CF_CANARIES` (default:
+campaign.yaml's) into `canary-<run-id>.json` (`{scanned, hits, canaries}`, the
+report `cf bench score --canary-report` reads), appends their usage to
+`usage-<run-id>.jsonl` (a resumed shard keeps its earlier attempt's rows), and
+deletes exactly those files, keeping them all when the scan found a canary or
+could not run, or the export failed. Its state in `<remote root>/campaigns/<id>/`
+is keyed by run id (`shard-<run-id>.done`, `.started`, `.before`, `usage-<run-id>.jsonl`,
+`canary-<run-id>.json`, `sequencer.log`). It writes `STOPPED` and stops when a
+shard's last watchdog record shows a drain, or a reason to drain that no drain
+acted on (a failed `tend-control drain`, or a cap crossed after the last
+periodic check), or cannot be read, and when a canary was found. The watchdog (model-free, stdlib) drains the root with
 `tend-control drain` when the spend summed from `usage/` reaches the shard's cap,
 or the gate-failure rate from `gate-log/gate.jsonl` (over at least 20 calls) or
 the cost per merged task (over at least `min_tasks`) passes `multiple` times the
 pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is
-`<root>/watchdog.json`. The operator's machine only harvests receipts:
-`status` reads each shard's `RECEIPT.json` (complete, gate, the `locate` block,
-the priced cost) and totals the UNRESOLVED rate.
+`<root>/watchdog.json`; `--min-gate-calls` and `--min-tasks` are at least 1. The
+operator's machine only harvests receipts: `status` reads each shard's
+`RECEIPT.json` (complete, the gate as ok, FAILED or UNGATED — a receipt with no
+gate block was never gated — the `locate` block, the priced cost) and totals
+the UNRESOLVED rate.

@@ -114,7 +114,16 @@ def resolve_host(workspace, host: str) -> dict:
         "tend_version_required": str(entry.get("tend_version")
                                      or hosts.get("tend_version")
                                      or workspace.default("tend_version", "") or ""),
+        # where the agents' transcripts land on that host, for the campaign
+        # sequencer's per-shard export (a list, or one colon-separated string)
+        "transcript_dirs": _colon_list(entry.get("transcript_dirs")),
     }
+
+
+def _colon_list(value: Any) -> str:
+    if isinstance(value, (list, tuple)):
+        return ":".join(str(v) for v in value if str(v))
+    return str(value or "")
 
 
 def remote_names(run: dict, run_id: str) -> dict:

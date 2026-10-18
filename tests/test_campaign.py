@@ -16,10 +16,12 @@ except ImportError:  # pragma: no cover
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -97,6 +99,19 @@ class TestTheWatchdog(unittest.TestCase):
         self.assertIn("cost per merged task", watchdog.decide(dollars=6.5, **args)[0])
         args.update(merged=4)                       # too few merged tasks to judge
         self.assertEqual(watchdog.decide(dollars=6.5, **args), [])
+        # no gate call yet and a zero minimum: nothing to divide by (review #74)
+        self.assertEqual(watchdog.decide(dollars=1, max_cost=10, calls=0, failed=0, merged=None,
+                                         p90_cost=None, p90_gate=0.1, multiple=2, min_calls=0), [])
+
+    def test_a_zero_minimum_is_refused(self):
+        for flag in ("--min-gate-calls", "--min-tasks"):
+            proc = subprocess.run([sys.executable, str(WATCHDOG), "--root", str(self.root),
+                                   "--max-cost", "10", "--p90-gate-failure-rate", "0.1",
+                                   flag, "0", "--once", "--dry-run"],
+                                  capture_output=True, text=True, env=clean_env())
+            with self.subTest(flag=flag):
+                self.assertEqual(proc.returncode, 64, proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
 
     def test_it_drains_once_at_the_cap_and_records_why(self):
         envelope(self.root / "usage", "t-1.worker.a.1.json", 4.0)
@@ -180,6 +195,14 @@ class WorkspaceCase(unittest.TestCase):
             lines.append(f"budget:\n  currency: USD\n  max_cost: {cap}")
         (rd / "run.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    def pilot(self, run_id: str = "p-1", *, verified: bool = True) -> str:
+        rd = self.ws_dir / "runs" / run_id
+        rd.mkdir(parents=True)
+        (rd / "run.yaml").write_text(f"version: 1\nrun_id: {run_id}\nmode: locate\n"
+                                     f"locate:\n  mode: locate\n"
+                                     f"run:\n  smoke_verified: {str(verified).lower()}\n")
+        return run_id
+
 
 class TestCampaignPlan(WorkspaceCase):
 
@@ -215,14 +238,82 @@ class TestCampaignPlan(WorkspaceCase):
         with self.assertRaises(CfError):
             campaign_mod.plan(self.ws, "c1", ["ok"], host="examplebox", multiple=1)
 
+    def test_the_shards_are_stamped_and_belong_to_one_campaign(self):
+        from cflib.yamlio import read_yaml
+
+        self.shard("r-1")
+        self.shard("r-2")
+        campaign_mod.plan(self.ws, "c1", ["r-1"], host="examplebox")
+        self.assertEqual(read_yaml(self.ws_dir / "runs" / "r-1" / "run.yaml")["locate"]["campaign"],
+                         "c1")
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.plan(self.ws, "c2", ["r-2", "r-1"], host="examplebox")
+        self.assertIn("belongs to campaign 'c1'", str(caught.exception))
+        self.assertNotIn("campaign", read_yaml(self.ws_dir / "runs" / "r-2" / "run.yaml")["locate"])
+
+    def test_an_id_a_shell_would_expand_is_refused(self):
+        self.shard("r-1")
+        for bad in ("c$(touch${IFS}PWNED)", "c`id`", "c 1", "-c1"):
+            with self.subTest(id=bad), self.assertRaises(CfError):
+                campaign_mod.plan(self.ws, bad, ["r-1"], host="examplebox")
+
+    def test_a_rendered_campaign_may_only_append(self):
+        for run_id in ("r-0", "r-1", "r-2", "r-3"):
+            self.shard(run_id)
+        campaign_mod.plan(self.ws, "c1", ["r-1", "r-2"], host="examplebox", pilot=self.pilot())
+        campaign_mod.render(self.ws, "c1")
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.plan(self.ws, "c1", ["r-0", "r-1", "r-2"], host="examplebox")
+        self.assertIn("may only append", str(caught.exception))
+        _path, doc = campaign_mod.plan(self.ws, "c1", ["r-1", "r-2", "r-3"], host="examplebox")
+        self.assertEqual(doc["pilot"], "p-1")
+
+    def test_render_needs_a_smoke_tested_pilot(self):
+        self.shard("r-1")
+        campaign_mod.plan(self.ws, "c1", ["r-1"], host="examplebox")
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.render(self.ws, "c1")
+        self.assertIn("no smoke-tested pilot", str(caught.exception))
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.plan(self.ws, "c1", ["r-1"], host="examplebox",
+                              pilot=self.pilot("p-0", verified=False))
+        self.assertIn("records no passed smoke test", str(caught.exception))
+
+    def test_status_says_ungated_not_failed(self):
+        self.shard("r-1")
+        self.shard("r-2")
+        campaign_mod.plan(self.ws, "c1", ["r-1", "r-2"], host="examplebox")
+        for run_id, gate in (("r-1", None), ("r-2", {"ok": False, "problems": ["x"]})):
+            corpus = self.ws_dir / "corpus" / run_id
+            corpus.mkdir(parents=True)
+            (corpus / "RECEIPT.json").write_text(json.dumps({"complete": gate is None,
+                                                             "gate": gate}))
+        rows = {r["run_id"]: r for r in campaign_mod.status(self.ws, "c1")["shards"]}
+        self.assertEqual((rows["r-1"]["gated"], rows["r-1"]["gate_ok"]), (False, False))
+        self.assertEqual((rows["r-2"]["gated"], rows["r-2"]["gate_ok"]), (True, False))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            cf_main.main(["--workspace", str(self.ws_dir), "campaign", "status", "c1"])
+        table = out.getvalue()
+        self.assertIn("UNGATED", table)
+        self.assertIn("FAILED", table)
+
     def test_the_cli(self):
         self.shard("r-1")
         out = io.StringIO()
         with redirect_stdout(out), redirect_stderr(out):
             code = cf_main.main(["--workspace", str(self.ws_dir), "campaign", "plan", "c1",
-                                 "--shard", "r-1", "--host", "examplebox"])
+                                 "--shard", "r-1", "--host", "examplebox",
+                                 "--pilot", self.pilot()])
         self.assertEqual(code, 0, out.getvalue())
         self.assertIn("drains on the spend cap alone", out.getvalue())
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = cf_main.main(["--workspace", str(self.ws_dir), "campaign", "render", "c1"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("--stage verify", out.getvalue())
+        self.assertNotIn("--stage smoke", out.getvalue())
+        self.assertIn("no transcript directories are known", out.getvalue())
         with redirect_stdout(io.StringIO()) as status, redirect_stderr(io.StringIO()):
             cf_main.main(["--workspace", str(self.ws_dir), "campaign", "status", "c1", "--json"])
         self.assertEqual(json.loads(status.getvalue())["totals"]["harvested"], 0)
@@ -236,15 +327,22 @@ class TestTheSequencer(WorkspaceCase):
         self.bin = self.tmp / "fakebin"
         self.bin.mkdir()
         self.log = self.tmp / "tend.log"
-        # `tend run --root R ...`: spend what R/spend says, slowly enough for the
-        # watchdog to look, then finish
+        self.transcripts = self.tmp / "transcripts"
+        self.transcripts.mkdir()
+        # `tend run --root R ...`: spend what R/spend says, write one transcript
+        # (R/words is any text it should hold), slowly enough for the watchdog
+        # to look, then finish
         (self.bin / "tend").write_text(
             '#!/bin/sh\nroot=""; while [ $# -gt 0 ]; do [ "$1" = --root ] && root="$2"; shift; done\n'
             f'echo "run $root" >> "{self.log}"\n'
             'mkdir -p "$root/usage"\n'
             'printf \'{"subtype":"success","total_cost_usd":%s}\' "$(cat "$root/spend")" '
-            '> "$root/usage/t.worker.x.1.json"\nsleep 2\n')
-        (self.bin / "tend-control").write_text(f'#!/bin/sh\necho "control $*" >> "{self.log}"\n')
+            '> "$root/usage/t.worker.x.1.json"\n'
+            f'printf \'{{"model":"claude-opus-5","usage":{{"input":1,"output":2,"cache_write":0,'
+            f'"cache_read":0}},"x":"%s"}}\\n\' "$(cat "$root/words" 2>/dev/null)" '
+            f'> "{self.transcripts}/$(basename "$root").jsonl"\nsleep 2\n')
+        (self.bin / "tend-control").write_text(
+            f'#!/bin/sh\necho "control $*" >> "{self.log}"\nexit "${{FAKE_DRAIN_EXIT:-0}}"\n')
         for f in self.bin.iterdir():
             f.chmod(0o755)
         for run_id, spend in (("r-1", 1), ("r-2", 50), ("r-3", 1)):
@@ -253,9 +351,22 @@ class TestTheSequencer(WorkspaceCase):
             root.mkdir()
             (root / "spend").write_text(str(spend))
 
-    def render(self):
-        campaign_mod.plan(self.ws, "c1", ["r-1", "r-2", "r-3"], host="examplebox")
+    def render(self, **plan_extra):
+        campaign_mod.plan(self.ws, "c1", ["r-1", "r-2", "r-3"], host="examplebox",
+                          pilot=self.pilot(), **plan_extra)
         return campaign_mod.render(self.ws, "c1")
+
+    def sequence(self, **env) -> subprocess.CompletedProcess:
+        sequencer = self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh"
+        return subprocess.run(["bash", str(sequencer)], capture_output=True, text=True,
+                              timeout=180,
+                              env=clean_env(PATH=f"{self.bin}:{os.environ['PATH']}",
+                                            CF_WATCH_INTERVAL="0.3",
+                                            CF_TRANSCRIPT_DIRS=str(self.transcripts), **env))
+
+    def runs(self) -> list[str]:
+        return [line.split()[1] for line in self.log.read_text().splitlines()
+                if line.startswith("run ")]
 
     def test_the_render(self):
         out = self.render()
@@ -266,6 +377,7 @@ class TestTheSequencer(WorkspaceCase):
         text = sequencer.read_text()
         self.assertLess(text.index("run_shard 1 r-1"), text.index("run_shard 2 r-2"))
         self.assertTrue((host / "watchdog.py").is_file() and (host / "usage.py").is_file())
+        self.assertTrue((host / "canary_scan.py").is_file())
         for needle in ("from cflib", "import cflib", "cf.py"):
             self.assertNotIn(needle, text)
         doc = campaign_mod.load(self.ws, "c1")
@@ -274,30 +386,103 @@ class TestTheSequencer(WorkspaceCase):
 
     def test_it_runs_in_order_and_stops_when_a_watchdog_drains(self):
         self.render()
-        sequencer = self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh"
-        transcripts = self.tmp / "transcripts"
-        transcripts.mkdir()
-        proc = subprocess.run(["bash", str(sequencer)], capture_output=True, text=True,
-                              timeout=180,
-                              env=clean_env(PATH=f"{self.bin}:{os.environ['PATH']}",
-                                            CF_WATCH_INTERVAL="0.3",
-                                            CF_TRANSCRIPT_DIRS=str(transcripts)))
+        # a transcript older than the campaign is neither exported nor pruned
+        old = self.transcripts / "operator.jsonl"
+        old.write_text(json.dumps({"model": "claude-opus-5", "usage": {"input": 7}}) + "\n")
+        proc = self.sequence()
         self.assertEqual(proc.returncode, 2, proc.stderr)
-        runs = [line.split()[1] for line in self.log.read_text().splitlines()
-                if line.startswith("run ")]
-        self.assertEqual(runs, [str(self.remote / "r-1-tend"), str(self.remote / "r-2-tend")])
+        self.assertEqual(self.runs(), [str(self.remote / "r-1-tend"), str(self.remote / "r-2-tend")])
         self.assertIn(f"control drain --root {self.remote / 'r-2-tend'}", self.log.read_text())
         state = self.remote / "campaigns" / "c1"
-        self.assertTrue((state / "shard-1.done").exists())
-        self.assertFalse((state / "shard-2.done").exists())
+        self.assertTrue((state / "shard-r-1.done").exists())
+        self.assertFalse((state / "shard-r-2.done").exists())
         self.assertTrue((state / "STOPPED").exists())
         self.assertIn("DRAINED by the watchdog", (state / "sequencer.log").read_text())
-        self.assertTrue((state / "usage-1.jsonl").exists())
+        # each shard's export holds its own transcript only, which was pruned
+        for run_id in ("r-1", "r-2"):
+            rows = (state / f"usage-{run_id}.jsonl").read_text().splitlines()
+            self.assertEqual(len(rows), 1, rows)
+            self.assertFalse((self.transcripts / f"{run_id}-tend.jsonl").exists())
+        self.assertTrue(old.exists())
         # a stopped campaign refuses to resume until the operator says so
-        again = subprocess.run(["bash", str(sequencer)], capture_output=True, text=True,
-                               env=clean_env(PATH=f"{self.bin}:{os.environ['PATH']}"))
+        again = self.sequence()
         self.assertEqual(again.returncode, 2)
         self.assertIn("STOPPED", again.stderr)
+
+    def test_a_resumed_shard_keeps_its_first_attempts_usage(self):
+        self.render()
+        (self.remote / "r-2-tend" / "spend").write_text("1")
+        (self.bin / "tend").write_text((self.bin / "tend").read_text().replace(
+            "sleep 2\n", 'sleep 2\ncase "$root" in *r-2-tend) exit 3;; esac\n'))
+        first = self.sequence()
+        self.assertEqual(first.returncode, 3, first.stderr)
+        second = self.sequence()
+        self.assertEqual(second.returncode, 3, second.stderr)
+        rows = (self.remote / "campaigns" / "c1" / "usage-r-2.jsonl").read_text().splitlines()
+        self.assertEqual(len(rows), 2, "the second attempt overwrote the first's usage")
+
+    def test_a_failed_drain_or_a_late_cap_still_stops_the_campaign(self):
+        self.render()
+        proc = self.sequence(FAKE_DRAIN_EXIT="1")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertEqual(self.runs(), [str(self.remote / "r-1-tend"), str(self.remote / "r-2-tend")])
+        state = self.remote / "campaigns" / "c1"
+        self.assertTrue((state / "STOPPED").exists())
+        self.assertIn("the drain FAILED", (state / "sequencer.log").read_text())
+
+    def test_a_label_canary_stops_the_campaign_and_keeps_the_transcripts(self):
+        canaries = self.tmp / "canaries.txt"
+        canaries.write_text("cf-bench-canary-" + "0" * 32 + "\n")
+        self.render(canaries=str(canaries))
+        (self.remote / "r-1-tend" / "words").write_text("cf-bench-canary-" + "0" * 32)
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertEqual(self.runs(), [str(self.remote / "r-1-tend")])
+        state = self.remote / "campaigns" / "c1"
+        report = json.loads((state / "canary-r-1.json").read_text())
+        self.assertEqual((report["scanned"], report["hits"]), (1, ["r-1-tend.jsonl"]))
+        self.assertTrue((self.transcripts / "r-1-tend.jsonl").exists())
+        self.assertIn("CANARY", (state / "sequencer.log").read_text())
+
+    def test_a_live_tend_run_or_a_second_sequencer_is_refused(self):
+        self.render()
+        root = self.remote / "r-1-tend"
+        smoke = subprocess.Popen(["bash", "-c", f'exec -a "tend run --root {root}" sleep 30'])
+        self.addCleanup(smoke.kill)
+        time.sleep(0.3)
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertIn("already live", proc.stderr)
+        self.assertEqual(self.runs() if self.log.exists() else [], [])
+        smoke.kill()
+        smoke.wait()
+        import fcntl
+
+        state = self.remote / "campaigns" / "c1"
+        with open(state / "sequencer.lock", "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            proc = self.sequence()
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertIn("another sequencer holds", proc.stderr)
+
+    def test_every_rendered_path_is_quoted(self):
+        odd = self.tmp / "re mote"
+        odd.mkdir()
+        self.ws.data["hosts"]["examplebox"]["remote_root"] = str(odd)
+        self.ws.save()
+        from cflib.workspace import Workspace
+
+        self.ws = Workspace.load(self.ws_dir, validate=False)
+        for run_id in ("r-1", "r-2", "r-3"):
+            path = self.ws_dir / "runs" / run_id / "run.yaml"
+            path.write_text(path.read_text().replace(str(self.remote), str(odd)))
+        out = self.render(transcript_dirs="/t/a b:/t/c")
+        text = (self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh").read_text()
+        self.assertEqual(subprocess.run(["bash", "-n", "-c", text]).returncode, 0)
+        self.assertIn(f"STATE='{odd}/campaigns/c1'", text)
+        self.assertIn("TRANSCRIPTS_DEFAULT='/t/a b:/t/c'", text)
+        remote_cmd = shlex.split(out["start"])[2]
+        self.assertEqual(shlex.split(remote_cmd)[:2], ["nohup", f"{odd}/campaigns/c1/sequencer.sh"])
 
 
 class TestCfRunForLocate(WorkspaceCase):
@@ -519,6 +704,33 @@ class TestCfRunForLocate(WorkspaceCase):
                                           f"{self.remote}/r-1-gate/verify_findings.py, --changed-files]\n")
         warnings = manifest.gate_config_warnings(self.ws_dir, "r-1", host, self.run_doc)
         self.assertTrue(any("verify_locate.py" in w for w in warnings))
+
+
+class TestTheCanaryScan(unittest.TestCase):
+    """scripts/run/canary_scan.py: the host-side report `cf bench score --canary-report` reads."""
+
+    def test_hits_plain_and_gzipped_and_the_exit_codes(self):
+        import gzip
+
+        tmp = scratch(self)
+        canaries = tmp / "canaries.txt"
+        canaries.write_text("cf-bench-canary-abc\n\n")
+        clean = tmp / "a.jsonl"
+        clean.write_text('{"x": "nothing"}\n')
+        dirty = tmp / "b.jsonl.gz"
+        with gzip.open(dirty, "wt") as fh:
+            fh.write('{"x": "a cf-bench-canary-abc leak"}\n')
+        out = tmp / "canary.json"
+        scan = [sys.executable, str(SCRIPTS / "run" / "canary_scan.py"), "--canaries",
+                str(canaries), "--out", str(out), "--"]
+        proc = subprocess.run(scan + [str(clean)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(out.read_text()), {"scanned": 1, "hits": [], "canaries": 1})
+        proc = subprocess.run(scan + [str(clean), str(dirty)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual(json.loads(out.read_text())["hits"], ["b.jsonl.gz"])
+        proc = subprocess.run(scan + [str(tmp / "missing.jsonl")], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
 
 
 if __name__ == "__main__":
