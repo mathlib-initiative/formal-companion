@@ -276,7 +276,14 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
             add("transfer", f"make the earlier copy of {entry['name']} writable so --delete "
                             f"can remove what was deleted since",
                 _ssh(host, f"test ! -e {dest} || chmod -R u+w {dest}"))
+        if entry.get("lock_dir"):
+            dest = shlex.quote(entry["dest"])
+            add("transfer", f"open {entry['dest']} for the files of this run",
+                _ssh(host, f"test ! -d {dest} || chmod u+w {dest}"))
         add("transfer", f"rsync {entry['name']} -> {entry['dest']}", _rsync(entry, host))
+        if entry.get("lock_dir"):
+            add("transfer", f"close {entry['dest']} again (read-only, owner-reversible)",
+                _ssh(host, f"chmod a-w {shlex.quote(entry['dest'])}"))
         modes = _chmod_fallback_modes(entry)
         if modes:
             # This rsync cannot express --chmod (macOS ships 2.6.9), so the

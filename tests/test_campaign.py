@@ -499,6 +499,7 @@ class TestCfRunForLocate(WorkspaceCase):
         db.write_bytes(b"sqlite")
         cands = self.ws_dir / "sourcesets" / "wpm" / "candidates" / "u1"
         cands.mkdir(parents=True)
+        (cands / "enwiki-1001-2002.json").write_text("{}")
         gate = {"schema": "cf-gate-locate/1", "mode": "locate",
                 "sourceset": {"id": "wpm", "sources_dir": f"{self.remote}/locate/wpm/sources"},
                 "sources": {"enwiki-1001-2002": {"html_sha256": "a" * 64}},
@@ -551,6 +552,34 @@ class TestCfRunForLocate(WorkspaceCase):
         # the task manifests (#54, #80)
         self.assertNotIn("inventory", {e["name"] for e in entries})
         self.assertFalse(any("names no sources" in w for w in warnings))
+
+    def test_only_this_runs_candidates_travel(self):
+        """Review #67: the candidates directory is the sourceset's, shared by every run."""
+        cands = self.ws_dir / "sourcesets" / "wpm" / "candidates" / "u1"
+        for sid in ("enwiki-1001-2002", "enwiki-9-9"):
+            (cands / f"{sid}.json").write_text("{}")
+        host = manifest.resolve_host(self.ws, "examplebox")
+        entries, _ = manifest.build_manifest(
+            workspace_dir=self.ws_dir, skill_dir=SKILL, run_id="r-1", run=self.run_doc, host=host)
+        entry = next(e for e in entries if e["name"] == "candidates")
+        self.assertEqual(entry["srcs"], [str(cands / "enwiki-1001-2002.json")])
+        self.assertNotIn("--delete", entry["rsync_flags"])
+        steps = remote.plan_commands(host=host, run_id="r-1", run=self.run_doc, entries=[entry],
+                                     names=manifest.remote_names(self.run_doc, "r-1"),
+                                     budget={"max_cost": 10, "currency": "USD"},
+                                     concurrency={"workers": 3, "reviewers": 2})
+        titles = [s["title"] for s in steps if s["stage"] == "transfer"]
+        rsync = titles.index(f"rsync candidates -> {entry['dest']}")
+        self.assertTrue(titles[rsync - 1].startswith("open ") and titles[rsync + 1].startswith("close "))
+        # the blind arm reads no L2, so none is sent
+        rd = self.ws_dir / "runs" / "r-1"
+        for name in ("gate.json", "gate.local.json"):
+            doc = json.loads((rd / name).read_text())
+            doc["blind"] = True
+            (rd / name).write_text(json.dumps(doc))
+        entries, _ = manifest.build_manifest(
+            workspace_dir=self.ws_dir, skill_dir=SKILL, run_id="r-1", run=self.run_doc, host=host)
+        self.assertNotIn("candidates", {e["name"] for e in entries})
 
     def test_the_verify_stage_checks_the_corpus_once_and_the_locate_gate(self):
         host = manifest.resolve_host(self.ws, "examplebox")
