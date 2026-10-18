@@ -1624,3 +1624,57 @@ class TestFieldS1TheRendererBumpPath(_FieldCase):
         code, out = cf(self.root, "sourceset", "create", "new", "--from", "wpm",
                        "--family", "dewiki")
         self.assertEqual(code, 2, out)
+
+
+def _tree(html: str):
+    """``(root, raw)`` of the renderer's tree, and a compact dump of it for assertions."""
+    builder = rh._TreeBuilder()
+    builder.feed(html)
+    root, raw = builder.finish()
+
+    def dump(node):
+        out = []
+        for child in node.children:
+            if isinstance(child, tuple):
+                out.append(raw[child[0]:child[1]])
+            else:
+                out.append((child.tag, child.ns, dump(child)))
+        return out
+    return dump(root)
+
+
+class TestFieldS14SelfClosingInForeignContent(unittest.TestCase):
+
+    def test_s14_a_mathml_or_svg_self_closing_tag_holds_nothing(self):
+        tree = _tree('<math alttext="a b"><mrow><mi>a</mi><mspace width="1em"/><mi>b</mi>'
+                     '</mrow></math>')
+        (_math, ns, (mrow,)), = tree
+        self.assertEqual(ns, "mathml")
+        self.assertEqual(mrow, ("mrow", "mathml", [("mi", "mathml", ["a"]),
+                                                    ("mspace", "mathml", []),
+                                                    ("mi", "mathml", ["b"])]))
+        svg = _tree('<svg><rect/><text>t</text></svg>')
+        self.assertEqual(svg, [("svg", "svg", [("rect", "svg", []), ("text", "svg", ["t"])])])
+
+    def test_s14_html_keeps_ignoring_the_flag_and_integration_points_are_html(self):
+        self.assertEqual(_tree("<p>x<span/>y</p>"), [("p", "html", ["x", ("span", "html",
+                                                                         ["y"])])])
+        tree = _tree('<svg><foreignObject><span/>z</foreignObject></svg>')
+        self.assertEqual(tree, [("svg", "svg", [("foreignobject", "svg",
+                                                  [("span", "html", ["z"])])])])
+        tree = _tree('<math><mtext><span/>w</mtext><mi><mglyph/>v</mi></math>')
+        self.assertEqual(tree, [("math", "mathml", [
+            ("mtext", "mathml", [("span", "html", ["w"])]),
+            ("mi", "mathml", [("mglyph", "mathml", []), "v"])])])
+        tree = _tree('<math><mrow><div/>u</mrow></math>')    # a breakout tag is HTML
+        self.assertEqual(tree, [("math", "mathml", [("mrow", "mathml",
+                                                      [("div", "html", ["u"])])])])
+
+    def test_s14_the_views_of_a_formula_with_an_mspace_are_unchanged(self):
+        r = rh.render('<p>Let <span class="mwe-math-element"><math alttext="{\\displaystyle '
+                      'a\\,b}"><semantics><mrow><mi>a</mi><mspace width="0.167em"/><mi>b</mi>'
+                      '</mrow><annotation encoding="application/x-tex">{\\displaystyle a\\,b}'
+                      '</annotation></semantics></math></span> be given.</p>')
+        self.assertEqual(r.layer, "Let ab{\\displaystyle a\\,b} be given.")
+        self.assertEqual(r.text, "Let $a\\,b$ be given.\n")
+        self.assertEqual([f["alttext"] for f in r.formulas], ["{\\displaystyle a\\,b}"])

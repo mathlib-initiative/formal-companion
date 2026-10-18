@@ -367,7 +367,9 @@ moved to `cf-layer-map/2`.
 `/1` not one layer equalled the consumer's text layer, because `/1` kept
 `style` and `script` text (a fifth of a real page's layer was TemplateStyles
 CSS, and a passage could open on it) and collapsed only ASCII whitespace. `/2`
-is the Literature Links rule above. A `/1` rendering cannot be re-rendered in
+is the Literature Links rule above. It also honours a self-closing flag on a
+MathML or SVG element (`<mspace/>` holds nothing, as in the HTML5 tree builder;
+the flag on an HTML element is still ignored). A `/1` rendering cannot be re-rendered in
 place (a recorded `layer_sha256` never changes): `cf sourceset create <new>
 --from <old>` seeds a new sourceset with the old one's identities and bytes and
 no layers, and `cf sourceset render <new>` renders it under the current id. Any
