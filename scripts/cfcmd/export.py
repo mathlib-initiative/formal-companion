@@ -105,8 +105,9 @@ def register(subparsers) -> None:
                     help="a harvested challenge run whose verdicts apply (repeatable)")
     ll.add_argument("--set-id", required=True, help="the record set's id: exports/<set-id>/")
     ll.add_argument("--byte-budget", type=int, default=None,
-                    help="per-source bytes of records/<source-id>.jsonl and its receipts "
-                         "(default 262144); a source over it is refused, never truncated")
+                    help="per-source bytes of records/<source-id>.jsonl and its receipts, for "
+                         "a consumer with a cap (default 0: no budget); a source over it is "
+                         "refused, never truncated, and the seal records the budget")
     ll.add_argument("--out", type=Path, default=None, metavar="DIR",
                     help="write the set here instead of exports/<set-id>/: a new or empty "
                          "directory, or an earlier set (never the checkout or a companion)")

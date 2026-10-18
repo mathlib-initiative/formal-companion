@@ -4,10 +4,19 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 2.7, 3 (L6)
 and 11.1 in the layout of references/locate-documents.md section 6::
 
     <set>/SEAL.json                 every other file with its sha256, and the pins
-    <set>/universe.json             the universe: per library its repo, commit, licence
+    <set>/universe.json             the universe: its sha, frozen date, a LIST of libraries
     <set>/sources.jsonl             per source: ids, revision, title, QID, shas, renderer
     <set>/records/<source-id>.jsonl the Literature Links 2.0 records
     <set>/receipts/<sha256>.json    the search receipts the absence records reference
+
+The shapes are the ones the consumer reads (references/locate-documents.md
+section 6): ``SEAL.json`` names the set, a campaign token that is never null
+(:func:`campaign_token`), the universe as ``{id, universe_sha256}``, the
+sourceset, the skill commit, the creation time and the byte budget it applied;
+``universe.json`` is ``{id, universe_sha256, frozen, libraries: [...] by id,
+excluded: [{id, reason}]}``.  No per-source byte budget applies unless one is
+asked for (``byte_budget``, default 0: off) -- a consumer with a cap passes its
+own.
 
 What it refuses, passage by passage, naming each one in the export report
 (``reports/export.<set-id>.json``) and exiting non-zero after writing the rest:
@@ -25,7 +34,10 @@ What it refuses, passage by passage, naming each one in the export report
   verbatim;
 * a record the vendored ``literature_links.check`` rejects;
 * a passage whose capped quote is not unique on the layer;
-* a whole source whose records pass the per-source byte budget;
+* a passage the record set cannot describe: no section heading path or no
+  prominence, or a ``closeMatch`` with no note;
+* a whole source whose records pass the per-source byte budget, when one is
+  given;
 * a whole source whose licence does not allow it: its manifest entry's
   ``licence_class`` must be the one the registry gives the source
   (``Registry.licence_class``), that class must be one an exported record may
@@ -66,8 +78,12 @@ from sources import websource
 from . import inputs, outcomes as outcomes_mod, records
 
 SEAL_SCHEMA = "cf-locate-recordset/1"
-#: the default per-source byte budget of records/<source-id>.jsonl
-DEFAULT_BYTE_BUDGET = 256 * 1024
+#: the default per-source byte budget of records/<source-id>.jsonl and its receipts:
+#: 0, off.  A consumer with a cap (an import into a store with a per-row limit) passes
+#: its own with --byte-budget, and the seal records the budget that applied.
+DEFAULT_BYTE_BUDGET = 0
+#: what a run in no campaign is sealed under: ``run:<locate run>[+<challenge run>...]``
+RUN_CAMPAIGN_PREFIX = "run:"
 
 
 def skill_commit() -> str | None:
@@ -80,14 +96,44 @@ def skill_commit() -> str | None:
     return found if len(found) == 40 else None
 
 
+def campaign_token(run: dict, run_id: str, challenge_runs: Iterable[str]) -> str:
+    """The seal's ``campaign``: never null.
+
+    The locate run's ``run.yaml`` ``locate.campaign`` (``cf campaign plan``
+    stamps a shard with its campaign id); for a run in no campaign,
+    ``run:<locate run>`` followed by ``+<challenge run>`` for each challenge run
+    applied, so two sets of one run with different challenges are told apart.
+    """
+    stamped = str((run.get("locate") or {}).get("campaign") or "").strip()
+    if stamped:
+        return stamped
+    return RUN_CAMPAIGN_PREFIX + "+".join([run_id, *challenge_runs])
+
+
 def _universe_json(universe: inputs.Universe) -> dict:
-    libs = {}
+    """``universe.json``: the universe's sha and frozen date, and its libraries as a list.
+
+    Each library: ``id``, ``brain_lib``, ``repo``, ``commit``, ``toolchain``,
+    ``roots``, ``licence`` (``{spdx}`` or null) and ``display_name`` -- the
+    library's ``brain_lib``, the one name the universe gives it.  ``excluded`` is
+    ``[{id, reason}]``.  Sorted by id; nothing the universe does not define.
+    """
+    frozen = str(universe.owner.frozen or "")
+    if not frozen:
+        raise CfError(f"universe {universe.id} records no frozen date",
+                      hint="a universe made by `cf corpus init` carries one; set `frozen: "
+                           "YYYY-MM-DD` in its universe.yaml to the day it was frozen")
+    libs = []
     for lid, lib in sorted(universe.libraries.items()):
-        libs[lid] = {"repo": lib.get("repo"), "commit": lib["commit"],
-                     "toolchain": lib.get("toolchain"), "brain_lib": lib.get("brain_lib"),
-                     "licence": lib.get("licence")}
-    return {"id": universe.id, "sha256": universe.sha256, "libraries": libs,
-            "excluded": universe.excluded}
+        name = str(lib.get("brain_lib") or lid)
+        libs.append({"id": lid, "brain_lib": name, "repo": lib.get("repo"),
+                     "commit": lib["commit"], "toolchain": lib.get("toolchain"),
+                     "roots": [str(r) for r in lib.get("roots") or []],
+                     "licence": lib.get("licence"), "display_name": name})
+    excluded = [{"id": str(row.get("id")), "reason": str(row.get("reason") or "")}
+                for row in sorted(universe.excluded, key=lambda r: str(r.get("id")))]
+    return {"id": universe.id, "universe_sha256": universe.sha256, "frozen": frozen,
+            "libraries": libs, "excluded": excluded}
 
 
 def _source_record(entry: dict, fam) -> dict:
@@ -137,9 +183,22 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
     universe = inputs.load_universe(paths, built["universe"]["id"])
     uni_doc = {"id": universe.id, "sha256": universe.sha256,
                "libraries": [{"id": lid, **lib} for lid, lib in sorted(universe.libraries.items())]}
+    universe_text = records.canonical(_universe_json(universe)) + "\n"
     reg = registry_mod.Registry.load(workspace)
     out = Path(out_dir).expanduser().resolve() if out_dir else paths.export_dir(set_id)
     previous = check_target(out, workspace)
+    commit = skill_commit()
+    if commit is None:
+        raise CfError(f"this checkout ({skill_root()}) has no git HEAD to seal the set with",
+                      hint="a sealed set names the skill commit that made it; export from a "
+                           "git checkout of the skill")
+    harvested = sorted(str(r["harvested_at"]) for r in
+                       [inputs.receipt(paths.corpus_run_dir(rid)) or {}
+                        for rid in [run_id, *challenge_runs]] if r.get("harvested_at"))
+    if not harvested:
+        raise CfError(f"run {run_id} and its challenge runs record no harvest time",
+                      hint="the seal's `created` is the newest harvest time, so a re-export "
+                           f"is byte-identical; re-run `cf harvest {run_id}`")
 
     refused: list[dict] = []
     skipped = Counter()
@@ -227,25 +286,24 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
         exported["passages"] += kept
     for digest, car in sorted(sidecars.items()):
         texts[f"receipts/{digest}.json"] = car
-    texts["universe.json"] = records.canonical(_universe_json(universe)) + "\n"
+    texts["universe.json"] = universe_text
     texts["sources.jsonl"] = "".join(records.canonical(r) + "\n" for r in sources_rows)
 
     _write_set(out, texts, previous)
     for rel, text in sorted(texts.items()):
         files[rel] = hashing.sha256_text(text)
-    harvested = sorted(str(r["harvested_at"]) for r in
-                       [inputs.receipt(paths.corpus_run_dir(rid)) or {}
-                        for rid in [run_id, *challenge_runs]] if r.get("harvested_at"))
     seal = {
         "schema": SEAL_SCHEMA,
-        "campaign": run["locate"].get("campaign"),
+        "set_id": set_id,
+        "campaign": campaign_token(run, run_id, challenge_runs),
         "runs": {"locate": run_id, "challenge": challenge_runs,
                  "inventory": run["locate"].get("inventory_run")},
-        "universe": {"id": universe.id, "sha256": universe.sha256},
+        "universe": {"id": universe.id, "universe_sha256": universe.sha256},
         "sourceset": {"id": pin["id"], "version": pin["version"],
                       "manifest_sha256": manifest.sha256},
-        "skill_commit": skill_commit(),
-        "created": harvested[-1] if harvested else None,
+        "skill_commit": commit,
+        "created": harvested[-1],
+        "byte_budget": int(byte_budget or 0),
         "files": files,
     }
     atomic_write(out / "SEAL.json", records.canonical(seal) + "\n")

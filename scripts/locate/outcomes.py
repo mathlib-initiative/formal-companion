@@ -46,6 +46,7 @@ row whose location could not be joined.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections import Counter
 from typing import Iterable
@@ -670,6 +671,8 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                                             "it is ignored and the record owed")
                 else:
                     loc["relation"] = relation
+                    if relation == vocab.CLOSE_MATCH and not str(loc.get("note") or "").strip():
+                        loc["note"] = downgrade_note(verdict)
         kept.append(loc)
     row["locations"] = kept
     # the passage-level record: an absence, an unresolved outcome, a scope or a prominence
@@ -732,6 +735,32 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
             if verdict.get("prominence") in vocab.PROMINENCE:
                 row["prominence"] = verdict["prominence"]
             row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
+
+
+#: the longest note a downgrade's witness lends a closeMatch, in characters
+NOTE_FROM_WITNESS_CHARS = 300
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+
+
+def downgrade_note(verdict: dict) -> str:
+    """The note of a location a challenge downgraded to ``closeMatch``.
+
+    A ``closeMatch`` names its convention difference in ``note`` (proposal
+    section 2.6), and a downgrade from ``exactMatch`` is exactly the challenger
+    saying there is one: the verdict's own ``note`` when it gives one, else the
+    first sentence of its ``witness`` (whitespace collapsed, cut at a word at
+    :data:`NOTE_FROM_WITNESS_CHARS`).  Empty only when the verdict says nothing,
+    which the gate refuses and the export would refuse by name.
+    """
+    note = " ".join(str(verdict.get("note") or "").split())
+    if note:
+        return note
+    witness = " ".join(str(verdict.get("witness") or "").split())
+    first = _SENTENCE_END.split(witness, maxsplit=1)[0] if witness else ""
+    if len(first) > NOTE_FROM_WITNESS_CHARS:
+        cut = first.rfind(" ", 0, NOTE_FROM_WITNESS_CHARS)
+        first = first[:cut if cut > 0 else NOTE_FROM_WITNESS_CHARS].rstrip(" ,;:") + "\u2026"
+    return first
 
 
 def _overturned(new: list[dict], old: list[dict]) -> list[dict]:

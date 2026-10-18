@@ -197,6 +197,10 @@ A locate task carries at most eight passages of one frozen inventory.
   `overturn` (with `locations`, at least one whose relation counts); `scope` —
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
   `uphold`, `overturn` (naming the new `prominence`).
+- A `downgrade` to `closeMatch` may give `note`, the convention difference the
+  record will carry; without one, the first sentence of its `witness` (at most
+  300 characters) becomes the note, since an exported `closeMatch` always names
+  one (§6).
 - A challenge task's records are its task manifest's, and each gets exactly one
   verdict (rule 1); overturn locations are checked like a locate document's.
   A verdict names its record by string `item` (and string `location_key` for a
@@ -272,11 +276,12 @@ and `written` when `--source` narrowed it:
 ## 6. Sealed record set (export)
 
 ```
-<set>/SEAL.json        {"schema": "cf-locate-recordset/1", "campaign", "runs": {"locate", "challenge",
-                        "inventory"}, "universe": {"id", "sha256"},
+<set>/SEAL.json        {"schema": "cf-locate-recordset/1", "set_id", "campaign",
+                        "runs": {"locate", "challenge", "inventory"},
+                        "universe": {"id", "universe_sha256"},
                         "sourceset": {"id", "version", "manifest_sha256"}, "skill_commit",
-                        "created", "files": {"<relative path>": "<sha256>"}}
-<set>/universe.json    the universe: per library id, repo, commit, toolchain, brain_lib, licence
+                        "created", "byte_budget", "files": {"<relative path>": "<sha256>"}}
+<set>/universe.json    {"id", "universe_sha256", "frozen", "libraries": [...], "excluded": [...]}
 <set>/sources.jsonl    per source: source_id, pageid, revision, title, wikidata, html_sha256,
                        layer_sha256, renderer, assessment
 <set>/records/<source-id>.jsonl   Literature Links 2.0 records (proposal §2.7)
@@ -284,14 +289,55 @@ and `written` when `--source` narrowed it:
 ```
 
 `SEAL.json` lists every other file with its sha256; a consumer refuses a set
-whose files do not match. It also names the runs the set was made from
-(`"runs": {"locate", "challenge", "inventory"}`), `campaign` is the locate run's
-`run.yaml` `locate.campaign` (which `cf campaign plan` stamps into a shard; null
-for a run in no campaign), `skill_commit` is the exporting checkout's, and
-`created` is the newest of those runs' harvest times, so the set is a function of
-its inputs and a re-export is byte-identical. A receipt's name, the absence
-record's `receipt.sha256` and the seal's entry are one value: the sha256 of the
-receipt file's exact bytes.
+whose files do not match. Its keys, every one always present:
+
+- `set_id` — the `--set-id` the set was exported under.
+- `campaign` — **never null**: the locate run's `run.yaml` `locate.campaign`
+  (which `cf campaign plan` stamps into a shard), or, for a run in no campaign,
+  `run:<locate run>` followed by `+<challenge run>` for each challenge run
+  applied (`run:loc-1+chl-1`), so two sets of one run under different challenges
+  are told apart.
+- `runs` — the runs the set was made from (`{"locate", "challenge": [...],
+  "inventory"}`).
+- `universe` — `{"id", "universe_sha256"}`, the key `universe.json` and every
+  record use.
+- `sourceset` — `{"id", "version", "manifest_sha256"}`, the manifest the run pinned.
+- `skill_commit` — the exporting checkout's 40-hex HEAD; the export refuses to
+  seal from a checkout with none.
+- `created` — the newest of those runs' harvest times (ISO 8601 UTC, `…Z`), so
+  the set is a function of its inputs and a re-export is byte-identical.
+- `byte_budget` — the per-source budget that applied, `0` for none (below).
+
+A receipt's name, the absence record's `receipt.sha256` and the seal's entry are
+one value: the sha256 of the receipt file's exact bytes.
+
+`universe.json` is the universe as proposal §2.3 writes it: `id`,
+`universe_sha256`, `frozen` (the `YYYY-MM-DD` it was frozen; the export refuses a
+universe without one), `libraries` — a **list** sorted by id, each `{"id",
+"brain_lib", "repo", "commit"` (40 hex)`, "toolchain", "roots": [...], "licence"`
+(`{"spdx"}` or null)`, "display_name"}`, where `display_name` is the library's
+`brain_lib`, the one name the universe gives it — and `excluded`, `[{"id",
+"reason"}]`. Nothing the universe does not define (no index paths, no host
+instructions).
+
+What every record carries beyond §2.7's example:
+
+- `extensions[‹locate›].section` — the passage's heading path (a list of
+  non-empty strings; `[]` is the lead) — and `.prominence` (`subject`,
+  `central`, `supporting`), after the challenge (a prominence overturn moves
+  it), so a consumer can single out the subject passage without a passage
+  table. A passage the outcomes give neither is refused.
+- A location's lean end carries `library`, `path`, `line` and `end_line` in its
+  extension **when the index has them**: a library's own published index may
+  record `line` only, and its ends then carry no `end_line` (never a null or a
+  guessed one). A consumer treats `end_line` as optional and renders `line N`.
+- A `closeMatch` always carries a non-empty `note`, a downgraded one too: a
+  challenge downgrade to `closeMatch` takes the verdict's `note`, else the first
+  sentence of its witness (§4); a `closeMatch` with no note is refused.
+- An absence keeps one lean end per universe library, each **minimal**:
+  `{"type": "lean", "uri": <repo>, "version": <40-hex commit>}` and nothing else
+  (no `role`, no extension; `universe.json` says which library a repository is),
+  about half the bytes of the earlier form at 48 libraries.
 
 `cf export literature-links --run <locate run> --challenge-run <run> --set-id
 <id>` writes it (`scripts/locate/export.py`, the records from
@@ -303,8 +349,11 @@ be joined, a document off the pinned rendering, a challenge that no longer fits
 its record), a `formal_math` passage with no outcome, a record the checker
 rejects, a quote no context can make unique, a receipt query or reason or a
 location note carrying more than `EXPORT_QUOTE_WORDS` words of the source
-verbatim, and a whole source whose records and receipts pass `--byte-budget`
-(default 262,144 bytes) or whose licence does not allow it — its manifest
+verbatim, a passage with no section or prominence or a `closeMatch` with no
+note, and a whole source whose records and receipts pass `--byte-budget` or
+whose licence does not allow it. No budget applies unless one is given (the
+default is 0, off): a consumer with a cap — an import into a store with a
+per-row limit — passes its own, and the seal records it. A source's manifest
 entry's `licence_class` must be the registry's for the source, one of
 `cflib.vocab.OPEN_LICENCE_CLASSES`, and an attribution class needs the family's
 SPDX id. A receipt keeps each candidate's documented keys only. Only
