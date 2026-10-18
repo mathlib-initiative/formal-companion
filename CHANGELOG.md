@@ -56,6 +56,22 @@ release has something to say.
   (`records.coverage_ext`), and the export refuses a claim whose challenge is
   none of the record values. Parity case C14 is refused (round 1 expected
   `partial`) and X11–X16 are new.
+- Parity round 3 settles the reading of D1 and resolves the open questions
+  Q1–Q3 of `references/vocabulary.md` §1.11: a survived coverage claim is one
+  more `exactMatch` location, judged by the passage's row like any other —
+  `proved` to the theorem row and a `definition` to the definition row when
+  every part is finished (`proved`, or data), `statement_only` on both rows when
+  any part is unfinished (`statement_only`, `wanted`, `axiom_dependent`, or a
+  `Prop`-valued definition). An `example` or `other` passage now takes the
+  better of the two rows for its claim too (Q1), a data part counts as finished
+  and a `Prop`-valued definition part does not (Q2), and a definition passage's
+  claim with an unfinished part is `statement_only` (Q3); rounds 1 and 2 left
+  each of these `partial`, and D04 moves from `formalized` to `statement_only`.
+  A confirmed claim also confirms its parts: a part whose own record is
+  `not_required` or `sampled_out` is exported `survived`
+  (`outcomes.confirm_parts`), a part a verdict judged keeps that verdict, and a
+  refuted claim confirms nothing. The parity table is 117 cases, and the cases
+  that carry `expected_challenges` pin each part's exported challenge.
 - A record set's `set_id` and `sourceset.id` are tokens of the consumer's grammar
   (`cflib.vocab.RECORDSET_TOKEN`: letters, digits and `._:-`, at most 128): the
   export refuses any other before a file is written, and `cf sourceset create`

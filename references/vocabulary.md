@@ -278,17 +278,23 @@ value) or `None`, and the three-argument call is the one it always was:
 
 | status | when |
 |---|---|
-| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration; `exactMatch` or `closeMatch` to **data** — a `definition` without the `statement` flag (an equivalence, isomorphism, bijection, structure-valued construction: the Chinese remainder theorem as a `RingEquiv`); a **survived coverage claim** whose every part is `proved`. Definition passage: `exactMatch` or `closeMatch` to a `definition`; a survived coverage claim whose every part is a `definition` or `proved` |
-| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or a theorem passage's survived coverage claim whose every part is `proved`, `statement_only`, `wanted` or `axiom_dependent` and not every one `proved` |
+| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration; `exactMatch` or `closeMatch` to **data** — a `definition` without the `statement` flag (an equivalence, isomorphism, bijection, structure-valued construction: the Chinese remainder theorem as a `RingEquiv`). Definition passage: `exactMatch` or `closeMatch` to a `definition`. Any passage: a **survived coverage claim** whose every part is finished — `proved`, or data |
+| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or any passage's survived coverage claim with an unfinished part — `statement_only`, `wanted`, `axiom_dependent`, or a `Prop`-valued definition |
 | `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition, with no coverage claim that upgrades them |
 | `not_formalized` | a checked absence, possibly beside `relatedMatch` locations |
 | none (`None`) | unresolved: no location that counts and no absence — including a passage whose only locations are `relatedMatch` |
 
-The best status over all the evidence wins (`formalized` > `statement_only` > `partial` >
-`not_formalized`). A coverage claim whose challenge is anything but `survived` —
-`challenge_pending`, `not_required`, `sampled_out`, `downgraded` — upgrades nothing; a refuted
-claim is removed by the outcomes before the status is derived, and an owed claim (no challenge has
-judged it yet, so it has no challenge value) is passed as no claim, which gives the same status.
+A survived coverage claim acts, for the status, exactly like **one more `exactMatch` location**
+(the reading of D1 that parity round 3 settled, below): a `proved` declaration to the theorem row
+and a `definition` to the definition row when every part is finished, so it formalizes the passage
+on either row, and a `statement_only` declaration, `statement_only` on both rows, when any part is
+unfinished. An `example` or `other` passage judges it on both rows, the better winning, as it
+judges every location. The best status over all the evidence wins (`formalized` >
+`statement_only` > `partial` > `not_formalized`). A coverage claim whose challenge is anything but
+`survived` — `challenge_pending`, `not_required`, `sampled_out`, `downgraded` — adds nothing; a
+refuted claim is removed by the outcomes before the status is derived, and an owed claim (no
+challenge has judged it yet, so it has no challenge value) is passed as no claim, which gives the
+same status.
 
 **The maintainer's decision D1** (2026-10-18), verbatim:
 
@@ -301,7 +307,9 @@ matched exactly or closely to data was `partial` (as its `broadMatch` still is),
 says several things — a conjunction of clauses — stated clause by clause by `hasPart` locations was
 `partial` however completely they covered it. The table above is the decision; the shared parity
 table `tests/data/locate/status-parity.json` (`cf-locate-status-parity/1`) holds its cases with
-their expected status, written by hand, and a consumer's own implementation runs the same cases.
+their expected status, written by hand — and, on the cases that carry `expected_challenges`, the
+challenge each location's exported record carries once the claim's verdict is applied — and a
+consumer's own implementation runs the same cases.
 
 **The coverage claim.** A located passage may carry `coverage: {"complete": true, "parts": [<rank>,
 …], "note": "<one sentence>"}` in its locate document (references/locate-documents.md §3): its
@@ -312,7 +320,13 @@ record note cap (no more than `EXPORT_QUOTE_WORDS` words of the source verbatim,
 characters). The gate refuses a claim on an absent or unresolved passage. Every claim is challenged
 whatever the passage's prominence — refuted by default, target `coverage` (`COVERAGE_TARGET`),
 actions `confirm` or `refute` (`COVERAGE_ACTIONS`) — because it upgrades a status: `confirm` makes
-it `survived`, `refute` removes the claim and leaves its parts `hasPart`. An exported record
+it `survived` and **confirms its parts** — each part whose own record no verdict judged
+(`not_required`, `sampled_out`) is `survived` too, a part a verdict judged keeps that verdict
+(`outcomes.confirm_parts`) — and `refute` removes the claim and leaves its parts `hasPart` with
+the values they had. The challenge planner puts a claim and its parts in one task, so one
+challenger judges them together. A part refuted, or downgraded out of `hasPart`, by another
+verdict lapses the claim: it upgrades nothing, confirms no part, and the export refuses the
+passage until the claim is challenged again. An exported record
 carries it as `extensions[‹locate›].coverage = {"complete": true, "parts": [<location_key>, …],
 "challenge": <value>}` — those three keys (`COVERAGE_RECORD_KEYS`) and no others, on every record
 of the passage, the note left out — and `outcomes` derives the status from that same projection
@@ -334,18 +348,37 @@ shape of part A of the agreed specification:
   at all (X16): a key is the sha-256 of source, item, library, commit and declaration, and gate
   rule 6 admits one location per declaration, so no run produces one.
 
-Read literally until the maintainer says otherwise (each is a parity case marked with its
-question):
+**Parity, round 3** (2026-10-18): the reading of D1. Rounds 1 and 2 read three points of part B
+of the agreed specification literally and left them open as Q1–Q3; round 3 resolved all three,
+from D1, with one rule, and the parity cases that turn on them are marked with their question
+(and say what round 2 expected). The rule: a survived coverage claim acts, for the derived
+status, exactly like one more `exactMatch` location whose proof status and `statement` flag are
+the weakest of its parts, in the order **finished** (`proved`; a `definition` without the flag,
+data) > **unfinished** (`statement_only`, `wanted`, `axiom_dependent`; a `definition` with the
+flag, a `Prop`-valued definition). Every part finished: the location is `proved` on the theorem
+row and a `definition` (no flag) on the definition row, so the claim formalizes the passage on
+either. Any part unfinished: it is `statement_only` on both rows. Everything else about the
+status is unchanged, a claim that is not survived adds nothing, and confirming a claim confirms
+its parts (above).
 
-- **Q1** — part B.2 of the agreed specification names definition passages and construction and
-  notation, not the definition row of an `example` or `other` passage (part B.1 names the theorem
-  row of both): a survived claim on an `example` or `other` passage upgrades only by the theorem
-  row, so `definition` parts upgrade nothing there;
-- **Q2** — "proved-or-statement-bearing" is read as the proof statuses `proved`, `statement_only`,
-  `wanted` and `axiom_dependent`: a theorem passage's part that is data, or a `Prop`-valued
-  definition whose proof status is `definition`, upgrades nothing;
-- **Q3** — a definition passage's claim with a `statement_only`, `wanted` or `axiom_dependent` part
-  upgrades nothing (part B.2 gives no `statement_only` fallback, as B.1 does for a theorem).
+- **Q1** (resolved) — an `example` or `other` passage judges a survived claim on **both** rows,
+  the better winning, exactly as it judges an ordinary location: `definition` parts formalize it
+  (E03, E04, R08–R11). Rounds 1 and 2 applied part B.2 to definition, construction and notation
+  passages only, and left these `partial`.
+- **Q2** (resolved) — a data part is finished, as data that states a theorem is (part B.3): a
+  theorem passage's claim with `proved` and data parts is `formalized` (C08, R01, R02), and a
+  `Prop`-valued definition part is unfinished, so its claim is `statement_only` (C09, R03).
+  Rounds 1 and 2 counted only the proof statuses `proved`, `statement_only`, `wanted` and
+  `axiom_dependent`, and left both `partial`.
+- **Q3** (resolved) — a definition passage's claim with an unfinished part gets the
+  `statement_only` an `exactMatch` to an unfinished declaration gets (D07, D08, R05, R06).
+  Rounds 1 and 2 gave part B.2 no such fallback, and left them `partial`.
+
+One case outside the three moved with them: a definition passage's claim whose part is a
+`Prop`-valued definition (D04, R07) is `statement_only` — the rule's order makes such a part
+unfinished on every row — where round 2 said `formalized`. An `exactMatch` to a `Prop`-valued
+definition alone still formalizes a definition passage (O07): the claim's rule, not the
+definition row, decides that its parts are finished.
 
 The proposal's table names theorem/conjecture and definition passages only. Decided here, each
 the conservative way, until the maintainer says otherwise:

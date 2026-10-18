@@ -19,7 +19,9 @@ Three steps, in this order, each a function of what landed:
    adds is the challenger's own witnessed finding, ``survived``; the
    locations a refute leaves are ranked 1..n again).  A passage's coverage
    claim (the maintainer's decision D1) is its own record: ``confirm`` makes
-   it ``survived``, ``refute`` removes it and leaves its parts ``hasPart``.  A
+   it ``survived`` and confirms its parts (each part no verdict judged,
+   ``not_required`` or ``sampled_out``, is ``survived`` too), ``refute``
+   removes it and leaves its parts ``hasPart``.  A
    record the challenge plan did not require keeps the value the plan
    recorded (``not_required``, ``sampled_out``) -- unless a prominence
    overturn to ``subject`` or ``central`` put it under a rule that requires
@@ -822,14 +824,14 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
 def _apply_coverage(row: dict, planned: dict, verdicts: dict, problems: list[str]) -> None:
     """A coverage claim's challenge (the maintainer's decision D1).
 
-    Every claim is refuted by default: ``confirm`` makes it ``survived``;
-    ``refute`` removes it (kept under ``coverage_refuted``, ``downgraded``) and
-    leaves its parts ``hasPart`` locations.  A verdict applies only while the
-    claim names the parts the plan saw, and an action outside
-    ``cflib.vocab.COVERAGE_ACTIONS`` leaves it owed.  A claim whose part a
-    location verdict refuted or downgraded no longer holds: it upgrades nothing
-    and the passage carries a problem, which the export refuses, until the claim
-    is challenged again.
+    Every claim is refuted by default: ``confirm`` makes it ``survived`` and
+    confirms its parts (:func:`confirm_parts`); ``refute`` removes it (kept
+    under ``coverage_refuted``, ``downgraded``) and leaves its parts ``hasPart``
+    locations.  A verdict applies only while the claim names the parts the plan
+    saw, and an action outside ``cflib.vocab.COVERAGE_ACTIONS`` leaves it owed.
+    A claim whose part a location verdict refuted or downgraded no longer holds:
+    it upgrades nothing, confirms no part, and the passage carries a problem,
+    which the export refuses, until the claim is challenged again.
     """
     sid, item, claim = row["source_id"], row["item"], row["coverage"]
     key = record_key(vocab.COVERAGE_TARGET, sid, item)
@@ -864,6 +866,23 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict, problems: list[str
                                 f"{', '.join(named.get(k, k[:12]) for k in gone)}, which the "
                                 "challenge refuted or downgraded; the claim no longer holds "
                                 "and is to be challenged again")
+    elif claim["challenge"] == vocab.CHALLENGE_SURVIVED:
+        confirm_parts([standing[k] for k in claim["parts"]])
+
+
+def confirm_parts(parts: Iterable[dict]) -> None:
+    """A confirmed coverage claim confirms its parts (decision D1, parity round 3).
+
+    The challenger matched every clause of the passage to a part, so each part
+    was judged with the claim: one whose own record no verdict judged
+    (``not_required``, ``sampled_out``) is ``survived``.  A part a verdict
+    judged keeps that verdict, and an owed one stays owed; a part refuted or
+    downgraded out of ``hasPart`` is no part any more, and lapses the claim
+    before this is reached.
+    """
+    for loc in parts:
+        if loc.get("challenge") in (vocab.CHALLENGE_NOT_REQUIRED, vocab.CHALLENGE_SAMPLED_OUT):
+            loc["challenge"] = vocab.CHALLENGE_SURVIVED
 
 
 def _reopen(row: dict) -> None:

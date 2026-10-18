@@ -310,8 +310,8 @@ once per passage after challenge and stamped on all its records):
 
 | status | when |
 |---|---|
-| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` theorem; `exactMatch` or `closeMatch` to a data declaration that states the theorem (a `definition` without the `statement` flag: an equivalence, an isomorphism, a structure-valued construction — the Chinese remainder theorem as a `RingEquiv`); a survived coverage claim whose every part is `proved`. definition passage: `exactMatch` or `closeMatch` to a `definition`; a survived coverage claim whose every part is a `definition` or `proved` |
-| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or a theorem passage's survived coverage claim whose every part is proved or unproved (`statement_only`, `wanted`, `axiom_dependent`) and not every one proved |
+| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` theorem; `exactMatch` or `closeMatch` to a data declaration that states the theorem (a `definition` without the `statement` flag: an equivalence, an isomorphism, a structure-valued construction — the Chinese remainder theorem as a `RingEquiv`). definition passage: `exactMatch` or `closeMatch` to a `definition`. any passage: a survived coverage claim whose every part is finished — `proved`, or data |
+| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or any passage's survived coverage claim with an unfinished part (`statement_only`, `wanted`, `axiom_dependent`, or a `Prop`-valued definition) |
 | `partial` | only `hasPart` or `narrowMatch` (or `broadMatch` to a definition), with no coverage claim that upgrades them |
 | `not_formalized` | a checked absence, possibly with `relatedMatch` locations |
 | *(none)* | unresolved; also only `relatedMatch` locations and no checked absence (what a challenge that downgrades a passage's one location leaves) |
@@ -321,12 +321,29 @@ locations, at least two, together state every clause with no hypothesis
 stronger than the passage's (`references/locate-documents.md` §3). Every
 claim is challenged, whatever the passage's prominence (§5), and only one
 whose challenge is `survived` counts; a refute removes it and leaves its parts
-`hasPart`. The best status over all the evidence wins. The data row and the
-coverage rows are the maintainer's decision D1 of 2026-10-18 ("D1: yes.
-Formalized when the hasPart locations together cover every clause (challenger
-confirms coverage), and when an exact/closeMatch is to an equivalence or data
-declaration that states the theorem (e.g. CRT's RingEquiv). Update vocab and
-WikiLean's parity table."); before it, both were `partial`.
+`hasPart`, and a confirm confirms its parts too (each part whose own record no
+verdict judged, `not_required` or `sampled_out`, is `survived`). The best
+status over all the evidence wins. The data row and the coverage rows are the
+maintainer's decision D1 of 2026-10-18 ("D1: yes. Formalized when the hasPart
+locations together cover every clause (challenger confirms coverage), and when
+an exact/closeMatch is to an equivalence or data declaration that states the
+theorem (e.g. CRT's RingEquiv). Update vocab and WikiLean's parity table.");
+before it, both were `partial`.
+
+**The reading of D1** (parity round 3, which resolved the questions Q1–Q3 of
+`references/vocabulary.md` §1.11): a survived coverage claim acts, for the
+derived status, exactly like one more `exactMatch` location whose proof status
+and `statement` flag are the weakest of its parts, finished (`proved`; data)
+above unfinished (`statement_only`, `wanted`, `axiom_dependent`; a
+`Prop`-valued definition). Every part finished, it is a `proved` declaration
+to the theorem row and a `definition` to the definition row, so it formalizes
+the passage on either; any part unfinished, it is `statement_only` on both.
+An example or `other` passage judges it on both rows, the better winning, as
+for every location (Q1); a data part is finished and a `Prop`-valued
+definition part is not (Q2); and a definition passage's claim with an
+unfinished part is `statement_only`, as an `exactMatch` to an unfinished
+declaration is (Q3). Nothing else in the table changes, and a claim that is not
+survived adds nothing.
 
 Built as `cflib.vocab.derive_status`, which refuses a contradiction (an
 absence beside a location that counts; the `statement` flag on a `proved`
