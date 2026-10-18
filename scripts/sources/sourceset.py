@@ -330,12 +330,32 @@ class Sourceset:
     def source_dir(self, source_id: str) -> Path:
         return self.paths.sourceset_source_dir(self.id, source_id)
 
-    def source_problems(self, entry: dict) -> list[str]:
-        """What on disk disagrees with one entry's shas (checked only when asked)."""
+    def source_problems(self, entry: dict, *, views: bool = True) -> list[str]:
+        """What on disk disagrees with one entry's shas (checked only when asked).
+
+        With ``views`` the rendered views are checked too: ``layer.txt`` against
+        ``layer_sha256``, and ``render.json`` and ``layer_map.json`` against the
+        entry's renderer and layer, so a view another renderer wrote is caught.
+        """
         sid = entry.get("source_id")
         directory = self.source_dir(sid)
         out: list[str] = []
+        if views and entry.get("renderer"):
+            for name, keys in (("render.json", ("renderer", "layer_sha256")),
+                               ("layer_map.json", ("renderer",))):
+                try:
+                    data = json.loads((directory / name).read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    out.append(f"{sid}: {name} is missing or unreadable")
+                    continue
+                for key in keys:
+                    if not isinstance(data, dict) or data.get(key) != entry.get(key):
+                        got = data.get(key) if isinstance(data, dict) else None
+                        out.append(f"{sid}: {name} says {key} {got!r}, the manifest records "
+                                   f"{entry.get(key)!r}")
         for key, name in SHA_FILES.items():
+            if key == "layer_sha256" and not views:
+                continue
             want = entry.get(key)
             if want is None:
                 continue

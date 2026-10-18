@@ -230,8 +230,7 @@ def _create_from(workspace, args) -> int:
         raise CfError("a sourceset cannot be seeded from itself")
     problems: list[str] = []
     for e in base:
-        problems.extend(p for p in old.source_problems(e)
-                        if "layer.txt" not in p)       # the layer is not carried over
+        problems.extend(old.source_problems(e, views=False))   # views are not carried over
     if problems:
         raise CfError(f"sourceset {old.id} version {base.version}: {len(problems)} recorded "
                       f"byte sha(s) do not match their files; nothing was created: "
