@@ -26,6 +26,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -543,8 +544,11 @@ class TestLocate(GateTestCase):
 
     def test_the_records_pass_the_vendored_checker(self):
         body = locate_body()
+        with mock.patch.object(vl.lr, "check", return_value=["SCHEMA: a synthetic problem"]):
+            self.assertRule(self.fx.run(self.doc(body)), 1, "Literature Links checker")
+        # a lone surrogate never gets that far: it is not UTF-8 text at all
         body["passages"][0]["locations"][0]["note"] = "\ud800 a lone surrogate"
-        self.assertRule(self.fx.run(self.doc(body)), 1, "Literature Links checker")
+        self.assertRule(self.fx.run(self.doc(body)), 1, "lone surrogate")
 
     def test_an_attempt_capped_document(self):
         body = {"passages": [{"item": i, "outcome": "unresolved", "locations": [],
@@ -595,7 +599,8 @@ class TestChallenge(GateTestCase):
         doc = locate_manifest_doc(self.fx)
         doc.pop("passages")
         doc["records"] = [{"item": THM_ITEM, "target": "location", "location_key": self.KEY,
-                           "span": THEOREM_SPAN, "passage_kind": "theorem"},
+                           "span": THEOREM_SPAN, "passage_kind": "theorem",
+                           "relation": "broadMatch"},
                           {"item": LEAD_ITEM, "target": "absence", "span": LEAD_SPAN,
                            "passage_kind": "theorem"}]
         self.fx.manifest(self.TASK, doc)
@@ -627,6 +632,25 @@ class TestChallenge(GateTestCase):
         body = self.body()
         body["verdicts"][0]["action"] = "downgrade"
         self.assertRule(self.fx.run(self.fx.document(self.TASK, body)), 1, "weaker relation")
+
+    def test_a_downgrade_names_a_weaker_relation_than_the_records(self):
+        """Review #59: the record is a broadMatch; exactMatch or broadMatch is no downgrade."""
+        for relation, ok in (("exactMatch", False), ("broadMatch", False),
+                             ("narrowMatch", True), ("relatedMatch", True)):
+            body = self.body()
+            body["verdicts"][0].update(action="downgrade", relation=relation)
+            result = self.fx.run(self.fx.document(self.TASK, body))
+            with self.subTest(relation=relation):
+                if ok:
+                    self.assertOk(result)
+                else:
+                    self.assertRule(result, 1, "weaker than the record's broadMatch")
+        doc = json.loads((self.fx.tasks / f"{self.TASK}.json").read_text())["documents"][0]
+        del doc["records"][0]["relation"]
+        self.fx.manifest(self.TASK, doc)
+        body = self.body()
+        body["verdicts"][0].update(action="downgrade", relation="relatedMatch")
+        self.assertBroken(self.fx.run(self.fx.document(self.TASK, body)), "carries no relation")
 
 
 # --------------------------------------------------------------------------- #
@@ -750,6 +774,260 @@ class TestOwnership(GateTestCase):
         self.fx.write_gate()
         proc = self.cli("--task-id", TASK)
         self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_vendor_pin_that_does_not_match(self):
+        """Review #61: --changed-files that broke says the gate could not run."""
+        self.contribute()
+        self.fx.gate["vendor"] = dict(self.fx.gate["vendor"], literature_links="0" * 64)
+        self.fx.write_gate()
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertEqual(proc.stdout.splitlines()[-1],
+                         "ownership: not checked (the gate could not run)")
+
+    def test_a_committed_symlink_is_refused(self):
+        elsewhere = self.fx.document(TASK, inventory_body(), directory=self.fx.root / "elsewhere")
+        target = self.wt / "findings" / TASK / f"{SID}.json"
+        target.parent.mkdir(parents=True)
+        target.symlink_to(elsewhere)
+        (self.wt / "tasks" / f"{TASK}.yaml").write_text(f"id: {TASK}\nstatus: complete\n")
+        git(self.wt, "add", "-A")
+        git(self.wt, "commit", "-qm", "a link")
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("not a regular file", proc.stderr)
+
+
+# --------------------------------------------------------------------------- #
+# the package review's findings: hostile shapes are refusals or exit 3
+# --------------------------------------------------------------------------- #
+
+class TestHostileDocumentsAreRefusals(GateTestCase):
+    """Review #48, #50, #51, #52, #54, #57, #58: rule refusals, never tracebacks."""
+
+    TASK = "t-loc-0001"
+
+    def setUp(self):
+        self.fx = Fixture(self, "locate")
+        self.fx.manifest(self.TASK, locate_manifest_doc(self.fx))
+
+    def doc(self, body):
+        return self.fx.document(self.TASK, body)
+
+    def raw(self, text: str, name: str = f"{SID}.json") -> Path:
+        path = self.fx.root / "findings" / self.TASK / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_symlink_or_a_device_is_not_read(self):
+        elsewhere = self.fx.document(self.TASK, locate_body(), directory=self.fx.root / "elsewhere")
+        target = self.fx.root / "findings" / self.TASK / f"{SID}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(elsewhere)
+        self.assertRule(self.fx.run(target), 1, "not a regular file")
+        target.unlink()
+        target.symlink_to("/dev/zero")
+        self.assertRule(self.fx.run(target), 1, "not a regular file")
+        # and in directory mode, where a harvest's rsync -a lands a link as a link
+        result = vl.run_gate(self.fx.gate_cfg(), root=self.fx.root, findings_dir="findings")
+        self.assertRule(result, 1, "not a regular file")
+
+    def test_a_list_or_an_object_where_a_word_belongs(self):
+        def located(**loc):
+            body = locate_body()
+            body["passages"][0]["locations"][0].update(loc)
+            return body
+
+        def passage(**fields):
+            body = locate_body()
+            body["passages"][0].update(fields)
+            return body
+
+        cases = {"relation": located(relation=["exactMatch"]), "library": located(library=["alpha"]),
+                 "confidence": located(confidence={"a": 1}), "item": passage(item=[THM_ITEM]),
+                 "outcome": passage(outcome={"a": 1}),
+                 "verdict": passage(receipt={"queries": ["q"], "candidates": [
+                     {"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+                      "verdict": ["accepted"]}]}),
+                 "unresolved.by": dict(locate_body(), unresolved={"reason": "x", "by": ["worker"]})}
+        for field, body in cases.items():
+            with self.subTest(field=field):
+                result = self.fx.run(self.doc(body))
+                self.assertEqual(result["exit"], vl.EXIT_REJECTED, result)
+                self.assertTrue(result["problems"])
+
+    def test_a_deep_document_and_an_overflowing_number(self):
+        text = json.dumps({**self.fx.header(self.TASK), **locate_body()})[:-1]
+        for depth in (995, 100000):
+            with self.subTest(depth=depth):
+                path = self.raw(text + ', "x": ' + "[" * depth + "]" * depth + "}")
+                self.assertRule(self.fx.run(path), 1, "nested deeper")
+        path = self.raw(text + ', "x_score": 1e999}')
+        self.assertRule(self.fx.run(path), 1, "not a finite JSON number")
+
+    def test_a_lone_surrogate_anywhere(self):
+        for where in ("witness", "query"):
+            body = locate_body()
+            if where == "witness":
+                body["passages"][0]["locations"][0]["witness"] = "\udfff"
+            else:
+                body["passages"][1]["receipt"]["queries"][0] = "widget \ud800 lemma"
+            text = json.dumps({**self.fx.header(self.TASK), **body})   # ASCII: \\uXXXX escapes
+            with self.subTest(where=where):
+                self.assertRule(self.fx.run(self.raw(text)), 1, "lone surrogate")
+
+    def test_the_file_is_named_for_its_source(self):
+        path = self.fx.document(self.TASK, locate_body())
+        moved = path.with_name("enwiki-1003-2004.json")
+        path.rename(moved)
+        self.assertRule(self.fx.run(moved), 1, f"holds source {SID}'s document")
+
+    def test_one_location_per_declaration(self):
+        body = locate_body()
+        body["passages"][0]["locations"] = [location(rank=1), location(rank=2, relation="broadMatch")]
+        self.assertRule(self.fx.run(self.doc(body)), 6, "located more than once")
+
+
+class TestRuleFourMeansLocated(GateTestCase):
+    """Review #49: accepted means located; a relatedMatch discharges no curated hit."""
+
+    TASK = "t-loc-0001"
+
+    def setUp(self):
+        self.fx = Fixture(self, "locate")
+        self.fx.manifest(self.TASK, locate_manifest_doc(self.fx))
+
+    def absent_body(self, **receipt_extra):
+        body = locate_body()
+        queries = ["widget lemma", "finite widget spanning", "Widget.spanning"]
+        body["passages"][0] = {"item": THM_ITEM, "outcome": "absent", "locations": [],
+                               "receipt": {"queries": list(queries), "candidates": []}}
+        body["passages"][0]["receipt"].update(receipt_extra)
+        return body
+
+    def test_an_accepted_candidate_with_no_location(self):
+        body = self.absent_body(candidates=[{"library": "alpha",
+                                             "declaration": "Widget.exists_spanning_gadget",
+                                             "verdict": "accepted", "reason": ""}])
+        result = self.fx.run(self.fx.document(self.TASK, body))
+        self.assertRule(result, 1, "is not one of this passage's locations")
+        self.assertRule(result, 4, "neither located")
+
+    def test_a_related_match_alone_does_not_discharge_a_curated_hit(self):
+        body = self.absent_body()
+        body["passages"][0]["locations"] = [location(relation="relatedMatch")]
+        self.assertRule(self.fx.run(self.fx.document(self.TASK, body)), 4, "a relatedMatch is not")
+        body["passages"][0]["receipt"]["candidates"] = [
+            {"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+             "verdict": "rejected", "reason": "states only a special case"}]
+        self.assertOk(self.fx.run(self.fx.document(self.TASK, body)))
+
+
+class TestTheInventoryKeepsItsSubject(GateTestCase):
+    """Review #60: demoting the subject passage does not turn rule 4 off."""
+
+    def test_a_relabelled_lead(self):
+        fx = Fixture(self, "locate-inventory")
+        fx.manifest(TASK, inventory_manifest_doc(fx))
+        body = inventory_body()
+        body["passages"][0].update(prominence="central", scope="expository")
+        self.assertRule(fx.run(fx.document(TASK, body)), 4, "prominence subject is kept")
+        self.assertOk(fx.run(fx.document(TASK, inventory_body())))
+
+
+class TestEveryDocumentOfTheTask(GateTestCase):
+    """Review #53: a task that writes documents writes one per source its manifest names."""
+
+    TASK = "t-loc-0001"
+    OTHER = "enwiki-1003-2004"
+
+    def setUp(self):
+        self.fx = Fixture(self, "locate")
+        self.fx.gate["sources"][self.OTHER] = dict(self.fx.gate["sources"][SID])
+        self.fx.write_gate()
+        second = dict(locate_manifest_doc(self.fx), source_id=self.OTHER, passages=[])
+        path = self.fx.manifest(self.TASK, locate_manifest_doc(self.fx))
+        doc = json.loads(path.read_text())
+        doc["documents"].append(second)
+        path.write_text(json.dumps(doc))
+        self.fx.document(self.TASK, locate_body())
+
+    def test_a_corpus_missing_one(self):
+        result = vl.run_gate(self.fx.gate_cfg(), root=self.fx.root, findings_dir="findings")
+        self.assertRule(result, 1, f"documents for {self.OTHER} are missing")
+
+    def test_a_change_set_missing_one(self):
+        ctx = vl.Context(self.fx.gate_cfg())
+        (self.fx.root / "tasks").mkdir()
+        (self.fx.root / "tasks" / f"{self.TASK}.yaml").write_text("id: x\n")
+        entries = {f"findings/{self.TASK}/{SID}.json": "A", f"tasks/{self.TASK}.yaml": "M"}
+        problems = vl.check_changed(entries, ctx, task_id=self.TASK, root=self.fx.root)
+        self.assertTrue(any(self.OTHER in line and "missing" in line for line in problems.lines()),
+                        problems.lines())
+        # the other document already landed in an earlier commit of the task
+        other = self.fx.root / "findings" / self.TASK / f"{self.OTHER}.json"
+        other.write_text("{}")
+        self.assertFalse(vl.check_changed(entries, ctx, task_id=self.TASK, root=self.fx.root))
+        # a symlinked path in the change set is refused under rule 7
+        doc = self.fx.root / "findings" / self.TASK / f"{SID}.json"
+        doc.rename(self.fx.root / "real.json")
+        doc.symlink_to(self.fx.root / "real.json")
+        problems = vl.check_changed(entries, ctx, task_id=self.TASK, root=self.fx.root)
+        self.assertTrue(any(line.startswith("[rule 7]") and "regular file" in line
+                            for line in problems.lines()), problems.lines())
+        ctx.close()
+
+
+class TestACorpusHoldsOnlyDocuments(GateTestCase):
+    """Review #63: JSON off the <task>/<source>.json layout is named, not skipped."""
+
+    def test_strays_are_refused(self):
+        fx = Fixture(self, "locate")
+        fx.manifest("t-loc-0001", locate_manifest_doc(fx))
+        landed = fx.root / "landed"
+        fx.document("t-loc-0001", locate_body(), directory=landed)
+        (landed / "RECEIPT.json").write_text("{}")
+        cfg = fx.gate_cfg()
+        self.assertOk(vl.run_gate(cfg, root=landed, findings_dir="."))
+        (landed / "stray.json").write_text("{}")
+        (landed / "t-loc-0001" / "sub").mkdir()
+        (landed / "t-loc-0001" / "sub" / f"{SID}.json").write_text("{}")
+        result = vl.run_gate(cfg, root=landed, findings_dir=".")
+        stray = [p for p in result["problems"] if p.startswith("[rule 7]")]
+        self.assertEqual(len(stray), 2, result["problems"])
+        self.assertTrue(any("stray.json" in p for p in stray))
+        self.assertTrue(any(f"t-loc-0001/sub/{SID}.json" in p for p in stray))
+
+
+class TestABrokenGateSaysSo(GateTestCase):
+    """Review #55, #56, #61: a malformed gate input is exit 3, and the last line says so."""
+
+    def test_malformed_gate_json_values(self):
+        fx = Fixture(self, "locate")
+        for key, value in (("max_locations", "five"), ("kinds", 7), ("max_document_bytes", 0),
+                           ("corpus_db", {"path": 5, "sha256": "b" * 64}),
+                           ("tasks_dir", ["x"])):
+            gate = dict(fx.gate, **{key: value})
+            path = fx.root / "bad.json"
+            path.write_text(json.dumps(gate))
+            with self.subTest(key=key), self.assertRaises(vl.GateBroken):
+                vl.GateConfig.load(path)
+        proc = subprocess.run([sys.executable, str(GATE), "--gate-config", str(path),
+                               "--root", str(fx.root)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_malformed_tables_are_not_read_as_empty(self):
+        fx = Fixture(self, "locate-inventory")
+        fx.manifest(TASK, inventory_manifest_doc(fx))
+        sdir = fx.root / "sourcesets" / "wpm" / "sources" / SID
+        paragraphs = (sdir / "paragraphs.json").read_text()
+        (sdir / "paragraphs.json").write_text(json.dumps({"paragraphs": json.loads(paragraphs)}))
+        self.assertBroken(fx.run(fx.document(TASK, inventory_body())), "paragraphs.json is not")
+        (sdir / "paragraphs.json").write_text(paragraphs)
+        (sdir / "formulas.json").write_text(json.dumps({"formulas": []}))
+        self.assertBroken(fx.run(fx.document(TASK, inventory_body())), "formulas.json is not")
 
 
 if __name__ == "__main__":

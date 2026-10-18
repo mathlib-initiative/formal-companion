@@ -173,7 +173,7 @@ class TestTheLocateGateAtHarvest(unittest.TestCase):
         self.fx.document("t-loc-0001", body, directory=self.landed)
         result = gate_corpus.gate_locate_corpus(self.landed, self.fx.root / "gate" / "gate.json")
         self.assertFalse(result["ok"])
-        self.assertEqual(result["by_rule"], {"3": 1})
+        self.assertEqual(result["by_rule"]["3"], 1)
         self.assertIn("FAILED", gate_corpus.render(result))
 
     def test_cf_harvest_of_a_locate_run(self):
@@ -434,6 +434,106 @@ class TestNestedCorporaAreCounted(unittest.TestCase):
         (self.ws / "corpus" / "loc-1" / "run.yaml").unlink()
         self.assertTrue(tally_mod.is_locate_corpus(self.ws / "corpus" / "loc-1"))
         self.assertFalse(tally_mod.is_locate_corpus(flat))
+
+
+class TestTheGateReadsWhatTheReceiptCounts(unittest.TestCase):
+    """Review #63, #70, #71, #78: one listing for the receipt and the gate."""
+
+    def setUp(self):
+        self.root = scratch(self)
+
+    def faithfulness_config(self) -> Path:
+        book = self.root / "text.txt"
+        book.write_text("Show that the union of two widgets is a widget and that the "
+                        "intersection is a widget as well.\n", encoding="utf-8")
+        cfg = self.root / "gate.local.json"
+        cfg.write_text(json.dumps({
+            "schema_version": 2, "preset": "differential-text", "mode": "differential",
+            "run_id": "run-1", "sources": {"a-book-1st": {"text": str(book), "sha256": "c" * 64,
+                                                          "page_offset": 0}},
+            "repos": ["ours"], "kinds": ["CONTENT", "COVERAGE"],
+            "verdicts": ["AGREE", "CONTENT_DELTA"], "witness_required": False,
+            "require_book_located": True, "require_source_sha": True,
+            "findings_dir": ".", "kind_rules": {}}), encoding="utf-8")
+        return cfg
+
+    @staticmethod
+    def finding(quote: str) -> dict:
+        return {"schema_version": 2, "run_id": "run-1", "source_id": "a-book-1st",
+                "source_sha": "c" * 64, "item": "Exercise 1001.1", "book_located": True,
+                "book_passage_quote": quote, "matches": [], "disagreements": [],
+                "coverage_notes": ""}
+
+    def test_a_nested_faithfulness_file_is_gated(self):
+        cfg = self.faithfulness_config()
+        corpus = self.root / "corpus" / "run-1"
+        write(corpus / "good.json", self.finding("Show that the union of two widgets is a widget"))
+        self.assertTrue(gate_corpus.gate_corpus(corpus, cfg)["ok"])
+        write(corpus / "sub" / "fab.json", self.finding("a sentence the book never printed at all"))
+        result = gate_corpus.gate_corpus(corpus, cfg)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["files"], 2)
+        self.assertTrue(any(p.startswith("sub/fab.json") for p in result["problems"]),
+                        result["problems"])
+
+    def test_a_stray_in_a_landed_locate_corpus_fails_the_receipt(self):
+        fx = tvl.Fixture(self, "locate")
+        fx.manifest("t-loc-0001", tvl.locate_manifest_doc(fx))
+        landed = fx.root / "landed"
+        fx.document("t-loc-0001", tvl.locate_body(), directory=landed)
+        write(landed / "t-loc-0001" / "sub" / f"{tvl.SID}.json", {"schema": "cf-locate/1"})
+        result = gate_corpus.gate_locate_corpus(landed, fx.root / "gate" / "gate.json")
+        self.assertFalse(result["ok"])
+        self.assertTrue(any(f"t-loc-0001/sub/{tvl.SID}.json" in p for p in result["problems"]))
+        receipt = harvest_mod.harvest(
+            run_id="r-1", source={"kind": "local", "path": str(landed)},
+            dest=fx.root / "corpus" / "r-1",
+            gate_runner=lambda d: gate_corpus.gate_locate_corpus(d, fx.root / "gate" / "gate.json"))
+        self.assertFalse(receipt["complete"])
+
+    def test_a_symlink_is_neither_listed_nor_landed(self):
+        source = self.root / "findings"
+        write(source / "t-1" / "s.json", {"schema": "cf-locate/1"})
+        (source / "t-2").mkdir()
+        (source / "t-2" / "s.json").symlink_to(source / "t-1" / "s.json")
+        self.assertEqual([p.relative_to(source).as_posix() for p in iter_finding_files(source)],
+                         ["t-1/s.json"])
+        rsync = harvest_mod.list_commands({"kind": "remote", "host": "examplebox",
+                                           "path": "/remote/r-1/findings"}, self.root / "d")[1]
+        self.assertIn("--no-links", rsync["argv"])
+
+    def test_a_checksum_the_source_did_not_give_fails_closed(self):
+        dest = self.root / "corpus" / "r-1"
+        write(dest / "t1" / "a.json", {"schema": "cf-locate/1"})
+        write(dest / "t1" / "b\\slash.json", {"schema": "cf-locate/1"})
+        sha_a = hashing.sha256_file(dest / "t1" / "a.json")
+        sha_b = hashing.sha256_file(dest / "t1" / "b\\slash.json")
+        out = f"{sha_a}  ./t1/a.json\n\\{sha_b}  ./t1/b\\\\slash.json\n"
+        with mock.patch.object(harvest_mod, "_run", return_value=out):
+            shas = harvest_mod.source_shas({"kind": "remote", "host": "h", "path": "/p"})
+        self.assertEqual(shas, {"t1/a.json": sha_a, "t1/b\\slash.json": sha_b})
+        names = ["t1/a.json", "t1/b\\slash.json"]
+        receipt = harvest_mod.build_receipt(run_id="r-1", source={"kind": "remote"},
+                                            expected=names, dest=dest, source_manifest=shas)
+        self.assertTrue(receipt["complete"] and receipt["sha_verified"])
+        receipt = harvest_mod.build_receipt(run_id="r-1",
+                                            source={"kind": "remote", "host": "h", "path": "/p"},
+                                            expected=names, dest=dest,
+                                            source_manifest={"t1/a.json": sha_a})
+        self.assertEqual(receipt["sha_unverified"], ["t1/b\\slash.json"])
+        self.assertFalse(receipt["sha_verified"])
+        self.assertFalse(receipt["complete"])
+        self.assertIn("SHA UNVERIFIED 1", harvest_mod.describe(receipt))
+
+    def test_the_standalone_entry_point_takes_its_sources(self):
+        source = self.root / "findings"
+        write(source / "a.json", {"defects": [], "source_id": "s", "source_sha": "abc"})
+        with redirect_stdout(io.StringIO()):
+            code = harvest_mod.main(["r1", "--from", str(source), "--dest",
+                                     str(self.root / "corpus" / "r1"), "--source", "s=abc"])
+        self.assertIn(code, (0, 1))
+        receipt = json.loads((self.root / "corpus" / "r1" / "RECEIPT.json").read_text())
+        self.assertEqual(receipt["sources"], {"s": "abc"})
 
 
 if __name__ == "__main__":

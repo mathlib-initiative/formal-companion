@@ -15,10 +15,11 @@ its contract:
   needs is inlined below and ``tests/test_verify_locate.py`` pins it to
   ``cflib.vocab``;
 * **the exit vocabulary** -- 0 every document validated; 1 REJECTED, fix the
-  documents; 3 the gate could not run (no or unreadable gate.json, a vendored
-  package that is not the pinned release, a layer, formula list or paragraph
-  table missing or not the pinned bytes, an unreadable corpus.sqlite, a
-  missing task-manifest directory, a change set git cannot read safely).
+  documents; 3 the gate could not run (no, unreadable or malformed gate.json,
+  a vendored package that is not the pinned release, a layer missing or not
+  the pinned bytes, a formula list or paragraph table missing or malformed, an
+  unreadable corpus.sqlite, a missing task-manifest directory, a change set
+  git cannot read safely).
   Every infrastructure failure arrives as 3, never as the interpreter's 1 out
   of a traceback, because the worker's prompt says 1 means "your documents
   are wrong".
@@ -47,12 +48,16 @@ references/locate-documents.md sections 2-4 and 9):
    exact table at that library and the universe's commit; ``proof_status``,
    ``commit`` and ``version`` are refused wherever a worker writes them;
 4. with L2 curated hits for the article (read here, from the candidates file,
-   never from the document), no passage ends absent, no ``subject`` passage is
-   scoped out and an inventory keeps a ``formal_math`` passage, unless every
-   hit is located or rejected with a reason -- off in the blind arm;
+   never from the document): an inventory keeps a ``subject`` passage scoped
+   ``formal_math`` and scopes no ``subject`` passage out; a locate document
+   leaves no hit handed to its task unhandled -- each is located with a
+   relation that counts (a ``relatedMatch`` does not) or rejected with a
+   reason -- and an ``accepted`` candidate is one of its passage's locations;
+   off in the blind arm;
 5. an absence lists at least three distinct queries, and the document names
    the frozen universe;
-6. at most five locations per passage with distinct ranks 1..5;
+6. at most five locations per passage with distinct ranks 1..5, one per
+   declaration;
 7. the changed files are the task's own: ``findings/<task-id>/<source-id>.json``
    for the sources its manifest names and ``tasks/<task-id>.yaml``; the task
    id comes from ``--task-id``/``TEND_TASK_ID``, else from tend's
@@ -71,10 +76,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
 import sqlite3
+import stat
 import sys
 import time
 import urllib.parse
@@ -166,6 +173,11 @@ SCOPES = frozenset({"formal_math", "expository", "non_math"})
 LOCATED_SCOPES = frozenset({"formal_math"})
 LOCATE_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch", "narrowMatch",
                               "hasPart", "relatedMatch"})
+#: how strong a relation is, strongest first: a challenge's ``downgrade`` names a
+#: relation of a HIGHER number than the record's (references/locate-documents.md
+#: section 4)
+RELATION_STRENGTH = {"exactMatch": 0, "closeMatch": 1, "broadMatch": 2, "narrowMatch": 3,
+                     "hasPart": 3, "relatedMatch": 4}
 RELATED_MATCH = "relatedMatch"
 CLOSE_MATCH = "closeMatch"
 NO_MATCH = "noMatch"
@@ -239,9 +251,78 @@ def _no_constant(name: str):
     raise ValueError(f"{name} is not JSON")
 
 
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text[:24]} is not a finite JSON number")
+    return value
+
+
+#: deeper than this a value is refused before anything walks it; the formats
+#: nest about six levels
+MAX_JSON_DEPTH = 64
+
+
+def _check_tree(value: Any) -> None:
+    """Refuse a value nested deeper than :data:`MAX_JSON_DEPTH` or holding a lone surrogate.
+
+    Iterative, so no worker document can exhaust the interpreter's stack; a
+    lone surrogate (a ``\\ud800`` escape) is not UTF-8 text, and every writer
+    downstream encodes UTF-8.
+    """
+    stack: list[tuple[Any, int, str]] = [(value, 1, "$")]
+    while stack:
+        node, depth, where = stack.pop()
+        if depth > MAX_JSON_DEPTH:
+            raise ValueError(f"nested deeper than {MAX_JSON_DEPTH} levels at {where}")
+        if isinstance(node, dict):
+            for key, child in node.items():
+                _check_text(key, f"a key under {where}")
+                stack.append((child, depth + 1, f"{where}.{key[:40]}"))
+        elif isinstance(node, list):
+            stack.extend((child, depth + 1, f"{where}[{i}]") for i, child in enumerate(node))
+        elif isinstance(node, str):
+            _check_text(node, where)
+
+
+def _check_text(text: str, where: str) -> None:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(f"{where} holds a lone surrogate (not UTF-8 text)") from None
+
+
 def load_json_strict(text: str) -> Any:
-    """JSON with no duplicate key and no NaN/Infinity: a value two readers read one way."""
-    return json.loads(text, object_pairs_hook=_strict_pairs, parse_constant=_no_constant)
+    """JSON a second reader reads the same way: no duplicate key, no NaN/Infinity and
+    no number that overflows to one, no lone surrogate, at most :data:`MAX_JSON_DEPTH`
+    levels deep.  Any of them is a ``ValueError``."""
+    try:
+        value = json.loads(text, object_pairs_hook=_strict_pairs, parse_constant=_no_constant,
+                           parse_float=_finite_float)
+    except RecursionError:
+        raise ValueError(f"nested deeper than {MAX_JSON_DEPTH} levels") from None
+    _check_tree(value)
+    return value
+
+
+def _one_of(value: Any, allowed) -> bool:
+    """``value in allowed`` for a worker-written value that may be a list or an object."""
+    return isinstance(value, str) and value in allowed
+
+
+def _positive_int(data: dict, key: str, default: int) -> int:
+    value = data.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise GateBroken(f"gate.json {key} is {value!r}, not a positive integer")
+    return value
+
+
+def _path_field(value: Any, key: str) -> pathlib.Path:
+    if not isinstance(value, str) or not value:
+        raise GateBroken(f"gate.json {key} is {value!r}, not a path")
+    return pathlib.Path(value).expanduser()
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -273,7 +354,11 @@ class GateConfig:
         self.run_id = str(data.get("run_id") or "")
         if not self.run_id:
             raise GateBroken("gate.json has no run_id")
-        self.kinds = frozenset(data.get("kinds") or KINDS_BY_MODE[self.mode])
+        kinds = data.get("kinds")
+        if kinds is not None and not (isinstance(kinds, list)
+                                      and all(isinstance(k, str) for k in kinds)):
+            raise GateBroken(f"gate.json kinds is {kinds!r}, not a list of kinds")
+        self.kinds = frozenset(kinds or KINDS_BY_MODE[self.mode])
         universe = data.get("universe") if isinstance(data.get("universe"), dict) else {}
         self.universe_id = str(universe.get("id") or "")
         self.universe_sha = str(universe.get("sha256") or "")
@@ -289,32 +374,33 @@ class GateConfig:
             raise GateBroken("gate.json has no frozen universe (id, sha256, libraries); a "
                              f"{self.mode} run cannot be gated without one")
         corpus = data.get("corpus_db") if isinstance(data.get("corpus_db"), dict) else {}
-        self.corpus_db = pathlib.Path(corpus["path"]).expanduser() if corpus.get("path") else None
+        self.corpus_db = (_path_field(corpus["path"], "corpus_db.path") if corpus.get("path")
+                          else None)
         self.corpus_db_sha = str(corpus.get("sha256") or "")
         sourceset = data.get("sourceset") if isinstance(data.get("sourceset"), dict) else {}
         if not sourceset.get("sources_dir"):
             raise GateBroken("gate.json sourceset has no sources_dir")
         self.sourceset = sourceset
-        self.sources_dir = pathlib.Path(sourceset["sources_dir"]).expanduser()
+        self.sources_dir = _path_field(sourceset["sources_dir"], "sourceset.sources_dir")
         sources = data.get("sources") if isinstance(data.get("sources"), dict) else {}
         if not sources:
             raise GateBroken("gate.json pins no sources (the gate fails closed)")
         self.sources: dict[str, dict] = {str(k): dict(v) for k, v in sources.items()
                                          if isinstance(v, dict)}
-        self.candidates_dir = (pathlib.Path(data["candidates_dir"]).expanduser()
+        self.candidates_dir = (_path_field(data["candidates_dir"], "candidates_dir")
                                if data.get("candidates_dir") else None)
         self.blind = bool(data.get("blind"))
         if not data.get("tasks_dir"):
             raise GateBroken("gate.json names no tasks_dir (the task manifests)")
-        self.tasks_dir = pathlib.Path(data["tasks_dir"]).expanduser()
-        self.log_dir = pathlib.Path(data["log_dir"]).expanduser() if data.get("log_dir") else None
-        self.orchestrator_db = (pathlib.Path(data["orchestrator_db"]).expanduser()
+        self.tasks_dir = _path_field(data["tasks_dir"], "tasks_dir")
+        self.log_dir = _path_field(data["log_dir"], "log_dir") if data.get("log_dir") else None
+        self.orchestrator_db = (_path_field(data["orchestrator_db"], "orchestrator_db")
                                 if data.get("orchestrator_db") else None)
-        self.max_locations = int(data.get("max_locations") or MAX_LOCATIONS_PER_PASSAGE)
-        self.min_absence_queries = int(data.get("min_absence_queries") or MIN_ABSENCE_QUERIES)
-        self.max_quote_chars = int(data.get("max_quote_chars") or MAX_QUOTE_CHARS)
-        self.max_context_chars = int(data.get("max_context_chars") or MAX_CONTEXT_CHARS)
-        self.max_document_bytes = int(data.get("max_document_bytes") or MAX_DOCUMENT_BYTES)
+        self.max_locations = _positive_int(data, "max_locations", MAX_LOCATIONS_PER_PASSAGE)
+        self.min_absence_queries = _positive_int(data, "min_absence_queries", MIN_ABSENCE_QUERIES)
+        self.max_quote_chars = _positive_int(data, "max_quote_chars", MAX_QUOTE_CHARS)
+        self.max_context_chars = _positive_int(data, "max_context_chars", MAX_CONTEXT_CHARS)
+        self.max_document_bytes = _positive_int(data, "max_document_bytes", MAX_DOCUMENT_BYTES)
         self.vendor = data.get("vendor") if isinstance(data.get("vendor"), dict) else {}
 
     @classmethod
@@ -323,7 +409,13 @@ class GateConfig:
             data = load_json_strict(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise GateBroken(f"gate config at {path} is unreadable ({exc})") from None
-        return cls(data, path)
+        try:
+            return cls(data, path)
+        except (TypeError, ValueError, AttributeError, KeyError) as exc:
+            # a value of the wrong shape is a broken gate.json (exit 3), never a
+            # traceback the worker would read as exit 1
+            raise GateBroken(f"gate config at {path} has a malformed value "
+                             f"({exc.__class__.__name__}: {exc})") from None
 
 
 def verify_vendor(cfg: GateConfig, vendor_dir: pathlib.Path = VENDOR) -> None:
@@ -390,8 +482,10 @@ class SourceView:
             formulas = load_json_strict(formulas_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise GateBroken(f"{source_id}: formulas.json is unreadable ({exc})") from None
+        if not isinstance(formulas, list) or not all(isinstance(f, dict) for f in formulas):
+            raise GateBroken(f"{source_id}: formulas.json is not a list of formula entries")
         try:
-            self.map = lt.HeadMap(self.layer, formulas if isinstance(formulas, list) else [])
+            self.map = lt.HeadMap(self.layer, formulas)
         except lt.HeadError as exc:
             raise GateBroken(f"{source_id}: formulas.json does not fit the layer ({exc})") from None
         self._paragraphs: list[dict] | None = None
@@ -407,7 +501,10 @@ class SourceView:
                 data = load_json_strict(path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 raise GateBroken(f"{self.source_id}: paragraphs.json is unreadable ({exc})") from None
-            self._paragraphs = [p for p in data if isinstance(p, dict)] if isinstance(data, list) else []
+            if not isinstance(data, list) or not all(isinstance(p, dict) for p in data):
+                raise GateBroken(f"{self.source_id}: paragraphs.json is not a list of block "
+                                 f"entries")
+            self._paragraphs = data
         return self._paragraphs
 
 
@@ -700,7 +797,7 @@ def _unresolved_block(doc: dict, name: str, problems: Problems) -> bool:
     if block is None:
         return False
     if not isinstance(block, dict) or not _nonempty_str(block.get("reason")) \
-            or block.get("by") not in UNRESOLVED_BY:
+            or not _one_of(block.get("by"), UNRESOLVED_BY):
         problems.add(1, name, "unresolved must be {reason: <text>, by: worker|attempt_cap}")
     return True
 
@@ -712,7 +809,7 @@ def _check_location(cfg: GateConfig, ctx: Context, problems: Problems, where: st
         return
     library = location.get("library")
     declaration = location.get("declaration")
-    if library not in cfg.libraries:
+    if not _one_of(library, cfg.libraries):
         problems.add(3, where, f"library {library!r} is not in universe {cfg.universe_id} "
                                f"({', '.join(sorted(cfg.libraries))})")
     elif not _nonempty_str(declaration):
@@ -720,7 +817,7 @@ def _check_location(cfg: GateConfig, ctx: Context, problems: Problems, where: st
     elif not ctx.exists(library, declaration):
         problems.add(3, where, f"{library}:{declaration} is not in corpus.sqlite at "
                                f"{cfg.libraries[library]['commit'][:12]} (a phantom declaration)")
-    if location.get("relation") not in LOCATE_RELATIONS:
+    if not _one_of(location.get("relation"), LOCATE_RELATIONS):
         problems.add(1, where, f"relation {location.get('relation')!r} is not a locate relation")
     if location.get("relation") == CLOSE_MATCH and not _nonempty_str(location.get("note")):
         problems.add(6, where, "closeMatch needs a note naming the convention difference")
@@ -728,7 +825,7 @@ def _check_location(cfg: GateConfig, ctx: Context, problems: Problems, where: st
     if not (isinstance(rank, int) and not isinstance(rank, bool)
             and 1 <= rank <= cfg.max_locations):
         problems.add(6, where, f"rank {rank!r} is not 1..{cfg.max_locations}")
-    if location.get("confidence") not in CONFIDENCES:
+    if not _one_of(location.get("confidence"), CONFIDENCES):
         problems.add(1, where, f"confidence {location.get('confidence')!r} is not "
                                f"{'/'.join(sorted(CONFIDENCES))}")
     if not _nonempty_str(location.get("witness")):
@@ -747,6 +844,14 @@ def _check_locations(cfg: GateConfig, ctx: Context, problems: Problems, where: s
     ranks = [loc.get("rank") for loc in locations if isinstance(loc, dict)]
     if len(ranks) != len(set(map(repr, ranks))):
         problems.add(6, where, f"ranks {ranks} are not distinct")
+    # one location per declaration: two would share one location_key, and the
+    # challenge plan refuses a key it sees twice
+    named = [f"{loc.get('library')}:{loc.get('declaration')}" for loc in locations
+             if isinstance(loc, dict)]
+    repeated = sorted({n for n in named if named.count(n) > 1})
+    if repeated:
+        problems.add(6, where, f"{', '.join(repeated)} is located more than once; one location "
+                               f"per declaration")
     for i, location in enumerate(locations):
         _check_location(cfg, ctx, problems, f"{where}.locations[{i}]", location)
     return [loc for loc in locations if isinstance(loc, dict)]
@@ -770,7 +875,7 @@ def _check_receipt(cfg: GateConfig, ctx: Context, problems: Problems, where: str
         if not isinstance(cand, dict):
             problems.add(1, at, "a candidate is an object")
             continue
-        if cand.get("verdict") not in CANDIDATE_VERDICTS:
+        if not _one_of(cand.get("verdict"), CANDIDATE_VERDICTS):
             problems.add(1, at, f"verdict {cand.get('verdict')!r} is not accepted/rejected")
         if cand.get("verdict") == "rejected" and not _nonempty_str(cand.get("reason")):
             problems.add(1, at, "a rejected candidate carries its reason")
@@ -839,7 +944,7 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
             seen_items.add(item)
         for key, allowed in (("passage_kind", PASSAGE_KINDS), ("prominence", PROMINENCE),
                              ("scope", SCOPES), ("finder", FINDERS)):
-            if p.get(key) not in allowed:
+            if not _one_of(p.get(key), allowed):
                 problems.add(1, where, f"{key} {p.get(key)!r} is not one of "
                                        f"{', '.join(sorted(allowed))}")
         if "kind" in p and p["kind"] != "PASSAGE":
@@ -945,7 +1050,8 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
     finder_starts = {(f.get("finder"), f.get("start", (f.get("span") or [None])[0]))
                      for f in manifest_doc.get("finders") or [] if isinstance(f, dict)}
     for i, p, _h in rows:
-        if p.get("finder") in DETERMINISTIC_FINDERS and (p.get("finder"), p["span"][0]) not in finder_starts:
+        if _one_of(p.get("finder"), DETERMINISTIC_FINDERS) \
+                and (p.get("finder"), p["span"][0]) not in finder_starts:
             problems.add(8, f"{name}: passages[{i}]",
                          f"finder {p.get('finder')} is claimed, but no {p.get('finder')} passage of "
                          f"the task starts at {p['span'][0]}; a passage the enumerator found is "
@@ -964,15 +1070,24 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
     # rule 4, inventory side
     curated = _curated(ctx, source_id)
     if curated:
-        if not any(isinstance(p, dict) and p.get("scope") in LOCATED_SCOPES for p in passages):
+        if not any(isinstance(p, dict) and _one_of(p.get("scope"), LOCATED_SCOPES)
+                   for p in passages):
             problems.add(4, name, f"L2 holds {len(curated)} curated hit(s) for this article "
                                   f"({_hits(curated)}), so the inventory keeps a formal_math passage")
         for i, p in enumerate(passages):
             if isinstance(p, dict) and p.get("prominence") == "subject" \
-                    and p.get("scope") not in LOCATED_SCOPES:
+                    and not _one_of(p.get("scope"), LOCATED_SCOPES):
                 problems.add(4, f"{name}: passages[{i}]",
                              f"the subject passage is scoped {p.get('scope')} while L2 holds a "
                              f"curated hit for the article ({_hits(curated)})")
+        # The hits are for the article's OWN subject, so the inventory names a
+        # subject passage it keeps in formal math; relabelling the subject
+        # `central` must not turn the half above off.
+        if not any(isinstance(p, dict) and p.get("prominence") == "subject"
+                   and _one_of(p.get("scope"), LOCATED_SCOPES) for p in passages):
+            problems.add(4, name, f"L2 holds {len(curated)} curated hit(s) for this article "
+                                  f"({_hits(curated)}), so a passage of prominence subject is "
+                                  f"kept, scoped formal_math")
     return stats
 
 
@@ -1025,7 +1140,7 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
             problems.add(1, where, "a passage is an object")
             continue
         item = p.get("item")
-        if item not in frozen:
+        if not isinstance(item, str) or item not in frozen:
             problems.add(2, where, f"item {item!r} is not one of this task's passages")
             continue
         if item in written:
@@ -1034,7 +1149,7 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
         written[item] = i
         where = f"{name}: {item}"
         outcome = p.get("outcome")
-        if outcome not in LOCATE_OUTCOMES:
+        if not _one_of(outcome, LOCATE_OUTCOMES):
             problems.add(1, where, f"outcome {outcome!r} is not located/absent/unresolved")
             continue
         if unresolved and outcome != "unresolved":
@@ -1060,11 +1175,21 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
                 problems.add(1, where, "an unresolved passage has no locations")
             if not _nonempty_str(p.get("reason")) and not unresolved:
                 problems.add(1, where, "an unresolved passage says why (reason)")
-        for loc in locations:
-            handled.add((str(loc.get("library")), str(loc.get("declaration"))))
+        # Rule 4's "located or rejected with a reason": a location whose relation
+        # COUNTS locates a hit (a relatedMatch is "relevant but states something
+        # else", so it discharges nothing on its own), and a rejection with a
+        # reason rejects one.  An `accepted` candidate is one of the passage's
+        # counting locations; accepted and not located is neither.
+        located = {(str(loc.get("library")), str(loc.get("declaration"))) for loc in counting}
+        handled.update(located)
         for cand in receipt["candidates"]:
-            if cand.get("verdict") == "accepted" or _nonempty_str(cand.get("reason")):
-                handled.add((str(cand.get("library")), str(cand.get("declaration"))))
+            key = (str(cand.get("library")), str(cand.get("declaration")))
+            if cand.get("verdict") == "accepted" and key not in located:
+                problems.add(1, where, f"accepted candidate {key[0]}:{key[1]} is not one of this "
+                                       f"passage's locations with a relation that counts: "
+                                       f"locate it, or reject it with a reason")
+            elif cand.get("verdict") == "rejected" and _nonempty_str(cand.get("reason")):
+                handled.add(key)
         span = frozen[item]["span"]
         check_records(cfg, problems, where, source_id=source_id, layer=source.layer, span=span,
                       quote=frozen[item]["quote"], item=item,
@@ -1087,7 +1212,8 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
             hits = [hit for hit in hits if hit in named]
         unhandled = [hit for hit in hits if hit not in handled]
         if unhandled:
-            problems.add(4, name, f"curated L2 hit(s) {_hits(unhandled)} are neither located nor "
+            problems.add(4, name, f"curated L2 hit(s) {_hits(unhandled)} are neither located "
+                                  f"(with a relation that counts: a relatedMatch is not) nor "
                                   f"rejected with a reason in any receipt"
                                   + (f", and {len(absent_where)} passage(s) end absent"
                                      if absent_where else ""))
@@ -1120,10 +1246,16 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
             problems.add(1, where, "a verdict is an object")
             continue
         target, action = v.get("target"), v.get("action")
-        if target not in CHALLENGE_TARGETS:
+        if not _one_of(target, CHALLENGE_TARGETS):
             problems.add(1, where, f"target {target!r} is not a challenge target")
             continue
-        if action not in CHALLENGE_COMBOS[target]:
+        if not isinstance(v.get("item"), str) or (
+                target == "location" and not isinstance(v.get("location_key"), str)):
+            problems.add(1, where, "a verdict names its record by item"
+                                   + (" and location_key" if target == "location" else "")
+                                   + " (strings)")
+            continue
+        if not _one_of(action, CHALLENGE_COMBOS[target]):
             problems.add(1, where, f"action {action!r} does not apply to a {target} "
                                    f"({'/'.join(sorted(CHALLENGE_COMBOS[target]))})")
         key = (v.get("item"), target, v.get("location_key") if target == "location" else None)
@@ -1137,9 +1269,18 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
         judged.add(key)
         if not _nonempty_str(v.get("witness")):
             problems.add(1, where, "a verdict carries a witness")
-        if action == "downgrade" and v.get("relation") not in LOCATE_RELATIONS:
-            problems.add(1, where, "a downgrade names the weaker relation")
-        if action == "overturn" and target == "prominence" and v.get("prominence") not in PROMINENCE:
+        if action == "downgrade":
+            new, old = v.get("relation"), records[key].get("relation")
+            if not _one_of(new, LOCATE_RELATIONS):
+                problems.add(1, where, "a downgrade names the weaker relation")
+            elif not _one_of(old, LOCATE_RELATIONS):
+                raise GateBroken(f"challenge record {v.get('item')} of {source_id} carries no "
+                                 f"relation, so no downgrade of it can be checked")
+            elif RELATION_STRENGTH[new] <= RELATION_STRENGTH[old]:
+                problems.add(1, where, f"a downgrade names a relation weaker than the record's "
+                                       f"{old}; {new} is not")
+        if action == "overturn" and target == "prominence" \
+                and not _one_of(v.get("prominence"), PROMINENCE):
             problems.add(1, where, "a prominence overturn names the new prominence")
         if action == "overturn" and target in ("absence", "unresolved", "scope"):
             locations = _check_locations(cfg, ctx, problems, where, v.get("locations"))
@@ -1170,14 +1311,36 @@ CHECKS = {LOCATE_INVENTORY: check_inventory, LOCATE: check_locate,
           LOCATE_CHALLENGE: check_challenge}
 
 
+def read_regular(path: pathlib.Path, limit: int, name: str, problems: Problems) -> bytes | None:
+    """A document's bytes, read only from a REGULAR file and at most ``limit + 1`` of them.
+
+    A committed symlink would be followed to any file of the host -- what merges
+    is then a link, not the bytes the gate checked -- and a device such as
+    ``/dev/zero`` would be read without end; both are refused before a byte is
+    read, and the file is opened ``O_NOFOLLOW`` so it cannot be swapped between
+    the check and the read.
+    """
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            problems.add(1, name, "is not a regular file (a symlink, device or fifo is refused)")
+            return None
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                problems.add(1, name, "is not a regular file")
+                return None
+            return fh.read(limit + 1)
+    except OSError as exc:
+        problems.add(1, name, f"cannot be read ({exc})")
+        return None
+
+
 def validate_document(path: pathlib.Path, name: str, task_id: str, cfg: GateConfig,
                       ctx: Context, problems: Problems) -> dict:
     """Every rule but 7 over one document; returns its counts for the receipt and the log."""
     stats: dict[str, Any] = {"task_id": task_id, "mode": cfg.mode}
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        problems.add(1, name, f"cannot be read ({exc})")
+    raw = read_regular(path, cfg.max_document_bytes, name, problems)
+    if raw is None:
         return stats
     if len(raw) > cfg.max_document_bytes:
         problems.add(1, name, f"{len(raw)} bytes; a document is at most {cfg.max_document_bytes}")
@@ -1204,6 +1367,11 @@ def validate_document(path: pathlib.Path, name: str, task_id: str, cfg: GateConf
                   "attempt_capped": bool(unresolved and isinstance(doc.get("unresolved"), dict)
                                          and doc["unresolved"].get("by") == "attempt_cap")})
     if not source_id:
+        return stats
+    if path.name != f"{source_id}.json":
+        problems.add(1, name, f"holds source {source_id}'s document; that lives at "
+                              f"findings/{task_id}/{source_id}.json (one document per source, "
+                              f"named for it)")
         return stats
     manifest_doc = next((d for d in manifest.get("documents") or []
                          if isinstance(d, dict) and d.get("source_id") == source_id), None)
@@ -1280,12 +1448,15 @@ def _classify(path: str) -> tuple[str, str, str] | None:
 
 
 def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
-                  allow_empty: bool = False) -> Problems:
+                  allow_empty: bool = False, root: pathlib.Path | None = None) -> Problems:
     """Rule 7: only the task's own documents and task file, nothing removed.
 
     With no task id the single-stem rule of ``verify_findings.check_changed``
     stands in, addition-aware per task for a batched pre-merge change set: a
     several-task set passes only when every one of its documents is an addition.
+    With ``root`` (the worktree) every path the change set writes must be a
+    regular file there, and a task that wrote documents must hold one for every
+    source its manifest names (rule 1: one document per source of the task).
     """
     problems = Problems()
     written: dict[str, list[tuple[str, str]]] = {}
@@ -1307,6 +1478,15 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
         if task_id and stem != task_id:
             problems.add(7, path, f"belongs to task {stem!r}, not to this worker's {task_id!r}")
             continue
+        if root is not None:
+            try:
+                regular = stat.S_ISREG(os.lstat(root / path).st_mode)
+            except OSError:
+                regular = False
+            if not regular:
+                problems.add(7, path, "is not a regular file in the worktree (a symlink is "
+                                      "refused: what merges must be the bytes the gate read)")
+                continue
         if what == "task":
             tasks.add(stem)
             continue
@@ -1320,6 +1500,13 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
             problems.add(7, path, f"source {source} is not one of task {stem}'s documents")
     for stem in sorted(set(written) - tasks):
         problems.add(7, f"findings/{stem}/", f"has no tasks/{stem}.yaml in the same change set")
+    for stem in sorted(written):
+        lacking = _lacking_documents(ctx, stem, {src for src, _st in written[stem]},
+                                     root / "findings" / stem if root is not None else None)
+        if lacking:
+            problems.add(1, f"findings/{stem}/", f"the task's documents for {', '.join(lacking)} "
+                                                 f"are missing: one document per source of the "
+                                                 f"task manifest")
     if not task_id and len(seen) > 1:
         landed = sorted(stem for stem, docs in written.items() if any(s != "A" for _src, s in docs))
         landed += sorted(stem for stem in seen - set(written))
@@ -1331,6 +1518,23 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
     if not written and not allow_empty:
         problems.add(7, "change set", "no document was written")
     return problems
+
+
+def _lacking_documents(ctx: Context, task_id: str, have: set[str],
+                       directory: pathlib.Path | None) -> list[str]:
+    """The sources task ``task_id``'s manifest names that have no document.
+
+    ``have`` is what this call validates; ``directory`` (the task's findings
+    directory, when known) supplies documents an earlier commit of the same task
+    already holds.
+    """
+    manifest = ctx.manifest(task_id)
+    if manifest is None:
+        return []
+    named = sorted({str(d.get("source_id")) for d in manifest.get("documents") or []
+                    if isinstance(d, dict) and d.get("source_id")})
+    return [sid for sid in named if sid not in have
+            and not (directory is not None and (directory / f"{sid}.json").is_file())]
 
 
 def ownership_line(task_id: str, how: str) -> str:
@@ -1353,13 +1557,39 @@ def _documents_in(directory: pathlib.Path) -> list[tuple[pathlib.Path, str, str]
     if not directory.is_dir():
         return out
     for task_dir in sorted(directory.iterdir()):
-        if not task_dir.is_dir() or not _safe_name(task_dir.name):
+        if task_dir.is_symlink() or not task_dir.is_dir() or not _safe_name(task_dir.name):
             continue
         for path in sorted(task_dir.glob("*.json")):
             if path.name in NON_DOCUMENT_FILES or path.name.startswith("."):
                 continue
             out.append((path, f"{task_dir.name}/{path.name}", task_dir.name))
     return out
+
+
+def _strays(directory: pathlib.Path) -> list[str]:
+    """JSON under ``directory`` that is not a ``<task>/<source>.json`` document.
+
+    A locate corpus is exactly that layout; the receipt and every reader of a
+    harvested corpus count JSON at any depth, so a file the gate never read
+    would land as counted and "gated".  The listing is the corpus readers' own:
+    hidden components skipped, the corpus's own receipt and copies excluded.
+    """
+    out: list[str] = []
+    if not directory.is_dir():
+        return out
+    for here, dirs, files in os.walk(directory):
+        rel_dir = pathlib.Path(here).relative_to(directory)
+        depth = len(rel_dir.parts)
+        for d in sorted(dirs):
+            if not d.startswith(".") and (pathlib.Path(here) / d).is_symlink():
+                out.append(f"{(rel_dir / d).as_posix()}/")
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for f in sorted(files):
+            if not f.endswith(".json") or f.startswith(".") or f in NON_DOCUMENT_FILES:
+                continue
+            if depth != 1 or not _safe_name(rel_dir.parts[0]):
+                out.append((rel_dir / f).as_posix())
+    return sorted(out)
 
 
 def write_log(cfg: GateConfig, record: dict) -> None:
@@ -1419,7 +1649,8 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
             entries, errs = vf.changed_entries(root, base)
             if errs:
                 raise GateBroken("; ".join(errs))
-            changed = check_changed(entries, ctx, task_id=task_id, allow_empty=allow_empty)
+            changed = check_changed(entries, ctx, task_id=task_id, allow_empty=allow_empty,
+                                    root=root)
             problems.items.extend(changed.items)
             if not findings:
                 for path, status in sorted(entries.items()):
@@ -1437,11 +1668,31 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
             if not docs:
                 problems.add(1, str(root / findings_dir), "the gate found no locate documents to "
                                                          "validate (an empty set is not a clean one)")
+            for stray in _strays(root / findings_dir):
+                problems.add(7, stray, "is not a <task-id>/<source-id>.json document; a locate "
+                                       "corpus holds nothing else, and the gate did not read it")
+            by_task: dict[str, set[str]] = {}
+            for path, _name, doc_task in docs:
+                by_task.setdefault(doc_task, set()).add(path.stem)
+            for doc_task, have in sorted(by_task.items()):
+                lacking = _lacking_documents(ctx, doc_task, have, None)
+                if lacking:
+                    problems.add(1, f"{doc_task}/", f"the task's documents for "
+                                                    f"{', '.join(lacking)} are missing: one "
+                                                    f"document per source of the task manifest")
         for path, name, doc_task in docs:
             if task_id and doc_task != task_id:
                 problems.add(7, name, f"is task {doc_task!r}'s document, not {task_id!r}'s")
                 continue
-            result["stats"].append(validate_document(path, name, doc_task, cfg, ctx, problems))
+            try:
+                result["stats"].append(validate_document(path, name, doc_task, cfg, ctx,
+                                                         problems))
+            except (TypeError, AttributeError, KeyError, ValueError, IndexError,
+                    RecursionError) as exc:
+                # the backstop of "raises nothing": a shape no check above
+                # foresaw is the worker's document's fault, said as rule 1
+                problems.add(1, name, f"the document's shape could not be checked "
+                                      f"({exc.__class__.__name__}: {str(exc)[:200]})")
         result["documents"] = len(docs)
     except GateBroken as exc:
         result["broken"].append(str(exc))
@@ -1521,6 +1772,8 @@ def main(argv: list[str] | None = None) -> int:
     # The LAST line says which ownership rule judged the contribution.
     if result["ownership"]:
         print(f"  changed files: {result['ownership']}")
+    elif result["broken"]:
+        print("ownership: not checked (the gate could not run)")
     else:
         print("ownership: not checked (no --changed-files: these documents were validated, the "
               "change set was not)")

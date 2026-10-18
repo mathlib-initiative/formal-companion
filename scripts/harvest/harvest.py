@@ -78,8 +78,8 @@ def list_commands(source: dict, dest: Path) -> list[dict]:
         return []
     remote = f"{source['host']}:{source['path']}/"
     ls = ["ssh", source["host"], REMOTE_LIST.format(path=shlex.quote(source["path"]))]
-    rsync = ["rsync", "-a", "--prune-empty-dirs", "--include=*.json", "--include=*/",
-             "--exclude=*", remote, str(dest) + "/"]
+    rsync = ["rsync", "-a", "--no-links", "--prune-empty-dirs", "--include=*.json",
+             "--include=*/", "--exclude=*", remote, str(dest) + "/"]
     shas = ["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(source["path"]))]
     return [
         {"title": "expected set (the source listing IS the expectation)", "argv": ls,
@@ -124,9 +124,16 @@ def source_shas(source: dict) -> dict[str, str]:
         out = _run(["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(source["path"]))],
                    "remote checksums")
         shas = {}
-        for line in out.splitlines():
-            digest, _, name = line.partition(" ")
-            name = _strip_dot(name.strip().lstrip("*"))
+        # split on "\n" only (splitlines also splits a name at U+2028 or \r), and
+        # read shasum's escaped form: a name holding a backslash or a newline is
+        # printed as "\<digest>  <name with \\ and \n>"
+        for line in out.split("\n"):
+            escaped = line.startswith("\\")
+            digest, _, name = (line[1:] if escaped else line).partition(" ")
+            name = name[1:] if name.startswith((" ", "*")) else name
+            if escaped:
+                name = name.replace("\\\\", "\0").replace("\\n", "\n").replace("\0", "\\")
+            name = _strip_dot(name)
             if len(digest) == 64 and name and name != "-":
                 shas[name] = digest
         return shas
@@ -139,8 +146,11 @@ def transfer(source: dict, dest: Path) -> None:
     """Copy the findings to *dest*; rsync for remote, a plain copy for local."""
     dest.mkdir(parents=True, exist_ok=True)
     if source["kind"] == "remote":
-        argv = ["rsync", "-a", "--prune-empty-dirs", "--include=*.json", "--include=*/",
-                "--exclude=*", f"{source['host']}:{source['path']}/", str(dest) + "/"]
+        # --no-links: the expected set is `find -type f`, so a link would land
+        # as an extra that the readers then follow
+        argv = ["rsync", "-a", "--no-links", "--prune-empty-dirs", "--include=*.json",
+                "--include=*/", "--exclude=*", f"{source['host']}:{source['path']}/",
+                str(dest) + "/"]
         _run(argv, "rsync")
         return
     root = Path(source["path"])
@@ -318,6 +328,10 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         name for name, sha in (source_manifest or {}).items()
         if name in manifest and manifest[name] != sha
     )
+    # Checksums asked for and a landed file with none from the source: it was
+    # never compared, so the receipt cannot say it was (fail closed).
+    sha_unverified = (sorted(set(manifest) - set(source_manifest or {}))
+                      if source_manifest is not None else [])
     malformed = malformed_files(dest)
     sources = {str(k): str(v) for k, v in dict(sources or {}).items()}
     edition = source_audit(dest, sources)
@@ -337,9 +351,10 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "missing": missing,
         "extra": extra,
         "sha_mismatched": mismatched,
-        "sha_verified": bool(source_manifest),
+        "sha_verified": bool(source_manifest) and not sha_unverified,
+        "sha_unverified": sha_unverified,
         "malformed": malformed,
-        "complete": (not missing and not mismatched and not malformed
+        "complete": (not missing and not mismatched and not sha_unverified and not malformed
                      and edition["ok"] and gate_ok),
         "manifest_algo": "sha256",
         "manifest": manifest,
@@ -439,6 +454,10 @@ def describe(receipt: dict) -> str:
     if receipt["sha_mismatched"]:
         lines.append(f"  SHA MISMATCH {len(receipt['sha_mismatched'])}: "
                      f"{', '.join(receipt['sha_mismatched'][:MAX_NAMED])}")
+    if receipt.get("sha_unverified"):
+        lines.append(f"  SHA UNVERIFIED {len(receipt['sha_unverified'])}: "
+                     f"{', '.join(receipt['sha_unverified'][:MAX_NAMED])} -- the source "
+                     f"listed no checksum for them, so they were never compared")
     if receipt.get("malformed"):
         lines.append(f"  MALFORMED {len(receipt['malformed'])}: "
                      f"{', '.join(receipt['malformed'][:MAX_NAMED])} -- valid JSON, but not a "
@@ -538,7 +557,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--from", dest="source", required=True,
                         help="host:/path/to/findings or a local directory")
     parser.add_argument("--dest", required=True, help="corpus/<run-id> directory")
-    parser.add_argument("--source", action="append", default=[], metavar="ID=SHA256",
+    # its own dest: `--from` already owns `source`, and argparse would make the
+    # two one option
+    parser.add_argument("--source", dest="source_specs", action="append", default=[],
+                        metavar="ID=SHA256",
                         help="a source this run reads (repeatable); the receipt records them "
                              "and a finding stamped with any other is refused")
     parser.add_argument("--run-yaml", default=None)
@@ -551,10 +573,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"# {step['title']}\n{step['shell']}")
         return 0
     sources = {}
-    for spec in args.source:
+    for spec in args.source_specs:
         sid, _, sha = str(spec).partition("=")
-        if sid and sha:
-            sources[sid] = sha
+        if not (sid and sha):
+            parser.error(f"--source {spec!r} is not ID=SHA256")
+        sources[sid] = sha
     receipt = harvest(run_id=args.run_id, source=source, dest=Path(args.dest),
                       sources=sources,
                       run_yaml_src=Path(args.run_yaml) if args.run_yaml else None,
