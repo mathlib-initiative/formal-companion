@@ -21,6 +21,12 @@ sections 2.3 and 2.7:
   12 KB at 48 libraries) and the default 256 KiB per-source budget refused 4 of
   10 sources; an absence's ends are ``{type, uri, version}`` only, the default
   budget is off and the seal records the budget that applied.
+
+And from the re-export of smoke 2 in the agreed format (the proof run):
+
+* P1 -- the seal still carried ``runs`` and ``sourceset.version`` beside the agreed
+  keys, and the consumer refuses a seal with any other key; a run token named every
+  challenge run, where the agreed grammar admits one.
 """
 from __future__ import annotations
 
@@ -108,13 +114,71 @@ class TestTheSeal(_Exported):
         self.assertEqual(seal["schema"], "cf-locate-recordset/1")
         self.assertEqual(seal["set_id"], "set-1")
         self.assertEqual(seal["universe"], {"id": pin["id"], "universe_sha256": pin["sha256"]})
-        self.assertLessEqual({"id", "manifest_sha256"}, set(seal["sourceset"]))
+        self.assertEqual(set(seal["sourceset"]), {"id", "manifest_sha256"})
         self.assertRegex(seal["sourceset"]["manifest_sha256"], r"\A[0-9a-f]{64}\Z")
         self.assertRegex(seal["skill_commit"], r"\A[0-9a-f]{40}\Z")
         self.assertRegex(seal["created"], r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
         self.assertEqual(seal["byte_budget"], 0)
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in seal["files"].values()))
         self.assertEqual(export_mod.verify_seal(out_dir), [])
+
+
+    def test_p1_the_seal_has_exactly_the_agreed_keys(self):
+        """The consumer refuses ``runs`` and ``sourceset.version`` by name; the report
+        keeps them."""
+        self.assertEqual(self.export()[0], 0)
+        seal = read_json(self.paths.export_dir("set-1") / "SEAL.json")
+        self.assertEqual(set(seal), {"schema", "set_id", "campaign", "universe", "sourceset",
+                                     "skill_commit", "created", "byte_budget", "files"})
+        self.assertEqual(set(seal), set(export_mod.SEAL_KEYS))
+        self.assertEqual(set(seal["universe"]), {"id", "universe_sha256"})
+        self.assertEqual(set(seal["sourceset"]), {"id", "manifest_sha256"})
+        report = read_json(self.paths.export_report_json("set-1"))
+        self.assertEqual((report["run_id"], report["challenge_runs"], report["inventory_run"]),
+                         ("loc-1", ["chl-1"], "inv-1"))
+        self.assertEqual(report["campaign"], seal["campaign"])
+        self.assertEqual(report["sourceset"]["manifest_sha256"],
+                         seal["sourceset"]["manifest_sha256"])
+        self.assertIsInstance(report["sourceset"]["version"], int)
+
+    def test_p1_a_campaign_the_grammar_refuses_writes_nothing(self):
+        path = self.paths.run_yaml("loc-1")
+        for bad in ("run:loc-1", "wpm tier a", "-wpm"):
+            run = read_yaml(path)
+            run["locate"]["campaign"] = bad
+            write_yaml(path, run)
+            with self.subTest(campaign=bad):
+                code, out, err = self.export(set_id="set-bad")
+                self.assertNotEqual(code, 0, out + err)
+                self.assertIn("not a campaign id a record set may carry", out + err)
+                self.assertFalse(self.paths.export_dir("set-bad").exists())
+
+
+class TestTheCampaignToken(unittest.TestCase):
+    """``run:<run-id>[+<challenge-run-id>]`` or a campaign id, and nothing else."""
+
+    def test_p1_a_run_token_names_at_most_one_challenge_run(self):
+        run = {"locate": {}}
+        self.assertEqual(export_mod.campaign_token(run, "loc-1", []), "run:loc-1")
+        self.assertEqual(export_mod.campaign_token(run, "loc-1", ["chl-1"]), "run:loc-1+chl-1")
+        with self.assertRaises(export_mod.CfError) as caught:
+            export_mod.campaign_token(run, "loc-1", ["chl-1", "chl-2"])
+        self.assertIn("at most one challenge run", str(caught.exception))
+
+    def test_p1_a_campaign_shard_may_apply_several_challenge_runs(self):
+        run = {"locate": {"campaign": "wpm-tier-a"}}
+        self.assertEqual(export_mod.campaign_token(run, "loc-1", ["chl-1", "chl-2"]),
+                         "wpm-tier-a")
+
+    def test_p1_only_ids_the_grammar_admits(self):
+        for run_id in ("loc 1", "loc+1", "loc:1", "-loc", "l" * 65):
+            with self.subTest(run_id=run_id), self.assertRaises(export_mod.CfError):
+                export_mod.campaign_token({"locate": {}}, run_id, [])
+        for campaign in ("run:x", "a b", "x" * 129, "+x"):
+            with self.subTest(campaign=campaign), self.assertRaises(export_mod.CfError):
+                export_mod.campaign_token({"locate": {"campaign": campaign}}, "loc-1", [])
+        self.assertEqual(export_mod.campaign_token({"locate": {"campaign": "w:p.m_3-a"}},
+                                                   "loc-1", []), "w:p.m_3-a")
 
 
 class TestTheUniverseFile(_Exported):

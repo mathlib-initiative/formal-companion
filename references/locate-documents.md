@@ -282,9 +282,8 @@ and `written` when `--source` narrowed it:
 
 ```
 <set>/SEAL.json        {"schema": "cf-locate-recordset/1", "set_id", "campaign",
-                        "runs": {"locate", "challenge", "inventory"},
                         "universe": {"id", "universe_sha256"},
-                        "sourceset": {"id", "version", "manifest_sha256"}, "skill_commit",
+                        "sourceset": {"id", "manifest_sha256"}, "skill_commit",
                         "created", "byte_budget", "files": {"<relative path>": "<sha256>"}}
 <set>/universe.json    {"id", "universe_sha256", "frozen", "libraries": [...], "excluded": [...]}
 <set>/sources.jsonl    per source: source_id, pageid, revision, title, wikidata, html_sha256,
@@ -294,19 +293,22 @@ and `written` when `--source` narrowed it:
 ```
 
 `SEAL.json` lists every other file with its sha256; a consumer refuses a set
-whose files do not match. Its keys, every one always present:
+whose files do not match. Its keys are exactly these, every one always present,
+and no other (`export.SEAL_KEYS`; a consumer refuses a seal with any other key,
+so the runs and the manifest version are the export report's, not the seal's):
 
 - `set_id` — the `--set-id` the set was exported under.
-- `campaign` — **never null**: the locate run's `run.yaml` `locate.campaign`
-  (which `cf campaign plan` stamps into a shard), or, for a run in no campaign,
-  `run:<locate run>` followed by `+<challenge run>` for each challenge run
-  applied (`run:loc-1+chl-1`), so two sets of one run under different challenges
-  are told apart.
-- `runs` — the runs the set was made from (`{"locate", "challenge": [...],
-  "inventory"}`).
+- `campaign` — **never null**, and a token of one grammar: the locate run's
+  `run.yaml` `locate.campaign` (which `cf campaign plan` stamps into a shard), a
+  campaign id of letters, digits and `._:-` (at most 128, never starting `run:`);
+  or, for a run in no campaign, `run:<locate run>`, followed by `+<challenge
+  run>` when one challenge run applies (`run:loc-1+chl-1`), each run id letters,
+  digits and `._-` (at most 64). A run token names **at most one** challenge
+  run: a run in no campaign exported with two is refused, as is any id the
+  grammar does not admit, before a file is written.
 - `universe` — `{"id", "universe_sha256"}`, the key `universe.json` and every
   record use.
-- `sourceset` — `{"id", "version", "manifest_sha256"}`, the manifest the run pinned.
+- `sourceset` — `{"id", "manifest_sha256"}`, the manifest the run pinned.
 - `skill_commit` — the exporting checkout's 40-hex HEAD; the export refuses to
   seal from a checkout with none.
 - `created` — the newest of those runs' harvest times (ISO 8601 UTC, `…Z`), so
@@ -347,7 +349,9 @@ What every record carries beyond §2.7's example:
 `cf export literature-links --run <locate run> --challenge-run <run> --set-id
 <id>` writes it (`scripts/locate/export.py`, the records from
 `scripts/locate/records.py`) under `exports/<id>/` (or `--out DIR`) and what it
-refused, by passage, to `reports/export.<id>.json`, exiting 1 when it refused
+refused, by passage, to `reports/export.<id>.json` (which also names the runs,
+`run_id`, `challenge_runs` and `inventory_run`, the `campaign` token and the
+`sourceset` with its manifest `version`), exiting 1 when it refused
 anything: a passage whose challenge is owed, one whose outcome row carries a
 `problem` (§10: an outcome that could not be derived, a location that could not
 be joined, a document off the pinned rendering, a challenge that no longer fits

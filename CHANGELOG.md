@@ -68,9 +68,13 @@ release has something to say.
   now an expected artifact: a harvest without it is INCOMPLETE and exits 1
   (`host_artifacts_missing` in the receipt).
 - The sealed record set is the shape its consumer reads
-  (`references/locate-documents.md` §6): `SEAL.json` carries `set_id`, a
-  `campaign` that is never null (`run:<run>[+<challenge run>]` outside a
-  campaign), `universe: {id, universe_sha256}` and the `byte_budget` applied;
+  (`references/locate-documents.md` §6): `SEAL.json` carries exactly `schema`,
+  `set_id`, a `campaign` that is never null (`run:<run>[+<challenge run>]`
+  outside a campaign, refused with two challenge runs or an id the token
+  grammar does not admit), `universe: {id, universe_sha256}`, `sourceset: {id,
+  manifest_sha256}`, `skill_commit`, `created`, the `byte_budget` applied and
+  `files` (the runs and the manifest version moved to the export report: the
+  consumer refuses any other seal key);
   `universe.json` lists its libraries (each with `roots` and `display_name`)
   under `universe_sha256` with `frozen`; every record carries its passage's
   `section` and `prominence`; a `closeMatch` a challenge produced keeps a note;
