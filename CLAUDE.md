@@ -287,9 +287,6 @@ The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
 `CF_M1_ENFORCE_BARS=1` (assert the proposal's recall bars instead of only
 reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
 and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
-`CF_WIKILEAN_LAYER` (a directory of `<name>.body.html` + `<name>.layer.txt` pairs
-from the consumer's own text layer) turns on `tests/test_locate_sources.py`'s
-renderer-parity test, which skips without it.
 Discovery and inference tests use fixture repos and synthetic text: no network,
 and the only PDFs read are the fixture PDFs the suite generates in a temporary
 directory. `tests/_hermetic.py` is what makes that true: importing it pins HOME

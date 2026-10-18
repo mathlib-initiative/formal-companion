@@ -663,6 +663,25 @@ The label rule is part of the frozen renderer: `tests/test_locate_sources.py`
 pins its fingerprint (the two label sets, its patterns and its answers on a
 fixed list of bolds) to the renderer id beside the golden views.
 
+**Parity with the consumer's text layer** is pinned by a conformance fixture,
+`tests/data/locate/text-layer.json`: synthetic MediaWiki-shaped bodies, each with
+the layer `$WIKILEAN`'s own `text_layer` gave for it (stamped with that commit
+and the module's sha256) and the renderer id it holds for, which
+`tests/test_locate_text_layer.py` replays through this renderer.
+`tests/gen_text_layer.py` regenerates it from a read-only checkout, running the
+function from the module's bytes in a separate isolated process, and refuses an
+unmarked difference or a stale mark. Where the two layers differ the case is a
+`known_divergence` that names the side that is not the HTML5 parser there
+(`departs`) and records this renderer's layer beside the consumer's. Most are the
+consumer's regular-expression scanner: the newline after `pre`, a reference with
+no `;`, a `>` inside a quoted attribute, a self-closing `<style/>` or `<script/>`
+in SVG or MathML (which it reads as the start of a skipped element that runs to
+the end of the page). Four are this renderer's: in `web-html/3`'s tree builder a
+`template` is no scope boundary, so an `li`, `dd`, `td` or `tr` start tag or an
+end tag inside one closes an element outside it, and the text after it leaks into
+the layer; MediaWiki's parser output carries no `<template>` element, and
+following HTML5 there moves layers, so it is a new renderer id.
+
 A `/1` or `/2` rendering cannot be re-rendered in
 place (a recorded `layer_sha256` never changes): `cf sourceset create <new>
 --from <old>` seeds a new sourceset with the old one's identities and bytes and
