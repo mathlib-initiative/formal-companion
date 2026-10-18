@@ -343,8 +343,10 @@ either; any part unfinished, it is a `statement_only` declaration on both.
 An example or `other` passage judges it on both rows, the better winning, as
 for every location (Q1); a data part is finished and a `Prop`-valued
 definition part is not (Q2); and a definition passage's claim with an
-unfinished part is `statement_only`, as an `exactMatch` to an unfinished
-declaration is (Q3). Nothing else in the table changes, and a claim that is not
+unfinished part is `statement_only`, as an `exactMatch` to a `statement_only`,
+`wanted` or `axiom_dependent` declaration is (Q3; an `exactMatch` to a
+`Prop`-valued definition alone still formalizes a definition passage, while
+as a claim's part it is unfinished). Nothing else in the table changes, and a claim that is not
 survived adds nothing.
 
 Built as `cflib.vocab.derive_status`, which refuses a contradiction (an
