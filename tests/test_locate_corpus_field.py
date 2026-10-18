@@ -919,23 +919,88 @@ class TestD8dWikipediaTitlesWithParentheses(unittest.TestCase):
 
 
 class TestD9ACamelCaseIdentifierFindsItsDeclaration(unittest.TestCase):
-    """D9 (already fixed by the review's #36/#45): a query ``IsCompact`` was one word that
-    never met the name column, so the declaration ranked below 200 signature hits."""
+    """D9: the query ``IsCompact`` did not find the declaration ``IsCompact`` in its top 200.
 
-    def test_the_identifier_ranks_first_over_its_many_mentions(self):
+    The CamelCase split of the query (the review's #36/#45) was in place and the
+    symptom was not gone: bm25 rewards a name that REPEATS the query's words, so
+    on the field universe ``isCompact_iff_isCompact_univ`` and
+    ``IsCompact.isSigmaCompact`` and about 450 more ranked above the identifier.
+    The reduction: the identifier among names that repeat its words.
+    """
+
+    def setUp(self):
         root = _scratch(self)
         universe = make_universe(root)
         udir = root / "corpora" / "u1"
-        records = [decl("IsCompact", "def", "definition", signature="Set α → Prop")]
-        records += [decl(f"IsCompact.lemma{i}", signature=" ∧ ".join(["IsCompact s"] * 6))
-                    for i in range(30)]
-        records += [decl(f"Other.result{i}", signature="IsCompact s → IsCompact t")
-                    for i in range(30)]
+        records = [decl("IsCompact", "def", "definition", signature="Set α → Prop"),
+                   decl("Gadget.Prime", "def", "definition", signature="ℕ → Prop"),
+                   decl("Gadget.prime_two", signature="Gadget.Prime 2"),
+                   decl("WidgetSpace", "class", "definition", signature="Type u → Type u"),
+                   decl("Polynomial.natDegree", "def", "definition", signature="ℕ")]
+        for i in range(5):
+            records += [
+                decl(f"IsCompact.isSigmaCompact{i}", signature="IsCompact s → IsSigmaCompact s"),
+                decl(f"isCompact_iff_isCompact_univ{i}",
+                     signature="IsCompact s ↔ IsCompact Set.univ"),
+                decl(f"Gadget.prime_iff_prime_prime{i}",
+                     signature="Gadget.Prime p ↔ Gadget.Prime p"),
+                decl(f"widgetSpace_iff_widgetSpace_widgetSpace{i}",
+                     signature="WidgetSpace X ↔ WidgetSpace X"),
+                decl(f"Polynomial.natDegree_le_natDegree_natDegree{i}",
+                     signature="natDegree p ≤ natDegree q")]
         ingest.ingest(universe, "alpha", write_probe(root / "p", records), udir / "index" / "alpha")
         build_db.build(universe, udir, udir / "corpus.sqlite")
-        conn = query.open_db(udir / "corpus.sqlite")
-        self.addCleanup(conn.close)
-        self.assertEqual(query.search(conn, "IsCompact", limit=5)[0]["declaration"], "IsCompact")
+        self.db = udir / "corpus.sqlite"
+        self.conn = query.open_db(self.db)
+        self.addCleanup(self.conn.close)
+
+    def ranks(self, text: str, **kw) -> list[str]:
+        return [r["declaration"] for r in query.search(self.conn, text, limit=200, **kw)]
+
+    def test_the_field_shape_is_reproduced_by_bm25_alone(self):
+        rows = self.conn.execute(
+            "SELECT d.name FROM decls_fts JOIN decls d ON d.id = decls_fts.rowid "
+            "WHERE decls_fts MATCH ? ORDER BY bm25(decls_fts, 10, 2, 1), d.name",
+            ['"is" OR "compact"']).fetchall()
+        self.assertGreater([r[0] for r in rows].index("IsCompact"), 0)
+
+    def test_the_identifier_ranks_first_in_both_modes(self):
+        for text, first in (("IsCompact", "IsCompact"), ("is_compact", "IsCompact"),
+                            ("Gadget.Prime", "Gadget.Prime"), ("Prime", "Gadget.Prime"),
+                            ("widget space", "WidgetSpace"),
+                            ("natDegree", "Polynomial.natDegree")):
+            for all_words in (False, True):
+                with self.subTest(text=text, all_words=all_words):
+                    got = self.ranks(text, all_words=all_words)
+                    self.assertEqual(got[0], first, got[:5])
+                    self.assertEqual(len(got), len(set(got)))
+
+    def test_the_tiers(self):
+        tier = query.identifier_tier
+        self.assertEqual(tier("IsCompact", "IsCompact"), 0)
+        self.assertEqual(tier("isCompact", "IsCompact"), 1)
+        self.assertEqual(tier("Gadget.Prime", "Prime"), 2)
+        self.assertEqual(tier("Polynomial.natDegree", "nat degree"), 2)
+        self.assertIsNone(tier("Gadget.isPrime", "Prime"))       # not at a component
+        self.assertIsNone(tier("IsCompact.isSigmaCompact", "IsCompact"))
+        self.assertIsNone(tier("X", " ".join(["w"] * 40)))        # a paragraph is no identifier
+
+    def test_the_host_tool_prints_the_identifier_first(self):
+        tool = Path(__file__).resolve().parents[1] / "scripts" / "corpus" / "corpus_search.py"
+        proc = subprocess.run([sys.executable, "-I", str(tool), "--db", str(self.db),
+                               "--limit", "200", "IsCompact"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout.splitlines()[0])["declaration"], "IsCompact")
+
+    def test_l2_ranks_the_declaration_an_article_is_named_for_first(self):
+        from locate import candidates
+
+        class _U:
+            libraries = {"alpha": {}}
+        hits = candidates.lexical_hits([("Widget space", "title"), ("is compact", "bold_term")],
+                                       _U(), self.conn, limit=10, exclude=set())
+        names = [h["declaration"] for h in hits]
+        self.assertEqual(set(names[:2]), {"IsCompact", "WidgetSpace"}, names)
 
 
 class TestD10TheIngestWarningSaysItsOwnFlag(unittest.TestCase):
