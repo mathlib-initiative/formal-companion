@@ -151,27 +151,53 @@ class TestTheParityTable(unittest.TestCase):
 
 
 def exported_challenges(case: dict) -> dict:
-    """``{location_key: challenge}`` once a parity case's claim verdict is applied.
+    """``{location_key: challenge}`` once a parity case's verdicts are applied.
 
-    The claim is planned with its parts, as the challenge planner plans every
-    claim, and its verdict is ``confirm`` for a ``survived`` claim and ``refute``
-    for a ``downgraded`` one (a refute removes the claim).
+    Through ``outcomes._apply_challenge``, the whole challenge of one supporting
+    passage in one run.  Each location is planned as its case value says: a
+    ``not_required`` or ``sampled_out`` one with that value, a ``survived`` one
+    as a required record a ``confirm`` judged, and a ``challenge_pending`` one
+    as a ``sampled_out`` record that a prominence overturn to ``central`` in the
+    same run reopens (P05) -- a reopen reopens every record no verdict judged,
+    so such a case has no ``not_required`` or ``sampled_out`` location.  The
+    claim is planned with its parts, as the challenge planner plans every claim,
+    and its verdict is ``confirm`` for a ``survived`` claim and ``refute`` for a
+    ``downgraded`` one (a refute removes the claim).
     """
     sid, item = "s", "In-text #0a1b2c3d"
     claim = case["coverage"]
-    row = {"source_id": sid, "item": item, "refuted": [], "runs": {"challenge": None},
+    row = {"source_id": sid, "item": item, "outcome": "located", "missing": False,
+           "prominence": "supporting", "absence": None, "refuted": [],
+           "runs": {"challenge": None}, "problem": None,
            "locations": [dict(l, library="alpha", declaration=l["location_key"], rank=rank)
                          for rank, l in enumerate(case["locations"], 1)],
            "coverage": {"complete": True, "parts": list(claim["parts"]),
                         "note": "the parts state every clause", "challenge": None}}
+    planned, verdicts = {}, {}
+    for l in case["locations"]:
+        value, k = l["challenge"], l["location_key"]
+        planned[k] = {"planned": vocab.CHALLENGE_SAMPLED_OUT
+                      if value == vocab.CHALLENGE_PENDING else value,
+                      "relation": l["relation"], "challenge_run": "chl"}
+        if value == vocab.CHALLENGE_SURVIVED:
+            planned[k]["planned"] = vocab.CHALLENGE_REQUIRED
+            verdicts[k] = {"action": "confirm", "witness": "checked", "challenge_run": "chl"}
+    values = {l["challenge"] for l in case["locations"]}
+    if vocab.CHALLENGE_PENDING in values:
+        assert not values & {vocab.CHALLENGE_NOT_REQUIRED, vocab.CHALLENGE_SAMPLED_OUT}, case
+        pkey = outcomes.record_key("prominence", sid, item)
+        planned[pkey] = {"planned": vocab.CHALLENGE_REQUIRED, "outcome": "located",
+                         "challenge_run": "chl"}
+        verdicts[pkey] = {"action": "overturn", "prominence": "central",
+                          "witness": "the article is about it", "challenge_run": "chl"}
     key = outcomes.record_key(vocab.COVERAGE_TARGET, sid, item)
-    planned = {key: {"planned": vocab.CHALLENGE_REQUIRED, "parts": list(claim["parts"]),
-                     "challenge_run": "chl"}}
+    planned[key] = {"planned": vocab.CHALLENGE_REQUIRED, "parts": list(claim["parts"]),
+                    "challenge_run": "chl"}
     action = {vocab.CHALLENGE_SURVIVED: "confirm",
               vocab.CHALLENGE_DOWNGRADED: "refute"}[claim["challenge"]]
-    verdicts = {key: {"action": action, "witness": "checked", "challenge_run": "chl"}}
+    verdicts[key] = {"action": action, "witness": "checked", "challenge_run": "chl"}
     problems: list[str] = []
-    outcomes._apply_coverage(row, planned, verdicts, problems)
+    outcomes._apply_challenge(row, planned, verdicts, None, None, problems)
     assert not problems, problems
     return {l["location_key"]: l.get("challenge") for l in row["locations"]}
 
@@ -629,6 +655,64 @@ class TestConfirmParts(unittest.TestCase):
         self.assertEqual([p["challenge"] for p in parts],
                          ["survived", "survived", "survived", None, "challenge_pending"])
 
+    @staticmethod
+    def reopened(prominence_action="overturn", part_verdict=None):
+        """A supporting passage, two sampled_out parts and a required claim confirmed, in
+        one run with its sampled prominence record (review 4, F1)."""
+        sid, item = "s", "In-text #0a1b2c3d"
+        k1, k2 = "a" * 64, "b" * 64
+        row = {"source_id": sid, "item": item, "outcome": "located", "missing": False,
+               "prominence": "supporting", "passage_kind": "theorem", "absence": None,
+               "refuted": [], "runs": {"challenge": None}, "problem": None,
+               "locations": [{"location_key": k, "library": "alpha", "declaration": name,
+                              "relation": "hasPart", "rank": r, "proof_status": "proved",
+                              "statement": False}
+                             for r, (k, name) in enumerate(((k1, "A.one"), (k2, "A.two")), 1)],
+               "coverage": {"complete": True, "parts": [k1, k2], "note": "n",
+                            "challenge": None},
+               "coverage_refuted": None}
+        ckey = outcomes.record_key(vocab.COVERAGE_TARGET, sid, item)
+        pkey = outcomes.record_key("prominence", sid, item)
+        planned = {k1: {"planned": "sampled_out", "relation": "hasPart", "challenge_run": "chl"},
+                   k2: {"planned": "sampled_out", "relation": "hasPart", "challenge_run": "chl"},
+                   ckey: {"planned": "required", "parts": [k1, k2], "challenge_run": "chl"},
+                   pkey: {"planned": "required", "outcome": "located", "challenge_run": "chl"}}
+        verdicts = {ckey: {"action": "confirm", "witness": "w", "challenge_run": "chl"},
+                    pkey: {"action": prominence_action, "witness": "w", "challenge_run": "chl"}}
+        if prominence_action == "overturn":
+            verdicts[pkey]["prominence"] = "central"
+        if part_verdict:
+            planned[k2]["planned"] = "required"
+            verdicts[k2] = {"action": part_verdict, "witness": "w", "challenge_run": "chl"}
+        problems: list[str] = []
+        outcomes._apply_challenge(row, planned, verdicts, None, None, problems)
+        outcomes._derive(row, problems)
+        return row, problems
+
+    def test_a_reopen_in_the_same_run_leaves_the_parts_pending(self):
+        """The reopen wins: a confirmed claim does not stand in for a part a prominence
+        overturn put under a rule requiring it; the claim survives and the status stands."""
+        row, problems = self.reopened()
+        self.assertEqual(problems, [])
+        self.assertEqual([l["challenge"] for l in row["locations"]],
+                         ["challenge_pending", "challenge_pending"])
+        self.assertEqual(row["coverage"]["challenge"], "survived")
+        self.assertEqual(row["prominence"], "central")
+        self.assertEqual((row["challenge"], row["status"]), ("challenge_pending", "formalized"))
+
+    def test_a_part_its_own_verdict_judged_keeps_it_under_the_reopen(self):
+        row, problems = self.reopened(part_verdict="confirm")
+        self.assertEqual(problems, [])
+        self.assertEqual([l["challenge"] for l in row["locations"]],
+                         ["challenge_pending", "survived"])
+        self.assertEqual(row["status"], "formalized")
+
+    def test_without_the_overturn_the_claim_confirms_its_parts(self):
+        row, problems = self.reopened(prominence_action="uphold")
+        self.assertEqual(problems, [])
+        self.assertEqual([l["challenge"] for l in row["locations"]], ["survived", "survived"])
+        self.assertEqual((row["challenge"], row["status"]), ("survived", "formalized"))
+
     def test_a_lapsed_claim_confirms_nothing(self):
         case = {"locations": [loc("a", "hasPart", "proved"), loc("b", "relatedMatch", "proved")],
                 "coverage": claim("ab")}
@@ -642,9 +726,10 @@ class TestConfirmParts(unittest.TestCase):
                             "challenge": None}}
         key = outcomes.record_key(vocab.COVERAGE_TARGET, sid, item)
         problems: list[str] = []
-        outcomes._apply_coverage(row, {key: {"planned": "required", "parts": ["a", "b"],
-                                             "challenge_run": "chl"}},
-                                 {key: {"action": "confirm", "challenge_run": "chl"}}, problems)
+        confirmed = outcomes._apply_coverage(
+            row, {key: {"planned": "required", "parts": ["a", "b"], "challenge_run": "chl"}},
+            {key: {"action": "confirm", "challenge_run": "chl"}}, problems)
+        self.assertEqual(confirmed, [])
         self.assertTrue(row["coverage_lapsed"])
         self.assertIn("no longer holds", problems[0])
         self.assertEqual({l["challenge"] for l in row["locations"]}, {"sampled_out"})
@@ -788,6 +873,11 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("**refute** it unless every clause of the passage is matched by a part "
                       "AND no part adds a hypothesis the passage does not have", worker)
         self.assertIn("The worker's `note` is a claim to check, not evidence", worker)
+        # review 4, F2: a confirm stands in only for the part records no rule required
+        self.assertIn("confirms with it only the parts whose own record the plan did not "
+                      "require", worker)
+        self.assertIn("give a verdict for every part record the task lists as required", worker)
+        self.assertNotIn("confirms every part with it", worker)
         self.assertIn('"target": "coverage", "action": "refute"', worker)
         self.assertIn("a coverage claim takes `confirm` or `refute` only", worker)
         self.assertNotIn("downgraded", worker)

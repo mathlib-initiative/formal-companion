@@ -323,8 +323,11 @@ actions `confirm` or `refute` (`COVERAGE_ACTIONS`) — because it upgrades a sta
 it `survived` and **confirms its parts** — each part whose own record no verdict judged
 (`not_required`, `sampled_out`) is `survived` too, a part a verdict judged keeps that verdict
 (`outcomes.confirm_parts`) — and `refute` removes the claim and leaves its parts `hasPart` with
-the values they had. The challenge planner puts a claim and its parts in one task, so one
-challenger judges them together. A part refuted, or downgraded out of `hasPart`, by another
+the values they had. The confirmation stands in only for parts no rule required: a prominence
+overturn to `subject` or `central` in the same run reopens the passage first, and a part it made
+`challenge_pending` stays pending, owed its own verdict under the stricter rule, while the claim
+stays `survived` and the status is unchanged (parity case P05). The challenge planner puts a
+claim and its parts in one task, so one challenger judges them together. A part refuted, or downgraded out of `hasPart`, by another
 verdict lapses the claim: it upgrades nothing, confirms no part, and the export refuses the
 passage until the claim is challenged again. An exported record
 carries it as `extensions[‹locate›].coverage = {"complete": true, "parts": [<location_key>, …],
@@ -352,14 +355,18 @@ shape of part A of the agreed specification:
 of the agreed specification literally and left them open as Q1–Q3; round 3 resolved all three,
 from D1, with one rule, and the parity cases that turn on them are marked with their question
 (and say what round 2 expected). The rule: a survived coverage claim acts, for the derived
-status, exactly like one more `exactMatch` location whose proof status and `statement` flag are
-the weakest of its parts, in the order **finished** (`proved`; a `definition` without the flag,
-data) > **unfinished** (`statement_only`, `wanted`, `axiom_dependent`; a `definition` with the
-flag, a `Prop`-valued definition). Every part finished: the location is `proved` on the theorem
-row and a `definition` (no flag) on the definition row, so the claim formalizes the passage on
-either. Any part unfinished: it is `statement_only` on both rows. Everything else about the
-status is unchanged, a claim that is not survived adds nothing, and confirming a claim confirms
-its parts (above).
+status, exactly like one more `exactMatch` location, and that location is a **fixed stand-in**,
+not any one of the parts. Each part is **finished** (`proved`; a `definition` without the flag,
+data) or **unfinished** (`statement_only`, `wanted`, `axiom_dependent`; a `definition` with the
+flag, a `Prop`-valued definition). Every part finished: the stand-in is a `proved` declaration on
+the theorem row and a `definition` (no flag) on the definition row, so the claim formalizes the
+passage on either. Any part unfinished: it is a `statement_only` declaration on both rows. It is
+not an `exactMatch` to any one part's own proof status and flag, the least finished one's
+included: a definition passage's claim of `proved` parts formalizes it, where an `exactMatch` to
+a `proved` theorem is `partial`, and one with a `Prop`-valued definition part is
+`statement_only`, where an `exactMatch` to that definition formalizes it (O07). Everything else about the status is unchanged, a claim that is
+not survived adds nothing, and confirming a claim confirms its parts (above) — except a part a
+prominence overturn in the same run reopened, which stays `challenge_pending` (the reopen wins).
 
 - **Q1** (resolved) — an `example` or `other` passage judges a survived claim on **both** rows,
   the better winning, exactly as it judges an ordinary location: `definition` parts formalize it
@@ -416,7 +423,7 @@ among them.
 | `downgraded` | challenged, and the relation or the outcome was weakened |
 | `not_required` | outside every challenge rule |
 | `sampled_out` | inside the stratified sample's frame, and not drawn |
-| `challenge_pending` | a rule now requires it and no challenge judged it: the passage's prominence was overturned to `subject` or `central` after its records were planned under `supporting`, so its unjudged locations, absence or unresolved outcome are refuted-by-default or hunted records nobody refuted or hunted. Exported as it is; a consumer reads it as unchallenged |
+| `challenge_pending` | a rule now requires it and no challenge judged it: the passage's prominence was overturned to `subject` or `central` after its records were planned under `supporting`, so its unjudged locations (a part of a coverage claim confirmed in the same run among them), absence or unresolved outcome are refuted-by-default or hunted records nobody refuted or hunted. Exported as it is; a consumer reads it as unchallenged |
 
 `CHALLENGE_UNJUDGED` is `not_required` · `sampled_out` · `challenge_pending`: the values of a
 record no verdict judged.

@@ -381,6 +381,10 @@ DATA_ALLOWLIST: tuple[tuple[str, str], ...] = (
      "5,207 rows of {model, usage} token counts and nothing else -- no text, "
      "paths, hosts or users (tests/data/m0a/README.md); small packed, over the "
      "cap unpacked"),
+    ("tests/data/locate/status-parity.json",
+     "the hand-written D1 status parity table (118 cases of synthetic keys k1, k2, "
+     "... and enum values, no source text), copied byte for byte by its consumer; "
+     "it crossed the cap with P05 in review 4 and grows a case per rule"),
 )
 
 
