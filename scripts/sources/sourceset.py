@@ -190,6 +190,24 @@ def append_only_problems(base: Manifest, entries: dict[str, dict]) -> list[str]:
     return out
 
 
+def check_new_id(sourceset_id: str) -> str:
+    """Refuse a NEW sourceset id that a sealed record set could not name.
+
+    A locate run's export seals ``sourceset.id``, and its consumer refuses a seal
+    whose id is outside the record set's token grammar (letters, digits and
+    ``._:-``, at most 128: ``cflib.vocab.RECORDSET_TOKEN``,
+    references/locate-documents.md section 6) -- after every run over the
+    sourceset has been paid for.  So the id is refused here, where it is chosen.
+    """
+    if not vocab.RECORDSET_TOKEN.fullmatch(str(sourceset_id or "")):
+        raise SourcesetError(f"sourceset id {sourceset_id!r} is not letters, digits and ._:- "
+                             f"(at most 128, starting with a letter or digit)",
+                             hint="a record set's seal names the sourceset by this id, and its "
+                                  "consumer refuses any other (references/locate-documents.md "
+                                  "section 6); choose an id such as wpm-3")
+    return sourceset_id
+
+
 def _write_new(path: Path, text: str) -> None:
     """Create ``path`` with ``text`` atomically, refusing when it already exists."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,6 +243,7 @@ class Sourceset:
     def create(cls, paths: WorkspacePaths, sourceset_id: str, family: str,
                *, workspace=None, now: str | None = None) -> "Sourceset":
         """A new sourceset: ``manifest-1.jsonl`` with the header and no sources."""
+        check_new_id(sourceset_id)
         websource.family(family, workspace)          # refuses an unknown family
         ss = cls(paths, sourceset_id)
         if paths.sourceset_manifests(sourceset_id):

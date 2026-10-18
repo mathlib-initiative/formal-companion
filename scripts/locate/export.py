@@ -18,6 +18,10 @@ excluded: [{id, reason}]}``.  No per-source byte budget applies unless one is
 asked for (``byte_budget``, default 0: off) -- a consumer with a cap passes its
 own.
 
+Before any file is written it refuses a ``--set-id``, a pinned sourceset id or a
+campaign token outside the record set's token grammar (``cflib.vocab.RECORDSET_TOKEN``
+and ``RUN_TOKEN_ID``): the consumer refuses the whole set over its seal.
+
 What it refuses, passage by passage, naming each one in the export report
 (``reports/export.<set-id>.json``) and exiting non-zero after writing the rest:
 
@@ -64,7 +68,6 @@ does not name.
 """
 from __future__ import annotations
 
-import re
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
@@ -84,16 +87,18 @@ SEAL_SCHEMA = "cf-locate-recordset/1"
 #: its own with --byte-budget, and the seal records the budget that applied.
 DEFAULT_BYTE_BUDGET = 0
 #: what a run in no campaign is sealed under: ``run:<locate run>[+<challenge run>]``
-RUN_CAMPAIGN_PREFIX = "run:"
+RUN_CAMPAIGN_PREFIX = vocab.RUN_TOKEN_PREFIX
 #: the seal's keys, exactly: the agreed record-set format (references/locate-documents.md
 #: section 6) -- a consumer refuses a seal with any other key, so the export writes no other
 SEAL_KEYS = ("schema", "set_id", "campaign", "universe", "sourceset", "skill_commit", "created",
              "byte_budget", "files")
 #: a campaign id the seal may carry: letters, digits and ``._:-``, at most 128, never
-#: starting ``run:`` (that prefix is a run token's)
-CAMPAIGN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+#: starting ``run:`` (that prefix is a run token's); the grammar of ``set_id`` and
+#: ``sourceset.id`` too (``cflib.vocab.RECORDSET_TOKEN``, the one definition)
+CAMPAIGN_ID_RE = vocab.RECORDSET_TOKEN
 #: a run id inside a run token: letters, digits and ``._-``, at most 64
-TOKEN_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+#: (``cflib.vocab.RUN_TOKEN_ID``, which ``cf plan-locate`` checks a run id against)
+TOKEN_RUN_ID_RE = vocab.RUN_TOKEN_ID
 
 
 def skill_commit() -> str | None:
@@ -141,6 +146,21 @@ def campaign_token(run: dict, run_id: str, challenge_runs: Iterable[str]) -> str
                           hint="a run id in a record set's campaign token is letters, digits "
                                "and ._- (at most 64); plan the run under such an id")
     return RUN_CAMPAIGN_PREFIX + "+".join([run_id, *challenge_runs])
+
+
+def check_token(value: str, what: str, hint: str) -> str:
+    """``value`` when the record set's token grammar admits it, else refuse naming ``what``.
+
+    A seal's ``set_id`` and ``sourceset.id`` are letters, digits and ``._:-``, at
+    most 128 (``cflib.vocab.RECORDSET_TOKEN``): a consumer refuses the whole set over a
+    seal naming any other, so the export refuses first, before a file is written.
+    """
+    if not isinstance(value, str) or not vocab.RECORDSET_TOKEN.fullmatch(value):
+        raise CfError(f"{what} {value!r} is not a token a record set's seal may carry",
+                      hint="a record-set token is letters, digits and ._:- (at most 128, "
+                           f"starting with a letter or digit; references/locate-documents.md "
+                           f"section 6); {hint}")
+    return value
 
 
 def _universe_json(universe: inputs.Universe) -> dict:
@@ -204,6 +224,7 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
               set_id: str, byte_budget: int = DEFAULT_BYTE_BUDGET, out_dir: Path | None = None,
               workspace=None) -> dict:
     """Write the sealed set; return the export report (also written to reports/)."""
+    check_token(set_id, "--set-id", "pass another --set-id")
     challenge_runs = list(challenge_runs)
     built = outcomes_mod.build(paths, run_id, challenge_runs=challenge_runs, require_gate=True)
     if built["mode"] != vocab.LOCATE:
@@ -213,6 +234,9 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
     run = built["run"]
     campaign = campaign_token(run, run_id, challenge_runs)
     pin = run["locate"]["sourceset"]
+    check_token(pin.get("id"), f"run {run_id}'s sourceset id",
+                "plan the run over a sourceset whose id is one (`cf sourceset create` "
+                "refuses any other)")
     manifest = inputs.pinned_manifest(paths, pin)
     universe = inputs.load_universe(paths, built["universe"]["id"])
     uni_doc = {"id": universe.id, "sha256": universe.sha256,

@@ -35,6 +35,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- A record set's `set_id` and `sourceset.id` are tokens of the consumer's grammar
+  (`cflib.vocab.RECORDSET_TOKEN`: letters, digits and `._:-`, at most 128): the
+  export refuses any other before a file is written, and `cf sourceset create`
+  refuses a new sourceset id outside it, where it is chosen (a `--set-id smoke+2`
+  or a sourceset `wpm+math` had exported cleanly and been refused whole by the
+  consumer).
 - A remote locate harvest brings the bridge's kept agent envelopes home
   (`runs/<run>/host/envelopes/`) and, with no `--transcripts` and no campaign
   usage export, prices the receipt from them: their own `total_cost_usd`,

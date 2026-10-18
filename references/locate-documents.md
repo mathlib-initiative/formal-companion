@@ -302,18 +302,24 @@ whose files do not match. Its keys are exactly these, every one always present,
 and no other (`export.SEAL_KEYS`; a consumer refuses a seal with any other key,
 so the runs and the manifest version are the export report's, not the seal's):
 
-- `set_id` — the `--set-id` the set was exported under.
+- `set_id` — the `--set-id` the set was exported under: a **token**, letters,
+  digits and `._:-`, at most 128, starting with a letter or digit
+  (`cflib.vocab.RECORDSET_TOKEN`, the consumer's own token grammar). Any other is
+  refused before a file is written.
 - `campaign` — **never null**, and a token of one grammar: the locate run's
   `run.yaml` `locate.campaign` (which `cf campaign plan` stamps into a shard), a
   campaign id of letters, digits and `._:-` (at most 128, never starting `run:`);
   or, for a run in no campaign, `run:<locate run>`, followed by `+<challenge
   run>` when one challenge run applies (`run:loc-1+chl-1`), each run id letters,
-  digits and `._-` (at most 64). A run token names **at most one** challenge
-  run: a run in no campaign exported with two is refused, as is any id the
-  grammar does not admit, before a file is written.
+  digits and `._-` (at most 64; `cflib.vocab.RUN_TOKEN_ID`). A run token names
+  **at most one** challenge run: a run in no campaign exported with two is
+  refused, as is any id the grammar does not admit, before a file is written.
 - `universe` — `{"id", "universe_sha256"}`, the key `universe.json` and every
   record use.
-- `sourceset` — `{"id", "manifest_sha256"}`, the manifest the run pinned.
+- `sourceset` — `{"id", "manifest_sha256"}`, the manifest the run pinned; the
+  id is a token of `set_id`'s grammar. `cf sourceset create` refuses a new id
+  outside it, where the id is chosen, and the export refuses a run pinned to an
+  older one, before a file is written.
 - `skill_commit` — the exporting checkout's 40-hex HEAD; the export refuses to
   seal from a checkout with none.
 - `created` — the newest of those runs' harvest times (ISO 8601 UTC, `…Z`), so
