@@ -459,9 +459,23 @@ a `def`/`abbrev`/`opaque` whose printed type's final codomain is `Prop`. The
 source scan for a `proof_wanted` that adds no constant is not implemented (the
 proposal's §2.4, rule 1): such a result is not in the index, and every manifest
 says `proof_wanted_scan: "not implemented"`. `tags` use `cflib.vocab.TAG_KINDS`:
-attributes in the source span from `start_line` to `line`, read from a checkout
-given to the ingest — which must be at the pinned commit (its HEAD read from its
-files) and clean — and Wikipedia URLs in the docstring. A Wikipedia tag's value is
+attributes read from a checkout given to the ingest — which must be at the pinned
+commit (its HEAD read from its files) and clean — and Wikipedia URLs in the
+docstring. An attribute list `@[...]` is read whole, its brackets balanced (`@[ext,
+aesop safe constructors (rule_sets := [G]), wikidata Q1]` is one list, however many
+lines it spans), after comments and string and character literals are blanked; a
+declaration's tags are those of every list that starts in its span (from
+`start_line` to `line`), except that a declaration whose span lies inside a list —
+a `to_additive` twin, which the probe reports at its attribute — takes only that
+list's `(attr := …)` tags, which apply to both twins. An `attribute [wikidata Q1]
+Name` command anywhere in the library tags the declaration `Name` resolves to
+through the enclosing namespaces, innermost first (no `open` namespace is tried); a
+name it cannot resolve in the library is counted in the manifest's
+`attribute_commands`, never guessed. A twin the command generates lies inside its
+list and takes its `(attr := …)` tags as above; an existing twin it pairs its target
+with (`attribute [to_additive (attr := wikidata Q1)] Subgroup` beside a hand-written
+`AddSubgroup`) is not tagged, since the source never writes that name. `-attr` and
+`local attr` tag nothing. A Wikipedia tag's value is
 one canonical page URL, the DESKTOP form `https://<lang>.wikipedia.org/wiki/<title>`:
 the mobile `<lang>.m.` host folded, the title percent-decoded, spaces and runs of underscores one
 underscore, its first letter upper-case, no fragment or query; an apostrophe

@@ -752,6 +752,212 @@ class TestD7TheCanaryPipelineRunsAsPrinted(_Pipelines):
         self.assertNotIn("<drivers>", text)
 
 
+WIDGET = """\
+/-- A graph. -/
+@[ext, aesop safe constructors (rule_sets := [Graphs]), wikidata Q141488]
+structure Graph where
+  adj : Nat
+
+/-- The index. -/
+@[to_additive (attr := wikidata Q1464168) /-- The additive index, with a ] in its
+doc and the words wikidata Q99 that are prose. -/]
+noncomputable def Sub.index : Nat := 0
+
+@[wikidata Q11, to_additive (attr := stacks 0ABC)
+  "the additive one"]
+theorem Sub.card_dvd : True := trivial
+
+-- @[wikidata Q9] in a comment is no attribute
+/-- A docstring that says `@[wikidata Q10]`. -/
+@[stacks 0BBB "a ] in a string"]
+theorem Plain.thm : True := trivial
+
+theorem Untagged.thm : True := trivial
+"""
+
+COMMANDS = """\
+namespace Alpha
+attribute [wikidata Q83478] Group
+attribute [stacks 0AAA] Alpha.Sub
+  _root_.Top
+section
+attribute [local wikidata Q5] Group
+attribute [-wikidata Q6] Group
+end
+end Alpha
+attribute [wikidata Q7] Missing.thing
+attribute [simp] Top
+"""
+
+
+def line_of(text: str, needle: str) -> int:
+    return next(i for i, l in enumerate(text.splitlines(), 1) if needle in l)
+
+
+class TestD8TagsTheOldSpanRuleMissed(unittest.TestCase):
+    """D8a-c: nested brackets ended a list early, a to_additive twin's list never closed in
+    its one-line span, and ``attribute [...] Name`` commands were never read."""
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.checkout, self.head = git_checkout(self.root / "checkout", {
+            "Alpha/Widget.lean": WIDGET, "Alpha/Commands.lean": COMMANDS,
+            "Alpha/Group.lean": "structure Alpha.Group\nstructure Alpha.Sub\nstructure Top\n"})
+        self.universe = make_universe(self.root)
+        self.universe.library("alpha")["commit"] = self.head
+        w = lambda needle: line_of(WIDGET, needle)  # noqa: E731
+        index_line = w("@[to_additive (attr := wikidata Q1464168)")
+        card_line = w("@[wikidata Q11, to_additive")
+        g = "Alpha/Group.lean"
+        self.records = [
+            decl("Graph", "structure", "definition", start_line=1, line=w("structure Graph"),
+                 end_line=w("adj : Nat"), path="Alpha/Widget.lean"),
+            decl("Sub.index", "def", "definition", start_line=w("/-- The index."),
+                 line=w("noncomputable def Sub.index"), path="Alpha/Widget.lean"),
+            # to_additive's twin: the probe's span is the attribute, inside the list
+            decl("AddSub.index", "def", "definition", start_line=index_line, line=index_line,
+                 end_line=index_line + 1, path="Alpha/Widget.lean"),
+            decl("Sub.card_dvd", start_line=card_line, line=w("theorem Sub.card_dvd"),
+                 path="Alpha/Widget.lean"),
+            decl("AddSub.card_dvd", start_line=card_line, line=card_line,
+                 end_line=card_line + 1, path="Alpha/Widget.lean"),
+            decl("Plain.thm", start_line=w("-- @[wikidata Q9]"), line=w("theorem Plain.thm"),
+                 path="Alpha/Widget.lean"),
+            decl("Untagged.thm", start_line=w("theorem Untagged"), line=w("theorem Untagged"),
+                 path="Alpha/Widget.lean"),
+            decl("Alpha.Group", "structure", "definition", start_line=1, line=1, path=g),
+            decl("Alpha.Sub", "structure", "definition", start_line=2, line=2, path=g),
+            decl("Top", "structure", "definition", start_line=3, line=3, path=g),
+        ]
+        modules = (("Alpha.Widget", "Alpha/Widget.lean"), ("Alpha.Commands", "Alpha/Commands.lean"),
+                   ("Alpha.Group", g))
+        source = write_probe(self.root / "p", self.records, commit=self.head, modules=modules)
+        self.manifest = ingest.ingest(self.universe, "alpha", source, self.root / "out",
+                                      checkout=self.checkout)
+        self.tags = {json.loads(l)["name"]: sorted((t["tag"], t["value"])
+                                                   for t in json.loads(l)["tags"])
+                     for l in (self.root / "out" / "decls.jsonl").read_text(
+                         encoding="utf-8").splitlines()}
+
+    def test_a_nested_bracket_does_not_end_the_list(self):
+        self.assertEqual(self.tags["Graph"], [("wikidata", "Q141488")])
+
+    def test_a_twin_inside_a_multi_line_list_takes_its_attr_tags(self):
+        self.assertEqual(self.tags["Sub.index"], [("wikidata", "Q1464168")])
+        self.assertEqual(self.tags["AddSub.index"], [("wikidata", "Q1464168")])
+        # (attr := ...) applies to both; a tag outside it is the original's alone
+        self.assertEqual(self.tags["Sub.card_dvd"], [("stacks", "0ABC"), ("wikidata", "Q11")])
+        self.assertEqual(self.tags["AddSub.card_dvd"], [("stacks", "0ABC")])
+
+    def test_comments_and_strings_are_not_attributes(self):
+        self.assertEqual(self.tags["Plain.thm"], [("stacks", "0BBB")])
+        self.assertEqual(self.tags["Untagged.thm"], [])
+
+    def test_attribute_commands_tag_what_they_resolve_to(self):
+        self.assertEqual(self.tags["Alpha.Group"], [("wikidata", "Q83478")])
+        self.assertEqual(self.tags["Alpha.Sub"], [("stacks", "0AAA")])
+        self.assertEqual(self.tags["Top"], [("stacks", "0AAA")])
+        commands = self.manifest["attribute_commands"]
+        self.assertEqual(commands["applied"], 3)
+        self.assertEqual((commands["unresolved"], commands["unresolved_names"]),
+                         (1, ["Missing.thing"]))
+        # stacks: Sub.card_dvd, AddSub.card_dvd, Plain.thm, Alpha.Sub, Top; wikidata: Graph,
+        # Sub.index, AddSub.index, Sub.card_dvd, Alpha.Group
+        self.assertEqual(self.manifest["tags"], {"stacks": 5, "wikidata": 5})
+
+    def test_without_a_checkout_only_docstrings_are_read(self):
+        source = write_probe(self.root / "p2", self.records, commit=self.head)
+        manifest = ingest.ingest(self.universe, "alpha", source, self.root / "out2")
+        self.assertEqual(manifest["tags"], {})
+        self.assertEqual(manifest["attribute_commands"]["applied"], 0)
+
+    def test_a_command_tags_its_target_and_the_twin_it_generates(self):
+        text = ("namespace Mul\n"
+                "theorem thing : True := trivial\n"
+                "attribute [to_additive (attr := wikidata Q2)] thing\n"
+                "end Mul\n")
+        root = _scratch(self)
+        checkout, head = git_checkout(root / "c", {"Alpha/Twin.lean": text})
+        universe = make_universe(root)
+        universe.library("alpha")["commit"] = head
+        records = [decl("Mul.thing", start_line=2, line=2, path="Alpha/Twin.lean"),
+                   decl("Add.thing", start_line=3, line=3, path="Alpha/Twin.lean")]
+        ingest.ingest(universe, "alpha", write_probe(root / "p", records, commit=head,
+                                                     modules=(("Alpha.Twin", "Alpha/Twin.lean"),)),
+                      root / "out", checkout=checkout)
+        tags = {json.loads(l)["name"]: json.loads(l)["tags"] for l in
+                (root / "out" / "decls.jsonl").read_text(encoding="utf-8").splitlines()}
+        self.assertEqual(tags["Mul.thing"], [{"tag": "wikidata", "value": "Q2"}])
+        self.assertEqual(tags["Add.thing"], [{"tag": "wikidata", "value": "Q2"}])
+
+    def test_the_mask_keeps_every_offset(self):
+        for text in (WIDGET, COMMANDS, "a 'b' c'd «x]y» \"s\\\"t\" /- /- n -/ -/ e -- c\nf"):
+            with self.subTest(text=text[:20]):
+                mask = ingest.code_mask(text)
+                self.assertEqual(len(mask), len(text))
+                self.assertEqual([i for i, c in enumerate(mask) if c == "\n"],
+                                 [i for i, c in enumerate(text) if c == "\n"])
+        self.assertEqual(ingest.code_mask("foo' = 'x' -- ]"), "foo' =" + " " * 9)
+
+
+class TestD8dWikipediaTitlesWithParentheses(unittest.TestCase):
+    """D8d (already fixed by the review's #35): a title's parentheses were cut at ``(``."""
+
+    def test_the_field_shapes(self):
+        for text, url in (
+                ("[monads](https://en.wikipedia.org/wiki/Monad_(functional_programming)).",
+                 "https://en.wikipedia.org/wiki/Monad_(functional_programming)"),
+                ("<https://en.wikipedia.org/wiki/Group_(mathematics)>",
+                 "https://en.wikipedia.org/wiki/Group_(mathematics)"),
+                ("(see https://en.wikipedia.org/wiki/Ring_(mathematics))",
+                 "https://en.wikipedia.org/wiki/Ring_(mathematics)")):
+            with self.subTest(text=text):
+                self.assertEqual(ingest.wikipedia_urls(text), [url])
+
+
+class TestD9ACamelCaseIdentifierFindsItsDeclaration(unittest.TestCase):
+    """D9 (already fixed by the review's #36/#45): a query ``IsCompact`` was one word that
+    never met the name column, so the declaration ranked below 200 signature hits."""
+
+    def test_the_identifier_ranks_first_over_its_many_mentions(self):
+        root = _scratch(self)
+        universe = make_universe(root)
+        udir = root / "corpora" / "u1"
+        records = [decl("IsCompact", "def", "definition", signature="Set α → Prop")]
+        records += [decl(f"IsCompact.lemma{i}", signature=" ∧ ".join(["IsCompact s"] * 6))
+                    for i in range(30)]
+        records += [decl(f"Other.result{i}", signature="IsCompact s → IsCompact t")
+                    for i in range(30)]
+        ingest.ingest(universe, "alpha", write_probe(root / "p", records), udir / "index" / "alpha")
+        build_db.build(universe, udir, udir / "corpus.sqlite")
+        conn = query.open_db(udir / "corpus.sqlite")
+        self.addCleanup(conn.close)
+        self.assertEqual(query.search(conn, "IsCompact", limit=5)[0]["declaration"], "IsCompact")
+
+
+class TestD10TheIngestWarningSaysItsOwnFlag(unittest.TestCase):
+    """D10 (already fixed by the review): every flag's warning carried the is_prop_unknown text."""
+
+    def test_a_published_index_warns_of_its_own_flag_only(self):
+        root = _scratch(self)
+        ws = root / "ws"
+        self.assertEqual(run_cf("init", str(ws), "--no-git", "-q")[0], 0)
+        for argv in (["corpus", "init", "u1"],
+                     ["corpus", "add", "u1", "--library", "alpha", "--repo",
+                      "https://example.org/alpha", "--commit", ALPHA, "--toolchain", TOOLCHAIN,
+                      "--roots", "Alpha"]):
+            self.assertEqual(run_cf(*argv, "--workspace", str(ws))[0], 0)
+        source = write_probe(root / "pub", TestD2AutoformsCompleteIsMappedByKind.RECORDS,
+                             schema="autoform-library-index/v0", modules=(("Alpha.Widget", None),))
+        code, out = run_cf("corpus", "ingest", "u1", "--library", "alpha", "--from", str(source),
+                           "--accept-published", "its CI publishes it", "--workspace", str(ws))
+        self.assertEqual(code, 0, out)
+        warning = next(l for l in out.splitlines() if "flagged published_status" in l)
+        self.assertIn("accepted on trust", warning)
+        self.assertNotIn("isProp", out)
+        self.assertNotIn("is_prop_unknown", out)
+
+
 class TestD12AtomicWritesKeepTheModeAPlainWriteWould(unittest.TestCase):
     """D12: ``universe.yaml`` was 0600 (mkstemp's mode) beside 0644 indexes."""
 
