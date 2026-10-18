@@ -189,7 +189,10 @@ A locate task carries at most eight passages of one frozen inventory.
   `confirm`/`uphold` keep the record (`challenge: survived`); `downgrade`
   changes a relation, `refute` removes a location, `overturn` replaces an
   absence or unresolved outcome (or a scope) with the given locations — all
-  three give `challenge: downgraded` on the affected records.
+  three give `challenge: downgraded` on the affected records, and the passage's
+  challenge is `downgraded`. The locations an overturn adds are the
+  challenger's own witnessed, gated findings: each carries `survived`. The
+  locations a refute leaves are ranked 1..n again, in their order.
 - The actions a target admits: `location` — `confirm`, `downgrade` (naming a
   `relation` weaker than the record's own, in the order `exactMatch` >
   `closeMatch` > `broadMatch` > `narrowMatch` = `hasPart` > `relatedMatch`;

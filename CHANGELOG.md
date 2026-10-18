@@ -35,6 +35,9 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- After a challenge, a passage's locations are ranked 1..n again (a refute had
+  left ranks `[1, 3]`), and the locations an absence overturn adds carry
+  `challenge: survived`, not `downgraded`.
 - A challenge's prominence overturn to `subject` or `central` reopens the
   passage: each of its records no verdict judged becomes `challenge_pending`
   (a new `CHALLENGE_VERDICTS` value, exported, read as unchallenged) instead of

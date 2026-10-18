@@ -9,7 +9,12 @@ applies it, in the shapes of references/locate-documents.md sections 6 and 10:
 * CH2 -- a prominence overturn from ``supporting`` to ``central`` left the
   passage's records ``not_required``: two central absences nobody hunted were
   exported as if no rule applied.  Every record no verdict judged is now
-  ``challenge_pending`` (``cflib.vocab.CHALLENGE_PENDING``), exported as such.
+  ``challenge_pending`` (``cflib.vocab.CHALLENGE_PENDING``), exported as such;
+* X4 -- a refuted location was dropped and the others kept their ranks, so two
+  passages exported ranks ``[1, 3]``; they are ranked 1..n again;
+* X5 -- the locations an absence overturn added carried ``downgraded``, a
+  value for a weakened record; they are the challenger's own witnessed
+  findings and carry ``survived``.
 """
 from __future__ import annotations
 
@@ -120,6 +125,68 @@ class TestCH2AProminenceOverturnReopensThePassage(_Challenged):
         row = self.outcome(F.W2, 1, challenge_runs=("chl-2",))
         self.assertEqual(row["prominence"], "supporting")
         self.assertEqual(row["absence"]["challenge"], vocab.CHALLENGE_NOT_REQUIRED)
+
+
+class TestX4RanksAfterARefute(Campaign):
+    """The field case: a subject passage with three ranked locations, rank 2 refuted."""
+
+    def setUp(self):
+        super().setUp()
+        F.plan_locate(self, self.root)
+        docs = F.locate_documents(self.paths, "loc-1")
+        for doc in docs.values():
+            if doc["source_id"] == F.W1:
+                doc["passages"][0]["locations"].append(
+                    F._loc("alpha", "Widget.card_dvd", "hasPart", 3))
+        F.write_harvest(self.paths, "loc-1", docs)
+        self.subject = F.frozen_formal_math(self.paths, F.W1)[0]["item"]
+
+        def refute_rank_2(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "location" and rec["item"] == self.subject \
+                    and rec.get("declaration") == "Beta.Widget.gadget_of_finite":
+                v.update(action="refute", witness="states the finite case of another object")
+            return v
+        self.challenge(verdict=refute_rank_2)
+
+    def test_x4_the_locations_a_refute_leaves_are_ranked_one_to_n(self):
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        row = next(r for r in built["outcomes"] if r["item"] == self.subject)
+        self.assertEqual([(l["declaration"], l["rank"]) for l in row["locations"]],
+                         [("Widget.exists_spanning_gadget", 1), ("Widget.card_dvd", 2)])
+        self.assertEqual([l["declaration"] for l in row["refuted"]],
+                         ["Beta.Widget.gadget_of_finite"])
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "set-1")
+        self.assertEqual(code, 0, out + err)
+        ranks = sorted(r["extensions"][EXT]["rank"] for r in _records(
+            self.paths.export_dir("set-1")) if r["extensions"][EXT]["item"] == self.subject)
+        self.assertEqual(ranks, [1, 2])
+
+    def test_x4_an_unchallenged_passage_keeps_its_order(self):
+        built = outcomes.build(self.paths, "loc-1")
+        row = next(r for r in built["outcomes"] if r["item"] == self.subject)
+        self.assertEqual([l["rank"] for l in row["locations"]], [1, 2, 3])
+
+
+class TestX5LocationsAnOverturnAdds(Campaign):
+
+    def test_x5_they_survive_and_the_passage_says_it_changed(self):
+        self.locate()
+        self.challenge()                 # the default overturns W2's subject absence
+        item = F.frozen_formal_math(self.paths, F.W2)[0]["item"]
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        row = next(r for r in built["outcomes"] if r["item"] == item)
+        self.assertEqual(row["outcome"], "located")
+        self.assertEqual([(l["declaration"], l["challenge"]) for l in row["locations"]],
+                         [("Beta.gadget_lattice_height", vocab.CHALLENGE_SURVIVED)])
+        self.assertEqual(row["challenge"], vocab.CHALLENGE_DOWNGRADED)
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "set-1")
+        self.assertEqual(code, 0, out + err)
+        (rec,) = [r for r in _records(self.paths.export_dir("set-1"))
+                  if r["extensions"][EXT]["item"] == item]
+        self.assertEqual(rec["extensions"][EXT]["challenge"], vocab.CHALLENGE_SURVIVED)
 
 
 if __name__ == "__main__":
