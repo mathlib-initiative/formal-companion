@@ -64,6 +64,7 @@ does not name.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
@@ -82,8 +83,17 @@ SEAL_SCHEMA = "cf-locate-recordset/1"
 #: 0, off.  A consumer with a cap (an import into a store with a per-row limit) passes
 #: its own with --byte-budget, and the seal records the budget that applied.
 DEFAULT_BYTE_BUDGET = 0
-#: what a run in no campaign is sealed under: ``run:<locate run>[+<challenge run>...]``
+#: what a run in no campaign is sealed under: ``run:<locate run>[+<challenge run>]``
 RUN_CAMPAIGN_PREFIX = "run:"
+#: the seal's keys, exactly: the agreed record-set format (references/locate-documents.md
+#: section 6) -- a consumer refuses a seal with any other key, so the export writes no other
+SEAL_KEYS = ("schema", "set_id", "campaign", "universe", "sourceset", "skill_commit", "created",
+             "byte_budget", "files")
+#: a campaign id the seal may carry: letters, digits and ``._:-``, at most 128, never
+#: starting ``run:`` (that prefix is a run token's)
+CAMPAIGN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+#: a run id inside a run token: letters, digits and ``._-``, at most 64
+TOKEN_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 
 def skill_commit() -> str | None:
@@ -97,16 +107,39 @@ def skill_commit() -> str | None:
 
 
 def campaign_token(run: dict, run_id: str, challenge_runs: Iterable[str]) -> str:
-    """The seal's ``campaign``: never null.
+    """The seal's ``campaign``: never null, and only a token the agreed grammar admits.
 
     The locate run's ``run.yaml`` ``locate.campaign`` (``cf campaign plan``
     stamps a shard with its campaign id); for a run in no campaign,
-    ``run:<locate run>`` followed by ``+<challenge run>`` for each challenge run
-    applied, so two sets of one run with different challenges are told apart.
+    ``run:<locate run>``, followed by ``+<challenge run>`` when one challenge
+    run applies, so two sets of one run with and without its challenge are told
+    apart.  The grammar is references/locate-documents.md section 6's: a
+    campaign id is letters, digits and ``._:-`` (at most 128, never starting
+    ``run:``), a run id letters, digits and ``._-`` (at most 64), and a run token
+    names at most one challenge run.  Anything else is refused before a file is
+    written: the consumer refuses the whole set over its seal.
     """
+    challenge_runs = list(challenge_runs)
     stamped = str((run.get("locate") or {}).get("campaign") or "").strip()
     if stamped:
+        if not CAMPAIGN_ID_RE.fullmatch(stamped) or stamped.startswith(RUN_CAMPAIGN_PREFIX):
+            raise CfError(f"run {run_id}'s campaign {stamped!r} is not a campaign id a record "
+                          "set may carry",
+                          hint="a campaign id is letters, digits and ._:- (at most 128), never "
+                               f"starting {RUN_CAMPAIGN_PREFIX!r} (references/locate-documents.md "
+                               "section 6)")
         return stamped
+    if len(challenge_runs) > 1:
+        raise CfError(f"run {run_id} is in no campaign, and a run token names at most one "
+                      f"challenge run, not {len(challenge_runs)} "
+                      f"({', '.join(challenge_runs)})",
+                      hint="export with the one --challenge-run whose verdicts apply, or export "
+                           "a campaign's shard: its run.yaml locate.campaign names the set")
+    for rid in [run_id, *challenge_runs]:
+        if not TOKEN_RUN_ID_RE.fullmatch(rid):
+            raise CfError(f"run id {rid!r} cannot be spelled in a run token",
+                          hint="a run id in a record set's campaign token is letters, digits "
+                               "and ._- (at most 64); plan the run under such an id")
     return RUN_CAMPAIGN_PREFIX + "+".join([run_id, *challenge_runs])
 
 
@@ -178,6 +211,7 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
                       hint="pass the locate run with --run and its challenge runs with "
                            "--challenge-run")
     run = built["run"]
+    campaign = campaign_token(run, run_id, challenge_runs)
     pin = run["locate"]["sourceset"]
     manifest = inputs.pinned_manifest(paths, pin)
     universe = inputs.load_universe(paths, built["universe"]["id"])
@@ -295,20 +329,23 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
     seal = {
         "schema": SEAL_SCHEMA,
         "set_id": set_id,
-        "campaign": campaign_token(run, run_id, challenge_runs),
-        "runs": {"locate": run_id, "challenge": challenge_runs,
-                 "inventory": run["locate"].get("inventory_run")},
+        "campaign": campaign,
         "universe": {"id": universe.id, "universe_sha256": universe.sha256},
-        "sourceset": {"id": pin["id"], "version": pin["version"],
-                      "manifest_sha256": manifest.sha256},
+        "sourceset": {"id": pin["id"], "manifest_sha256": manifest.sha256},
         "skill_commit": commit,
         "created": harvested[-1],
         "byte_budget": int(byte_budget or 0),
         "files": files,
     }
     atomic_write(out / "SEAL.json", records.canonical(seal) + "\n")
-    report = {"set_id": set_id, "path": str(out), "run_id": run_id,
-              "challenge_runs": challenge_runs, "exported": dict(sorted(exported.items())),
+    # the runs and the manifest version are the workspace's provenance, in the report:
+    # the agreed seal carries the campaign token and the manifest's sha instead
+    report = {"set_id": set_id, "path": str(out), "run_id": run_id, "campaign": campaign,
+              "challenge_runs": challenge_runs,
+              "inventory_run": run["locate"].get("inventory_run"),
+              "sourceset": {"id": pin["id"], "version": pin["version"],
+                            "manifest_sha256": manifest.sha256},
+              "exported": dict(sorted(exported.items())),
               "skipped": dict(sorted(skipped.items())), "refused": refused,
               "byte_budget": byte_budget, "seal_sha256": hashing.sha256_file(out / "SEAL.json")}
     write_json(paths.export_report_json(set_id), report, sort_keys=True)
