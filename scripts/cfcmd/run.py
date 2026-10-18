@@ -95,6 +95,15 @@ def run(args) -> int:
     if args.show_status:
         return _status(workspace, args, data)
     planned_host = data.get("host") if isinstance(data.get("host"), dict) else {}
+    if manifest.is_locate(data) and (args.local or planned_host.get("kind") == "local"):
+        # Before the local branch, which creates runs/<id>/self-gate/ and then
+        # refuses the run for naming no source: a locate run has no local fleet,
+        # and one planned for `local` carries this machine's paths in gate.json.
+        raise CfError(
+            f"locate run {args.run_id!r} was planned for this machine; a locate run runs on an "
+            "allowlisted host through tend",
+            hint="re-plan it for that host: `cf plan-locate --sourceset <id> --universe <id> "
+                 f"--host <allowlisted host> --run-id {args.run_id}`")
     if args.local or (not args.host and planned_host.get("kind") == "local"):
         # A run planned with `--host local` carries this machine's absolute paths;
         # it can only be run by the local Workflow fleet.
@@ -541,8 +550,7 @@ def _record(run_yaml_path: Path, data: dict, *, args, host, entries, budget, dis
         # WHAT LEFT THIS MACHINE: the consent record names the exact source ids,
         # not "the book", because a workspace can hold two editions of one work
         # and this run transferred at most the ones it reads.
-        "sources_transferred": (manifest.run_source_ids(data)
-                                if args.include_source_text else []),
+        "sources_transferred": _sources_transferred(data, entries, args),
         "source_access": manifest.source_access(data),
         # WHAT THE AGENTS MAY DO: the bridge denies by default, and a run whose
         # wrapper opted out of approvals and the sandbox has to say so here.
@@ -561,7 +569,36 @@ def _record(run_yaml_path: Path, data: dict, *, args, host, entries, budget, dis
     if executed:
         block.setdefault("executed", []).extend(executed)
     data["run"] = block
+    # The pins the bench reports a run under (run.yaml top-level `versions`),
+    # from the preflight that printed them; a dry run leaves the last ones.
+    versions = remote.recorded_versions(executed or [])
+    if versions:
+        data["versions"] = {**(data.get("versions") if isinstance(data.get("versions"), dict)
+                               else {}), **versions}
+    if manifest.is_locate(data) and budget.get("max_cost") is not None:
+        # The campaign, the sequencer and the watchdog read the TOP-LEVEL cap; a
+        # --max-cost that differs from a recorded one was refused before this.
+        top = data.get("budget") if isinstance(data.get("budget"), dict) else {}
+        if top.get("max_cost") is None:
+            top["max_cost"] = budget["max_cost"]
+            top.setdefault("currency", budget.get("currency") or "USD")
+            data["budget"] = top
     write_yaml(run_yaml_path, data)
+
+
+def _sources_transferred(data: dict, entries: list[dict], args) -> list[str]:
+    """The source ids whose text this invocation sends.
+
+    A locate run's text travels as its rendered layers (``source-layer:<id>``,
+    only with ``--include-source-text``), and its run.yaml ``sources`` list is
+    empty, so the faithfulness answer recorded that nothing left.
+    """
+    if not args.include_source_text:
+        return []
+    if manifest.is_locate(data):
+        return sorted(e["name"].split(":", 1)[1] for e in entries
+                      if str(e.get("name") or "").startswith("source-layer:"))
+    return manifest.run_source_ids(data)
 
 
 def _companions(data: dict) -> list[str]:
