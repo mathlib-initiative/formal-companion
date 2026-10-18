@@ -412,15 +412,21 @@ def _library_pipeline(universe: Universe, lib: dict, root: str | None, min_free_
             f"libs/{workspace},",
             "#    at the rev its lake-manifest pins (which must be the pin); nothing is cloned or",
             "#    built:"]
+    index_name = "index.jsonl"
+    source = "<the copied index dir>"
+    if kind == "published-index":
+        index_name = options.get("INDEX_FILE") or universe_host.OPTION_DEFAULTS["INDEX_FILE"]
+        if index_name not in ("index.jsonl", "autoform-library-index.jsonl"):
+            source = f"<the copied index dir>/{index_name}"     # ingest finds only those two
     lines += [
         f"MIN_FREE_GB={int(min_free_gb)} bash \"$CF_DRIVERS/scripts/corpus/build_universe_host.sh\" "
         f"{tsv} {shlex.quote(lib_id)}",
-        "# 3. bring the index back (the directory holds index.jsonl and manifest.json)",
+        f"# 3. bring the index back (the directory holds {index_name} and manifest.json)",
         f'#      "$ATLAS_ROOT/index/{lib_id}@{commit[:12]}/"',
         "#    and ingest it where the universe is, filling in the placeholders:",
     ]
     ingest = (f"#      cf corpus ingest {universe.id} --library {lib_id} "
-              f"--from <the copied index dir>")
+              f"--from {source}")
     if kind == "published-index":
         lines += [ingest + " --accept-published '<why the published index is trusted>'",
                   f"#        --checkout <a clean checkout of {lib_id} at {commit[:12]}>  "
