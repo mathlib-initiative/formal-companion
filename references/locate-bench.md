@@ -27,8 +27,8 @@ benches/<id>/gold/planted/            P: ablation.json and the module-ablated co
 benches/<id>/labeler/args-<mode>.json, results/   the labeler's args and copied results
 benches/<id>/gold-manifest-<n>.json   gold version n, never rewritten
 benches/<id>/spend.json               benchmark-construction spend, its own receipt
-benches/<id>/scores/<split>-<id16>.json   score documents, named by split and measurement_id
-benches/<id>/audits/<split>-<id16>.jsonl  the overclaim audit sample of one score
+benches/<id>/scores/<split>-<id16>-<s8>.json   score documents, by split, measurement_id and scoring digest
+benches/<id>/audits/<split>-<id16>-<s8>.jsonl  the overclaim audit sample of one score
 benches/<id>/ledger.jsonl             the loop ledger
 ```
 
@@ -311,6 +311,11 @@ a run's.
 
 - `manifest_sha256` is `cflib.hashing.sha256_json` of the manifest without that key,
   `created`, `version` and `previous_sha256`.
+- `canary_sha256` is `cflib.hashing.sha256_json` of the canary string, like every value the
+  manifest hashes: the sha of its JSON spelling, quotes included. It is **not** the sha a host
+  canary scan lists under the same name (§8 `canary_check`), which is the sha256 of the canary's
+  UTF-8 bytes, the line of `host/canaries.txt`; to match a host report against a bench, hash that
+  line, never compare it to this value.
 - `labeler` is read from the rows each mode wrote (G1 for `anchor`, G3 for `label`, GX for
   `inventory`, `calibration.json` for `calibrate`), never from args on disk, so re-freezing
   unchanged gold from a later checkout changes nothing; a tier whose rows name two labelers, or
@@ -350,13 +355,19 @@ a run's.
 [--transcripts <dir> | --canary-report <file> | --no-canary-check] [--article-costs <file>]
 [--audit-labels <file>] [--pin KEY=VALUE] [--bootstrap N] [--seed N] [--checkpoint]
 [--subset <ids>|<file>]` writes
-`scores/<split>-<first 16 hex of measurement_id>.json` (`cf-bench-score/1`); re-scoring the same
-run on the same split rewrites the same file, whatever the checkout committed in between. Top-level
-keys:
+`scores/<score_id>.json` (`cf-bench-score/1`), where `score_id` is `<split>-<first 16 hex of
+measurement_id>-<first 8 hex of the scoring digest>`. `scoring: {digest, inputs}` says how the
+measurement was scored -- `inputs: {split, checkpoint, bootstrap, seed, article_costs_sha256,
+gate_log_sha256, audit_labels_sha256, canary_check}`, each input file's sha (`--gate-log`'s, else
+each run's harvested `host/gate.jsonl`'s; a directory hashes its `*.jsonl` files by name) -- and
+`digest` is `cflib.hashing.sha256_json(inputs)`. Re-scoring the same run on the same split the
+same way rewrites the same file, whatever the checkout committed in between; scoring it another
+way (another `--article-costs`, say) writes another document beside it, so a ledger entry's score
+is never overwritten. Top-level keys:
 
 `schema, bench, split, arm, checkpoint, run, runs, subset, subset_articles, subset_sha256,
-measurement_id, pins, scorer, gold_manifest, coverage, canary_check, tiers, strata, cost,
-gate_rejections, misses, audit, bootstrap, per_cluster, created`.
+measurement_id, score_id, scoring, pins, scorer, gold_manifest, coverage, canary_check, tiers,
+strata, cost, gate_rejections, misses, audit, bootstrap, per_cluster, created`.
 
 **A pre-registered subset.** `--subset` (source ids, comma-separated and repeatable, or a file of
 them: one per line with `#` comments, or a JSON list) scores only the articles it names, each of
@@ -364,7 +375,7 @@ which must be an article of the split, for a run that covers fewer than the whol
 run, a pilot). Every coverage rule below applies to those articles alone. The document says
 `subset: true` with the sorted `subset_articles` and their `subset_sha256`; `pins.subset:
 {articles, sha256, of_split}` puts the list in `measurement_id`; and the file is
-`scores/<split>-subset-<id16>.json`. A whole-split score has `subset: false`, nulls beside it
+`scores/<split>-subset-<id16>-<s8>.json`. A whole-split score has `subset: false`, nulls beside it
 and no `pins.subset`, so its `measurement_id` is what it always was. `cf bench compare` refuses a
 subset score in any role (§9). Gold must be frozen for a subset score too: freezing stays its own
 explicit step (`cf bench freeze`).
@@ -374,10 +385,21 @@ explicit step (`cf bench freeze`).
 naming none is refused), and the challenge runs are the ones the locate tally built the outcome
 rows with (`reports/locate-tally.<run>.json` `challenge_runs`), so they are pinned even when no
 verdict touched a row. Every one of them must have a receipt that is complete, **gated**
-(`locate.inputs.require_gated`: `gate.ok`) and priced (a `cost` block); a run read through
+(`locate.inputs.require_gated`: `gate.ok`) and priced (a `cost` block) -- except a challenge run
+whose `challenge-plan.json` required no record of the locate run
+(`locate.outcomes.challenge_values`: `required: 0`) and that was never harvested: it was planned
+with no task (references/locate-documents.md §9), so it has no receipt, is pinned by its plan's
+sha (`pins.challenge_plans`), costs nothing and has no transcript to scan. A run read through
 `run.yaml` without a locate block is refused (`locate.outcomes.run_yaml`); and every run's
 `locate.arm` must be the locate run's -- a G1-blind score rests on a blind inventory and blind
 challenges.
+
+**The tally is the harvest's.** The outcome rows are the locate tally's, and `cf tally --locate`
+records the sha of every receipt it read (`reports/locate-tally.<run>.json`
+`gates.<run>.receipt_sha256`). Each receipt the score pins must be the one the tally read: a run
+harvested again after the tally (a late task, a corrected document) leaves rows that describe the
+earlier documents, and is refused until the tally is re-run; so is a tally that records no
+receipt sha.
 
 **Run passages.** The frozen inventory (`locate.outcomes.inventory`, keyed by
 `cflib.items.join_key`) supplies each passage's span, scope and kind; the outcome rows
@@ -412,7 +434,7 @@ seeded per metric:
 | metric | over | counts |
 |---|---|---|
 | `fnf_rate` (the safety metric) | gold passages with status `formalized` | those whose run status is not `formalized`, for any reason; `causes` breaks them down by `cflib.vocab.FNF_CAUSES`, first applicable: unresolved and gate-failed articles, then no joined passage (`inventory_miss`), a run scope other than `formal_math` (`scope_demotion`), no locate result (`gate_failed`), an unresolved outcome or no status (`unresolved`), an absence (`absence`), else `weak_relation` (partial or statement-only) |
-| `article_fnf_rate` | G1 entries that could not be anchored, with gold status `formalized` | articles with no run passage `formalized` at an accept-set declaration (`E-WRONG-RELATION` when one locates it at a weaker status, else `E-RETRIEVAL-MISS`) |
+| `article_fnf_rate` | G1 entries that could not be anchored, with gold status `formalized` | articles with no run passage `formalized` at an accept-set declaration (cause `unresolved` or `gate_failed`, `E-UNRESOLVED`, when the article's inventory was unresolved or never landed; else `E-WRONG-RELATION` when one locates it at a weaker status, else `E-RETRIEVAL-MISS`) |
 | `overclaim_rate` | joined run passages derived `formalized` whose gold has a status | gold not `formalized` |
 | `scope_error_rate` | joined passages whose gold has a scope | run scope ≠ gold scope |
 | `unresolved_rate` | joined `formal_math` run passages, and the `formal_math` gold passages of unresolved or gate-failed articles | an unresolved outcome, no locate result (gate-failed, `missing`), no status; every passage of such an article |
@@ -425,7 +447,9 @@ seeded per metric:
 `relation_confusion` counts, per tier, gold relation × run relation over the six relations,
 for every run location at a gold declaration. `strata` repeats **every** metric of the tier
 (P included) per article importance and class, gold passage kind and, outside dev,
-`seen:yes`/`seen:no`.
+`seen:yes`/`seen:no` (P's gold is eval G1's, stratified as G1 is); each cell is the bootstrap of
+the stratum's ratio plus `n`, the units it counts (gold passages, or passage-library pairs), and
+`by_cluster` -- `den` is a sum of weights for G3's `inventory_recall`, never a count.
 `misses` lists every miss with its mechanical **error code** (`cflib.vocab.ERROR_CODES`):
 inventory miss `E-INVENTORY-MISS`, scope demotion `E-WRONG-SCOPE`, unresolved and gate-failed
 `E-UNRESOLVED`, an absence `E-FALSE-ABSENCE` (or `E-REJECTED-CORRECT` when the receipt rejected
@@ -438,7 +462,9 @@ tier P alone: `tiers.P: {gold, joined, metrics: {memory_rate}, memory_citations,
 ablation_sha256, note}`, where the gold is the eval G1 passages whose accept set meets the
 ablation's removed declarations and `memory_citations` counts the run's locations at a removed
 declaration. It is refused when the bench has no planted tier, when its tools database's sha is
-not the ablation's `corpus_sha256`, and off eval.
+not the ablation's `corpus_sha256`, off eval, and when any of its challenge runs' `run.yaml`
+records another tools database: a challenge's hunters overturn absences into the rows P counts,
+and a hunter that searched the full database finds the removed declarations legitimately.
 
 `cost`: dollars per article, per cluster, two ways -- every stage (`value`, and
 `per_cluster.cost.usd_per_article`) and the locate and challenge spend alone
@@ -458,38 +484,54 @@ refused unless `--article-costs` prices every article, and the score then says
 
 `gate_rejections`: per run of the score, its harvested `runs/<run>/host/gate.jsonl` (or the
 `--gate-log` file or directory, filtered to the run), else `null`: `{attempts, rejected,
-rejection_rate, broken, dropped_lines, by_rule, by_reason}`. Only worker calls of that run
-count: a line with an empty `task_id` (the harvest's own re-gate) or another `run_id` is
-dropped, and a call that exited 3 (the gate could not run) is `broken`, never a rejection. A
+rejection_rate, broken, dropped_lines, by_rule, by_reason}`. An attempt is a line of that run with
+`changed_files: true`, a gate call that judged a change set: tend's validation of a worker's
+contribution, whatever `task_id` it names (an empty one, `task_id_from` null, is the single-stem
+rule's call, and an attempt like any other). tend's pre-merge command makes the same call over
+its merge batch and its line does not say so, so it is counted too. The gate logs every call
+(references/locate-documents.md §9), so `dropped_lines` holds the rest: an agent's own check
+(`--findings`, or a findings directory: `changed_files: false`, whatever task id it names), a
+line from a gate older than the field, and a line of another `run_id`. The harvest's re-gate of
+the landed corpus writes no line. A call that exited 3 (the gate could not run) is `broken`,
+never a rejection. A
 rule is the line's `by_rule` key, else the reason's `[rule N]` prefix; `by_reason` classes are
 `rule_<N>` plus, when the message says which, `:<sub-class>` (`phantom_declaration`,
 `outside_universe`, `universe_pin`, `proof_status_written`, `curated`, `absence_receipt`,
 `ranks`, `note`, `pin`, `quote`, `passage_id`, `coverage`, `ownership`, `schema`), matched on
 the message after the `<document>: <where>:` prefix so a passage's item id never classifies a
 reason. `audit`: about 30 exact/broad run locations outside every gold passage, seeded, written
-to `audits/<split>-<id16>.jsonl` with `verdict: null` for labelling; `--audit-labels` counts the
-labelled ones (`correct` | `overclaim`).
+to `audits/<score_id>.jsonl` (`<split>-<id16>-<s8>`, the score's own name) with `verdict: null`
+for labelling; `--audit-labels` counts the labelled ones (`correct` | `overclaim`).
 
 `canary_check`: `--transcripts <dir>` scans the transcripts here (`basis: transcripts`);
 `--canary-report <file>` reads one host scan (`basis: host report`); with neither, every run's
 harvested `runs/<run>/host/canary.json` is read (`basis: host reports`), and a run without one
 leaves the check undone, which is refused unless `--no-canary-check` (`ran: false`). A scan is
-`{"scanned": <transcripts scanned>, "hits": [<file names holding a canary>]}`; any hit fails the
-run. A check that read nothing is refused, never passed: a `--transcripts` path that does not
-exist or holds no file, a transcript that cannot be read (a bad `.gz` included), and a host scan
-whose `scanned` is not a positive count.
+`scripts/run/canary_scan.py`'s `{"scanned": <transcripts scanned>, "hits": [<file names holding a
+canary>], "canaries": <count>, "canary_sha256": [<sha256 of each canary's UTF-8 bytes>]}`; any hit
+fails the run. Those shas are of the raw bytes, not the gold manifest's `canary_sha256` (§7,
+the sha of the canary's JSON spelling): the score hashes the bench's canary the scan's way
+(`canary_scan.canary_sha256`) to look it up. A check that read nothing is refused, never passed:
+a `--transcripts` path that does not exist or holds no file, a transcript that cannot be read (a
+bad `.gz` included), and a host scan whose `scanned` is not a positive count; and so is a host
+scan whose `canary_sha256` does not list this bench's canary (a scan with another bench's or a
+stale `canaries.txt` looked for something else).
 
 **Pins and `measurement_id`** (§8.3): `pins` holds, per run of the score, `skill_commit` (its
-`run.yaml` `locate.skill_commit`, the checkout it was planned from, else `unrecorded`),
-`gate_files` (the sha of its `locate.gate_files` map), `prompts` and `gate` (its `gate.json`
-sha); then `observed_models` (the receipts' `cost.tokens` models, counted by
-`messages_by_model` when present, else by tokens), `agent_cli`, `tend`, `agentbox` (from
+`run.yaml` `locate.skill_commit`, the checkout it was planned from, else `unrecorded`), the
+configuration -- `gate_files` (the sha of its `locate.config_shas.gate_files` map) and `prompts`
+(its `locate.config_shas.prompts`, the template shas), each `unrecorded` for a plan that records
+no `config_shas` -- then what it staged and rendered, run id and paths included:
+`rendered_gate_files` (the sha of its `locate.gate_files` map), `rendered_prompts` (its
+`run.yaml` `prompts`) and `gate` (its `gate.json` sha); then `observed_models` (the receipts'
+`cost.tokens` models, counted by `messages_by_model` when present, else by tokens), `agent_cli`, `tend`, `agentbox` (from
 `run.yaml` `versions`, or `--pin`; `unrecorded` otherwise), `universe_sha256`,
 `gold_universe_sha256`, `corpus_db_sha256`, `tools_corpus_db: {kind, sha256}` (`full` when
 unrecorded), `sourceset_manifest_sha256` (from the locate run's `locate` block), `renderer` (the
 renderers the inventory documents of the split declare, each refused unless it is the bench's
 for that article, as is a document naming no `layer_sha256` or `renderer`),
-`gold_manifest_sha256`, `receipts` (each `RECEIPT.json`'s sha), `price_table_sha256` and
+`gold_manifest_sha256`, `receipts` (each `RECEIPT.json`'s sha), `challenge_plans` (the
+`challenge-plan.json` sha of each challenge run that required nothing), `price_table_sha256` and
 `challenge_runs`. `--pin` fills a version no `run.yaml` records, and is refused when it
 contradicts one. `measurement_id` is `cflib.hashing.sha256_json(pins)`. The scorer's own code
 is **not** a pin: `scorer: {sha256, files}` (a sha over `scripts/bench/*.py`, names and bytes)
@@ -497,16 +539,18 @@ sits beside it, so re-scoring an unchanged run with any checkout writes the same
 `cf bench compare` refuses two scores of different scorers.
 
 **Refusals**: a receipt that is not `complete`, not gated or has no `cost` block; a run without
-a locate tally; gold changed after freeze; a run planned on another universe, or another state
+a locate tally, or whose tally read other receipts than the ones on disk; gold changed after
+freeze; a run planned on another universe, or another state
 of it, than gold is labelled at (re-anchor with `--supersede`); runs of mixed arms, or `--arm`
 other than the run's; a subject-only run; an inventory whose task manifests did not plan every
 article of the split, or that read another rendering than the bench pins; a `formal_math`
 passage of a covered article with no outcome row; an inventory document naming no layer or
 renderer, or another renderer than the bench's; a cost that is not a finite non-negative number;
 a `--pin` contradicting a recorded version; a planted run that is not this bench's frozen
-ablation, or off eval, or a run that searched the planted database but records another kind;
-the test split without `--checkpoint`; no canary check at all, or one that read nothing; and any
-transcript (or host scan) holding the canary, which fails the run (§8.4).
+ablation, or off eval, or whose challenge searched another database, or a run that searched the
+planted database but records another kind; the test split without `--checkpoint`; no canary
+check at all, one that read nothing, or a host scan that did not look for this bench's canary;
+and any transcript (or host scan) holding the canary, which fails the run (§8.4).
 
 ## 9. The acceptance rule and the loop ledger
 
@@ -535,18 +579,23 @@ accepts only when every condition holds:
    passes;
 3. `strata`: no stratum with n ≥ 30 in both drops by more than three points (its 2.5% bound of
    improvement is at least −0.03), for every metric both scores stratify
-   (`conditions.strata.checked` keys `<stratum>.<metric>`);
+   (`conditions.strata.checked` keys `<stratum>.<metric>`); n is the stratum's unit count (its
+   `n`), never its weighted denominator, and a stratum without one is refused (re-score);
 4. `cost`: the 95% upper bound of the cost per article's increase is at most 20% of the
    baseline's -- on the locate and challenge spend (`usd_per_article_locate`) when the two
    scores share their inventory runs, whose cost would otherwise dilute the rise, else on every
    stage (`usd_per_article`); `conditions.cost.cells` says which. Two price tables
-   (`pins.price_table_sha256`) fail it, and so does any rise over a zero-cost baseline (20% of
-   nothing is nothing);
+   (`pins.price_table_sha256`) fail it, so do two cost bases (`cost.basis`: per-article costs
+   price every stage, the receipt spread splits them, so one against the other reads a stage's
+   spend as a rise or hides one), and so does any rise over a zero-cost baseline (20% of nothing
+   is nothing);
 5. `aa`: the same rule applied to the baseline and its A/A replicate does **not** accept (no
    `--aa` fails the condition). The replicate must be a distinct run -- not the baseline's
    measurement, run or locate receipt -- of the baseline's configuration: the comparison is
    refused when any of `universe_sha256`, `sourceset_manifest_sha256`, the tool versions, the
-   runs' `skill_commit`, `gate_files` and `prompts`, or `price_table_sha256` differ;
+   runs' `skill_commit`, `gate_files` and `prompts` (the configuration shas, never the rendered
+   ones, which name each run), or `price_table_sha256` differ, and when either score holds a run
+   whose `run.yaml` records no `locate.config_shas` (re-plan it);
 6. multiplicity: the j-th claimed, non-replication entry of the bench's ledger uses
    `alpha · 2^-j` (alpha-spending). `--replication <bench>:<entry id>` replicates an accepted,
    claimed entry of ANOTHER bench's ledger (a fresh draw is a new bench) for the same claim, and
@@ -558,8 +607,10 @@ The ledger is always `benches/<id>/ledger.jsonl`; a comparison holds an exclusiv
 Below 150 eval articles and 400 gold positives, or when the candidate was scored without a
 canary check, the decision is **recorded, not claimed** (`claimed: false`). Each comparison
 appends one row to `ledger.jsonl` (`cf-bench-ledger/1`): `{entry_id, bench, at, claim, split,
-arm, baseline, candidate, gold_manifest_sha256, alpha, alpha_j, replication, replicates,
-bootstrap, conditions, decision, claimed, claim_basis, differences, failed, note}`;
+arm, baseline, candidate, baseline_score, candidate_score, gold_manifest_sha256, alpha, alpha_j,
+replication, replicates, bootstrap, conditions, decision, claimed, claim_basis, differences,
+failed, note}` (`baseline`/`candidate` the measurement ids, `*_score` the score documents' ids,
+and `conditions.aa.replicate_score` the replicate's);
 `differences` names the pins that differ without making the scores incomparable (universe,
 corpus database, sourceset manifest, tool versions, the runs' commits, gate files and prompts),
 notes when both scores still owe challenge verdicts, and says when the baseline's measurement
@@ -578,10 +629,11 @@ its reader (`scripts/bench/inputs.py` re-implements none):
 | `corpora/<u>/universe.yaml` (§8) | `corpus.universe.Universe.load` (validating; `sha256()` recomputed, `mathlib_library()`, `corpus_db`) | `id`, `libraries[].{id, repo, commit, brain_lib}` |
 | `corpora/<u>/corpus.sqlite` (§8) | `corpus.query`: `open_db`, `check_universe`, `exists`, `declaration` (with `deprecated_to`), `tagged` (with `path`, `line`), `libraries` | `meta.universe_sha256`; `decls`; `tags`; the planted copy is the bench's own (§7) |
 | `reports/locate-outcomes.<run>.jsonl` (§10) | the bench (the rows of `locate.outcomes.outcome_row`) | `source_id, item, scope, passage_kind, prominence, outcome, status, locations[].{library, declaration, relation, rank}, runs.{inventory, locate, challenge}, challenge, missing, span` |
-| `reports/locate-tally.<run>.json` (§10) | the bench | `challenge_runs` |
+| `reports/locate-tally.<run>.json` (§10) | the bench | `challenge_runs`, `gates.<run>.receipt_sha256` |
+| `runs/<run>/challenge-plan.json` (§9) | `locate.outcomes.challenge_values` | each challenge run's `required` records of the locate run |
 | `corpus/<run>/<task-id>/<source-id>.json` (§1–§3, §10) | `locate.outcomes.inventory` (inventory runs), `locate.inputs.harvested_documents` (any run) | inventory documents' `layer_sha256`, `unresolved`, `passages[].{item, span, scope, passage_kind}`; locate documents' `passages[].receipt.candidates[].{library, declaration, verdict}` |
 | `runs/<run>/tend-root/gate/tasks/*.json` (§9) | `locate.outcomes.task_manifests` | the inventory run's `documents[].source_id` (inventory coverage); any run's, for its cost share when `run.yaml` names no `source_ids` |
-| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, skill_commit, gate_files, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
+| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, skill_commit, gate_files, config_shas.{prompts, gate_files}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
 | `corpus/<run>/RECEIPT.json` | `locate.inputs.require_gated` | `complete`, `gate.ok`, `cost.{usd, tokens, messages_by_model, price_table_sha256}` |
 | `runs/<run>/host/gate.jsonl` (brought home by `cf harvest`) | the bench | one line per gate call: `run_id, task_id, task_id_from, changed_files, ownership, mode, ok, exit, documents, by_rule, reasons` (each reason `[rule N] <document>: <where>: <message>`) |
-| `runs/<run>/host/canary.json` (brought home by `cf harvest`) | the bench | `{scanned, hits}` |
+| `runs/<run>/host/canary.json` (brought home by `cf harvest`) | the bench | `{scanned, hits, canary_sha256}` (raw-byte shas, §8) |

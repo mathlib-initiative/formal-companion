@@ -13,7 +13,11 @@ needs has to run on the host first; this writes the report ``cf bench score
 
 The canaries file holds one string per line (the bench's ``host/canaries.txt``).
 A ``.gz`` transcript is read decompressed.  The report is ``{"scanned": N,
-"hits": [<file name>, ...], "canaries": K}``.  Exit 0 when nothing matched, 1
+"hits": [<file name>, ...], "canaries": K, "canary_sha256": [<sha256 of each
+canary's UTF-8 bytes>, sorted]}``: the shas say WHICH canaries were looked for,
+and the score refuses a scan that did not look for its bench's.  They are NOT
+the gold manifest's ``canary_sha256``, which hashes the canary's JSON spelling
+(references/locate-bench.md section 7).  Exit 0 when nothing matched, 1
 when a transcript holds a canary, 2 when the canaries or a transcript cannot be
 read -- the sequencer keeps every transcript on anything but 0.  Standard
 library only: the host has no cflib.
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import sys
@@ -45,9 +50,15 @@ def holds(path: Path, canaries: list[str]) -> bool:
     return any(c in text for c in canaries)
 
 
+def canary_sha256(canary: str) -> str:
+    """The sha256 of one canary's UTF-8 bytes: what the report names it by."""
+    return hashlib.sha256(canary.encode("utf-8")).hexdigest()
+
+
 def scan(canaries: list[str], files: list[Path]) -> dict:
     hits = [p.name for p in files if holds(p, canaries)]
-    return {"scanned": len(files), "hits": sorted(hits), "canaries": len(canaries)}
+    return {"scanned": len(files), "hits": sorted(hits), "canaries": len(canaries),
+            "canary_sha256": sorted({canary_sha256(c) for c in canaries})}
 
 
 def write(out: Path, report: dict) -> None:

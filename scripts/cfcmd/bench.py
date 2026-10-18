@@ -132,7 +132,8 @@ def register(subparsers) -> None:
     s.add_argument("--transcripts", type=Path, default=None,
                    help="the run's transcripts, scanned for the label canary")
     s.add_argument("--canary-report", type=Path, default=None,
-                   help="a host-side canary scan ({scanned, hits}) instead of --transcripts "
+                   help="a host-side canary scan ({scanned, hits, canary_sha256}, of this "
+                        "bench's host/canaries.txt) instead of --transcripts "
                         "(default: each run's harvested runs/<run>/host/canary.json)")
     s.add_argument("--no-canary-check", action="store_true",
                    help="score without a canary scan (recorded in the score)")
@@ -814,9 +815,7 @@ def _score(ws, args) -> int:
     print(f"  cost : {doc['cost']['value'] if doc['cost']['value'] is not None else '?'} USD/article "
           f"({doc['cost']['basis']})")
     print(f"  misses: {len(doc['misses'])}, audit sample {doc['audit']['sampled']} -> {doc['audit']['file']}")
-    name = score_mod.score_name(doc["split"], doc["measurement_id"],
-                                subset=bool(doc.get("subset")))
-    print(f"  wrote {layout.score_json(name)}")
+    print(f"  wrote {layout.score_json(doc['score_id'])}")
     return 0
 
 

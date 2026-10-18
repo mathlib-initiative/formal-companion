@@ -1169,7 +1169,7 @@ rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
 |---|---|
 | `gate.jsonl` | `<log_dir>/gate.jsonl`, `log_dir` being the host `gate.json`'s (the tend root's `gate-log/`) |
 | `usage.jsonl` | a campaign shard only: the sequencer's `<campaign dir>/usage-<run-id>.jsonl` (§11) |
-| `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<run-id>.json` (§11) |
+| `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<run-id>.json` (§11), `scripts/run/canary_scan.py`'s `{scanned, hits, canaries, canary_sha256}`, the last the sha256 of each canary's UTF-8 bytes it looked for; `cf bench score` refuses a scan that does not list its bench's canary (references/locate-bench.md §8) |
 | `envelopes/` | the tend root's `usage/` `*.json`: the bridge's kept envelope of each agent call, and the record of each call that left none (§9) |
 
 A shard is a run whose `run.yaml` carries `locate.campaign` and which that
@@ -1227,8 +1227,13 @@ Every row also carries the `source_sha` and `layer_sha256` of its document.
 `cf tally --locate --run <run> [--challenge-run <run>]…` computes them
 (`scripts/locate/outcomes.py`) and writes `reports/locate-tally.<run-id>.json`
 (the rows, the counts, and `gates`: `{run id: {role, receipt, complete,
-gate_ok}}` for the locate run, its inventory and each challenge run, each one
-not a complete gated harvest named in a warning) and
+gate_ok, harvested_at, receipt_sha256}}` for the locate run, its inventory and
+each challenge run -- `receipt_sha256` the sha of the `RECEIPT.json` it read, so
+a reader can tell outcomes of this harvest from those of an earlier one
+(`cf bench score` refuses rows tallied before the last harvest); a challenge
+run's `required`, the records its plan required of the run; and an inventory's
+`skipped`, its receipt's `gate.skipped`, what its skips left unkept, which the
+tally also prints -- each one not a complete gated harvest named in a warning) and
 `reports/locate-outcomes.<run-id>.jsonl`, one row per passage after challenge:
 
 ```json

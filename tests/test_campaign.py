@@ -792,6 +792,7 @@ class TestTheCanaryScan(unittest.TestCase):
 
     def test_hits_plain_and_gzipped_and_the_exit_codes(self):
         import gzip
+        import hashlib
 
         tmp = scratch(self)
         canaries = tmp / "canaries.txt"
@@ -806,7 +807,9 @@ class TestTheCanaryScan(unittest.TestCase):
                 str(canaries), "--out", str(out), "--"]
         proc = subprocess.run(scan + [str(clean)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(out.read_text()), {"scanned": 1, "hits": [], "canaries": 1})
+        self.assertEqual(json.loads(out.read_text()), {
+            "scanned": 1, "hits": [], "canaries": 1,
+            "canary_sha256": [hashlib.sha256(b"cf-bench-canary-abc").hexdigest()]})
         proc = subprocess.run(scan + [str(clean), str(dirty)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 1, proc.stderr)
         self.assertEqual(json.loads(out.read_text())["hits"], ["b.jsonl.gz"])
