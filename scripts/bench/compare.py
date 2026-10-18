@@ -5,9 +5,12 @@ New code, implementing docs/proposals/wikipedia-locate.md section 9 (steps 2 to
 section 9 fixes.
 
 A comparison is between two score documents of ONE bench, gold manifest, split
-and arm.  It is refused outright when the two runs' observed model sets or
-renderers differ: a model change is a new baseline, never an improvement.  It
-then pairs the two runs cluster by cluster (the score documents carry every
+and arm, scored by one scorer (``scorer``, the sha of ``scripts/bench/*.py``).
+It is refused outright when the two runs' observed model sets, renderers or
+tools databases (full, blind, planted) differ -- a model change is a new
+baseline, never an improvement -- and when one was scored after challenge and
+the other was not, or one still owes challenge verdicts the other does not.
+It then pairs the two runs cluster by cluster (the score documents carry every
 ratio per article cluster) and checks, at once:
 
 1. the pre-registered metric improves, the lower bound of its paired interval
@@ -17,7 +20,9 @@ ratio per article cluster) and checks, at once:
    both documents hold) do not regress: the upper bound of their increase is at
    most 0.01;
 3. no stratum with n >= 30 drops by more than three points on its interval;
-4. the cost per article rises by at most 20% on its paired interval;
+4. the cost per article rises by at most 20% on its paired interval -- the
+   locate and challenge spend alone when the two runs share their inventory
+   runs (a shared inventory's cost would dilute the rise), every stage otherwise;
 5. the A/A comparison (the baseline against its own replicate) does NOT accept;
 6. multiplicity: the alpha of the j-th claimed comparison in the ledger is
    ``alpha * 2**-j`` (alpha-spending), unless the comparison is a replication on
@@ -58,6 +63,19 @@ def load_score(path: Path) -> dict:
     return doc
 
 
+def _challenge_state(doc: dict) -> tuple[bool, bool]:
+    """``(scored after a challenge run, rows still owed a verdict)`` of one score."""
+    owed = ((doc.get("coverage") or {}).get("challenge_owed") or {}).get("total") or 0
+    return bool((doc.get("pins") or {}).get("challenge_runs")), int(owed) > 0
+
+
+def _values(pin) -> list[str]:
+    """A per-run pin (``{run: value}``) as its sorted values; any other pin as itself."""
+    if isinstance(pin, dict):
+        return sorted({str(v) for v in pin.values()})
+    return pin
+
+
 def refuse_incomparable(base: dict, cand: dict) -> list[str]:
     """Raise on what makes two scores incomparable; return the softer differences."""
     for key, why in (("bench", "two benches"), ("split", "two splits"), ("arm", "two arms")):
@@ -67,6 +85,26 @@ def refuse_incomparable(base: dict, cand: dict) -> list[str]:
     if base["gold_manifest"]["sha256"] != cand["gold_manifest"]["sha256"]:
         raise CfError("the scores were measured against two gold manifests",
                       hint="score both runs against the same frozen gold")
+    b_scorer = (base.get("scorer") or {}).get("sha256")
+    c_scorer = (cand.get("scorer") or {}).get("sha256")
+    if b_scorer != c_scorer:
+        raise CfError(f"the scores were computed by two scorers ({str(b_scorer)[:12]}… and "
+                      f"{str(c_scorer)[:12]}…)",
+                      hint="re-score both runs with this checkout's cf bench score")
+    b_tools = ((base["pins"].get("tools_corpus_db") or {}).get("kind")) or "full"
+    c_tools = ((cand["pins"].get("tools_corpus_db") or {}).get("kind")) or "full"
+    if b_tools != c_tools:
+        raise CfError(f"the workers searched a {b_tools} and a {c_tools} database",
+                      hint="a planted (P) or blind tools database is its own measurement")
+    b_chal, c_chal = _challenge_state(base), _challenge_state(cand)
+    if b_chal[0] != c_chal[0]:
+        raise CfError("one score was tallied after a challenge run and the other was not",
+                      hint="challenge both runs (cf tally --locate --challenge-run) or neither, "
+                           "then score them again")
+    if b_chal[1] != c_chal[1]:
+        raise CfError("one score still owes challenge verdicts (coverage.challenge_owed) and "
+                      "the other does not",
+                      hint="finish the challenge of the run that owes them, tally and score again")
     base_models = set(base["pins"].get("observed_models") or {})
     cand_models = set(cand["pins"].get("observed_models") or {})
     if base_models != cand_models:
@@ -78,9 +116,12 @@ def refuse_incomparable(base: dict, cand: dict) -> list[str]:
                       f"{cand['pins'].get('renderer')})",
                       hint="a renderer change re-keys passages; it is a new baseline")
     notes = []
-    for pin in ("universe_sha256", "sourceset_manifest_sha256", "agent_cli", "tend", "agentbox"):
-        if base["pins"].get(pin) != cand["pins"].get(pin):
+    for pin in ("universe_sha256", "corpus_db_sha256", "sourceset_manifest_sha256", "agent_cli",
+                "tend", "agentbox", "skill_commit", "gate_files", "prompts"):
+        if _values(base["pins"].get(pin)) != _values(cand["pins"].get(pin)):
             notes.append(f"{pin} differs")
+    if b_chal[1] and c_chal[1]:
+        notes.append("both scores owe challenge verdicts")
     return notes
 
 
@@ -171,9 +212,18 @@ def _stratum_draws(base, cand, tier, key, metric, replicates, seed):
                           seed=f"{seed}:unseen")
 
 
+def cost_cells(base: dict, cand: dict) -> str:
+    """Which cost the rule judges: locate and challenge spend when the inventories are shared."""
+    shared = (base.get("runs") or {}).get("inventory") == (cand.get("runs") or {}).get("inventory")
+    both = all("usd_per_article_locate" in ((d.get("per_cluster") or {}).get("cost") or {})
+               for d in (base, cand))
+    return "usd_per_article_locate" if shared and both else "usd_per_article"
+
+
 def _cost(base: dict, cand: dict, clusters: list[str], replicates: int, seed: int) -> dict:
-    b = (base.get("per_cluster") or {}).get("cost", {}).get("usd_per_article")
-    c = (cand.get("per_cluster") or {}).get("cost", {}).get("usd_per_article")
+    cells = cost_cells(base, cand)
+    b = (base.get("per_cluster") or {}).get("cost", {}).get(cells)
+    c = (cand.get("per_cluster") or {}).get("cost", {}).get(cells)
     if not b or not c:
         return {"ok": False, "why": "a score has no cost per article"}
     base_value = sum(x[0] for x in b.values()) / max(1.0, sum(x[1] for x in b.values()))
@@ -182,7 +232,7 @@ def _cost(base: dict, cand: dict, clusters: list[str], replicates: int, seed: in
     draws = metrics.paired(b, c, clusters, replicates=replicates, seed=f"{seed}:cost")
     upper = metrics.quantile(draws, 0.95)
     relative = None if upper is None else upper / base_value
-    return {"baseline_usd_per_article": base_value, "relative_upper": relative,
+    return {"baseline_usd_per_article": base_value, "relative_upper": relative, "cells": cells,
             "basis": [base.get("cost", {}).get("basis"), cand.get("cost", {}).get("basis")],
             "ok": relative is None or relative <= COST_MAX_INCREASE}
 

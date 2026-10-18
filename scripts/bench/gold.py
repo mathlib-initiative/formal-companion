@@ -42,6 +42,9 @@ from cflib.jsonio import read_json, write_json
 from cflib.paths import skill_root
 from cflib.yamlio import load_yaml
 
+from corpus import query
+from locate.candidates import normalise_title
+
 from . import inputs
 from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GOLD_SCHEMA,
                      LABEL_ARGS_SCHEMA, LABEL_FILES, LABEL_RESULT_SCHEMA, SPEND_SCHEMA,
@@ -81,6 +84,13 @@ def workflow_sha256() -> str:
     return inputs.sha256_file(path)
 
 
+def labeler_commit() -> str:
+    """The checkout the labeler's args are emitted from (``locate.export.skill_commit``)."""
+    from locate.export import skill_commit
+
+    return skill_commit() or "unrecorded"
+
+
 # --------------------------------------------------------------------------
 # curated lists and the rename table
 # --------------------------------------------------------------------------
@@ -91,13 +101,16 @@ def _yaml_or_json(path: Path) -> Any:
 
 
 def _decls_of(entry: dict) -> list[str]:
+    """An entry's declaration names, under the keys L2's reader takes (``locate.candidates``)."""
     out = []
-    if isinstance(entry.get("decl"), str):
-        out.append(entry["decl"])
-    for name in entry.get("decls") or []:
-        if isinstance(name, str):
-            out.append(name)
-    return [n.strip() for n in out if n and n.strip()]
+    for key in ("decl", "declaration"):
+        if isinstance(entry.get(key), str):
+            out.append(entry[key])
+    for key in ("decls", "declarations"):
+        for name in entry.get(key) or []:
+            if isinstance(name, str):
+                out.append(name)
+    return list(dict.fromkeys(n.strip() for n in out if n and n.strip()))
 
 
 def read_curated_1000(path: Path) -> list[dict]:
@@ -124,8 +137,9 @@ def read_curated_100(path: Path) -> list[dict]:
     out = []
     for key in sorted(data, key=lambda k: (len(str(k)), str(k))):
         entry = data[key] if isinstance(data[key], dict) else {}
-        out.append({"key": str(key), "qid": None, "title": entry.get("title"),
-                    "declarations": _decls_of(entry)})
+        qid = str(entry.get("wikidata") or "").strip() or None
+        out.append({"key": str(key), "qid": qid if qid and _QID.match(qid) else None,
+                    "title": entry.get("title"), "declarations": _decls_of(entry)})
     return out
 
 
@@ -155,7 +169,8 @@ def read_rename_table(path: Path | None) -> dict[str, str]:
 
 
 def normalized_title(title: str | None) -> str:
-    return " ".join(str(title or "").casefold().split())
+    """The title key both L2 (``cf locate candidates``) and G1 join a 100.yaml entry on."""
+    return normalise_title(str(title or ""))
 
 
 # --------------------------------------------------------------------------
@@ -207,7 +222,7 @@ def _resolve(conn: sqlite3.Connection, library: str, commit: str, name: str,
     chain = [name]
     current = name
     for _ in range(MAX_RENAME_HOPS + 1):
-        if inputs.decl(conn, library, commit, current):
+        if query.exists(conn, library, commit, current):
             return current, chain
         nxt = renames.get(current)
         if not nxt or nxt in chain:
@@ -235,10 +250,13 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
             if not row["declarations"]:
                 no_declarations[via] = no_declarations.get(via, 0) + 1
                 continue
-            if row.get("qid"):
-                matched = by_qid.get(row["qid"], [])
-            else:
-                matched = by_title.get(normalized_title(row.get("title")), [])
+            # L2's join (locate.candidates.curated_hits): a 1000.yaml entry by its QID; a
+            # 100.yaml entry by the QID it carries AND by the shared title key -- over the
+            # article's title only, where L2 also reads aliases and bold terms
+            matched = list(by_qid.get(row["qid"], [])) if row.get("qid") else []
+            if via == "mathlib_100":
+                matched += [a for a in by_title.get(normalized_title(row.get("title")), [])
+                            if a not in matched]
             if not matched:
                 unmatched[via] = unmatched.get(via, 0) + 1
                 continue
@@ -255,20 +273,18 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
         for hit in inputs.tagged(conn, "wikidata", qid, libraries):
             claims.append({"source_id": article["source_id"], "qid": qid,
                            "title": article.get("title"), "via": "wikidata_tag",
-                           "key": f"{hit['library']}:{hit['name']}",
-                           "declarations": [(hit["library"], hit["name"])],
-                           "evidence": f"@[wikidata {qid}] on {hit['library']}:{hit['name']}"})
-    commits = {library: commit}
+                           "key": f"{hit['library']}:{hit['declaration']}",
+                           "declarations": [(hit["library"], hit["declaration"])],
+                           "evidence": f"@[wikidata {qid}] at {hit['path']}:{hit['line']}"})
+    commits = {row["id"]: row["commit_sha"] for row in query.libraries(conn)}
+    commits.setdefault(library, commit)
     resolved: list[dict] = []
     dropped_entries: list[dict] = []
     for claim in claims:
         accept: dict[tuple[str, str], str] = {}
         dropped: list[dict] = []
         for lib, name in claim["declarations"]:
-            lib_commit = commits.get(lib)
-            if lib_commit is None:
-                found = conn.execute("SELECT commit_sha FROM libraries WHERE id = ?", (lib,)).fetchone()
-                lib_commit = commits[lib] = found[0] if found else ""
+            lib_commit = commits.get(lib, "")
             at, chain = _resolve(conn, lib, lib_commit, name, renames)
             if at is None:
                 dropped.append({"library": lib, "declaration": name,
@@ -276,8 +292,16 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
                                 + (f" (rename chain {' -> '.join(chain)})" if len(chain) > 1 else "")})
                 continue
             accept.setdefault((lib, at), "curated" if at == name else "renamed")
-            for twin in twins(at):
-                if (lib, twin) not in accept and inputs.decl(conn, lib, lib_commit, twin):
+            # a deprecated alias that survives at the pin points at its new name, which
+            # a correct worker cites: the index's own rename (corpus deprecated_to)
+            row = inputs.declaration(conn, lib, lib_commit, at) or {}
+            new_name = row.get("deprecated_to")
+            if new_name and (lib, new_name) not in accept and query.exists(conn, lib, lib_commit,
+                                                                          new_name):
+                accept[(lib, new_name)] = "renamed"
+            for twin in sorted({t for n in [at] + ([new_name] if new_name else [])
+                                for t in twins(n)}):
+                if (lib, twin) not in accept and query.exists(conn, lib, lib_commit, twin):
                     accept[(lib, twin)] = "to_additive"
         entry = {"source_id": claim["source_id"], "qid": claim["qid"], "title": claim["title"],
                  "via": [claim["via"]], "evidence": [claim["evidence"]],
@@ -395,7 +419,7 @@ def _excerpt(layer: str, span: list[int]) -> str:
 
 
 def emit_args(mode: str, *, paths, layout: BenchLayout, bench: dict, articles: dict[str, dict],
-              universe: dict, conn: sqlite3.Connection | None, checkouts: dict[str, str],
+              universe, conn: sqlite3.Connection | None, checkouts: dict[str, str],
               tools: dict, model: str, hunters: int, gx_articles: list[str] | None = None) -> dict:
     """The labeler's args for one mode.  Reads the bench, the sourceset and the universe only."""
     vocab.check(mode, vocab.BENCH_LABEL_MODES, "labeler mode")
@@ -411,7 +435,8 @@ def emit_args(mode: str, *, paths, layout: BenchLayout, bench: dict, articles: d
             for entry in entries:
                 accept = []
                 for a in entry["accept"]:
-                    row = inputs.decl(conn, a["library"], a["commit"], a["declaration"]) if conn else None
+                    row = (inputs.declaration(conn, a["library"], a["commit"], a["declaration"])
+                           if conn else None)
                     accept.append({"library": a["library"], "declaration": a["declaration"],
                                    "signature": (row or {}).get("signature"),
                                    "path": (row or {}).get("path"), "line": (row or {}).get("line")})
@@ -456,11 +481,14 @@ def emit_args(mode: str, *, paths, layout: BenchLayout, bench: dict, articles: d
             used.add(sid)
     args = {
         "schema": LABEL_ARGS_SCHEMA, "mode": mode, "bench": layout.bench_id,
-        "labeler": {"version": LABELER_VERSION, "workflow_sha256": workflow_sha256()},
+        "labeler": {"version": LABELER_VERSION, "workflow_sha256": workflow_sha256(),
+                    "skill_commit": labeler_commit()},
         "universe": {"id": bench["universe"]["id"], "sha256": bench["universe"]["sha256"],
                      "libraries": [{"id": lib, "repo": entry.get("repo"), "commit": entry["commit"],
                                     "checkout": checkouts.get(lib)}
                                    for lib, entry in sorted(libs.items())]},
+        # never a run record: what the labeler is given is the bench, the sources and the
+        # universe (section 8.1, G3 is blind)
         "tools": tools, "model": model, "hunters": hunters,
         "sources": [_source_block(paths, sourceset, articles[s]) for s in sorted(used)],
         "tasks": tasks,
@@ -529,7 +557,7 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
         if relation not in vocab.LOCATE_RELATIONS:
             dropped.append({**d, "reason": f"relation {relation!r} is not a locate relation"})
             continue
-        row = inputs.decl(conn, lib, libs[lib]["commit"], name)
+        row = inputs.declaration(conn, lib, libs[lib]["commit"], name)
         if not row:
             dropped.append({**d, "reason": "not in the universe at its commit (re-checked at the pin)"})
             continue
@@ -553,7 +581,7 @@ def _merged(layout: BenchLayout, tier: str, rows: list[dict], *, keep: set[str])
 
 
 def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: dict,
-               articles: dict[str, dict], universe: dict, conn: sqlite3.Connection,
+               articles: dict[str, dict], universe, conn: sqlite3.Connection,
                signed_by: str | None = None, after_freeze: bool = False) -> dict:
     """Turn a checked labeler result into label rows; returns a summary."""
     check_result(result, args)
@@ -593,7 +621,7 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                 else vocab.PASSAGE_OTHER
             declarations = []
             for a in entry["accept"]:
-                row = inputs.decl(conn, a["library"], a["commit"], a["declaration"])
+                row = inputs.declaration(conn, a["library"], a["commit"], a["declaration"])
                 if row and relation:
                     declarations.append({"library": a["library"], "declaration": a["declaration"],
                                          "commit": a["commit"], "relation": relation,
@@ -690,7 +718,7 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
 
 
 def import_g4(rows: list[dict], *, paths, layout: BenchLayout, bench: dict,
-              articles: dict[str, dict], universe: dict, conn: sqlite3.Connection,
+              articles: dict[str, dict], universe, conn: sqlite3.Connection,
               after_freeze: bool = False) -> dict:
     """The maintainer's spot checks: at most 30 negatives and 20 positives (section 8.1)."""
     libs = inputs.libraries(universe)
@@ -745,11 +773,23 @@ def record_spend(layout: BenchLayout, mode: str, labels: int, cost: dict | None)
 # P: the module-ablated index
 # --------------------------------------------------------------------------
 
-def plant(layout: BenchLayout, source_db: Path, eval_g1: list[dict]) -> dict:
-    """A copy of ``corpus.sqlite`` without the modules of the eval G1 declarations."""
+def plant(layout: BenchLayout, paths, universe, eval_g1: list[dict]) -> dict:
+    """A copy of ``corpus.sqlite`` without the modules of the eval G1 declarations.
+
+    The source is the universe's full database, checked against the universe
+    first (``inputs.open_checked``); the copy keeps its ``meta`` -- so it passes
+    ``corpus.query.check_universe`` for the same universe, which is what
+    ``cf plan-locate`` checks of a tools database -- plus ``meta.planted``.  It
+    is the TOOLS database of a P run (references/locate-documents.md section 9):
+    the workers search it, while the gate and the outcomes check the full one,
+    where a removed declaration still exists, so a citation of one from memory
+    lands in the outcomes as a location and scores ``E-MEMORY``.
+    """
     targets = {(a["library"], a["declaration"]) for row in eval_g1 for a in row.get("accept") or []}
     if not targets:
         raise CfError("no eval G1 declaration to ablate", hint="anchor G1 and freeze the splits first")
+    source_db = paths.corpus_db(universe.id)
+    inputs.open_checked(paths, universe, source_db).close()
     layout.planted_dir.mkdir(parents=True, exist_ok=True)
     staged = layout.planted_db.with_name(layout.planted_db.name + ".tmp")
     shutil.copyfile(source_db, staged)
@@ -781,7 +821,13 @@ def plant(layout: BenchLayout, source_db: Path, eval_g1: list[dict]) -> dict:
     finally:
         conn.close()
     staged.replace(layout.planted_db)
+    check = query.open_db(layout.planted_db)
+    try:
+        query.check_universe(check, universe)
+    finally:
+        check.close()
     doc = {"schema": ABLATION_SCHEMA, "bench": layout.bench_id,
+           "universe": inputs.universe_pin(universe),
            "modules": [{"library": lib, "module": m} for lib, m in sorted(modules)],
            "removed": sorted(removed), "source_db_sha256": inputs.sha256_file(source_db),
            "corpus_sha256": inputs.sha256_file(layout.planted_db)}

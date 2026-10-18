@@ -40,19 +40,31 @@ LOWER_IS_BETTER = frozenset({"fnf_rate", "overclaim_rate", "scope_error_rate", "
                              "article_fnf_rate", "memory_rate", "usd_per_article"})
 #: the safety metrics the acceptance rule holds (section 9)
 SAFETY_METRICS = ("fnf_rate", "overclaim_rate")
-#: a gate log reason, classified by the first pattern it matches
-REASON_CLASSES = (
-    ("phantom_declaration", re.compile(r"phantom|not in (the )?corpus|does not exist|no such declaration|exact table", re.I)),
-    ("outside_universe", re.compile(r"universe|unknown library|not a library", re.I)),
-    ("quote", re.compile(r"quote|prefix|suffix|layer", re.I)),
-    ("passage_id", re.compile(r"In-text|passage id|head_words|hash", re.I)),
-    ("schema", re.compile(r"schema|missing key|not an object|must be", re.I)),
-    ("ownership", re.compile(r"ownership|changed path|task id|stem", re.I)),
-    ("absence_receipt", re.compile(r"queries|receipt", re.I)),
-    ("curated", re.compile(r"curated|rule 4", re.I)),
-    ("coverage", re.compile(r"coverage|skip|finder|paragraph", re.I)),
+#: a gate log line's reason is ``[rule N] <document>: <where>: <message>``
+#: (scripts/gate/verify_locate.py ``Problems``); the rule is the class, and these
+#: patterns, run over the MESSAGE alone, split a rule into sub-classes
+REASON_SUBCLASSES = (
+    ("phantom_declaration", re.compile(r"is not in corpus\.sqlite|does not exist|no such declaration", re.I)),
+    ("outside_universe", re.compile(r"not in (?:the )?universe|outside the universe|not a library", re.I)),
+    ("universe_pin", re.compile(r"^universe ", re.I)),
+    ("proof_status_written", re.compile(r"not a worker's to write|proof_status", re.I)),
+    ("curated", re.compile(r"curated", re.I)),
+    ("absence_receipt", re.compile(r"distinct quer|\breceipt\b", re.I)),
+    ("ranks", re.compile(r"\branks?\b|per passage", re.I)),
+    ("note", re.compile(r"\bnote\b", re.I)),
+    ("pin", re.compile(r"source_sha|layer_sha256|renderer|pinned", re.I)),
+    ("quote", re.compile(r"\bquote\b|\bprefix\b|\bsuffix\b|matches the layer", re.I)),
+    ("passage_id", re.compile(r"head_words|passage id|\bhash|cannot be keyed|cannot start"
+                              r"|not one of this task's passages|is given twice", re.I)),
+    ("coverage", re.compile(r"coverage|\bskip|finder|paragraph|have no outcome", re.I)),
+    ("ownership", re.compile(r"ownership|changed path|belongs to task|not a task of", re.I)),
+    ("schema", re.compile(r"schema|missing key|not an object|must be|is not one of", re.I)),
 )
-_RULE = re.compile(r"\brule\s*([1-8])\b", re.I)
+_RULE = re.compile(r"^\s*\[rule\s+([0-9A-Za-z_-]+)\]\s*")
+_DOCUMENT = re.compile(r"^\S+\.json:\s*")
+_WHERE_PART = re.compile(r"^(?:(?:passages|skips|verdicts|locations|candidates|receipt)"
+                         r"(?:\[\d+\])?|In-text\s*#\s*[0-9A-Fa-f]+|\$[\w.\[\]]*)"
+                         r"(?:\.[A-Za-z_]+(?:\[\d+\])?)*\s*:\s*")
 
 
 # --------------------------------------------------------------------------
@@ -434,29 +446,74 @@ def _strata_keys(g: GoldPassage, assessment: dict) -> list[str]:
     return keys
 
 
+def split_reason(reason: str) -> tuple[str | None, str]:
+    """``(rule, message)`` of one gate reason: the ``[rule N]`` prefix and the text after the where.
+
+    The where -- the document name, then ``passages[i]``, an ``In-text #<hex>``
+    item, a ``locations[j]`` path -- names the passage, not the failure, so it is
+    stripped before any pattern runs: an item id must not make every passage-level
+    reason read as a passage-id failure.
+    """
+    text = str(reason or "")
+    found = _RULE.match(text)
+    rule = found.group(1) if found else None
+    rest = text[found.end():] if found else text
+    rest = _DOCUMENT.sub("", rest, count=1)
+    while True:
+        stripped = _WHERE_PART.sub("", rest, count=1)
+        if stripped == rest:
+            return rule, rest
+        rest = stripped
+
+
 def classify_reason(reason: str) -> str:
-    """One gate log reason's class: a rule number when it names one, else the first pattern."""
-    for name, pattern in REASON_CLASSES:
-        if pattern.search(reason or ""):
-            return name
-    found = _RULE.search(reason or "")
-    return f"rule_{found.group(1)}" if found else "other"
+    """``rule_<N>`` (``:<sub-class>`` when the message says which), or ``unruled[:<sub>]``."""
+    rule, message = split_reason(reason)
+    sub = next((name for name, pattern in REASON_SUBCLASSES if pattern.search(message)), None)
+    head = f"rule_{rule}" if rule else "unruled"
+    return f"{head}:{sub}" if sub else head
 
 
-def gate_rejections(lines: list[dict], mode: str | None = None) -> dict:
-    """Pre-gate rejection rates by reason over every attempt the gate log records."""
-    attempts = [l for l in lines if mode is None or l.get("mode") in (None, mode)]
+#: the gate's exit status when it could not run (not a verdict on the worker)
+EXIT_GATE_BROKEN = 3
+
+
+def gate_rejections(lines: list[dict], run_ids: Iterable[str] | None = None) -> dict:
+    """Pre-gate rejection rates by rule and reason over every worker attempt of these runs.
+
+    A line with no ``task_id`` is the operator's own call (a harvest re-gate) and is
+    dropped; a line of another run is dropped; a call that exited 3 (the gate
+    could not run) is an infrastructure failure, counted apart and never as a
+    rejection.  A rule is counted from the line's ``by_rule`` when it carries one,
+    else from its reasons' ``[rule N]`` prefixes.
+    """
+    wanted = set(run_ids) if run_ids is not None else None
+    calls = [l for l in lines if str(l.get("task_id") or "").strip()
+             and (wanted is None or str(l.get("run_id") or "") in wanted)]
+    broken = [l for l in calls if l.get("exit") == EXIT_GATE_BROKEN]
+    attempts = [l for l in calls if l.get("exit") != EXIT_GATE_BROKEN]
     rejected = [l for l in attempts if not l.get("ok")]
+    by_rule: dict[str, int] = {}
     by_reason: dict[str, int] = {}
     for line in rejected:
-        classes = {classify_reason(str(r)) for r in (line.get("reasons") or [])} or {"other"}
-        for name in classes:
+        rules = set(str(k) for k in (line.get("by_rule") or {}))
+        reasons = [str(r) for r in (line.get("reasons") or [])]
+        if not rules:
+            rules = {split_reason(r)[0] for r in reasons if split_reason(r)[0]}
+        for rule in rules or {"unruled"}:
+            by_rule[rule] = by_rule.get(rule, 0) + 1
+        for name in {classify_reason(r) for r in reasons} or {"unruled"}:
             by_reason[name] = by_reason.get(name, 0) + 1
     total = len(attempts)
+
+    def rated(counts: dict[str, int]) -> dict:
+        return {k: {"attempts": v, "rate": v / total if total else None}
+                for k, v in sorted(counts.items())}
+
     return {"attempts": total, "rejected": len(rejected),
             "rejection_rate": (len(rejected) / total) if total else None,
-            "by_reason": {k: {"attempts": v, "rate": v / total if total else None}
-                          for k, v in sorted(by_reason.items())}}
+            "broken": len(broken), "dropped_lines": len(lines) - len(calls),
+            "by_rule": rated(by_rule), "by_reason": rated(by_reason)}
 
 
 def summarise(ratios: dict[str, Ratio], clusters: list[str], *, replicates: int,
