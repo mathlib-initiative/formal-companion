@@ -314,6 +314,20 @@ spaces, UTF-8):
   revision of a page is a new source id beside the old one.
 - The manifest sha is sha256 of the file's bytes; a run pins `(sourceset id,
   version, manifest sha256)` and the gate checks per-source shas from that pin.
+- **Snapshots and deltas.** A version is a *snapshot* — the header above, then
+  every entry — or a *delta*: a header with `"schema": "cf-sourceset-delta/1"`,
+  the same keys (`sources` still counts every source) and `"changed": k`, then
+  only the k entries that are new or changed since version n-1. Version n is
+  version n-1 with those lines laid over it; a delta line repeats no unchanged
+  entry. `Sourceset.write_version` writes a delta unless it changes half the
+  sources or follows `MAX_DELTA_CHAIN` (64) deltas in a row, so a fetch that
+  checkpoints every 200 of thirty thousand sources writes some tens of
+  megabytes of manifests, not one and a half gigabytes. A reader replays the
+  deltas onto the snapshot before them, checking each `previous_sha256` and the
+  append-only rule at every link; the pinned sha is the version file's own,
+  and the chain makes it fix every entry. `sources.sourceset.Sourceset.load`
+  is that reader, and the planner's and the bench's own readers hand it a
+  delta version.
 
 **The fetch.** One parameter set, fixed: `action=parse`, `oldid=<revision>`,
 `prop=text`, `formatversion=2`, `disablelimitreport=1`,
