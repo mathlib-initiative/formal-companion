@@ -219,13 +219,19 @@ def _tend_version_step(host: dict, tend: str) -> str:
 #: pins as arguments: one quoted ``<sha>  <path>`` line per source made one ssh
 #: argument of about 136 bytes a source, over Linux's 128 KiB cap on a single
 #: argument at about 960 sources, and an article-tier shard holds up to 4,000
-#: (8 sources a task, 500 tasks a root).  A failure is printed as ``sha256sum -c`` prints one
+#: (8 sources a task, 500 tasks a root).  Beside each layer it opens the two tables the
+#: gate's ``SourceView`` reads there and fails closed without (``formulas.json`` and
+#: ``paragraphs.json``, which gate.json does not pin): each must be a JSON list of
+#: objects.  Whether the formulas fit the layer, and the gate's stricter JSON reader,
+#: stay the gate's own checks.  A failure is printed as ``sha256sum -c`` prints one
 #: (``<path>: FAILED``, ``FAILED open or read``), on stdout, which run.yaml keeps;
-#: argv[3] is how many are named before the rest are counted.
+#: argv[3] is how many failure lines are named before the rest are counted.
 LAYER_CHECK_PY = r'''
 import hashlib, json, sys
 
 config, want, named = sys.argv[1], sys.argv[2], int(sys.argv[3])
+#: the tables the gate's SourceView opens beside each layer.txt (gate/verify_locate.py)
+TABLES = ("formulas.json", "paragraphs.json")
 
 
 def refuse(why):
@@ -251,36 +257,59 @@ if not sources_dir:
     refuse("gate.json has no sourceset.sources_dir; the gate fails closed without one")
 if not sources:
     refuse("gate.json pins no source layer; the gate fails closed without one")
-bad = []
-for sid in sorted(sources):
-    pins = sources[sid] if isinstance(sources[sid], dict) else {}
-    pin = str(pins.get("layer_sha256") or "")
-    path = "%s/%s/layer.txt" % (sources_dir, sid)
+
+
+def layer_failure(path, pin):
+    """``sha256sum -c``'s failure line for ``path`` against ``pin``, or None."""
     if not pin:
-        bad.append("%s: FAILED (gate.json pins no layer_sha256)" % path)
-        continue
+        return "%s: FAILED (gate.json pins no layer_sha256)" % path
     digest = hashlib.sha256()
     try:
         with open(path, "rb") as fh:
             for chunk in iter(lambda: fh.read(65536), b""):
                 digest.update(chunk)
     except OSError:
-        bad.append("%s: FAILED open or read" % path)
-        continue
-    if digest.hexdigest() != pin:
-        bad.append("%s: FAILED" % path)
-for line in bad[:named]:
+        return "%s: FAILED open or read" % path
+    return None if digest.hexdigest() == pin else "%s: FAILED" % path
+
+
+def table_failure(path):
+    """The failure line for a table the gate opens beside the layer, or None."""
+    try:
+        with open(path, "rb") as fh:
+            data = json.loads(fh.read().decode("utf-8"))
+    except OSError:
+        return "%s: FAILED open or read" % path
+    except ValueError:
+        return "%s: FAILED (not JSON)" % path
+    if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
+        return "%s: FAILED (not a JSON list of objects)" % path
+    return None
+
+
+lines, bad = [], 0
+for sid in sorted(sources):
+    pins = sources[sid] if isinstance(sources[sid], dict) else {}
+    base = "%s/%s/" % (sources_dir, sid)
+    failed = [layer_failure(base + "layer.txt", str(pins.get("layer_sha256") or ""))]
+    failed += [table_failure(base + name) for name in TABLES]
+    failed = [line for line in failed if line]
+    lines += failed
+    bad += 1 if failed else 0
+for line in lines[:named]:
     print(line)
-if len(bad) > named:
-    print("... and %d more" % (len(bad) - named))
+if len(lines) > named:
+    print("... and %d more" % (len(lines) - named))
 if bad:
-    refuse("%d of %d source layer(s) of this run are missing from %s on the host, or are not "
-           "the rendering gate.json pins (the lines above name them); send them with "
-           "`cf run --include-source-text`" % (len(bad), len(sources), sources_dir))
-print("source layers: %d pinned sha256 verified" % len(sources))
+    refuse("%d of %d source(s) of this run are not in %s on the host as the gate reads them "
+           "(a layer.txt missing or not the rendering gate.json pins, or a %s missing or "
+           "unreadable; the lines above name them); send them with "
+           "`cf run --include-source-text`" % (bad, len(sources), sources_dir, " or ".join(TABLES)))
+print("source layers: %d pinned sha256 verified, each with its %s"
+      % (len(sources), " and ".join(TABLES)))
 '''
 
-#: how many failing layers the verify step names before it counts the rest
+#: how many failure lines the verify step names before it counts the rest
 LAYERS_NAMED = 50
 
 
@@ -288,10 +317,12 @@ def layer_check(gate_config: str, want_sha256: str = "") -> str:
     """The verify command that checks each source layer of a locate run on the host.
 
     The gate reads ``<sources_dir>/<id>/layer.txt`` and fails closed (exit 3)
-    when it is missing or is not gate.json's ``layer_sha256``; a run whose
-    layers were neither sent (``--include-source-text``) nor already on the
-    host would pass the other checks and fail every task (review OPS-08).  So
-    each one is checked here, from the host's ``gate_config`` -- refused unless
+    when it is missing or is not gate.json's ``layer_sha256``, and so it does
+    when the ``formulas.json`` or ``paragraphs.json`` beside it is missing or
+    unreadable; a run whose layers were neither sent (``--include-source-text``)
+    nor already on the host would pass the other checks and fail every task
+    (review OPS-08).  So each one is checked here, from the host's
+    ``gate_config`` -- refused unless
     its sha256 is ``want_sha256``, the gate.json the transfer sent
     (:func:`sent_gate_json_sha256`) -- and the failures are named.  The command
     is the same size for any number of sources (:data:`LAYER_CHECK_PY`).
@@ -471,7 +502,8 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
     if locate is not None:
         sent = sent_gate_json_sha256(entries, gate_dir)
         add("verify", "every source layer this run reads is on the host as pinned "
-                      "(sha256 of each layer.txt, read from the host's gate.json)",
+                      "(sha256 of each layer.txt, read from the host's gate.json, and the "
+                      "formulas.json and paragraphs.json beside it)",
             _ssh(host, layer_check(f"{gate_dir}/gate.json", sent)),
             safe=True, record_output=True, **({"expected": sent} if sent else {}))
     tools = (locate or {}).get("tools_corpus_db") or {}

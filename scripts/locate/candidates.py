@@ -163,11 +163,18 @@ def read_curated_100(path: Path) -> list[dict]:
 MEDIAWIKI_URL_LITERAL = frozenset("-_.;@$!*(),/~:")
 
 
+def _url_title(name: str, literal: frozenset[str] | str) -> str:
+    """``name`` as a page URL writes it: an ASCII letter, a digit or a ``literal`` as is,
+    every other character percent-encoded."""
+    return "".join(ch if ch.isascii() and (ch.isalnum() or ch in literal) else quote(ch, safe="")
+                   for ch in name)
+
+
 def article_urls(site: str, title: str) -> list[str]:
     """Every form a docstring's link to the article is stored in, sorted; ``[]`` for none.
 
     The docstring side is ``corpus.ingest.wikipedia_urls``, so the article's
-    side is the same reader over the two ways its URL is written (review C-10):
+    side is the same reader over the ways its URL is written (review C-10):
     MediaWiki's own page URL, which leaves ``!``, ``*``, ``,``, ``;`` and ``:``
     literal -- so a trailing ``!`` is read as sentence punctuation and dropped,
     as it is from a docstring's link copied from the page -- and the
@@ -177,17 +184,25 @@ def article_urls(site: str, title: str) -> list[str]:
     docstring's ``What_Is_Mathematics%3F`` and its ``Widget_lemma%21``.  The
     MediaWiki form of ``Widget lemma!`` is ``Widget lemma``'s own URL: the
     docstring side stores the two links alike, so either joins both articles.
+
+    The same trade-off keeps a link typed by hand with a title's TRAILING ``?``
+    raw (``What_Is_Mathematics?``): the reader ends the URL at the ``?``, as a
+    browser does, and stores ``What_Is_Mathematics``, so the title less its
+    trailing question marks is read too.  A ``?`` inside a title is not: what a
+    raw one leaves (``Who`` of ``Who? (film)``) is another article's whole name,
+    not the same words less a mark.  Nor is a raw ``#``, which no title holds.
     """
     if not site or not title:
         return []
     name = str(title).replace(" ", "_")
-    forms = ("".join(ch if ch.isascii() and (ch.isalnum() or ch == "_") else quote(ch, safe="")
-                     for ch in name),
-             "".join(ch if ch.isascii() and (ch.isalnum() or ch in MEDIAWIKI_URL_LITERAL)
-                     else quote(ch, safe="") for ch in name))
+    names = [name]
+    stem = name.rstrip("?")
+    if stem != name and stem.strip("_") and "?" not in stem:
+        names.append(stem)
     found: set[str] = set()
-    for written in forms:
-        found.update(wikipedia_urls(f"{site.rstrip('/')}/wiki/{written}"))
+    for each in names:
+        for literal in ("_", MEDIAWIKI_URL_LITERAL):
+            found.update(wikipedia_urls(f"{site.rstrip('/')}/wiki/{_url_title(each, literal)}"))
     return sorted(found)
 
 

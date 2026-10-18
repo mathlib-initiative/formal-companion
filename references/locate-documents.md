@@ -312,11 +312,16 @@ with apostrophe and dash look-alikes folded, and an entry that names another
 QID than the article's is dropped with the reason `the entry names another QID
 (<qid>)` rather than joined. A docstring URL joins on the canonical page URL
 `corpus.ingest.wikipedia_urls` writes, so a mobile link joins too; the article's
-side is the same reader over both ways its URL is written: the exact title,
+side is the same reader over the ways its URL is written: the exact title,
 percent-encoded and decoded back, so a title with a `?`, a `#` or a quote mark
 meets the docstring's `%3F`, `%23` or `%22`, and MediaWiki's own page URL, which
 leaves `!`, `*`, `,`, `;` and `:` literal, so a title ending in one meets a
 link copied from the page, whose last mark the reader strips as punctuation.
+A title ending in `?` is also read without it, since the reader ends a link
+typed with that `?` raw at the `?`, as a browser does; either trade-off also
+joins the article named by the same words less the mark. A raw `?` inside a
+title is not read that way: what it leaves (`Who` of `Who? (film)`) is another
+article's whole name, so such a link joins only that article.
 `--blind` reads `corpus.blind.sqlite` and `--tools-corpus-db <file>` a planted
 database. The curated joins and their checks are always the full
 `corpus.sqlite`'s, so a `dropped` reason is true of the universe; a planted file
@@ -1097,7 +1102,8 @@ like a faithfulness run:
   rendered shas (`gate_files` and the top-level `prompts`) stay recorded pins.
   The planner never stamps `locate.campaign` (`cf campaign plan` does), and a
   re-plan of a stamped shard carries its stamp forward. `passages` counts what
-  the tasks owe: an inventory task's distinct finder starts, a locate task's passages, a challenge task's records;
+  the tasks owe: an inventory task's distinct finder starts, a locate task's
+  passages, a challenge task's records;
   a source the inventory covered with every passage scoped out is planned as
   `skipped` and still in `source_ids`. `remote` names the host directories of
   the sourceset's sources, the universe and the candidates
@@ -1129,16 +1135,19 @@ like a faithfulness run:
   per-universe directory around it, so the arms go to one host in any order.
   The verify stage checks each database against its pinned sha256 once, and
   every source layer the run reads against gate.json's `layer_sha256`, read
-  from the host's own gate.json once that file is shown to be the staged one
-  (each failure named, as `sha256sum -c` names it), so a run whose layers were
-  neither sent nor already there stops at verify instead of failing every gate
-  call. No command sent to the host grows with the number of sources: the
-  transfer creates the sources directory, and each layer's rsync its own. The
+  from the host's own gate.json once that file is shown to be the staged one,
+  and the `formulas.json` and `paragraphs.json` the gate opens beside it (which
+  gate.json does not pin) as JSON lists of objects (each failure named, as
+  `sha256sum -c` names it), so a run whose layers were neither sent nor
+  already there stops at verify instead of failing every gate call. No
+  command sent to the host grows with the number of sources: the transfer
+  creates the sources directory, and each layer's rsync its own. The
   frozen inventory is not sent: nothing on the host reads it, and its passages
   reach the workers and the gate in the task manifests. The preflight checks
   tend against `hosts.<host>.tend_version` when one is recorded, and prints
-  `tend-version:`, `agentbox-version:` and `agent-cli-version:` lines (the CLI the run's `bridge` launches; `unknown`
-  when a probe finds none), and an executed preflight records them at the top
+  `tend-version:`, `agentbox-version:` and `agent-cli-version:` lines (the CLI
+  the run's `bridge` launches; `unknown` when a probe finds none), and an
+  executed preflight records them at the top
   level as `versions: {tend, agentbox, agent_cli}`. `cf campaign plan` adds
   `campaign: <id>` to a shard's `locate` block (§11).
 
