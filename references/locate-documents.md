@@ -1062,12 +1062,19 @@ rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
 
 A shard is a run whose `run.yaml` carries `locate.campaign` and which that
 campaign's `campaign.yaml` lists; the campaign directory is the rendered
-sequencer's `host_dir`. Each file is one `rsync -a --ignore-missing-args` and
-lands only once it arrived whole; the dry run prints those commands with the
-findings ones. The receipt records `host_artifacts: {<local name>: {remote,
-fetched, path, sha256, bytes} | {remote, fetched: false, reason,
-kept_previous?}}` (a shard's rows also carry `campaign`); a file the
-host lacks is `absent on the host`, never a failed harvest. With no
+sequencer's `host_dir`. Each file is two steps: the host is asked whether it
+is there (`ssh <host> test -f <path>`: 0 there, 1 absent, anything else a
+failure to ask, said in the reason), and a file that is there is copied by a
+plain `rsync -a` — no `--ignore-missing-args`, which macOS's rsync 2.6.9
+rejects — and lands only once it arrived whole; the dry run prints those
+commands with the findings ones. The receipt records `host_artifacts: {<local
+name>: {remote, expected, fetched, path, sha256, bytes} | {remote, expected,
+fetched: false, reason, kept_previous?}}` (a shard's rows also carry
+`campaign`) and `host_artifacts_missing`, the EXPECTED files that did not come
+home. `gate.jsonl` is expected — every merged task ran the gate, which logs
+each call — so a harvest without it is **INCOMPLETE** and exits 1, a previous
+harvest's copy notwithstanding; `usage.jsonl` and `canary.json` are not, and
+one the host lacks is `absent on the host`, never a failed harvest. With no
 `--transcripts`, a landed `usage.jsonl` is what the receipt's `cost` block
 prices. The harvest then merges `runs.<run-id>` of the sourceset's
 `state.json` through `Sourceset.record_state` — `{status: harvested,

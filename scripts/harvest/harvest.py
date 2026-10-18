@@ -315,8 +315,9 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     affects ``complete``, because a run's findings are whole or not regardless
     of whether anyone priced them.  ``host_artifacts`` is what
     ``harvest.host_artifacts.fetch`` brought home beside the corpus (a locate
-    run's gate log, usage export and canary scan); it never affects
-    ``complete`` either.
+    run's gate log, usage export and canary scan); an EXPECTED one that did
+    not arrive (the gate log) makes the receipt incomplete and is named in
+    ``host_artifacts_missing``, the others never affect ``complete``.
     """
     actual_paths = iter_finding_files(dest)
     actual = sorted(finding_name(p, dest) for p in actual_paths)
@@ -340,6 +341,9 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     edition["allowed_mismatch"] = bool(allow_edition_mismatch)
     edition["ok"] = not edition_mismatch or bool(allow_edition_mismatch)
     gate_ok = True if gate is None else bool(gate.get("ok"))
+    from harvest import host_artifacts as host_mod   # local, as describe() imports it
+
+    artifacts_missing = host_mod.missing(host_artifacts) if host_artifacts is not None else []
     receipt = {
         "run_id": run_id,
         "harvested_at": iso_now(),
@@ -355,7 +359,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "sha_unverified": sha_unverified,
         "malformed": malformed,
         "complete": (not missing and not mismatched and not sha_unverified and not malformed
-                     and edition["ok"] and gate_ok),
+                     and edition["ok"] and gate_ok and not artifacts_missing),
         "manifest_algo": "sha256",
         "manifest": manifest,
         "run_yaml": run_yaml or "",
@@ -371,6 +375,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         receipt["locate"] = locate
     if host_artifacts is not None:
         receipt["host_artifacts"] = host_artifacts
+        receipt["host_artifacts_missing"] = artifacts_missing
     if previous:
         receipt["previous"] = {
             "harvested_at": previous.get("harvested_at"),

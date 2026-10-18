@@ -35,6 +35,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- `cf harvest` fetches a locate run's host artifacts by asking the host
+  whether each is there (`ssh test -f`) and copying it with a plain `rsync -a`:
+  `--ignore-missing-args` is rsync 3.1's, macOS's 2.6.9 rejected it, and the
+  gate log never came home while the harvest said COMPLETE. The gate log is
+  now an expected artifact: a harvest without it is INCOMPLETE and exits 1
+  (`host_artifacts_missing` in the receipt).
 - The sealed record set is the shape its consumer reads
   (`references/locate-documents.md` §6): `SEAL.json` carries `set_id`, a
   `campaign` that is never null (`run:<run>[+<challenge run>]` outside a

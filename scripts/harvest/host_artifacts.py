@@ -14,10 +14,23 @@ three files the bench and ``cf campaign status`` read stayed on the host:
   ``<campaign dir>/canary-<run-id>.json``.
 
 They land in ``runs/<run>/host/`` (``WorkspacePaths.run_host_dir``), never under
-``corpus/<run>/``, whose tree is the receipt's manifest.  A file the host does
-not have is recorded as absent, never an error: the findings are what make a
-receipt complete, and a shard run with no ``CF_TRANSCRIPT_DIRS`` exports no
-usage at all.
+``corpus/<run>/``, whose tree is the receipt's manifest.
+
+**Expected or not.**  The gate log is EXPECTED: every task the host merged ran
+the gate, which appends a line per call, so a remote locate run without one
+lost the record of every gate call; a harvest that cannot bring it home is
+INCOMPLETE (the receipt names it in ``host_artifacts_missing``).  The usage
+export and the canary scan are not: a shard run with no ``CF_TRANSCRIPT_DIRS``
+exports no usage at all, and a file the host does not have is recorded as
+absent, never an error.
+
+**How a file is fetched.**  The host is asked first whether the file is there
+(``ssh <host> test -f <path>``: 0 there, 1 absent, anything else a failure to
+ask), and only a file that is there is copied, by a plain ``rsync -a`` that any
+rsync runs.  The copy used to pass ``--ignore-missing-args`` (rsync 3.1) so an
+absent file was no error; macOS's ``/usr/bin/rsync`` 2.6.9 rejects the option,
+so the gate log was never fetched while the harvest still said COMPLETE (field
+defect H1).
 """
 from __future__ import annotations
 
@@ -74,31 +87,42 @@ def remote_files(workspace, run_id: str, data: dict) -> list[dict]:
     except Exception:  # noqa: BLE001 - an unreadable gate.json names no log
         log_dir = ""
     if log_dir:
-        out.append({"name": GATE_LOG, "remote": f"{log_dir.rstrip('/')}/gate.jsonl"})
+        out.append({"name": GATE_LOG, "remote": f"{log_dir.rstrip('/')}/gate.jsonl",
+                    "expected": True})
     shard = campaign_shard(workspace, run_id, data)
     if shard:
         campaign_id, host_dir = shard
         out.append({"name": USAGE, "remote": f"{host_dir}/usage-{run_id}.jsonl",
-                    "campaign": campaign_id})
+                    "campaign": campaign_id, "expected": False})
         out.append({"name": CANARY, "remote": f"{host_dir}/canary-{run_id}.json",
-                    "campaign": campaign_id})
+                    "campaign": campaign_id, "expected": False})
     return out
 
 
 def commands(ssh_host: str, files: Sequence[dict], local_dir: Path) -> list[dict]:
-    """The rsync each file takes, for the dry run to print."""
+    """The two steps each file takes (ask the host, then copy), for the dry run to print."""
     out = []
     for f in files:
-        argv = rsync_argv(ssh_host, f["remote"], Path(local_dir) / f["name"])
-        out.append({"title": f"host artifact {f['name']}", "argv": argv,
-                    "shell": " ".join(shlex.quote(a) for a in argv)})
+        for title, argv in ((f"host artifact {f['name']}: is it there",
+                             exists_argv(ssh_host, f["remote"])),
+                            (f"host artifact {f['name']}",
+                             rsync_argv(ssh_host, f["remote"], Path(local_dir) / f["name"]))):
+            out.append({"title": title, "argv": argv,
+                        "shell": " ".join(shlex.quote(a) for a in argv)})
     return out
 
 
+def exists_argv(ssh_host: str, remote: str) -> list[str]:
+    """``ssh <host> test -f <remote>``: exit 0 the file is there, 1 it is not."""
+    return ["ssh", ssh_host, f"test -f {shlex.quote(remote)}"]
+
+
 def rsync_argv(ssh_host: str, remote: str, local: Path) -> list[str]:
-    # --ignore-missing-args: an artifact the host never wrote is "absent", a
-    # status, not a failed transfer
-    return ["rsync", "-a", "--ignore-missing-args", f"{ssh_host}:{remote}", str(local)]
+    """A plain copy of one file the host was asked about first (:func:`exists_argv`).
+
+    No ``--ignore-missing-args``: rsync 2.6.9, the one macOS ships, rejects it.
+    """
+    return ["rsync", "-a", f"{ssh_host}:{remote}", str(local)]
 
 
 def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
@@ -115,16 +139,27 @@ def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
     incoming = Path(tempfile.mkdtemp(prefix=".incoming-", dir=local_dir))
     try:
         for f in files:
-            row = {"remote": f["remote"], "fetched": False}
+            row = {"remote": f["remote"], "fetched": False,
+                   "expected": bool(f.get("expected"))}
             row.update({k: f[k] for k in ("campaign",) if k in f})
             target = incoming / f["name"]
-            proc = runner(rsync_argv(ssh_host, f["remote"], target), text=True,
-                          capture_output=True)
-            if proc.returncode != 0:
+            asked = runner(exists_argv(ssh_host, f["remote"]), text=True, capture_output=True)
+            proc = None
+            if asked.returncode == 1:
+                row["reason"] = "absent on the host"
+            elif asked.returncode != 0:
+                row["reason"] = (f"could not ask the host whether it is there (ssh exited "
+                                 f"{asked.returncode}: {(asked.stderr or '').strip()[:300]})")
+            else:
+                proc = runner(rsync_argv(ssh_host, f["remote"], target), text=True,
+                              capture_output=True)
+            if proc is None:
+                pass
+            elif proc.returncode != 0:
                 row["reason"] = (f"rsync exited {proc.returncode}: "
                                  f"{(proc.stderr or '').strip()[:300]}")
             elif not target.is_file():
-                row["reason"] = "absent on the host"
+                row["reason"] = "the host has it, and rsync reported success with no file"
             else:
                 final = local_dir / f["name"]
                 shutil.move(str(target), str(final))
@@ -138,6 +173,16 @@ def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
     return out
 
 
+def missing(block: dict | None) -> list[str]:
+    """The EXPECTED artifacts this harvest did not bring home: each makes it incomplete.
+
+    A previous harvest's copy does not stand in for one: it may predate the
+    run's last gate call.
+    """
+    return sorted(name for name, row in (block or {}).items()
+                  if isinstance(row, dict) and row.get("expected") and not row.get("fetched"))
+
+
 def describe(block: dict) -> list[str]:
     """One line per artifact, for the harvest summary."""
     lines = []
@@ -146,6 +191,8 @@ def describe(block: dict) -> list[str]:
             lines.append(f"  host: {name} <- {row['remote']} ({row.get('bytes', 0)} bytes)")
         else:
             kept = " (the previous copy is kept)" if row.get("kept_previous") else ""
-            lines.append(f"  host: {name} NOT fetched from {row['remote']}: "
+            label = "MISSING (expected; the harvest is INCOMPLETE)" if row.get("expected") \
+                else "NOT fetched"
+            lines.append(f"  host: {name} {label} from {row['remote']}: "
                          f"{row.get('reason')}{kept}")
     return lines
