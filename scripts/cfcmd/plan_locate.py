@@ -131,7 +131,21 @@ def _check_mode_flags(args) -> None:
 
 
 def _check_run_id(paths, args, run_id: str, preset) -> None:
-    """Refuse a run id that names a run this plan reads, or a run of another preset."""
+    """Refuse a run id that names a run this plan reads, or a run of another preset.
+
+    And a ``--run-id`` or ``--challenge-of`` id the export's run token cannot spell
+    (``cflib.vocab.RUN_TOKEN_ID``: letters, digits and ``._-``, at most 64): a run in
+    no campaign is sealed under ``run:<locate run>[+<challenge run>]``, and a run
+    cannot be renamed once it has run, so the id is refused before anything is
+    planned rather than after the whole run has been paid for.
+    """
+    for flag, rid in [("--run-id", run_id)] + [("--challenge-of", c) for c in args.challenge_of]:
+        if not vocab.RUN_TOKEN_ID.fullmatch(str(rid or "")):
+            raise CfError(f"{flag} {rid!r} cannot be spelled in a record set's run token",
+                          hint="a run id is letters, digits and ._- (at most 64, a letter or "
+                               "digit first): a run in no campaign is exported as "
+                               "run:<locate run>[+<challenge run>] (references/"
+                               "locate-documents.md section 6); plan the run under such an id")
     if run_id == args.inventory_run or run_id in args.challenge_of:
         raise CfError(f"run id {run_id} names a run this plan reads",
                       hint="give the new run its own --run-id")

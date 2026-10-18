@@ -314,6 +314,9 @@ so the runs and the manifest version are the export report's, not the seal's):
   digits and `._-` (at most 64; `cflib.vocab.RUN_TOKEN_ID`). A run token names
   **at most one** challenge run: a run in no campaign exported with two is
   refused, as is any id the grammar does not admit, before a file is written.
+  `cf plan-locate` refuses a `--run-id` or `--challenge-of` id outside the
+  run-id grammar, and `cf campaign plan` a campaign id longer than 128, so the
+  refusal comes before the run, which cannot be renamed once it has run.
 - `universe` — `{"id", "universe_sha256"}`, the key `universe.json` and every
   record use.
 - `sourceset` — `{"id", "manifest_sha256"}`, the manifest the run pinned; the

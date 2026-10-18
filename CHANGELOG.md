@@ -41,6 +41,11 @@ release has something to say.
   refuses a new sourceset id outside it, where it is chosen (a `--set-id smoke+2`
   or a sourceset `wpm+math` had exported cleanly and been refused whole by the
   consumer).
+- `cf plan-locate` refuses a `--run-id` or `--challenge-of` id the export's run
+  token cannot spell (`cflib.vocab.RUN_TOKEN_ID`: letters, digits and `._-`, at
+  most 64), and `cf campaign plan` a campaign id over 128 characters: a run
+  planned as `loc+2` ran to completion and could then never be exported outside
+  a campaign, nor renamed.
 - A remote locate harvest brings the bridge's kept agent envelopes home
   (`runs/<run>/host/envelopes/`) and, with no `--transcripts` and no campaign
   usage export, prices the receipt from them: their own `total_cost_usd`,

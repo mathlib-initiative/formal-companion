@@ -32,8 +32,10 @@ from . import manifest
 MAX_ROOT_TASKS = vocab.MAX_TASKS_PER_ROOT
 CAMPAIGN_VERSION = 1
 #: a campaign id names a directory here and on the host and is written into a
-#: shell script: nothing a shell would expand
-CAMPAIGN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+#: shell script: nothing a shell would expand; and it is sealed into every record set
+#: of its shards, whose consumer admits at most 128 characters
+#: (``cflib.vocab.RECORDSET_TOKEN``, of which this is a narrower spelling)
+CAMPAIGN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 #: the host-side tools render copies beside the sequencer
 HOST_TOOLS = (("run", "watchdog.py"), ("cost", "usage.py"), ("run", "canary_scan.py"))
 
@@ -41,7 +43,7 @@ HOST_TOOLS = (("run", "watchdog.py"), ("cost", "usage.py"), ("run", "canary_scan
 def check_campaign_id(campaign_id: str) -> str:
     if not CAMPAIGN_ID.match(str(campaign_id or "")):
         raise CfError(f"campaign id {campaign_id!r} is not letters, digits, '.', '_' and '-' "
-                      f"(starting with a letter or digit)",
+                      f"(at most 128, starting with a letter or digit)",
                       hint="the id names a directory on the host and is written into the "
                            "sequencer script; pick a plain one, e.g. wpm-tier-a")
     return campaign_id
