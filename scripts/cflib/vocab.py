@@ -15,6 +15,7 @@ that use them are not.
 """
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 from .errors import CfError
@@ -435,6 +436,28 @@ FINDER_LEAD = "lead"
 FINDER_MODEL = "model"
 DETERMINISTIC_FINDERS = frozenset({FINDER_THEOREM_BOX, FINDER_BOLD_DEFINITION, FINDER_LEAD})
 FINDERS = DETERMINISTIC_FINDERS | {FINDER_MODEL}
+#: The words a bold run that only LABELS a paragraph is made of ("Proof.",
+#: "Example 2:", "Definition:"): such a bold names no term, so it makes no
+#: ``bold_definition`` passage and is no L2 lexical term (``is_bold_label``).
+#: These are labels however they are written ...
+BOLD_LABELS = frozenset({
+    "proof", "proofs", "proof sketch", "sketch of proof", "proof idea", "example", "examples",
+    "counterexample", "counterexamples", "non-example", "definition", "definitions",
+    "theorem", "theorems", "lemma", "lemmas", "corollary", "corollaries", "proposition",
+    "propositions", "remark", "remarks", "notation", "exercise", "exercises", "claim",
+    "conjecture", "case", "cases", "step", "base case", "inductive step", "induction step",
+    "hint", "note", "notes", "warning", "caution"})
+#: ... and these only with a label's punctuation or enumerator ("Solution:",
+#: "Problem 3."), since bare they may be the term a sentence defines.
+BOLD_LABELS_PUNCTUATED = frozenset({
+    "solution", "answer", "problem", "question", "input", "output", "statement",
+    "observation", "axiom", "axioms", "fact", "result", "construction", "algorithm",
+    "property", "properties", "assumption", "assumptions", "special case", "idea"})
+_LABEL_TRIM = " \t.:;,!?\u2013\u2014-"
+#: an enumerator a label may carry after its word: 2, 2.1, 3a, iv, (b), (2)
+_LABEL_ENUMERATOR = re.compile(r"(?:\s+(?:\(?(?:\d+(?:\.\d+)*[a-z]?|[ivxlc]+|[a-z])\)?))+$")
+#: a name a label may carry in parentheses: "Theorem (Widget lemma)."
+_LABEL_NAME = re.compile(r"\s*\([^()]*\)$")
 #: a location's ``confidence``: the worker's own, recorded, never a status input
 CONFIDENCES = frozenset({"high", "medium", "low"})
 #: a receipt candidate's ``verdict``: every curated candidate handed to a task is
@@ -568,6 +591,26 @@ def kinds_for_mode(mode: str) -> frozenset:
 def witness_required(mode: str, kind: str) -> bool:
     """The witness gate: attack modes require a witness on CONTENT/VACUITY."""
     return mode in ATTACK_MODES and kind in WITNESS_KINDS
+
+
+def is_bold_label(text: str) -> bool:
+    """Is a bold run's text only a paragraph label, in :data:`BOLD_LABELS`?
+
+    Case-folded, with its punctuation stripped and an enumerator or a
+    parenthesised name after the label word dropped ("Case 2:", "Step 1a.",
+    "Example (iii)", "Theorem (Widget lemma)."); a word of
+    :data:`BOLD_LABELS_PUNCTUATED` counts only when one of those marks was there,
+    and a proof of something ("Proof of the lemma:") is a label too.
+    """
+    spaced = " ".join(str(text or "").split()).casefold()
+    bare = spaced.strip(_LABEL_TRIM)
+    core = _LABEL_ENUMERATOR.sub("", bare).strip(_LABEL_TRIM)
+    named = _LABEL_NAME.sub("", core).strip(_LABEL_TRIM)
+    marked = bare != spaced.strip() or core != bare or named != core
+    for word in {core, named}:
+        if word in BOLD_LABELS or (marked and word in BOLD_LABELS_PUNCTUATED):
+            return True
+    return core.startswith("proof of ") or core.startswith("proof (")
 
 
 def locate_mode(mode: str) -> bool:
