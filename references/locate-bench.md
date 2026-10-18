@@ -95,7 +95,8 @@ manifest holds one unrendered, the build writes the drawn unrendered source ids 
 `benches/<id>/unrendered.txt` and either:
 
 - **refuses** (the default), naming them and the step that settles it: fetch and render
-  exactly the listed sources (`cf sourceset fetch`, then `cf sourceset render --source <id>`)
+  exactly the listed sources (`cf sourceset fetch <set> --select benches/<id>/unrendered.txt
+  --execute`, then `cf sourceset render <set> --source <id>`)
   and build again with the newer manifest; the draw depends on the frame and the seed alone,
   and source ids order by page id, so the same pages are drawn whichever revision each page
   resolves to; or
