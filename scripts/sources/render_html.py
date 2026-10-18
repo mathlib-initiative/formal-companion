@@ -91,8 +91,12 @@ in full:
   ``mwe-math-element-block``, a ``div`` formula, or a ``math`` with
   ``display="block"``) that has a kept span and lies outside the dropped regions
   below.  Blocks may nest (an ``li`` holding a ``p`` is two entries).
-  ``formulas`` counts the formulas starting inside; ``math`` is true when there
-  is one, or when a deterministic finder's passage starts inside.
+  ``formulas`` counts the formulas starting inside and ``texhtml`` the formulas
+  written as HTML starting inside (each outermost element whose class tokens
+  include ``texhtml``: MediaWiki's ``{{math}}`` and ``{{mvar}}``, which are no
+  ``formulas.json`` formula because they carry no TeX); ``math`` is true when
+  there is one of either, or when a deterministic finder's passage starts
+  inside -- it is what gate rule 8's coverage floor reads.
 * **The deterministic finders** (``finders.json``, ``cflib.vocab.
   DETERMINISTIC_FINDERS``): ``theorem_box`` -- each theorem box, ``term`` its
   ``.theorem-name`` (or ``.math_theorem_name``) text, else its first ``b`` or
@@ -931,6 +935,8 @@ class _Walker:
         self.headings: list[tuple[_Node, int]] = []
         self.blocks: list[tuple[_Node, str, tuple[int, int], bool]] = []
         self.boxes: list[tuple[_Node, tuple[int, int]]] = []
+        #: layer starts of the formulas written as HTML (``.texhtml``), outermost only
+        self.texhtml: list[int] = []
         self.paras: list[tuple[_Node, tuple[int, int], bool, bool]] = []  # node, span, in table, in heading
 
     def run(self) -> None:
@@ -988,6 +994,11 @@ class _Walker:
         heading = _HEADINGS.get(tag)
         if heading is not None and not in_formula:
             self.headings.append((node, heading))
+        if ("texhtml" in node.classes and not in_formula and not drop_here
+                and not any("texhtml" in a.classes for a in node.ancestors())):
+            kept_formula = _kept_span(node, c)
+            if kept_formula is not None:
+                self.texhtml.append(kept_formula[0])
         kept = (_kept_span(node, c)
                 if not drop_here and (tag in _BLOCK_TAGS or _is_theorem_box(node)) else None)
         if kept is not None:
@@ -1151,19 +1162,26 @@ def render(body: str) -> Rendering:
 
     # blocks
     formula_starts = [f["span"][0] for f in formulas]
+    texhtml_starts = sorted(walker.texhtml)
+
+    def inside(starts: list[int], a: int, b: int) -> int:
+        return bisect_right(starts, b - 1) - bisect_right(starts, a - 1)
+
     paragraphs = []
     for node, kind, span, _in_table in walker.blocks:
         a, b = span
-        n = bisect_right(formula_starts, b - 1) - bisect_right(formula_starts, a - 1)
-        hit = bisect_right(finder_starts, b - 1) - bisect_right(finder_starts, a - 1)
+        n = inside(formula_starts, a, b)
+        html_n = inside(texhtml_starts, a, b)
+        hit = inside(finder_starts, a, b)
         paragraphs.append({"span": [a, b], "section": section_of(a), "block": kind,
-                           "formulas": n, "math": bool(n or hit)})
+                           "formulas": n, "texhtml": html_n, "math": bool(n or html_n or hit)})
     paragraphs.sort(key=lambda p: (p["span"][0], -p["span"][1], p["block"]))
 
     text, segments = walker.copy.finish()
     counts = {
         "layer_chars": len(layer), "text_chars": len(text), "formulas": len(formulas),
-        "formulas_without_text": walker.no_text_formulas, "sections": len(sections),
+        "formulas_without_text": walker.no_text_formulas, "texhtml": len(texhtml_starts),
+        "sections": len(sections),
         "paragraphs": len(paragraphs),
         "math_paragraphs": sum(1 for p in paragraphs if p["math"]),
         "finders": {name: sum(1 for r in finders if r["finder"] == name)

@@ -1678,3 +1678,33 @@ class TestFieldS14SelfClosingInForeignContent(unittest.TestCase):
         self.assertEqual(r.layer, "Let ab{\\displaystyle a\\,b} be given.")
         self.assertEqual(r.text, "Let $a\\,b$ be given.\n")
         self.assertEqual([f["alttext"] for f in r.formulas], ["{\\displaystyle a\\,b}"])
+
+
+class TestFieldS13FormulasWrittenAsHtml(unittest.TestCase):
+
+    def test_s13_a_block_holding_only_a_texhtml_formula_is_math(self):
+        # a partition of an interval, indented, written with {{math}} (no TeX at all)
+        r = rh.render('<p>A partition of an interval is a finite sequence of numbers of '
+                      'the form</p>\n<dl><dd><span class="texhtml"><i>a</i> = <i>x</i><sub>0'
+                      '</sub> &lt; <i>x</i><sub>1</sub> &lt; ... &lt; <i>x</i><sub><i>n</i>'
+                      '</sub> = <i>b</i></span></dd></dl>\n<h2 id="R">Refinement</h2>\n'
+                      '<p>Given <span class="texhtml mvar" style="font-style:italic;">P</span>'
+                      ', a refinement adds points.</p>\n<p>History of the widget idea, told '
+                      'without any formula at all.</p>')
+        blocks = {r.layer[p["span"][0]:p["span"][0] + 12]: p for p in r.paragraphs}
+        dd = blocks["a = x0 < x1 "]
+        self.assertEqual((dd["block"], dd["formulas"], dd["texhtml"], dd["math"]),
+                         ("dd", 0, 1, True))
+        mvar = blocks["Given P, a r"]
+        self.assertEqual((mvar["texhtml"], mvar["math"]), (1, True))
+        prose = blocks["History of t"]
+        self.assertEqual((prose["texhtml"], prose["math"]), (0, False))
+        self.assertEqual(r.counts["texhtml"], 2)
+        self.assertEqual(r.formulas, [])               # no TeX: no formulas.json formula
+        self.assertNotIn("$", r.text)
+
+    def test_s13_nested_texhtml_counts_once_and_mathml_still_counts_as_formulas(self):
+        r = rh.render(f'<p>Both <span class="texhtml"><span class="texhtml">x</span> + 1</span>'
+                      f' and {math("y")} appear.</p>')
+        (p,) = r.paragraphs
+        self.assertEqual((p["formulas"], p["texhtml"], p["math"]), (1, 1, True))
