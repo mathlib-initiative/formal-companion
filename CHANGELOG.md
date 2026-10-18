@@ -326,6 +326,12 @@ release has something to say.
   zero-cost baseline is no longer a pass.
 
 ### Added
+- `cf bench score --subset <ids>|<file>`: a pre-registered subset of the split's
+  articles, for a run that covers fewer than the whole split (the second smoke
+  covered 4 of 36 eval articles and could not be scored). The document says
+  `subset: true` with the list and its sha, the list is a pin of
+  `measurement_id`, the file is `<split>-subset-<id16>.json`, and
+  `cf bench compare` refuses a subset score. Gold must still be frozen.
 - Locate L1, web sources (`docs/proposals/wikipedia-locate.md` §2.1, §2.2, §3;
   `references/locate-documents.md` §7). `cf sourceset create | enumerate-wikiproject
   | adopt | fetch | render | status` keeps a sourceset of page revisions as

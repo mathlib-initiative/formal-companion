@@ -146,6 +146,11 @@ def register(subparsers) -> None:
                    help="bootstrap replicates (default 2000)")
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--checkpoint", action="store_true", help="required to score the test split")
+    s.add_argument("--subset", action="append", default=None, metavar="IDS|FILE",
+                   help="score only these articles of the split, pre-registered: source ids "
+                        "(comma-separated, repeatable) or a file of them (one per line, or a "
+                        "JSON list); the score says subset: true and the acceptance rule "
+                        "refuses it")
     s.add_argument("--json", action="store_true", dest="as_json")
 
     c = sub.add_parser("compare", help="the section 9 acceptance rule over two score documents")
@@ -747,6 +752,30 @@ def _freeze(ws, args) -> int:
 # score and compare
 # --------------------------------------------------------------------------
 
+def subset_ids(values: list[str] | None) -> list[str] | None:
+    """``--subset`` values -> source ids: each an existing file of ids, or comma-separated ids."""
+    if values is None:
+        return None
+    out: list[str] = []
+    for value in values:
+        path = Path(value).expanduser()
+        if path.is_file():
+            text = path.read_text(encoding="utf-8")
+            try:
+                data = json.loads(text)
+            except ValueError:
+                data = None
+            if isinstance(data, list):
+                out.extend(str(x) for x in data)
+                continue
+            for line in text.splitlines():
+                line = line.split("#", 1)[0].strip()
+                out.extend(part for part in line.replace(",", " ").split() if part)
+            continue
+        out.extend(part.strip() for part in value.split(",") if part.strip())
+    return out
+
+
 def _score(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
@@ -763,12 +792,16 @@ def _score(ws, args) -> int:
                           no_canary_check=args.no_canary_check,
                           article_costs_path=args.article_costs,
                           audit_labels=args.audit_labels, replicates=args.bootstrap,
-                          seed=args.seed, pin_overrides=overrides, checkpoint=args.checkpoint)
+                          seed=args.seed, pin_overrides=overrides, checkpoint=args.checkpoint,
+                          subset=subset_ids(getattr(args, "subset", None)))
     if args.as_json:
         print(json.dumps({k: v for k, v in doc.items() if k != "per_cluster"}, indent=1, sort_keys=True))
         return 0
     print(f"scored run {args.run} on bench {args.bench_id} {args.split} ({doc['arm']} arm): "
           f"measurement {doc['measurement_id'][:16]}")
+    if doc.get("subset"):
+        print(f"  SUBSET: {len(doc['subset_articles'])} pre-registered article(s) of the split "
+              f"(sha {doc['subset_sha256'][:12]}); not for the acceptance rule")
     for tier, info in sorted(doc["tiers"].items()):
         m = info["metrics"]
         parts = []
@@ -781,7 +814,9 @@ def _score(ws, args) -> int:
     print(f"  cost : {doc['cost']['value'] if doc['cost']['value'] is not None else '?'} USD/article "
           f"({doc['cost']['basis']})")
     print(f"  misses: {len(doc['misses'])}, audit sample {doc['audit']['sampled']} -> {doc['audit']['file']}")
-    print(f"  wrote {layout.score_json(score_mod.score_name(doc['split'], doc['measurement_id']))}")
+    name = score_mod.score_name(doc["split"], doc["measurement_id"],
+                                subset=bool(doc.get("subset")))
+    print(f"  wrote {layout.score_json(name)}")
     return 0
 
 

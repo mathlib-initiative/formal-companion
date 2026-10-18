@@ -23,6 +23,16 @@ is not this bench's ablation, or scored off eval; the test split without
 ``--checkpoint``; and a transcript that holds the bench's canary, which fails the
 run outright (section 8.4).
 
+**A pre-registered subset** (``subset``): a run that covers only some articles
+of the split -- a smoke run, a pilot -- is scored on exactly the articles named,
+each of which must be an article of the split; every coverage rule above then
+applies to those articles alone.  The document says ``subset: true`` with the
+sorted ``subset_articles`` and their ``subset_sha256``, the list is a pin (so it
+is in ``measurement_id``) and the file is ``<split>-subset-<id16>.json``.  The
+acceptance rule (``bench.compare``) refuses a subset score: a subset is a
+measurement, never a claim.  Gold must still be frozen; a subset changes which
+articles are read, not what they are scored against.
+
 **``measurement_id``** is the sha of every pin section 8.3 lists -- each run's
 own recorded commit and gate files, prompts, models, tool versions, universe,
 sourceset, renderer, gold, receipts and prices -- so two score documents with one
@@ -222,9 +232,28 @@ def measurement_id(pin_doc: dict) -> str:
     return sha_of(pin_doc)
 
 
-def score_name(split: str, mid: str) -> str:
-    """``<split>-<first 16 hex of measurement_id>``: one run scores once per split."""
-    return f"{split}-{mid[:16]}"
+def score_name(split: str, mid: str, *, subset: bool = False) -> str:
+    """``<split>-<first 16 hex of measurement_id>``: one run scores once per split.
+
+    A subset score is ``<split>-subset-<16 hex>``, so no reader takes it for the
+    split's.
+    """
+    return f"{split}-subset-{mid[:16]}" if subset else f"{split}-{mid[:16]}"
+
+
+def subset_articles(split_articles: list[str], subset, split: str) -> list[str]:
+    """The pre-registered subset as the sorted articles it names; refused unless each is in the split."""
+    wanted = sorted({str(a).strip() for a in subset if str(a).strip()})
+    if not wanted:
+        raise CfError("--subset names no article",
+                      hint="name the articles the run covers (source ids, or a file of them)")
+    outside = [a for a in wanted if a not in set(split_articles)]
+    if outside:
+        raise CfError(f"--subset names {len(outside)} article(s) that are not in the {split} "
+                      f"split: " + ", ".join(outside[:8]),
+                      hint="a subset is of the split's own articles (benches/<id>/gold manifest "
+                           "splits)")
+    return wanted
 
 
 # --------------------------------------------------------------------------
@@ -543,7 +572,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
           no_canary_check: bool = False, article_costs_path: Path | None = None,
           audit_labels: Path | None = None, replicates: int = DEFAULT_REPLICATES,
           seed: int = 0, pin_overrides: dict[str, str] | None = None,
-          checkpoint: bool = False) -> dict:
+          checkpoint: bool = False, subset: list[str] | None = None) -> dict:
     vocab.check(split, vocab.BENCH_SPLITS, "split")
     if split == "test" and not checkpoint:
         raise CfError("the test split is scored only at checkpoints",
@@ -553,6 +582,9 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
     articles_in = sorted((manifest.get("splits") or {}).get(split) or [])
     if not articles_in:
         raise CfError(f"bench {layout.bench_id} has no {split} article")
+    split_size = len(articles_in)
+    if subset is not None:
+        articles_in = subset_articles(articles_in, subset, split)
     locate_yaml = inputs.run_yaml(paths, run_id)
     locate = _locate_block(locate_yaml)
     if locate.get("mode") != vocab.LOCATE:
@@ -602,6 +634,9 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
                    locate_run=run_id, renderers=renderers or [UNRECORDED],
                    manifest=manifest, tools=tools, challenge_runs=runs["challenge"],
                    overrides=pin_overrides or {})
+    if subset is not None:
+        pin_doc["subset"] = {"articles": articles_in, "sha256": sha_of(articles_in),
+                             "of_split": split_size}
     mid = measurement_id(pin_doc)
     sourceset = bench["sourceset"]["id"]
     layers = {sid: inputs.read_layer(paths, sourceset, sid, layers_sha[sid]) for sid in articles_in}
@@ -673,7 +708,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
                            "usd_per_article_locate": cost_locate.by_cluster}
     gate_rej = _gate_rejections(paths, all_runs, gate_log)
     audit = _audit(run, joined_items, seed, arm)
-    score_id = score_name(split, mid)
+    score_id = score_name(split, mid, subset=subset is not None)
     write_canonical_jsonl(layout.audit_jsonl(score_id), audit)
     audit_summary: dict[str, Any] = {"sampled": len(audit), "file": f"audits/{score_id}.jsonl",
                                      "labeled": 0, "overclaims": 0}
@@ -686,6 +721,9 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
     doc = {
         "schema": SCORE_SCHEMA, "bench": layout.bench_id, "split": split, "arm": arm,
         "checkpoint": bool(checkpoint), "run": run_id, "runs": runs,
+        "subset": subset is not None,
+        "subset_articles": articles_in if subset is not None else None,
+        "subset_sha256": pin_doc["subset"]["sha256"] if subset is not None else None,
         "measurement_id": mid, "pins": pin_doc, "scorer": scorer(),
         "gold_manifest": {"version": version, "sha256": manifest["manifest_sha256"]},
         "coverage": {"articles": len(articles_in), "clusters": len(clusters),
