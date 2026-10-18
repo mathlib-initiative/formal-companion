@@ -114,11 +114,10 @@ def split_list(value: str) -> list[str]:
 # module names
 # ---------------------------------------------------------------------------
 #
-# Lake names a module after its file: ``FormalConjectures/ErdosProblems/1.lean`` is
-# the module whose last component is the string ``1``, and a directory
-# ``Arxiv/0805.3777/`` is ONE component holding a dot.  Neither is an identifier, so
-# Lean writes them escaped -- ``FormalConjectures.ErdosProblems.«1»``,
-# ``FormalConjectures.Arxiv.«0805.3777».TensorRank`` -- and that is the only spelling
+# Lake names a module after its file: ``Alpha/Problems/1.lean`` is the module whose
+# last component is the string ``1``, and a directory ``Arxiv/0805.3777/`` is ONE
+# component holding a dot.  Neither is an identifier, so Lean writes them escaped --
+# ``Alpha.Problems.«1»``, ``Alpha.Arxiv.«0805.3777».Rank`` -- and that is the only spelling
 # an ``import`` line can parse.  These four functions are the one place the drivers
 # turn a file into a module name and a module name back into its components.  An
 # escaped spelling and a plain one of the same components are the same module

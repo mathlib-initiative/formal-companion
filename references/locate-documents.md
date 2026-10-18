@@ -398,7 +398,10 @@ checked by the driver's own parser (`scripts/corpus/universe_host.py`). `host` i
 a pin is built, not what is pinned: it is outside `universe_sha256`, and `cf corpus
 probe-command` prints from it the universe's whole driver list (every library, those
 probed inside a workspace last) and the steps of that library's kind;
-`excluded` lists `{id, reason}`; `canaries` lists, per
+`excluded` lists `{id, reason}` (what a universe leaves out WITHIN a library is a
+choice of its `roots`, stated in the proposal's §2.3 for the default universe: Mathlib
+with its `Wanted` library of `proof_wanted` statements, Lean core without the `Lean`
+namespace); `canaries` lists, per
 toolchain, the acceptance canary's result (`{toolchain, lean_version, passed,
 checked, index_sha256, cases}`) — no library on a toolchain without a passed
 canary is ingested; `corpus_db` is `{path, sha256, built, declarations,
@@ -473,8 +476,8 @@ through the enclosing namespaces, innermost first (no `open` namespace is tried)
 name it cannot resolve in the library is counted in the manifest's
 `attribute_commands`, never guessed. A twin the command generates lies inside its
 list and takes its `(attr := …)` tags as above; an existing twin it pairs its target
-with (`attribute [to_additive (attr := wikidata Q1)] Subgroup` beside a hand-written
-`AddSubgroup`) is not tagged, since the source never writes that name. `-attr` and
+with (`attribute [to_additive (attr := wikidata Q1)] MulWidget` beside a hand-written
+`AddWidget`) is not tagged, since the source never writes that name. `-attr` and
 `local attr` tag nothing. A Wikipedia tag's value is
 one canonical page URL, the DESKTOP form `https://<lang>.wikipedia.org/wiki/<title>`:
 the mobile `<lang>.m.` host folded, the title percent-decoded, spaces and runs of underscores one

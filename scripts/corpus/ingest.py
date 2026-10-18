@@ -476,8 +476,8 @@ def check_checkout(checkout: Path, commit: str) -> None:
 #   one outside the library, is counted unresolved, never guessed.  A twin such a
 #   command generates has its span inside the command's list and takes its ``(attr :=
 #   ...)`` tags by the rule above; a twin that already exists elsewhere (``attribute
-#   [to_additive (attr := wikidata Q1)] Subgroup`` pairing ``Subgroup`` with an
-#   ``AddSubgroup`` declared by hand) is not tagged: the source never writes its name,
+#   [to_additive (attr := wikidata Q1)] MulWidget`` pairing ``MulWidget`` with an
+#   ``AddWidget`` declared by hand) is not tagged: the source never writes its name,
 #   which ``to_additive`` derives, and it is not guessed.
 #
 # ``-attr`` (an erasure) and ``local attr`` (gone at the end of its section) tag nothing.
