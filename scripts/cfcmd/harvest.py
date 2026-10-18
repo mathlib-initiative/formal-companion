@@ -28,6 +28,7 @@ from cost import pricing
 from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
 from harvest import harvest_journal, record as record_mod
+from harvest import host_artifacts as host_mod
 from recheck import pin as pin_mod
 from run import manifest
 
@@ -102,7 +103,7 @@ def run(args) -> int:
         log.warn(f"UNPRICED model(s) {', '.join(cost['unpriced'])}: their tokens are in the "
                  f"receipt and priced nowhere, so {pricing.format_usd(cost['usd'])} is a lower "
                  f"bound. Add them to workspace.yaml budget.prices and re-run the harvest.")
-    if receipt["missing"] or receipt["sha_mismatched"]:
+    if receipt["missing"] or receipt["sha_mismatched"] or receipt.get("sha_unverified"):
         log.warn("harvest INCOMPLETE: the corpus is not the whole corpus, so every number "
                  "derived from it is a lower bound. Re-run the missing tasks, then `cf harvest` again.")
     if not ((receipt.get("gate") or {"ok": True}).get("ok", True)):
@@ -125,7 +126,8 @@ def run(args) -> int:
         # the sourceset, which the locate harvest records.
         log.info("locate run: the faithfulness tally, the companion pin and the companions' "
                  "state.json are not written for it; the receipt's locate block carries its "
-                 "counts")
+                 "counts, and the sourceset's state.json records the harvest")
+        record_sourceset_state(workspace, args.run_id, data, receipt)
         return 0 if receipt["complete"] else 1
     pin = _pin(workspace, args.run_id, data, dest)
     counts = ({} if args.no_tally
@@ -140,6 +142,36 @@ def is_locate(data: dict) -> bool:
 
     block = data.get("locate") if isinstance(data, dict) else None
     return isinstance(block, dict) or str((data or {}).get("mode") or "") in vocab.LOCATE_MODES
+
+
+def record_sourceset_state(workspace, run_id: str, data: dict, receipt: dict) -> dict | None:
+    """Merge the harvest into the sourceset's ``state.json`` (``runs.<run>``).
+
+    Through ``Sourceset.record_state``, the file's one writer, which MERGES into
+    the row ``cf plan-locate`` wrote: the planned fields stay and ``status``
+    moves on.  A sourceset this workspace no longer holds is warned about and
+    skipped; the receipt is still the corpus's record.
+    """
+    from sources.sourceset import Sourceset, SourcesetError
+
+    block = data.get("locate") if isinstance(data.get("locate"), dict) else {}
+    pin = block.get("sourceset")
+    sourceset_id = str((pin.get("id") if isinstance(pin, dict) else pin) or "")
+    if not sourceset_id:
+        log.warn(f"run {run_id}: run.yaml names no locate.sourceset, so no sourceset's "
+                 "state.json records this harvest")
+        return None
+    gate = receipt.get("gate")
+    payload = {"status": "harvested", "harvested_at": receipt.get("harvested_at"),
+               "complete": bool(receipt.get("complete")),
+               "gate_ok": None if not gate else bool(gate.get("ok")),
+               "locate": receipt.get("locate")}
+    try:
+        return Sourceset.open(workspace.paths, sourceset_id).record_state(
+            "runs", payload, key=run_id)
+    except SourcesetError as exc:
+        log.warn(f"run {run_id}: sourceset {sourceset_id!r} not updated ({exc.message})")
+        return None
 
 
 def locate_source_shas(workspace, run_id: str) -> dict[str, str]:
@@ -170,6 +202,11 @@ def _cost_block(workspace, args) -> dict | None:
     path = getattr(args, "transcripts", None)
     if not path:
         return None
+    return _price(workspace, path, model=getattr(args, "transcripts_model", None))
+
+
+def _price(workspace, path, *, model: str | None = None) -> dict:
+    """Price the logs (or the usage export) at *path* with this workspace's table."""
     try:
         table, source = pricing.from_workspace_data(workspace.data)
     except ValueError as exc:
@@ -179,8 +216,7 @@ def _cost_block(workspace, args) -> dict | None:
     if source == pricing.SOURCE_DEFAULT:
         log.detail("  cost: workspace.yaml has no budget.prices; priced with the shipped "
                    "default table")
-    return cost_fleet.cost_block(path, table=table, table_source=source,
-                                 model=getattr(args, "transcripts_model", None))
+    return cost_fleet.cost_block(path, table=table, table_source=source, model=model)
 
 
 def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
@@ -195,13 +231,27 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
             _check_remote_source(workspace, args, source)
     else:
         source = _default_source(workspace, args, data)
+    locate = is_locate(data)
+    host_files = (host_mod.remote_files(workspace, args.run_id, data)
+                  if locate and source["kind"] == "remote" else [])
+    host_dir = Path(workspace.paths.run_host_dir(args.run_id))
     if source["kind"] == "remote" and not args.execute:
         log.info(f"# dry run: harvesting {source['host']}:{source['path']} -> {dest}")
-        for step in harvest_mod.list_commands(source, dest):
+        for step in (harvest_mod.list_commands(source, dest)
+                     + host_mod.commands(source["host"], host_files, host_dir)):
             log.info(f"# {step['title']}\n{step['shell']}")
         raise CfError("remote harvest needs --execute",
                       hint="the commands above are exactly what it will run")
-    locate = is_locate(data)
+    host = None
+    if host_files:
+        # outside the findings rsync, which carries *.json documents only, and
+        # outside corpus/<run>/, whose tree is the receipt's manifest
+        host = host_mod.fetch(source["host"], host_files, host_dir)
+        usage = host.get(host_mod.USAGE) or {}
+        if cost is None and usage.get("fetched"):
+            cost = _price(workspace, usage["path"],
+                          model=getattr(args, "transcripts_model", None))
+            log.detail(f"  cost: priced from the sequencer's usage export {usage['path']}")
     return harvest_mod.harvest(
         run_id=args.run_id, source=source, dest=dest,
         sources=(locate_source_shas(workspace, args.run_id) if locate
@@ -209,7 +259,8 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
         run_yaml_src=run_yaml_path if run_yaml_path.exists() else None,
         verify_sha=args.verify_sha, execute=True,
         allow_edition_mismatch=args.allow_edition_mismatch,
-        gate_runner=gate_runner(workspace, args, locate=locate), cost=cost)
+        gate_runner=gate_runner(workspace, args, locate=locate), cost=cost,
+        host_artifacts=host)
 
 
 def _check_remote_source(workspace, args, source: dict) -> None:

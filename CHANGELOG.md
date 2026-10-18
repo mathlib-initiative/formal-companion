@@ -62,6 +62,36 @@ release has something to say.
   licence class, problem rows and source text past the cap in receipts, hashes
   each receipt as written, and never writes into the checkout, a companion or a
   directory that is not a record set.
+- The locate gate, harvest, `cf run` and campaigns after the wave-2 seam and
+  package reviews (`references/locate-documents.md` §1-§4 and §9-§11). The
+  gate builds rule 1's records with the staged `locate_records.py`, takes rule
+  4's hits from the task manifest's `curated` list, turns a missing sibling
+  module into exit 3, opens SQLite through quoted read-only URIs, reads a
+  document only from a regular file (a symlink is refused), refuses a hostile
+  shape (a list where a word belongs, deep nesting, an overflowing number, a
+  lone surrogate) as rule 1 instead of a traceback, and requires the file name
+  to be the `source_id`, a document for every source of the task, one location
+  per declaration, a downgrade weaker than the record's relation and, for a
+  curated hit, a location whose relation counts or a reasoned rejection (an
+  `accepted` candidate is a location; a `relatedMatch` discharges nothing); a
+  malformed `gate.json` value is exit 3. The bridges' fallback gates only the
+  task's own documents and the reviewer may run the gate; `agent_call.py`
+  forwards TERM/INT/HUP to the agent's group before freeing its slot. A remote
+  `cf harvest` of a locate run brings the host's gate log, a campaign shard's
+  usage export and canary scan to `runs/<run>/host/`, prices from that export,
+  records the run in the sourceset's `state.json`, writes no gate-log line of
+  its own, refuses JSON off the `<task-id>/<source-id>.json` layout, lands no
+  symlink and fails `--verify-sha` closed; status, monitor and tally count
+  nested corpora, and the faithfulness tally leaves locate corpora out.
+  `cf run` refuses a locate run planned for `local`, sends the tools database
+  and only this run's candidates files but no inventory, keeps one spend cap,
+  records `versions: {tend, agentbox, agent_cli}` and the source layers it
+  sent. `cf campaign` stamps `locate.campaign` into its shards, needs a
+  smoke-tested `--pilot` and `cf run <shard> --stage verify` instead of a smoke,
+  quotes every rendered path, and its sequencer holds one lock, refuses a root
+  with a live tend run, keys its state by run id, scans (new
+  `scripts/run/canary_scan.py`), exports and prunes only the transcripts each
+  shard wrote, and stops on any reason to drain a drain did not act on.
 - The overlay writes and reads Literature Links 2.0.0, unreleased. A
   record's `subject` ends are the item's regions of the PDF and its `object`
   end is the declaration in the repository at the export commit, so an item
@@ -267,8 +297,8 @@ release has something to say.
 - `cf run` for a locate run: `--execute` needs a spend cap recorded in its
   `run.yaml` or given as `--max-cost` (a workspace default does not count and
   `--no-budget-cap` is refused); the transfer sends this run's rendered sources
-  (with `--include-source-text`), `corpus.sqlite`, the L2 candidates and the
-  frozen inventory to the host paths its `gate.json` names; the verify stage
+  (with `--include-source-text`), `corpus.sqlite` and the L2 candidates to the
+  host paths its `gate.json` names; the verify stage
   checks `corpus.sqlite`'s sha256 once and that the locate gate is out of tree,
   and the tend config is checked for `verify_locate.py`.
 - Recursive harvest (proposal §3, §6): the listing (`find -print0` on a host),
