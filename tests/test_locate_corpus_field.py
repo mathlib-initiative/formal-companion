@@ -675,6 +675,9 @@ class TestD6TheLibraryPipelineIsTheLibrarysOwn(_Pipelines):
     def test_the_ingest_and_the_clean_up_follow_the_kind(self):
         published = self.pipeline("delta")
         self.assertIn("--accept-published '<why the published index is trusted>'", published)
+        # ingest finds index.jsonl or autoform-library-index.jsonl itself; another name is given
+        self.assertIn("--from <the copied index dir>/delta-index.jsonl", published)
+        self.assertIn("the directory holds delta-index.jsonl and manifest.json", published)
         self.assertIn(f'"$ATLAS_ROOT/index/delta@{"d" * 12}/"', published)
         self.assertIn("nothing to remove: a published index builds nothing", published)
         core = self.pipeline("core")
