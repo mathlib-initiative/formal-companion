@@ -39,9 +39,12 @@ run host, named only in a workspace's `workspace.yaml`, never here —
 
 ## 1. What exists
 
-Built and tested on synthetic fixtures only (`tests/test_locate_*.py`, the end-to-end
-`tests/e2e/locate_synthetic/`); none of it has run on `$HOST`, against a real page or
-a real library index, or with a model.
+Built and tested on synthetic fixtures (`tests/test_locate_*.py`, the end-to-end
+`tests/e2e/locate_synthetic/`). Of the real-data runs, L0's probe and host drivers
+built a universe on `$HOST` (the L0 row), and L1, L2, the planner and the staged gate
+have run against real pages and that universe on a copy of a workspace; nothing has
+run with a model, and no task has yet gone through worker, gate, reviewer and merge on
+`$HOST` (§12).
 
 | part | path | state |
 |---|---|---|
@@ -49,7 +52,7 @@ a real library index, or with a model.
 | the passage head id of §2.2 | `scripts/cflib/passages.py`, `scripts/gate/locate_text.py` | the frozen head rule, restated stdlib-only for the gate in lockstep (a test pins the two) with the layer/head offset map and the exact-once quote match |
 | the locate vocabulary of §2.2, §2.4, §2.6, §5, §8 and §9 | `scripts/cflib/vocab.py`, `references/vocabulary.md` §1.11 | values, bounds, `decide_proof_status`, `derive_status` |
 | licence classes and web-source families of §10 | `scripts/cflib/registry.py`, `registry/sources.yaml`, `POLICY.md` §4.1 | ships `enwiki`; `cf export literature-links` exports quotes only from an open class |
-| L1: web sources, the renderer, sourcesets | `scripts/sources/render_html.py`, `websource.py`, `wikinet.py`, `sourceset.py`; `cf sourceset` | renderer `web-html/1` (layer, formulas, head text, reading copy and its map, sections, blocks, deterministic finders); append-only manifests; the one Wikipedia client, under `--execute` only. Parity with `$WIKILEAN`'s text layer is a test that runs only when `CF_WIKILEAN_LAYER` names its output: **unverified** |
+| L1: web sources, the renderer, sourcesets | `scripts/sources/render_html.py`, `websource.py`, `wikinet.py`, `sourceset.py`; `cf sourceset` | renderer `web-html/3` (layer, formulas, head text, reading copy and its map, sections, blocks, deterministic finders, every view's sha in `render.json`); append-only manifests with page flags and `create --from` to a new renderer; the one Wikipedia client, under `--execute` only, which also asks Wikidata for `flag-biographies`. Parity with `$WIKILEAN`'s text layer is a test that runs only when `CF_WIKILEAN_LAYER` names its output: **unverified** |
 | L0: universes, ingest, `corpus.sqlite`, the host tools | `scripts/corpus/`, `templates/corpus/`; `cf corpus` | §2.4's proof status re-decided at ingest; the canary gate per toolchain; the exact table, FTS5 and tags; a blind build for G1-blind; the probe and its host drivers as run on `$HOST` (44 of 45 libraries, before two driver fixes, §12) |
 | L2: candidates | `scripts/locate/candidates.py`; `cf locate candidates` | curated joins and lexical retrieval over `corpus.sqlite` |
 | L3a/L3b/L5: the locate planner and presets | `scripts/locate/`, `scripts/cfcmd/plan_locate.py`, `templates/prompts/locate-*.md.tmpl`; `cf plan-locate` | sourceset-scoped runs, task manifests, the tend root with the out-of-tree gate directory |
@@ -85,7 +88,7 @@ fetch: {api: action=parse, params_sha256: <sha of the fixed parameter set>}
 raw_sha256: <sha of the bytes as fetched>
 html_sha256: <sha of the canonical body>     # = source_sha
 layer_sha256: <sha of the Literature Links text layer>
-renderer: web-html/2
+renderer: web-html/3
 licence_class: open_share_alike
 assessment: {class: B, importance: high}
 ```
@@ -143,7 +146,7 @@ Links record (§2.7) carries the passage kind as its `kind`.
 
 ```json
 {"source_id": "enwiki-28767-1371234567", "source_sha": "<html_sha256>",
- "layer_sha256": "<hex>", "renderer": "web-html/2",
+ "layer_sha256": "<hex>", "renderer": "web-html/3",
  "item": "In-text #3fa91c07", "head_words": 12,
  "span": [10234, 10612],
  "quote": {"exact": "…", "prefix": "…", "suffix": "…"},
@@ -334,7 +337,7 @@ A location:
               "location": {"quote": {"exact": "…", "prefix": "…", "suffix": "…"}},
               "citation": {"type": "webpage", "title": "Sylow theorems", "container-title": "Wikipedia",
                            "URL": "https://en.wikipedia.org/w/index.php?title=Sylow_theorems&oldid=1371234567"},
-              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "renderer": "web-html/2",
+              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "renderer": "web-html/3",
                                           "span_sha256": "<hex>", "licence": "CC-BY-SA-4.0"}}}],
  "object": [{"type": "lean", "uri": "https://github.com/leanprover-community/mathlib4",
              "version": "<40-hex commit>", "role": "key",

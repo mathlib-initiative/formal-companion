@@ -104,8 +104,12 @@ What a class does **not** change:
   copying an article is redistribution, and the skill does not do it;
 - **fetching** is section 2's business (`licence.fetch`), not the class's. The
   one fetcher a web family uses is a named network exception in `CLAUDE.md`
-  §3: `scripts/sources/wikinet.py`, which `cf sourceset fetch` and
-  `enumerate-wikiproject` reach only under `--execute`.
+  §3: `scripts/sources/wikinet.py`, which `cf sourceset fetch`,
+  `enumerate-wikiproject` and `adopt` (only to ask the page of a pinned
+  revision that names no page id and that the sourceset does not hold) reach
+  only under `--execute`, at the family's site; and `cf sourceset
+  flag-biographies --execute`, which asks the Wikidata Query Service one fixed
+  SPARQL shape (which items are instances of human) and nothing else.
 
 A web source is not a registry entry: Wikipedia has millions of revisions and
 the registry holds none of them. Its class comes from its **family**, one row
