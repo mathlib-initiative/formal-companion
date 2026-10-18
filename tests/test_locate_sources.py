@@ -1542,9 +1542,6 @@ class TestReviewFixesSourcesets(unittest.TestCase):
                                          1003: "enwiki-1003-2004"})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 # ---------------------------------------------------------------------------
 # field fixes: defects found running the stage against real data (synthetic
@@ -1923,3 +1920,85 @@ class TestFieldS11ManifestDeltas(unittest.TestCase):
 def sourceset_canonical(obj: dict) -> str:
     from sources.sourceset import canonical_line
     return canonical_line(obj)
+
+
+class TestFieldS9S10S12TheStateAndTheStatus(_FieldCase):
+
+    def adopt_older_revision(self):
+        pins = _scratch(self)
+        body = {"parse": {"revid": 1990, "text": "<p>The <b>widget lemma</b> as a consumer "
+                                                 "pinned it, at an older revision.</p>"}}
+        (pins / "b.json").write_text(json.dumps(body))
+        (pins / "pins.jsonl").write_text(json.dumps(
+            {"pageid": 1001, "revision": 1990, "bytes": "b.json",
+             "assessment": {"class": "B", "importance": "high"}}) + "\n")
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from",
+                       str(pins / "pins.jsonl"), "--consumer", "wikilean")
+        self.assertEqual(code, 0, out)
+
+    def test_s9_status_counts_pages_once_whatever_their_revisions(self):
+        self.enumerate()
+        self.adopt_older_revision()
+        counts = self.ss.read_state()["counts"]
+        self.assertEqual((counts["sources"], counts["pages"]), (4, 3))
+        self.assertEqual(sum(counts["by_class"].values()), 3)
+        self.assertEqual(sum(counts["by_importance"].values()), 3)
+        self.assertEqual(counts["by_importance"].get("high"), 1)
+        code, out = cf(self.root, "sourceset", "status", "wpm")
+        self.assertIn("pages by class", out)
+
+    def test_s10_the_history_keeps_every_run_and_a_plain_status_writes_nothing(self):
+        self.enumerate("--limit", "1")
+        self.fetch()
+        cf(self.root, "sourceset", "render", "wpm")
+        written = self.ss.read_state()
+        code, out = cf(self.root, "sourceset", "render", "wpm")      # a no-op re-run
+        self.assertEqual(code, 0, out)
+        state = self.ss.read_state()
+        runs = [(h["command"], h["wrote_version"]) for h in state["history"]]
+        self.assertEqual(runs, [("create", True), ("enumerate-wikiproject", True),
+                                ("fetch", True), ("render", True), ("render", False)])
+        rendered = [h for h in state["history"] if h["command"] == "render"]
+        self.assertEqual((rendered[0]["rendered"], rendered[1]["rendered"]), (1, 0))
+        self.assertEqual(rendered[0]["version"], written["manifest"]["version"])
+        before = self.paths.sourceset_state_json("wpm").read_bytes()
+        code, out = cf(self.root, "sourceset", "status", "wpm")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.paths.sourceset_state_json("wpm").read_bytes(), before)
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ss.read_state()["history"][-1]["command"], "status")
+        with self.assertRaises(SourcesetError):
+            self.ss.record_state("history", {"x": 1})
+
+    def test_s10_the_history_is_bounded(self):
+        from sources import sourceset as sourceset_mod
+        with mock.patch.object(sourceset_mod, "MAX_HISTORY", 3):
+            for _ in range(5):
+                self.ss.refresh_state(command="probe")
+        state = self.ss.read_state()
+        self.assertEqual(len(state["history"]), 3)
+        self.assertEqual(state["history_dropped"], 3)      # create + 5 probes - 3 kept
+
+    def test_s12_cf_status_shows_the_sourcesets(self):
+        self.enumerate()
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = cf_main.main(["--workspace", str(self.root), "status"])
+        self.assertEqual(code, 0, out.getvalue())
+        text = out.getvalue()
+        self.assertIn("sourceset", text)
+        self.assertIn("wpm", text)
+        self.assertIn("enumerate-wikiproject", text)
+        self.assertNotIn("next:  cf onboard", text)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cf_main.main(["--workspace", str(self.root), "status", "--json"])
+        (row,) = json.loads(out.getvalue())["sourcesets"]
+        self.assertEqual((row["id"], row["counts"]["sources"], row["counts"]["pages"]),
+                         ("wpm", 3, 3))
+        self.assertEqual(row["version"], row["latest_on_disk"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -274,8 +274,15 @@ latest version's pin and counts (`manifest`, `counts`, `commands`), and
 the planner's, the outcomes', the export's: with no `key` the section becomes
 `payload`, with one `state[section][key]` becomes `{…what it was, …payload, "at":
 <now>}`, its sibling keys kept. The file always carries `schema:
-cf-sourceset-state/1` and `id`; those, `family`, `manifest`, `counts` and
-`updated_at` are no section.
+cf-sourceset-state/1` and `id`; those, `family`, `manifest`, `counts`,
+`commands`, `history` and `updated_at` are no section. `counts` counts sources
+(enumerated, adopted, fetched, rendered) and pages: `by_class` and
+`by_importance` count each page once, by the assessment of the source a run
+plans for it. `commands` holds the last run of each command and `history` every
+run in order (the newest 1,000; `history_dropped` counts the rest), each row
+saying whether it wrote a version (`wrote_version`), so a no-op re-run never
+hides the run that wrote one. `cf sourceset status` writes the file only with
+`--verify`, and `cf status` prints every sourceset's row from it.
 
 **Manifests.** Line 1 of `manifest-<n>.jsonl` is a header, every later line one
 source, sorted by `source_id`, each a canonical JSON object (sorted keys, no
