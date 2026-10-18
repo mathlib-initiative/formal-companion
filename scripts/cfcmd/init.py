@@ -53,10 +53,15 @@ detect/*/deps.json
 pipelines/*/repo/
 
 # Locate: a sourceset's page text sits under sourcesets/<id>/sources/, which the
-# `sources/` line above already ignores. Library indexes and corpus.sqlite are
+# `sources/` line above already ignores. Library indexes and the two corpus databases are
 # large derived artifacts, rebuilt from the probe output:
 corpora/*/index/
 corpora/*/corpus.sqlite
+corpora/*/corpus.blind.sqlite
+# The bench's planted copy of a universe database, and the labeler's args and
+# copied results, which hold source excerpts:
+benches/*/gold/planted/*.sqlite
+benches/*/labeler/
 
 # corpus/ is deliberately NOT ignored: the findings corpus is the calibration
 # baseline and must be durable. It quotes 1-3 book sentences per finding, so the

@@ -326,11 +326,20 @@ not a bool (absent or `null` is `false`); and any value outside these sets.
 | `CHALLENGE_TARGETS` | `location` · `absence` · `unresolved` · `scope` · `prominence` |
 | `CHALLENGE_ACTIONS` | `confirm` and `uphold` (`CHALLENGE_KEEP`: the record survives) · `downgrade`, `refute` and `overturn` (`CHALLENGE_CHANGE`: the affected records are `downgraded`) |
 | `UNRESOLVED_ATTEMPT_CAP` | `attempt_cap`: the reason on an `UNRESOLVED` document the bridge writes after a task's third genuine reviewer rejection; never a worker's |
+| `UNRESOLVED_BY` | `worker` (`UNRESOLVED_BY_WORKER`: the worker could not decide) · `attempt_cap` (the bridge, at the cap) — an `UNRESOLVED` document's `unresolved.by` |
+| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage) · `hunt` (an absence or unresolved outcome on one) · `sample` (the stratified sample's frame: scope demotions, `supporting` demotions, weak relations) · `none` — why the challenge plan put a record where it did |
+| `CHALLENGE_PLANNED` | `required` (`CHALLENGE_REQUIRED`: the record is in a challenge task and its verdict is owed) · `sampled_out` · `not_required` — what the challenge plan says a record is owed, before any verdict |
+| `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
 
 Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
-task), and the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
-`EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`).
+task), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
+`EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), and the run
+machinery's: `MAX_TASKS_PER_ROOT` (500 tasks in one tend root; a larger plan is campaign
+shards), `LOCATE_ATTEMPT_CAP` (3: the genuine reviewer rejection that reaches it writes the
+`UNRESOLVED` document), `SESSION_SLOTS` (15 `flock` slots, one below the account's 16 sessions)
+and `AGENT_TIMEOUT` (`45m` per agent call). The host-side scripts that cannot import `cflib`
+keep copies of these, which tests pin.
 
 **The benchmark's values** (the proposal's §8 and §9):
 

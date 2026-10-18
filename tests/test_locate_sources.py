@@ -864,6 +864,59 @@ def _entry(n: int, **fields) -> dict:
     return e
 
 
+class TestTheStateFileHasOneWriter(unittest.TestCase):
+    """Wave 1 #83: ``Sourceset.record_state`` is the state file's one writer, per key."""
+
+    def setUp(self):
+        self.root = _workspace(self)
+        self.paths = WorkspacePaths(self.root)
+        self.ss = Sourceset.create(self.paths, "wpm", "enwiki")
+
+    def state(self) -> dict:
+        return json.loads(self.paths.sourceset_state_json("wpm").read_text(encoding="utf-8"))
+
+    def test_a_keyed_row_is_merged_and_its_siblings_kept(self):
+        self.ss.record_state("runs", {"planned": 3, "preset": "locate"}, key="r1")
+        self.ss.record_state("runs", {"planned": 5}, key="r2")
+        self.ss.record_state("runs", {"harvested": 2}, key="r1")
+        runs = self.state()["runs"]
+        self.assertEqual({k: {f: v for f, v in row.items() if f != "at"}
+                          for k, row in runs.items()},
+                         {"r1": {"planned": 3, "preset": "locate", "harvested": 2},
+                          "r2": {"planned": 5}})
+        self.assertTrue(all(row.get("at") for row in runs.values()))
+
+    def test_the_header_is_kept_and_never_the_other_writers(self):
+        self.ss.refresh_state(command="status")
+        self.ss.record_state("exports", {"records": 4}, key="set-1")
+        state = self.state()
+        self.assertEqual((state["schema"], state["id"]), ("cf-sourceset-state/1", "wpm"))
+        self.assertNotIn("version", state)
+        self.assertNotIn("sourceset", state)
+        self.assertIn("counts", state)                  # refresh_state's section survives
+        self.ss.refresh_state(command="status")
+        self.assertIn("set-1", self.state()["exports"])  # and survives it in turn
+
+    def test_a_whole_section_without_a_key(self):
+        self.ss.record_state("tally", {"a": 1})
+        self.ss.record_state("tally", {"b": 2})
+        self.assertEqual(self.state()["tally"], {"b": 2})
+
+    def test_refusals(self):
+        for section in ("schema", "id", "counts", "manifest"):
+            with self.subTest(section=section), self.assertRaises(SourcesetError):
+                self.ss.record_state(section, {"x": 1})
+        with self.assertRaises(SourcesetError):
+            self.ss.record_state("notes", ["a list"])
+        state = self.state()
+        state["odd"] = [1, 2]
+        self.paths.sourceset_state_json("wpm").write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaises(SourcesetError):
+            self.ss.record_state("odd", {"y": 2}, key="k")
+        with self.assertRaises(SourcesetError):
+            Sourceset(self.paths, "nope").record_state("runs", {"x": 1}, key="r")
+
+
 class TestSourcesetManifests(unittest.TestCase):
 
     def setUp(self):

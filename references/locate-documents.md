@@ -262,10 +262,20 @@ A web source (proposal §2.1) is identified by family, page id and revision —
 
 ```
 sourcesets/<id>/manifest-<n>.jsonl                 version n, never rewritten
-sourcesets/<id>/state.json                         counts, written through one writer
+sourcesets/<id>/state.json                         counts and sections, one writer (below)
 sourcesets/<id>/sources/<source-id>/               one directory per source (gitignored)
 sourcesets/<id>/candidates/<universe>/<source-id>.json   L2 (§5)
 ```
+
+**The state file.** `state.json` is written by ONE writer,
+`scripts/sources/sourceset.py`: `Sourceset.refresh_state(command=…)` stamps the
+latest version's pin and counts (`manifest`, `counts`, `commands`), and
+`Sourceset.record_state(section, payload, key=None)` writes every other section —
+the planner's, the outcomes', the export's: with no `key` the section becomes
+`payload`, with one `state[section][key]` becomes `{…what it was, …payload, "at":
+<now>}`, its sibling keys kept. The file always carries `schema:
+cf-sourceset-state/1` and `id`; those, `family`, `manifest`, `counts` and
+`updated_at` are no section.
 
 **Manifests.** Line 1 of `manifest-<n>.jsonl` is a header, every later line one
 source, sorted by `source_id`, each a canonical JSON object (sorted keys, no
@@ -378,8 +388,9 @@ index is one the library publishes itself, accepted by name with `cf corpus inge
 toolchain, the acceptance canary's result (`{toolchain, lean_version, passed,
 checked, index_sha256, cases}`) — no library on a toolchain without a passed
 canary is ingested; `corpus_db` is `{path, sha256, built, declarations,
-universe_sha256}` once `corpus.sqlite` is built, and `null` again as soon as an
-index changes. **`universe_sha256`** is sha256 over the lines `<id>\t<commit>\t<index
+universe_sha256}` once `corpus.sqlite` is built, `corpus_db_blind` the same for
+`corpus.blind.sqlite` (`cf corpus build-db <u> --blind`), and both are `null` again
+as soon as an index changes. **`universe_sha256`** is sha256 over the lines `<id>\t<commit>\t<index
 sha256>`, one per library sorted by id (an empty index sha before ingest), joined
 with `\n` — so a re-probe that changes one index changes the universe.
 
@@ -426,8 +437,8 @@ says `proof_wanted_scan: "not implemented"`. `tags` use `cflib.vocab.TAG_KINDS`:
 attributes in the source span from `start_line` to `line`, read from a checkout
 given to the ingest — which must be at the pinned commit (its HEAD read from its
 files) and clean — and Wikipedia URLs in the docstring. A Wikipedia tag's value is
-one canonical page URL, `https://<lang>.wikipedia.org/wiki/<title>`: the mobile
-host folded, the title percent-decoded, spaces and runs of underscores one
+one canonical page URL, the DESKTOP form `https://<lang>.wikipedia.org/wiki/<title>`:
+the mobile `<lang>.m.` host folded, the title percent-decoded, spaces and runs of underscores one
 underscore, its first letter upper-case, no fragment or query; an apostrophe
 and a balanced pair of parentheses are part of the title, an unmatched `)` and
 trailing sentence punctuation are not. A consumer joining on an article URL
@@ -440,13 +451,13 @@ with `mode=ro&immutable=1`; its sha256 is recorded in `gate.json`):
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-  -- schema = cf-corpus/1, universe, universe_sha256, built
+  -- schema = cf-corpus/1, universe, universe_sha256, built, blind (1 or 0)
 CREATE TABLE libraries (id TEXT PRIMARY KEY, repo TEXT NOT NULL, commit_sha TEXT NOT NULL,
   toolchain TEXT, brain_lib TEXT, index_sha256 TEXT NOT NULL, declarations INTEGER NOT NULL);
 CREATE TABLE decls (id INTEGER PRIMARY KEY, library TEXT NOT NULL, commit_sha TEXT NOT NULL,
   name TEXT NOT NULL, module TEXT, path TEXT, line INTEGER, end_line INTEGER, kind TEXT,
   proof_status TEXT NOT NULL, statement INTEGER NOT NULL DEFAULT 0,
-  printable INTEGER NOT NULL DEFAULT 1, signature TEXT, docstring TEXT,
+  printable INTEGER NOT NULL DEFAULT 1, signature TEXT, docstring TEXT, deprecated_to TEXT,
   UNIQUE (library, commit_sha, name));                        -- the exact table
 CREATE VIRTUAL TABLE decls_fts USING fts5(name_words, signature, docstring,
   tokenize = 'unicode61');                                    -- rowid = decls.id
@@ -462,7 +473,16 @@ upper-case one, and words are lower-cased — `Widget.exists_spanning_gadget` is
 `T2Space` `t2 space`. Search queries are split by the same rule
 (`scripts/corpus/corpus_search.py` `iter_words`), so `natDegree`, `nat_degree`
 and `nat degree` are one query. A declaration present in two libraries is two
-rows.
+rows. `deprecated_to` is the new name a deprecated alias points at (the probe's
+`deprecated.new_name`), null otherwise.
+
+**The G1-blind database** (`corpus.blind.sqlite`, `cf corpus build-db <u>
+--blind`, `cflib.paths.WorkspacePaths.corpus_db_blind`) has the same declarations
+with an empty `tags` table, every Wikipedia link stripped from `decls.docstring`
+and from the FTS docstring column, and `meta.blind` = `1`: the proposal's §8.1
+arm with "the tag table turned off", which a run of that arm pins in place of
+`corpus.sqlite`, so neither a curated join nor a host tool can reach an
+article's tag or URL.
 
 **The host tools** (`scripts/corpus/corpus_search.py` and
 `scripts/corpus/corpus_show.py`) are standard-library scripts copied into the
@@ -482,8 +502,19 @@ by the rule above (at most 32), each quoted and the words OR-ed, so nothing a
 worker types reaches FTS5's own syntax; results are ranked by `bm25` with the name weighted over the signature
 over the docstring. Exit status: 0, 1 (`corpus_show.py`: no such declaration), 2
 (bad arguments, one that is not valid UTF-8 included), 3 (the database could not
-be read — a host problem); never a traceback. The
-workspace side reads the same database through `scripts/corpus/query.py`.
+be read — a host problem); never a traceback.
+
+**The workspace side** reads the database through `scripts/corpus/query.py` and
+nowhere else: `open_db(path)`, `meta(conn)`, `check_universe(conn, universe, *,
+blind=None)` (refuses a database that is not `cf-corpus/1` or whose
+`universe_sha256` is not the universe's — call it before trusting one),
+`is_blind(conn)`, `libraries(conn)`, `exists(conn, library, commit, name)` (the
+exact table), `declaration(conn, library, name, *, commit=None)` (every column
+with `tags`), `search(conn, words, *, library=None, limit=20, all_words=False)`
+(the host tool's search; `all_words` keeps only declarations matching every
+word), `show(conn, library, name)`, and the tag joins `tagged(conn, tag, value)`
+and `tags_of_kind(conn, tag)`, whose rows are `{library, commit, declaration,
+path, line, tag, value}`.
 
 ## 9. A locate run on disk
 

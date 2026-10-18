@@ -95,6 +95,9 @@ def register(subparsers) -> None:
     bdb = sub.add_parser("build-db", help="build corpus.sqlite from the ingested indexes")
     bdb.add_argument("universe")
     bdb.add_argument("--force", action="store_true", help="rebuild even when it is current")
+    bdb.add_argument("--blind", action="store_true",
+                     help="build corpus.blind.sqlite instead: the G1-blind database, with no tags "
+                          "and no Wikipedia links in the docstrings")
 
     st = sub.add_parser("status", help="libraries, canaries, indexes and the database")
     st.add_argument("universe")
@@ -105,6 +108,8 @@ def register(subparsers) -> None:
     se.add_argument("words", nargs="+")
     se.add_argument("--library", default=None)
     se.add_argument("--limit", type=int, default=20)
+    se.add_argument("--all-words", action="store_true",
+                    help="only declarations matching every word (default: any word)")
     se.add_argument("--json", action="store_true", dest="as_json")
 
     sh = sub.add_parser("show", help="one declaration of corpus.sqlite")
@@ -344,13 +349,16 @@ def _ingest(workspace, args) -> int:
 
 def _build_db(workspace, args) -> int:
     universe = _load(workspace, args.universe)
-    db = workspace.paths.corpus_db(args.universe)
+    db = (workspace.paths.corpus_db_blind(args.universe) if args.blind
+          else workspace.paths.corpus_db(args.universe))
     result = build_db.build(universe, workspace.paths.universe_dir(args.universe), db,
-                            force=args.force)
+                            force=args.force, blind=args.blind)
     if result["built"]:
         universe.save()
+        what = "G1-blind: no tags, no docstring Wikipedia links" if args.blind else \
+            f"{result['tags']} tags"
         print(f"built {db}: {result['declarations']} declarations of {result['libraries']} "
-              f"libraries, {result['tags']} tags, sha256 {short(result['sha256'])}")
+              f"libraries, {what}, sha256 {short(result['sha256'])}")
     else:
         print(f"{db} is current (sha256 {short(result['sha256'])}); --force rebuilds it")
     return 0
@@ -362,13 +370,18 @@ def _build_db(workspace, args) -> int:
 
 def _status(workspace, args) -> int:
     universe = _load(workspace, args.universe)
-    db_path = workspace.paths.corpus_db(args.universe)
-    recorded = universe.corpus_db
-    db_state = "not built"
-    if recorded:
-        db_state = "current" if build_db.current(universe, db_path) else "STALE or changed"
-    elif db_path.exists():
-        db_state = "STALE (an index changed since it was built)"
+    databases = {}
+    for blind, path, recorded in (
+            (False, workspace.paths.corpus_db(args.universe), universe.corpus_db),
+            (True, workspace.paths.corpus_db_blind(args.universe), universe.corpus_db_blind)):
+        state = "not built"
+        if recorded:
+            state = ("current" if build_db.current(universe, path, blind=blind)
+                     else "STALE or changed")
+        elif path.exists():
+            state = "STALE (an index changed since it was built)"
+        databases[path.name] = (recorded, state)
+    recorded, db_state = databases["corpus.sqlite"]
     rows = []
     for lib in universe.libraries:
         index = lib.get("index") or {}
@@ -388,7 +401,9 @@ def _status(workspace, args) -> int:
         print(json.dumps({"universe": universe.id, "frozen": universe.frozen,
                           "universe_sha256": universe.sha256(), "libraries": rows,
                           "excluded": universe.excluded, "canaries": universe.canaries,
-                          "corpus_db": recorded, "corpus_db_state": db_state},
+                          "corpus_db": recorded, "corpus_db_state": db_state,
+                          "corpus_db_blind": databases["corpus.blind.sqlite"][0],
+                          "corpus_db_blind_state": databases["corpus.blind.sqlite"][1]},
                          indent=2, sort_keys=True))
         return 0
     print(f"universe {universe.id} (frozen {universe.frozen}), sha256 {short(universe.sha256())}")
@@ -402,11 +417,12 @@ def _status(workspace, args) -> int:
     for row in universe.canaries:
         print(f"  canary Lean {row.get('lean_version')}: "
               f"{'passed' if row.get('passed') else 'FAILED'} ({row.get('checked')})")
-    if recorded:
-        print(f"  corpus.sqlite: {recorded.get('declarations')} declarations, sha256 "
-              f"{short(recorded.get('sha256') or '')}, {db_state}")
-    else:
-        print(f"  corpus.sqlite: {db_state}")
+    for name, (row, state) in databases.items():
+        if row:
+            print(f"  {name}: {row.get('declarations')} declarations, sha256 "
+                  f"{short(row.get('sha256') or '')}, {state}")
+        elif name == "corpus.sqlite" or state != "not built":
+            print(f"  {name}: {state}")
     return 0
 
 
@@ -423,7 +439,8 @@ def _open(workspace, universe_id: str):
 def _search(workspace, args) -> int:
     conn = _open(workspace, args.universe)
     try:
-        results = query.search(conn, args.words, library=args.library, limit=args.limit)
+        results = query.search(conn, args.words, library=args.library, limit=args.limit,
+                               all_words=args.all_words)
     finally:
         conn.close()
     if args.as_json:

@@ -109,9 +109,10 @@ def query_words(text: str) -> list[str]:
     return out
 
 
-def fts_match(words: list[str]) -> str:
-    """An FTS5 MATCH expression that ORs the words, each as a quoted string."""
-    return " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
+def fts_match(words: list[str], *, all_words: bool = False) -> str:
+    """An FTS5 MATCH expression over the words, each a quoted string: OR-ed, or AND-ed."""
+    return (" AND " if all_words else " OR ").join('"' + w.replace('"', '""') + '"'
+                                                   for w in words)
 
 
 def connect(db: str | Path) -> sqlite3.Connection:
@@ -133,8 +134,12 @@ def connect(db: str | Path) -> sqlite3.Connection:
 
 
 def search(conn: sqlite3.Connection, text: str, *, library: str | None = None,
-           limit: int = DEFAULT_LIMIT) -> list[dict]:
-    """The best ``limit`` declarations for ``text``, best first."""
+           limit: int = DEFAULT_LIMIT, all_words: bool = False) -> list[dict]:
+    """The best ``limit`` declarations for ``text``, best first.
+
+    ``all_words`` keeps only declarations matching every word (AND) instead of
+    any of them (OR, the default); the ranking is the same either way.
+    """
     words = query_words(text)
     if not words:
         return []
@@ -143,7 +148,7 @@ def search(conn: sqlite3.Connection, text: str, *, library: str | None = None,
            "d.signature, bm25(decls_fts, ?, ?, ?) AS rank "
            "FROM decls_fts JOIN decls d ON d.id = decls_fts.rowid "
            "WHERE decls_fts MATCH ?")
-    params: list = [*WEIGHTS, fts_match(words)]
+    params: list = [*WEIGHTS, fts_match(words, all_words=all_words)]
     if library:
         sql += " AND d.library = ?"
         params.append(library)

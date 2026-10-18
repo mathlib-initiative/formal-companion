@@ -370,6 +370,10 @@ class WorkspacePaths:
         """``corpus.sqlite``: derived from the indexes, rebuildable, opened read-only."""
         return self.universe_dir(universe_id) / "corpus.sqlite"
 
+    def corpus_db_blind(self, universe_id: str) -> Path:
+        """``corpus.blind.sqlite``: the G1-blind database -- no tags, no docstring Wikipedia URLs."""
+        return self.universe_dir(universe_id) / "corpus.blind.sqlite"
+
     @property
     def exports_dir(self) -> Path:
         return self.root / "exports"

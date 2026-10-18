@@ -308,7 +308,7 @@ class TestTheUniverse(unittest.TestCase):
         universe = make_universe(self.root, libs=("alpha", "beta"))
         data = universe.data
         self.assertEqual(set(data), {"id", "frozen", "libraries", "excluded", "canaries",
-                                     "corpus_db", "universe_sha256"})
+                                     "corpus_db", "corpus_db_blind", "universe_sha256"})
         self.assertEqual([lib["id"] for lib in data["libraries"]], ["alpha", "beta"])
         self.assertEqual(data["universe_sha256"], universe.sha256())
         self.assertEqual(set(data["libraries"][0]), {
@@ -798,6 +798,26 @@ class TestWikipediaURLs(unittest.TestCase):
                 self.assertEqual(ingest.wikipedia_urls(text),
                                  [f"https://en.wikipedia.org/wiki/{title}"])
 
+    def test_the_seam_cases_join_the_desktop_page(self):
+        """Wave 1 #14: a disambiguated title, a mobile link, a fragment, a markdown link."""
+        for text, title in (
+                ("https://en.wikipedia.org/wiki/Function_(mathematics).", "Function_(mathematics)"),
+                ("[x](https://en.wikipedia.org/wiki/Ring_(mathematics))", "Ring_(mathematics)"),
+                ("https://en.m.wikipedia.org/wiki/Widget_lemma", "Widget_lemma"),
+                ("https://en.wikipedia.org/wiki/Widget_lemma#Proof", "Widget_lemma")):
+            with self.subTest(text=text):
+                self.assertEqual(ingest.wikipedia_urls(text),
+                                 [f"https://en.wikipedia.org/wiki/{title}"])
+
+    def test_stripping_removes_the_whole_link(self):
+        self.assertEqual(ingest.strip_wikipedia_urls(
+            "See https://en.m.wikipedia.org/wiki/Ring_(mathematics)#Def, then x."),
+            "See , then x.")
+        self.assertEqual(ingest.strip_wikipedia_urls("[r](https://en.wikipedia.org/wiki/R) ok"),
+                         "[r]() ok")
+        self.assertEqual(ingest.strip_wikipedia_urls("no link"), "no link")
+        self.assertIsNone(ingest.strip_wikipedia_urls(None))
+
     def test_other_wikis_and_none(self):
         self.assertEqual(ingest.wikipedia_urls("https://de.wikipedia.org/wiki/Satz_von_Sylow"),
                          ["https://de.wikipedia.org/wiki/Satz_von_Sylow"])
@@ -945,7 +965,9 @@ class TestTheDatabase(unittest.TestCase):
         conn = self.connect()
         hits = query.tagged(conn, "wikipedia", "https://en.wikipedia.org/wiki/Widget_lemma")
         self.assertEqual(hits, [{"library": "alpha", "commit": ALPHA,
-                                 "declaration": "Widget.exists_spanning_gadget"}])
+                                 "declaration": "Widget.exists_spanning_gadget",
+                                 "path": "Alpha/Widget.lean", "line": 11, "tag": "wikipedia",
+                                 "value": "https://en.wikipedia.org/wiki/Widget_lemma"}])
 
     def test_a_second_build_is_a_no_op_and_a_forced_one_has_the_same_rows(self):
         again = build_db.build(self.universe, self.udir, self.db)
@@ -1417,6 +1439,176 @@ class TestTheProofWantedScanIsMarkedUnbuilt(unittest.TestCase):
             encoding="utf-8").split())
         self.assertIn("source scan for a `proof_wanted` that adds no constant is not "
                       "implemented", documents)
+
+
+class TestTheConsumerAPI(unittest.TestCase):
+    """Wave 1 #13, #16, #19, #23, #24: what the planner and the bench call instead of a
+    private reader."""
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.universe = make_universe(self.root, libs=("alpha", "beta"))
+        self.udir = self.root / "corpora" / "u1"
+        records = alpha_records() + [
+            decl("Widget.old_lemma", deprecated={"new_name": "Widget.exists_spanning_gadget",
+                                                 "since": "2026-01-01"}, line=61, start_line=61)]
+        ingest.ingest(self.universe, "alpha", write_probe(self.root / "pa", records),
+                      self.udir / "index" / "alpha")
+        beta = [decl("Beta.Widget.gadget_of_finite", module="Beta.Widget",
+                     signature="∀ (w : Widget), Finite w → ∃ g, g.Spans w",
+                     docstring="Finite case of https://en.wikipedia.org/wiki/Widget_lemma ."),
+                decl("Beta.spanning", module="Beta.Widget")]
+        ingest.ingest(self.universe, "beta",
+                      write_probe(self.root / "pb", beta, library="beta", commit=BETA,
+                                  modules=(("Beta.Widget", "Beta/Widget.lean"),)),
+                      self.udir / "index" / "beta")
+        self.db = self.udir / "corpus.sqlite"
+        build_db.build(self.universe, self.udir, self.db)
+
+    def connect(self, path=None):
+        conn = query.open_db(path or self.db)
+        self.addCleanup(conn.close)
+        return conn
+
+    def test_all_words_is_an_and_of_the_same_ranking(self):
+        conn = self.connect()
+        self.assertEqual(corpus_search.fts_match(["a", "b"], all_words=True), '"a" AND "b"')
+        any_word = {h["declaration"] for h in query.search(conn, "gadget finite")}
+        every = [h["declaration"] for h in query.search(conn, "gadget finite", all_words=True)]
+        self.assertEqual(every, ["Beta.Widget.gadget_of_finite"])
+        self.assertLess(set(every), any_word)
+
+    def test_the_tag_rows_carry_path_line_and_value(self):
+        conn = self.connect()
+        url = "https://en.wikipedia.org/wiki/Widget_lemma"
+        rows = query.tagged(conn, "wikipedia", url)
+        self.assertEqual([(r["library"], r["declaration"]) for r in rows],
+                         [("alpha", "Widget.exists_spanning_gadget"),
+                          ("beta", "Beta.Widget.gadget_of_finite")])
+        self.assertEqual(set(rows[0]), {"library", "commit", "declaration", "path", "line",
+                                        "tag", "value"})
+        self.assertEqual((rows[0]["path"], rows[0]["line"], rows[0]["value"], rows[0]["commit"]),
+                         ("Alpha/Widget.lean", 11, url, ALPHA))
+        self.assertEqual(query.tags_of_kind(conn, "wikipedia"), rows)
+        self.assertEqual(query.tags_of_kind(conn, "kerodon"), [])
+
+    def test_declaration_by_the_exact_key_and_its_rename(self):
+        conn = self.connect()
+        row = query.declaration(conn, "alpha", "Widget.old_lemma", commit=ALPHA)
+        self.assertEqual(row["deprecated_to"], "Widget.exists_spanning_gadget")
+        self.assertIsNone(query.declaration(conn, "alpha", "Widget.old_lemma", commit=BETA))
+        self.assertIsNone(query.declaration(conn, "alpha", "Widget.Spans")["deprecated_to"])
+
+    def test_check_universe_refuses_a_stale_or_foreign_database(self):
+        conn = self.connect()
+        self.assertEqual(query.check_universe(conn, self.universe)["schema"], "cf-corpus/1")
+        self.universe.set_index("beta", path="index/beta/", sha256="9" * 64, declarations=2)
+        with self.assertRaises(CfError) as caught:
+            query.check_universe(conn, self.universe)
+        self.assertIn("cf corpus build-db u1", caught.exception.hint)
+        other = self.root / "other.sqlite"
+        raw = sqlite3.connect(other)
+        raw.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        raw.execute("INSERT INTO meta VALUES ('schema', 'something-else/1')")
+        raw.commit()
+        raw.row_factory = sqlite3.Row
+        self.addCleanup(raw.close)
+        with self.assertRaises(CfError):
+            query.check_universe(raw, self.universe)
+
+    def test_the_blind_database(self):
+        blind_path = self.udir / "corpus.blind.sqlite"
+        result = build_db.build(self.universe, self.udir, blind_path, blind=True)
+        self.assertTrue(result["blind"])
+        conn = self.connect(blind_path)
+        self.assertTrue(query.is_blind(conn))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM decls").fetchone()[0], 8)
+        self.assertNotIn("wikipedia.org",
+                         query.declaration(conn, "beta", "Beta.Widget.gadget_of_finite")["docstring"])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM decls WHERE docstring LIKE "
+                                      "'%wikipedia.org%'").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM decls_fts WHERE docstring LIKE "
+                                      "'%wikipedia.org%'").fetchone()[0], 0)
+        self.assertEqual(query.tagged(conn, "wikipedia",
+                                      "https://en.wikipedia.org/wiki/Widget_lemma"), [])
+        # the host tool cannot reach the URL through the docstring column either
+        self.assertEqual([h["declaration"] for h in
+                          query.search(conn, "wikipedia org wiki", all_words=True)], [])
+        query.check_universe(conn, self.universe, blind=True)
+        with self.assertRaises(CfError):
+            query.check_universe(conn, self.universe, blind=False)
+        full = self.connect()
+        self.assertFalse(query.is_blind(full))
+        with self.assertRaises(CfError):
+            query.check_universe(full, self.universe, blind=True)
+        recorded = self.universe.corpus_db_blind
+        self.assertEqual(recorded["path"], "corpus.blind.sqlite")
+        self.assertEqual(recorded["sha256"], hashlib.sha256(blind_path.read_bytes()).hexdigest())
+        self.assertEqual(self.universe.corpus_db["path"], "corpus.sqlite")
+        self.assertTrue(build_db.current(self.universe, blind_path, blind=True))
+        self.assertFalse(build_db.current(self.universe, blind_path, blind=False))
+        self.assertFalse(build_db.build(self.universe, self.udir, blind_path, blind=True)["built"])
+        self.universe.save()
+        self.assertEqual(Universe.load(self.universe.path).corpus_db_blind, recorded)
+        # an index change makes both stale
+        self.universe.set_index("beta", path="index/beta/", sha256="9" * 64, declarations=2)
+        self.assertIsNone(self.universe.corpus_db)
+        self.assertIsNone(self.universe.corpus_db_blind)
+
+    def test_the_mathlib_library(self):
+        self.assertIsNone(self.universe.mathlib_library())
+        self.universe.add_library(library_id="mathlib4", repo="https://example.org/mathlib4",
+                                  commit="c" * 40, toolchain=TOOLCHAIN, roots=["Mathlib"],
+                                  brain_lib="Mathlib")
+        self.assertEqual(self.universe.mathlib_library()["id"], "mathlib4")
+        other = make_universe(_scratch(self), libs=("alpha",))
+        other.add_library(library_id="mathlib", repo="https://example.org/mathlib",
+                          commit="d" * 40, toolchain=TOOLCHAIN, roots=["Mathlib"])
+        self.assertEqual(other.mathlib_library()["id"], "mathlib")
+        for lib in other.libraries:
+            lib["brain_lib"] = "Mathlib"
+        with self.assertRaises(CfError):
+            other.mathlib_library()
+
+
+class TestBuildDbBlindCommand(unittest.TestCase):
+
+    def test_the_command_writes_beside_the_full_one(self):
+        root = _scratch(self)
+        ws = root / "ws"
+        buf = io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(buf):
+            cf_main.main(["init", str(ws), "--no-git", "-q"])
+
+        def cf(*argv):
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(out):
+                self.assertEqual(cf_main.main([*argv, "--workspace", str(ws)]), 0)
+            return out.getvalue()
+
+        cf("corpus", "init", "u1")
+        cf("corpus", "add", "u1", "--library", "alpha", "--repo", "https://example.org/alpha",
+           "--commit", ALPHA, "--toolchain", TOOLCHAIN, "--roots", "Alpha")
+        cf("corpus", "ingest", "u1", "--canary", "--from",
+           str(write_probe(root / "canary", canary_records(), library="cf-canary")))
+        cf("corpus", "ingest", "u1", "--library", "alpha", "--from",
+           str(write_probe(root / "pa", alpha_records())))
+        self.assertIn("G1-blind", cf("corpus", "build-db", "u1", "--blind"))
+        from cflib.paths import WorkspacePaths
+        paths = WorkspacePaths(ws)
+        self.assertTrue(paths.corpus_db_blind("u1").is_file())
+        self.assertFalse(paths.corpus_db("u1").exists())
+        status = cf("corpus", "status", "u1")
+        self.assertIn("corpus.blind.sqlite: 5 declarations", status)
+        self.assertIn("corpus.sqlite: not built", status)
+        cf("corpus", "build-db", "u1")
+        data = json.loads(cf("corpus", "status", "u1", "--json"))
+        self.assertEqual((data["corpus_db_state"], data["corpus_db_blind_state"]),
+                         ("current", "current"))
+        hits = [json.loads(line) for line in cf("corpus", "search", "u1", "spanning", "gadget",
+                                                "--all-words", "--json").splitlines()]
+        self.assertEqual([h["declaration"] for h in hits], ["Widget.exists_spanning_gadget"])
 
 
 if __name__ == "__main__":
