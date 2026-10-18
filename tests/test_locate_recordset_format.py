@@ -366,6 +366,23 @@ class TestALibraryWithNoLicence(_Exported):
                          [{"spdx": "Apache-2.0"}, {"spdx": "MIT"}])
 
 
+class TestARepositoryTheConsumerCannotLink(_Exported):
+    """R2-H: the review's RepoTrailingSlash variant, a universe pinned before ``cf corpus
+    add`` checked the consumer's repository grammar: refused, by name, before a file is
+    written, instead of a set the consumer refuses whole."""
+
+    def test_r2_a_trailing_slash_is_refused_at_export(self):
+        self.challenge()
+        path = self.paths.universe_yaml(F.U)
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("https://example.org/beta", "https://example.org/beta/"),
+                        encoding="utf-8")
+        code, out, err = self.export()
+        self.assertNotEqual(code, 0, out + err)
+        self.assertIn("'https://example.org/beta/' is not an https repository URL", out + err)
+        self.assertFalse(self.paths.export_dir("set-1").exists())
+
+
 class TestTheRecords(_Exported):
 
     def test_m7_every_record_carries_its_passages_section_and_prominence(self):

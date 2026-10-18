@@ -386,6 +386,35 @@ class TestTheUniverse(unittest.TestCase):
             toolchain=TOOLCHAIN, roots=["D"], licence=" MIT OR Apache-2.0 ")["licence"],
             {"spdx": "MIT OR Apache-2.0"})
 
+    def test_r2_a_repository_the_consumer_cannot_link_is_refused_at_add(self):
+        """The review's RepoTrailingSlash and RepoFiveSegments variants were pinned, exported
+        with nothing refused, and refused by the consumer; a re-add cannot change a repo."""
+        universe = make_universe(self.root)
+        for bad in ("https://example.org/beta/", "https://gitlab.example.org/group/sub/team/lean/beta",
+                    "https://example.org/a/../beta", "https://example.org/a//beta",
+                    "https://example.org/./beta", "https://localhost/beta", "https://example.org",
+                    "https://example.org:8443/beta", "https://example.org/be ta",
+                    "https://example.org/" + "b" * 101):
+            with self.subTest(repo=bad), self.assertRaises(CfError) as caught:
+                universe.add_library(library_id="beta", repo=bad, commit=BETA,
+                                     toolchain=TOOLCHAIN, roots=["Beta"])
+            self.assertIn("no trailing slash", str(caught.exception))
+        for good in ("https://github.com/leanprover-community/mathlib4",
+                     "https://gitlab.example.org/group/sub/team/beta",
+                     "https://example.org/beta.git", "https://example.org/~beta"):
+            with self.subTest(repo=good):
+                lid = f"lib{len(universe.libraries)}"
+                universe.add_library(library_id=lid, repo=good, commit=BETA,
+                                     toolchain=TOOLCHAIN, roots=["Beta"], brain_lib=lid)
+        path = self.root / "trailing.yaml"
+        text = universe.path.read_text(encoding="utf-8")
+        path.write_text(text.replace("https://example.org/alpha", "https://example.org/alpha/"),
+                        encoding="utf-8")
+        with self.assertRaises(CfError) as caught:
+            Universe.load(path)
+        self.assertIn("'https://example.org/alpha/' is not an https repository URL",
+                      str(caught.exception))
+
     def test_canaries_match_every_spelling_of_a_toolchain(self):
         self.assertEqual(lean_version("leanprover/lean4:v4.34.0-rc2"), "4.34.0-rc2")
         self.assertEqual(lean_version("v4.34.0"), "4.34.0")

@@ -48,7 +48,11 @@ LIBRARY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
-_REPO = re.compile(r"https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+\Z")
+#: a library's repository, as a record set names it and its consumer links it
+#: (references/locate-documents.md section 8): https, a dotted host, one to four path
+#: segments of letters, digits and ``._~-`` (at most 100 each), none of them ``.`` or
+#: ``..``, so no empty segment and no trailing slash
+REPO = re.compile(r"https://[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?:/[A-Za-z0-9_.~-]{1,100}){1,4}\Z")
 #: an elan toolchain spelling (``leanprover/lean4:v4.34.0``,
 #: ``leanprover/lean4-nightly:nightly-2026-10-01``) or a bare version: nothing that
 #: needs quoting in the shell lines ``cf corpus probe-command`` prints
@@ -464,12 +468,21 @@ def _host_problems(lib: dict) -> list[str]:
     return []
 
 
+def is_repo_url(repo) -> bool:
+    """Is ``repo`` a repository URL a record set may name (:data:`REPO`, no dot segment)?"""
+    return (isinstance(repo, str) and REPO.match(repo) is not None
+            and all(part not in (".", "..") for part in repo.split("/")[3:]))
+
+
 def _library_problems(lib: dict) -> list[str]:
     problems: list[str] = []
     if not LIBRARY_ID.match(str(lib.get("id") or "")):
         problems.append(f"id {lib.get('id')!r} is not [a-z0-9][a-z0-9._-]*")
-    if not _REPO.match(str(lib.get("repo") or "")):
-        problems.append(f"repo {lib.get('repo')!r} is not an https repository URL")
+    if not is_repo_url(lib.get("repo")):
+        problems.append(f"repo {lib.get('repo')!r} is not an https repository URL: a dotted "
+                        f"host and one to four path segments of letters, digits and ._~- "
+                        f"(none of them . or .., no trailing slash), e.g. "
+                        f"https://github.com/leanprover-community/mathlib4")
     if not COMMIT.match(str(lib.get("commit") or "")):
         problems.append(f"commit {lib.get('commit')!r} is not 40 lowercase hex digits")
     licence = lib.get("licence")
