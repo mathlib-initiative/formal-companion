@@ -69,6 +69,7 @@ class TestTheDocumentValues(unittest.TestCase):
                   | vocab.CANDIDATE_VERDICTS | vocab.CANDIDATE_VIA | vocab.TAG_KINDS
                   | vocab.CHALLENGE_TARGETS | vocab.CHALLENGE_ACTIONS | vocab.BENCH_TIERS
                   | vocab.BENCH_ARMS | vocab.BENCH_SPLITS | vocab.FNF_CAUSES | vocab.ERROR_CODES
+                  | vocab.SOURCE_ORIGINS
                   | {vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML,
                      vocab.UNRESOLVED_ATTEMPT_CAP})
         for value in sorted(values):
@@ -77,7 +78,7 @@ class TestTheDocumentValues(unittest.TestCase):
 
     def test_the_documents_name_the_values_they_carry(self):
         for value in (vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML, "cf-sourceset/1",
-                      "cf-corpus/1", "cf-gate-locate/1", "cf-layer-map/1",
+                      "cf-corpus/1", "cf-gate-locate/1", "cf-layer-map/2",
                       "cf-locate-candidates/1", "cf-locate-recordset/1"):
             with self.subTest(value=value):
                 self.assertIn(value, DOCUMENTS_MD)

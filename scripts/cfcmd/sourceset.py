@@ -31,11 +31,14 @@ from cflib.errors import CfError
 from cflib.jsonio import iter_jsonl, write_json
 from cflib.workspace import from_args
 from sources import render_html, websource, wikinet
-from sources.sourceset import Sourceset
+from sources.sourceset import Sourceset, is_adopted
 
 #: how many fetched sources a version records at most, so a killed fetch loses
 #: at most this many manifest updates (the bytes on disk are reused next time)
 DEFAULT_CHECKPOINT = 200
+#: a fetch stops after this many sources in a row that Wikipedia refused or
+#: rate-limited, instead of sending the rest of the list into the limiter
+MAX_UNAVAILABLE = 3
 
 
 def register(subparsers) -> None:
@@ -58,6 +61,9 @@ def register(subparsers) -> None:
     enum.add_argument("--importance", action="append", default=[], metavar="I",
                       help="keep only this importance (repeatable; top, high, mid, low, ...)")
     enum.add_argument("--limit", type=int, default=None, help="add at most N pages")
+    enum.add_argument("--include-adopted", action="store_true",
+                      help="also add the latest revision of a page a consumer pinned (by "
+                           "default such a page keeps only its adopted revision)")
     _network_arguments(enum)
 
     adopt = sub.add_parser("adopt", help="adopt a consumer's pinned revisions and their bytes")
@@ -110,16 +116,26 @@ def run(args) -> int:
 # ---------------------------------------------------------------------------
 # helpers
 
-def _transport(args):
-    """FixtureTransport with --fixtures, CurlTransport with --execute, else None (dry run)."""
+def _transport(args, family_id: str, workspace):
+    """FixtureTransport with --fixtures, CurlTransport with --execute, else None (dry run).
+
+    Before a real request the family is checked for network use: confirmed, and
+    its site the shipped one (``websource.family(network=True)``).
+    """
     if getattr(args, "fixtures", None):
         return wikinet.FixtureTransport(Path(args.fixtures).expanduser())
     if getattr(args, "execute", False):
+        websource.family(family_id, workspace, network=True)
         return wikinet.CurlTransport()
     return None
 
 
-def _write_bytes(path: Path, data: bytes) -> None:
+def _create_bytes(path: Path, data: bytes) -> bool:
+    """Create ``path`` holding ``data``; False, writing nothing, when it already exists.
+
+    The raw bytes a manifest records are never replaced: two writers racing for
+    one source both end up recording whichever bytes reached the disk first.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -127,26 +143,33 @@ def _write_bytes(path: Path, data: bytes) -> None:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
-    except BaseException:
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            return False
+        return True
+    finally:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise
 
 
-def _write_source(ss: Sourceset, entry: dict, *, raw: bytes | None = None,
-                  body: str | None = None) -> None:
-    """The source directory's raw bytes, canonical body and source.json."""
-    from cflib.jsonio import atomic_write
-
+def _write_source(ss: Sourceset, entry: dict, *, body: str | None = None) -> None:
+    """The source directory's canonical body (exact UTF-8 bytes) and source.json."""
     directory = ss.source_dir(entry["source_id"])
-    if raw is not None:
-        _write_bytes(directory / "source.raw.html", raw)
     if body is not None:
-        atomic_write(directory / "body.html", body)
+        render_html.write_bytes(directory / "body.html", body.encode("utf-8"))
     write_json(directory / "source.json", entry, sort_keys=True)
+
+
+def _on_disk_entry(ss: Sourceset, sid: str) -> dict:
+    """The ``source.json`` a source directory holds, or {} when there is none."""
+    try:
+        data = json.loads((ss.source_dir(sid) / "source.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _sha(data: bytes) -> str:
@@ -171,7 +194,7 @@ def _enumerate(workspace, args) -> int:
     ss = Sourceset.open(workspace.paths, args.sourceset_id)
     base = ss.latest()
     fam = websource.family(base.family, workspace)
-    transport = _transport(args)
+    transport = _transport(args, base.family, workspace)
     if transport is None:
         first = wikinet.request_url(fam.site, {
             "action": "query", "list": "projectpages", "wppprojects": args.project,
@@ -194,6 +217,11 @@ def _enumerate(workspace, args) -> int:
             continue
         pages.append(page)
     pages.sort(key=lambda p: p["pageid"])
+    # a page a consumer pinned keeps the revision it pinned (the proposal's
+    # section 2.1): its latest revision is added only when asked for
+    pinned = set() if args.include_adopted else base.adopted_pages()
+    kept_pinned = [p["pageid"] for p in pages if p["pageid"] in pinned]
+    pages = [p for p in pages if p["pageid"] not in pinned]
     if args.limit is not None:
         pages = pages[:max(0, args.limit)]
     infos = wikinet.page_infos(transport, fam.site, [p["pageid"] for p in pages])
@@ -222,9 +250,13 @@ def _enumerate(workspace, args) -> int:
     manifest = ss.write_version(base, entries.values())
     ss.refresh_state(command="enumerate-wikiproject", details={
         "project": args.project, "listed": len(pages), "added": added, "skipped": skipped,
-        "new_revisions": len(newer), "missing": len(missing)})
+        "new_revisions": len(newer), "missing": len(missing),
+        "pinned_by_a_consumer": len(kept_pinned)})
     log.info(f"WikiProject {args.project}: {len(pages)} page(s) listed, {added} added, "
              f"{skipped} already present at their latest revision")
+    if kept_pinned:
+        log.info(f"  {len(kept_pinned)} page(s) pinned by a consumer keep their adopted "
+                 f"revision (--include-adopted adds their latest one too)")
     for line in newer:
         log.info(f"  new revision of a present page, kept beside it: {line}")
     if missing:
@@ -265,12 +297,39 @@ def _adopt(workspace, args) -> int:
             bytes_path = pins_path.parent / bytes_path
         if not bytes_path.is_file():
             raise CfError(f"{where}: no bytes at {bytes_path}")
+        if isinstance(pageid, bool) or not isinstance(pageid, int) or \
+                isinstance(revision, bool) or not isinstance(revision, int):
+            raise CfError(f"{where}: pageid and revision are integers")
+        if row.get("assessment") is not None and not isinstance(row["assessment"], dict):
+            raise CfError(f"{where}: assessment is null or {{class, importance}}")
         raw = bytes_path.read_bytes()
         text, parse = render_html.parse_response_text(raw)
-        if parse and parse.get("revid") not in (None, revision):
-            raise CfError(f"{where}: the bytes are the parse of revision {parse.get('revid')}, "
-                          f"the pin says {revision}")
-        body = render_html.canonical_body(raw)
+        if text is None and render_html.response_json(raw) is not None:
+            data = render_html.response_json(raw)
+            error = data.get("error") if isinstance(data, dict) else None
+            raise CfError(f"{where}: {bytes_path.name} is JSON but no action=parse response "
+                          f"with a parse.text"
+                          + (f" (the API error {error.get('code')!r})"
+                             if isinstance(error, dict) else ""),
+                          hint="adopt the response bytes exactly as the API returned them "
+                               "(prop=text), or the HTML body itself")
+        for key, want in (("revid", revision), ("pageid", pageid)):
+            got = parse.get(key) if parse else None
+            if got is not None and got != want:
+                label = "revision" if key == "revid" else "pageid"
+                raise CfError(f"{where}: the bytes are the parse of {label} {got}, the pin "
+                              f"says {want}")
+        try:
+            body = render_html.canonical_body(raw)
+        except render_html.RenderError as exc:
+            raise CfError(f"{where}: {bytes_path.name}: {exc}",
+                          hint="adopt takes an action=parse JSON response or UTF-8 HTML; "
+                               "re-encode the consumer's file as UTF-8") from None
+        title = row.get("title") or (parse.get("title") if parse else None)
+        if parse and row.get("title") and parse.get("title") and \
+                row["title"] != parse["title"]:
+            notes.append(f"{where}: the pin titles page {pageid} {row['title']!r}, the "
+                         f"response {parse['title']!r}; the pin's title is kept as metadata")
         sid = fam.source_id(pageid, revision)
         raw_sha = _sha(raw)
         html_sha = render_html.sha256_text(body)
@@ -290,16 +349,17 @@ def _adopt(workspace, args) -> int:
             entry["raw_sha256"] = raw_sha
             entry["html_sha256"] = html_sha
             entry.setdefault("adopted_from", adopted_from)
-            for key in ("title", "wikidata"):
-                if entry.get(key) is None and row.get(key):
-                    entry[key] = row[key]
+            if entry.get("title") is None and title:
+                entry["title"] = title
+            if entry.get("wikidata") is None and row.get("wikidata"):
+                entry["wikidata"] = row["wikidata"]
         else:
             if pageid in by_page:
                 notes.append(f"page {pageid}: the consumer pins revision {revision}; the "
                              f"sourceset also holds revision(s) "
                              f"{', '.join(str(r) for r in sorted(by_page[pageid]))}; both are "
                              f"kept and a run should read the adopted one")
-            entry = websource.entry(fam, pageid, revision, title=row.get("title"),
+            entry = websource.entry(fam, pageid, revision, title=title,
                                     wikidata=row.get("wikidata"),
                                     assessment=row.get("assessment"),
                                     origin=websource.ORIGIN_ADOPTED, adopted_from=adopted_from)
@@ -313,7 +373,14 @@ def _adopt(workspace, args) -> int:
         writes.append((entry, raw, body))
         adopted += 1
     for entry, raw, body in writes:
-        _write_source(ss, entry, raw=raw, body=body)
+        raw_path = ss.source_dir(entry["source_id"]) / "source.raw.html"
+        if not _create_bytes(raw_path, raw) and raw_path.read_bytes() != raw:
+            raise CfError(f"{entry['source_id']}: source.raw.html on disk holds other bytes "
+                          f"than the consumer's (another writer, or an interrupted fetch); "
+                          f"nothing more was adopted",
+                          hint="`cf sourceset status --verify` shows the source; if no "
+                               "version records those bytes, delete the file and re-run")
+        _write_source(ss, entry, body=body)
     manifest = ss.write_version(base, entries.values())
     ss.refresh_state(command="adopt", details={"consumer": args.consumer,
                                                "pins_sha256": pins_sha, "adopted": adopted,
@@ -333,10 +400,16 @@ def _fetch(workspace, args) -> int:
     ss = Sourceset.open(workspace.paths, args.sourceset_id)
     base = ss.latest()
     fam = websource.family(base.family, workspace)
+    # a page a consumer pinned is read at its adopted revision: its enumerated
+    # revision is not fetched once the adopted bytes are in (the proposal's 2.1)
+    adopted_bytes = {e["pageid"] for e in base if is_adopted(e) and e.get("raw_sha256")}
     todo = [e for e in base if not e.get("raw_sha256")]
+    pinned = [e for e in todo if e["origin"] == websource.ORIGIN_ENUMERATED
+              and e["pageid"] in adopted_bytes]
+    todo = [e for e in todo if e not in pinned]
     if args.limit is not None:
         todo = todo[:max(0, args.limit)]
-    transport = _transport(args)
+    transport = _transport(args, base.family, workspace)
     if transport is None:
         log.info(f"dry run: {len(todo)} source(s) of {ss.id} have no bytes yet")
         if todo:
@@ -349,39 +422,66 @@ def _fetch(workspace, args) -> int:
     entries = {e["source_id"]: dict(e) for e in base}
     fetched, reused, failed = 0, 0, []
     pending = 0
+    unavailable = 0
     manifest = base
+    stopped = None
     for e in todo:
         sid = e["source_id"]
         raw_path = ss.source_dir(sid) / "source.raw.html"
         try:
             if raw_path.is_file():
-                raw = raw_path.read_bytes()       # fetch once: an earlier run's bytes
+                # fetch once: an earlier run's bytes, checked as fetched bytes are
+                if _on_disk_entry(ss, sid).get("adopted_from"):
+                    raise CfError("an interrupted adopt left these bytes; re-run "
+                                  "`cf sourceset adopt` with the consumer's pins")
+                wikinet.check_parse(raw_path.read_bytes(), e["revision"])
                 reused += 1
             else:
-                raw = wikinet.fetch_parse(transport, fam.site, e["revision"])
-                fetched += 1
+                fresh = wikinet.fetch_parse(transport, fam.site, e["revision"])
+                render_html.canonical_body(fresh)   # bytes it cannot read are never kept
+                if _create_bytes(raw_path, fresh):
+                    fetched += 1
+                else:                       # another writer got there first: theirs stand
+                    wikinet.check_parse(raw_path.read_bytes(), e["revision"])
+                    reused += 1
+            unavailable = 0
+            raw = raw_path.read_bytes()
             body = render_html.canonical_body(raw)
+            entry = dict(e)
+            entry["raw_sha256"] = _sha(raw)
+            entry["html_sha256"] = render_html.sha256_text(body)
+            entry["fetch"] = websource.fetch_block()
+        except wikinet.WikiUnavailable as exc:
+            failed.append(f"{sid}: {exc}")
+            unavailable += 1
+            if unavailable >= MAX_UNAVAILABLE:
+                stopped = exc
+                break
+            continue
         except (CfError, render_html.RenderError) as exc:
             failed.append(f"{sid}: {exc}")
             continue
-        entry = dict(e)
-        entry["raw_sha256"] = _sha(raw)
-        entry["html_sha256"] = render_html.sha256_text(body)
-        entry["fetch"] = websource.fetch_block()
-        _write_source(ss, entry, raw=None if raw_path.is_file() else raw, body=body)
+        _write_source(ss, entry, body=body)
         entries[sid] = entry
         pending += 1
         if pending >= checkpoint:
             manifest = ss.write_version(manifest, entries.values())
             pending = 0
     manifest = ss.write_version(manifest, entries.values())
-    ss.refresh_state(command="fetch", details={"fetched": fetched, "reused_on_disk": reused,
-                                               "failed": len(failed)})
+    ss.refresh_state(command="fetch", details={
+        "fetched": fetched, "reused_on_disk": reused, "failed": len(failed),
+        "pinned_by_a_consumer": len(pinned), "stopped": bool(stopped)})
     log.info(f"fetched {fetched} source(s), reused {reused} already on disk, "
-             f"{len(failed)} failed")
+             f"{len(failed)} failed"
+             + (f", {len(pinned)} left to their consumer's adopted revision" if pinned else ""))
     for line in failed[:20]:
         log.warn(f"  {line}")
     log.ok(f"sourceset {ss.id}: version {manifest.version} (sha {manifest.sha256[:12]})")
+    if stopped is not None:
+        raise CfError(f"Wikipedia is refusing or rate-limiting requests: stopped after "
+                      f"{MAX_UNAVAILABLE} sources in a row failed ({stopped})",
+                      hint="re-run `cf sourceset fetch --execute` later; what was fetched "
+                           "is recorded in the version above")
     return 1 if failed else 0
 
 
@@ -405,16 +505,19 @@ def _render(workspace, args) -> int:
             waiting += 1
             continue
         directory = ss.source_dir(sid)
-        body_path = directory / "body.html"
         try:
-            body = body_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
+            body = render_html.read_body(directory / "body.html")
+        except (OSError, render_html.RenderError) as exc:
             refused.append(f"{sid}: body.html cannot be read ({exc})")
             continue
         if render_html.sha256_text(body) != e["html_sha256"]:
             refused.append(f"{sid}: body.html is not the body the manifest records")
             continue
-        rendering = render_html.render(body)
+        try:
+            rendering = render_html.render(body)
+        except render_html.RenderError as exc:
+            refused.append(f"{sid}: {exc}")
+            continue
         if e.get("layer_sha256"):
             if e["layer_sha256"] == rendering.layer_sha256 and \
                     e.get("renderer") == render_html.RENDERER:

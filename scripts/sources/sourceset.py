@@ -34,6 +34,7 @@ from typing import Iterable
 
 from cflib import registry as registry_mod
 from cflib import state as state_mod
+from cflib import vocab
 from cflib.errors import CfError
 from cflib.jsonio import read_json, write_json
 from cflib.paths import WorkspacePaths
@@ -51,9 +52,25 @@ class SourcesetError(CfError):
     """A sourceset that is missing, malformed, or would stop being append-only."""
 
 
+#: characters some line splitters break on that ``json.dumps(ensure_ascii=False)``
+#: leaves raw; a manifest line escapes them so every reader sees one line per entry
+_LINE_BREAKERS = {"\u0085": "\\u0085", "\u2028": "\\u2028", "\u2029": "\\u2029"}
+
+
 def canonical_line(obj: dict) -> str:
-    """One manifest line: sorted keys, no spaces, UTF-8 as is."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    """One manifest line: sorted keys, no spaces, UTF-8 as is except U+0085, U+2028, U+2029."""
+    line = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    for raw, escaped in _LINE_BREAKERS.items():
+        line = line.replace(raw, escaped)
+    return line
+
+
+def split_lines(text: str) -> list[str]:
+    """A manifest's lines: split on LF only, the one separator a manifest is written with."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def sha256_file(path: Path) -> str:
@@ -92,6 +109,31 @@ class Manifest:
         """What a run records: ``{id, version, manifest_sha256}``."""
         return {"id": self.sourceset_id, "version": self.version,
                 "manifest_sha256": self.sha256}
+
+    def preferred(self) -> dict[int, str]:
+        """``{pageid: source_id}``: the one source per page a run plans.
+
+        The proposal's section 2.1: a revision a consumer pinned is adopted
+        INSTEAD of one the sourceset chose, so a page with an adopted source plans
+        it (the highest adopted revision when there are several), and any other
+        page plans its highest enumerated revision.
+        """
+        best: dict[int, tuple[int, int, str]] = {}
+        for entry in self.entries.values():
+            adopted = 1 if is_adopted(entry) else 0
+            key = (adopted, entry["revision"], entry["source_id"])
+            if entry["pageid"] not in best or key > best[entry["pageid"]]:
+                best[entry["pageid"]] = key
+        return {pageid: key[2] for pageid, key in sorted(best.items())}
+
+    def adopted_pages(self) -> set[int]:
+        """Page ids with an adopted source: the pages a consumer pinned."""
+        return {e["pageid"] for e in self.entries.values() if is_adopted(e)}
+
+
+def is_adopted(entry: dict) -> bool:
+    """Did a consumer pin this source -- adopted outright, or its bytes adopted later?"""
+    return entry.get("origin") == vocab.SOURCE_ORIGIN_ADOPTED or bool(entry.get("adopted_from"))
 
 
 def append_only_problems(base: Manifest, entries: dict[str, dict]) -> list[str]:
@@ -181,7 +223,7 @@ class Sourceset:
             raise SourcesetError(f"sourceset {self.id!r} has no version {version}",
                                  hint=f"versions on disk: {self.versions()}")
         raw = path.read_bytes()
-        lines = raw.decode("utf-8").splitlines()
+        lines = split_lines(raw.decode("utf-8"))
         if not lines:
             raise SourcesetError(f"{path} is empty")
         try:
@@ -269,8 +311,16 @@ class Sourceset:
         header = {"schema": SCHEMA, "id": self.id, "version": version, "family": base.family,
                   "previous_sha256": base.sha256, "created": now or state_mod.now(),
                   "sources": len(new)}
-        text = "".join(canonical_line(x) + "\n"
-                       for x in [header] + [new[k] for k in sorted(new)])
+        rows = [header] + [new[k] for k in sorted(new)]
+        text = "".join(canonical_line(x) + "\n" for x in rows)
+        # read it back as load() will, BEFORE the version exists: once linked it is
+        # permanent, and one unreadable version wedges every later command
+        try:
+            if [json.loads(line) for line in split_lines(text)] != rows:
+                raise ValueError("the lines do not read back as the entries")
+        except ValueError as exc:
+            raise SourcesetError(f"sourceset {self.id!r}: version {version} would not read "
+                                 f"back ({exc}); nothing was written") from None
         _write_new(self.paths.sourceset_manifest(self.id, version), text)
         return self.load(version)
 
@@ -302,9 +352,9 @@ class Sourceset:
         entries = list(manifest)
         return {
             "sources": len(entries),
-            "enumerated": sum(1 for e in entries if e["origin"] == websource.ORIGIN_ENUMERATED),
-            "adopted": sum(1 for e in entries if e["origin"] == websource.ORIGIN_ADOPTED
-                           or e.get("adopted_from")),
+            vocab.SOURCE_ORIGIN_ENUMERATED: sum(
+                1 for e in entries if e["origin"] == vocab.SOURCE_ORIGIN_ENUMERATED),
+            vocab.SOURCE_ORIGIN_ADOPTED: sum(1 for e in entries if is_adopted(e)),
             "fetched": sum(1 for e in entries if e.get("raw_sha256")),
             "rendered": sum(1 for e in entries if e.get("layer_sha256")),
             "pages": len({e["pageid"] for e in entries}),
