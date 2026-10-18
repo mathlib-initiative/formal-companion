@@ -863,9 +863,13 @@ like a faithfulness run:
   from `orchestrator.sqlite` (whose schema is assumed, not known: any table
   with a worktree-path-like and a task-id-like column, one task id or none; a
   recorded path counts when it resolves to the worktree's directory; the
-  database is opened `mode=ro`, never `immutable=1`, because tend writes it in
-  WAL mode and a live run's rows sit in the WAL until a checkpoint), or
-  the single-stem rule. Documents are parsed strictly: a duplicate key, a
+  database is opened `mode=ro`, because tend writes it in WAL mode and a live
+  run's rows sit in the WAL until a checkpoint; `immutable=1` is the fallback
+  only when no `-wal` lies beside it, where the main file is complete, or its
+  directory cannot be written, where the line adds "read immutably: rows in its
+  -wal may be missing" when a `-wal` is there — any other failed read is no
+  task id, never an immutable read), or the single-stem rule, followed by why
+  no task id was found. Documents are parsed strictly: a duplicate key, a
   `NaN`/`Infinity` or a number that overflows to one, a lone surrogate, or
   nesting deeper than 64 levels is a rule 1 refusal, and so is a value of the
   wrong type where a word or an id belongs; a document is read only from a

@@ -245,9 +245,11 @@ root, bridge and harvest, with these differences:
   commands with `--changed-files --base <branch>`; it reads only the documents the change set
   touched and only the sources, candidates and manifest they name. Its last line names the
   ownership rule that judged the change set: the task id from `--task-id`/`TEND_TASK_ID`, the
-  task id recovered from `<tend-root>/orchestrator.sqlite` (opened read-only and immutable,
-  **with an assumed schema**: read that line on the smoke task, as for §4 step 5), or the
-  single-stem rule.
+  task id recovered from `<tend-root>/orchestrator.sqlite` (opened `mode=ro`, which reads the
+  rows tend's WAL holds; `immutable=1` only when no `-wal` lies beside it or its directory
+  cannot be written, and then the line says it was read immutably; **with an assumed
+  schema**: read that line on the smoke task, as for §4 step 5), or the single-stem rule,
+  with the reason the lookup found no task.
 - **What travels.** `cf run` sends only the run's own sources (their rendered directories),
   `corpus.sqlite` (and the database the workers search, when the run is blind or planted) and the
   candidates directory, and checks the database's sha once at the verify stage. **A locate run

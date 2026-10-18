@@ -418,10 +418,12 @@ documents** (`--findings` from the bridge), loading only the sources they name:
    the universe frozen in `gate.json`;
 6. at most K locations per passage, ranks distinct;
 7. ownership: the changed files are that task's own directory, using the task
-   id recovered from `<tend-root>/orchestrator.sqlite` (opened `mode=ro&
-   immutable=1`) when tend does not export `TEND_TASK_ID` to validation
-   commands; otherwise the single-stem rule, and the gate's last line says
-   which rule ran;
+   id recovered from `<tend-root>/orchestrator.sqlite` (opened `mode=ro`, so
+   the rows tend's WAL holds are read; `immutable=1` only when no `-wal` lies
+   beside it or its directory cannot be written, and the last line then says
+   so) when tend does not export `TEND_TASK_ID` to validation commands;
+   otherwise the single-stem rule, and the gate's last line says which rule
+   ran and, for the single-stem rule, why no task id was found;
 8. an inventory document (L3a) may not drop a passage the deterministic
    finders found without a reason, and every `formal_math` paragraph of the
    source must be covered by a passage or a recorded skip (a paragraph-coverage
