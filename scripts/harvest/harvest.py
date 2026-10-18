@@ -283,7 +283,8 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
                   sources: Mapping[str, str] | None = None, previous: dict | None = None,
                   source_manifest: dict[str, str] | None = None,
                   run_yaml: str | None = None, allow_edition_mismatch: bool = False,
-                  gate: dict | None = None, cost: dict | None = None) -> dict:
+                  gate: dict | None = None, cost: dict | None = None,
+                  host_artifacts: dict | None = None) -> dict:
     """Reconcile the destination against the expected set.
 
     ``expected`` is the REMOTE listing, never a number someone remembered.
@@ -302,7 +303,10 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     ``cost`` is the block ``cost.fleet.cost_block`` computed from the agents'
     transcripts (issue #11), or None when the harvest was given none; it never
     affects ``complete``, because a run's findings are whole or not regardless
-    of whether anyone priced them.
+    of whether anyone priced them.  ``host_artifacts`` is what
+    ``harvest.host_artifacts.fetch`` brought home beside the corpus (a locate
+    run's gate log, usage export and canary scan); it never affects
+    ``complete`` either.
     """
     actual_paths = iter_finding_files(dest)
     actual = sorted(finding_name(p, dest) for p in actual_paths)
@@ -350,6 +354,8 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     locate = locate_counts(dest)
     if locate:
         receipt["locate"] = locate
+    if host_artifacts is not None:
+        receipt["host_artifacts"] = host_artifacts
     if previous:
         receipt["previous"] = {
             "harvested_at": previous.get("harvested_at"),
@@ -472,6 +478,10 @@ def describe(receipt: dict) -> str:
         from cost import fleet as cost_fleet  # local: cost.fleet reads receipts through this module
 
         lines.extend(cost_fleet.describe(cost))
+    if isinstance(receipt.get("host_artifacts"), dict):
+        from harvest import host_artifacts as host_mod
+
+        lines.extend(host_mod.describe(receipt["host_artifacts"]))
     prev = receipt.get("previous")
     if prev:
         lines.append(f"  previous harvest: {prev.get('actual')} files at {prev.get('harvested_at')}"
@@ -488,7 +498,8 @@ def describe(receipt: dict) -> str:
 def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str] | None = None,
             run_yaml_src: Path | None = None, verify_sha: bool = False,
             execute: bool = True, allow_edition_mismatch: bool = False,
-            gate_runner=None, cost: dict | None = None) -> dict:
+            gate_runner=None, cost: dict | None = None,
+            host_artifacts: dict | None = None) -> dict:
     """Transfer, reconcile and write RECEIPT.json. Returns the receipt.
 
     ``execute=False`` only makes sense for a remote source: it prints the
@@ -516,7 +527,7 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
                             sources=sources, previous=previous, source_manifest=shas,
                             run_yaml=run_yaml_name,
                             allow_edition_mismatch=allow_edition_mismatch, gate=gate,
-                            cost=cost)
+                            cost=cost, host_artifacts=host_artifacts)
     write_json(dest / RECEIPT_NAME, receipt, indent=1, sort_keys=True)
     return receipt
 

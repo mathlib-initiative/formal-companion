@@ -668,8 +668,39 @@ is `find -print0`, the checksums `shasum` over it). The landed corpus is gated
 again with `verify_locate.py` and the run's `gate.local.json`, and the receipt's
 `locate` block counts `documents`, `by_mode`, `tasks`, `passages`, `verdicts`,
 `unresolved_documents`, `attempt_capped_documents` and `unresolved_passages` —
-UNRESOLVED on its own, never as not formalized. Each
-document becomes finding rows that `cflib.hashing.finding_id` keys unchanged —
+UNRESOLVED on its own, never as not formalized. That re-gate writes no line to
+any gate log: it is not a worker's attempt.
+
+A remote `cf harvest <run> --execute` also brings home, outside the findings
+rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
+(whose tree is the receipt's manifest), into `runs/<run-id>/host/`
+(`WorkspacePaths.run_host_dir`, `scripts/harvest/host_artifacts.py`):
+
+| local file | from the host |
+|---|---|
+| `gate.jsonl` | `<log_dir>/gate.jsonl`, `log_dir` being the host `gate.json`'s (the tend root's `gate-log/`) |
+| `usage.jsonl` | a campaign shard only: the sequencer's `<campaign dir>/usage-<k>.jsonl` (§11) |
+| `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<k>.json` (§11) |
+
+A shard is a run whose `run.yaml` carries `locate.campaign`; `k` is its `index`
+in that campaign's `campaign.yaml`, and the campaign directory is the rendered
+sequencer's `host_dir`. Each file is one `rsync -a --ignore-missing-args` and
+lands only once it arrived whole; the dry run prints those commands with the
+findings ones. The receipt records `host_artifacts: {<local name>: {remote,
+fetched, path, sha256, bytes} | {remote, fetched: false, reason,
+kept_previous?}}` (a shard's rows also carry `campaign` and `shard`); a file the
+host lacks is `absent on the host`, never a failed harvest. With no
+`--transcripts`, a landed `usage.jsonl` is what the receipt's `cost` block
+prices. The harvest then merges `runs.<run-id>` of the sourceset's
+`state.json` through `Sourceset.record_state` — `{status: harvested,
+harvested_at, complete, gate_ok, locate: <the receipt's locate block>}` over the
+row `cf plan-locate` wrote, whose fields stay. The faithfulness `cf tally`
+leaves a locate corpus out (one whose `run.yaml` copy carries a `locate` block
+or a locate mode, or whose receipt has a `locate` block), names it under
+`locate_runs`, and `cf status` and `cf run --status` count a nested corpus by
+the receipt's own listing.
+
+Each document becomes finding rows that `cflib.hashing.finding_id` keys unchanged —
 the library id is the `repo` and `<library>:<declaration>@<commit>` the
 declaration list:
 
