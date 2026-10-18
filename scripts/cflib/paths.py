@@ -348,6 +348,12 @@ class WorkspacePaths:
         return (self.candidates_dir(sourceset_id, universe_id)
                 / f"{_safe_id(source_id, 'source_id')}.json")
 
+    def candidates_kind_dir(self, sourceset_id: str, universe_id: str, kind: str) -> Path:
+        """L2 retrieved from another TOOLS database than the full one (``blind``,
+        ``planted-<sha16>``): a directory of its own under the full one's, so one arm
+        never overwrites another's files (references/locate-documents.md section 5)."""
+        return self.candidates_dir(sourceset_id, universe_id) / _safe_id(kind, "candidates kind")
+
     @property
     def corpora_dir(self) -> Path:
         """Universes of libraries.  Not ``corpus/``, which holds harvested findings."""

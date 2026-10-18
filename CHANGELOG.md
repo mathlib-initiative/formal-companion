@@ -35,6 +35,33 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The locate planner meets the other locate packages through their owners
+  (`references/locate-documents.md` §5, §6, §9, §10): the sourceset through
+  `sources.sourceset.Sourceset` (one source per page, `Manifest.preferred()`;
+  a source whose files moved is refused at plan time; a missing view is never
+  read as empty), the views through `sources.render_html`, the universe through
+  `corpus.universe.Universe`, the database through `corpus.query`, accepted by
+  the universe sha it was built for, never its bytes, and the state file
+  through `Sourceset.record_state`. A run names two databases: the full
+  `corpus.sqlite` the gate checks, and the tools database its workers search
+  — `--blind` the G1-blind build, `cf plan-locate`/`cf locate candidates
+  --tools-corpus-db` a planted one — with `--db` inside the allowlisted prefix
+  and one candidates directory per kind. The staged gate directory and `bin/`
+  are whole (`verify_findings.py`, both corpus tools, `agent_call.py`,
+  `attempt_cap.py` for every run, `watchdog.py`), a missing file is a planning
+  error, and `run.yaml` pins `skill_commit`, every staged file's sha, the
+  tools database and the arm (a plan of another arm than its inventory or
+  challenged runs is refused); `budget.max_cost` comes only from `--max-cost`.
+  Task manifests carry each source's curated hits once (`curated`) and where to
+  read each passage (`text_span`, `section`, `quote`), and are kept in
+  `runs/<run>/planned.json`. Candidates join titles only on the title, by base
+  QID for suffixed `1000.yaml` keys, never across another QID. The outcomes
+  apply a challenge only to the run and records it planned, count a refuted
+  location as judged, accept only a weaker downgrade, re-rank an overturn and
+  stamp every row with its document's shas; the export refuses a closed
+  licence class, problem rows and source text past the cap in receipts, hashes
+  each receipt as written, and never writes into the checkout, a companion or a
+  directory that is not a record set.
 - The overlay writes and reads Literature Links 2.0.0, unreleased. A
   record's `subject` ends are the item's regions of the PDF and its `object`
   end is the declaration in the repository at the export commit, so an item

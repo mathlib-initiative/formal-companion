@@ -105,10 +105,11 @@ def register(subparsers) -> None:
                     help="a harvested challenge run whose verdicts apply (repeatable)")
     ll.add_argument("--set-id", required=True, help="the record set's id: exports/<set-id>/")
     ll.add_argument("--byte-budget", type=int, default=None,
-                    help="per-source bytes of records/<source-id>.jsonl (default 262144); a "
-                         "source over it is refused, never truncated")
+                    help="per-source bytes of records/<source-id>.jsonl and its receipts "
+                         "(default 262144); a source over it is refused, never truncated")
     ll.add_argument("--out", type=Path, default=None, metavar="DIR",
-                    help="write the set here instead of exports/<set-id>/")
+                    help="write the set here instead of exports/<set-id>/: a new or empty "
+                         "directory, or an earlier set (never the checkout or a companion)")
 
 
 def _common_arguments(p) -> None:
@@ -253,11 +254,10 @@ def _literature_links(args) -> int:
     run = outcomes_mod.run_yaml(ws.paths, args.run)
     sourceset = (run["locate"].get("sourceset") or {}).get("id")
     if sourceset:
-        with ss_state.update(ws.paths, sourceset) as st:
-            ss_state.record(st, "exports", args.set_id, {
-                "run": args.run, "challenge_runs": list(args.challenge_run),
-                "exported": report["exported"], "refused": len(report["refused"]),
-                "seal_sha256": report["seal_sha256"], "path": report["path"]})
+        ss_state.record(ws.paths, sourceset, "exports", args.set_id, {
+            "run": args.run, "challenge_runs": list(args.challenge_run),
+            "exported": report["exported"], "refused": len(report["refused"]),
+            "seal_sha256": report["seal_sha256"], "path": report["path"]})
     exported = report["exported"]
     log.info(f"record set {args.set_id}: {exported.get('records', 0)} record(s) of "
              f"{exported.get('passages', 0)} passage(s) in {exported.get('sources', 0)} "

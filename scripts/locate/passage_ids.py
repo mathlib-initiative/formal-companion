@@ -21,7 +21,9 @@ of ``paragraphs.json`` it starts in, else at the end of the quote.
     passage_ids.py --source-dir <sources>/<source-id> --document findings/<task>/<source>.json [--write]
 
 Exit 0 when every passage was placed, 1 when one was not (each named on
-stderr), 2 when the inputs cannot be read.
+stderr), 2 when the inputs cannot be read -- a source directory without its
+``layer.txt``, ``formulas.json`` or ``paragraphs.json`` among them, as the gate
+refuses one.
 """
 from __future__ import annotations
 
@@ -112,8 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         layer = (source / "layer.txt").read_text(encoding="utf-8")
         formulas = json.loads((source / "formulas.json").read_text(encoding="utf-8"))
-        paragraphs = (json.loads((source / "paragraphs.json").read_text(encoding="utf-8"))
-                      if (source / "paragraphs.json").is_file() else [])
+        paragraphs = json.loads((source / "paragraphs.json").read_text(encoding="utf-8"))
         doc = json.loads(Path(args.document).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         print(f"passage_ids: cannot read the inputs ({exc})", file=sys.stderr)
