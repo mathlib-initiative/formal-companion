@@ -7,15 +7,23 @@ is one canonical rendering of one page revision, identified by
 title: titles carry ``/`` and move, so a title is metadata here and nothing
 keys on it.
 
-Three things are fixed and live only here:
+Four things are fixed and live only here:
 
 * the parse parameter set every fetch uses (:data:`PARSE_PARAMS`, plus
   ``oldid``), whose canonical-JSON sha (:func:`params_sha256`) every fetched
   entry records, so two fetches of one revision with different parameters can
   never pass for one source;
 * the manifest entry's fields (:data:`ENTRY_FIELDS`) and what each may hold
-  (:func:`entry_problems`), the page flags among them (:func:`page_flags`), and
-  what an entry's flags say when it recorded none (:func:`effective_flags`);
+  (:func:`entry_problems`), ``adopted_from`` (:func:`adopted_from_problems`) and
+  the page flags among them (:func:`page_flags`), and what an entry's flags say
+  when it recorded none (:func:`effective_flags`);
+* the pins row a producer hands ``cf sourceset adopt`` (:data:`PIN_FIELDS`,
+  :func:`pin_problems`), the import contract of references/locate-documents.md
+  section 7 ("Adopting a producer's pins"): its ``bytes`` is a path inside the
+  pins file's directory, its optional ``fetch`` must be this module's
+  :func:`fetch_block`, and its optional ``layer_sha256`` is the producer's sha
+  of the text layer of those bytes, recorded in ``adopted_from`` and held
+  against the render;
 * the revision permalink, from the family's ``revision_url`` template in the
   registry -- built from the page id and revision, so it survives a page move.
 """
@@ -24,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from pathlib import PurePosixPath
 from typing import Any
 
 from cflib import registry as registry_mod
@@ -57,6 +66,17 @@ OPTIONAL_FIELDS = ("adopted_from", "flags")
 #: the fields a later manifest version may fill in (null -> value); every other
 #: field is fixed when the entry is first written
 SHA_FIELDS = ("raw_sha256", "html_sha256", "layer_sha256")
+#: ``adopted_from``: who pinned the source and the sha of the pins file, plus the
+#: producer's sha of the text layer when its pin carried one
+ADOPTED_FROM_FIELDS = ("consumer", "pins_sha256")
+ADOPTED_FROM_OPTIONAL = ("layer_sha256",)
+#: every field a pins row may carry (references/locate-documents.md section 7):
+#: ``revision`` and one of ``pageid`` / ``title`` are required, the rest may be
+#: absent or null; ``fetch`` and ``layer_sha256`` speak of the row's bytes, so
+#: they need ``bytes``
+PIN_FIELDS = ("revision", "pageid", "title", "bytes", "wikidata", "assessment", "fetch",
+              "layer_sha256")
+PIN_NEEDS_BYTES = ("fetch", "layer_sha256")
 
 #: the assessment classes that make a page a redirect, a disambiguation page, a list
 REDIRECT_CLASSES = frozenset({"redirect"})
@@ -284,15 +304,135 @@ def entry_problems(record: Any) -> list[str]:
         out.append(f"{where}: a renderer with no layer_sha256")
     if record["layer_sha256"] is not None and record["html_sha256"] is None:
         out.append(f"{where}: a layer_sha256 with no html_sha256")
-    adopted = record.get("adopted_from")
-    if adopted is not None and not isinstance(adopted, dict):
-        out.append(f"{where}: adopted_from is an object")
+    out.extend(f"{where}: {p}" for p in adopted_from_problems(record.get("adopted_from")))
+    producer = producer_layer_sha256(record)
+    if producer is not None and record["layer_sha256"] is not None \
+            and record["layer_sha256"] != producer:
+        out.append(f"{where}: layer_sha256 is not the producer's (adopted_from.layer_sha256)")
     flags = record.get("flags")
     if flags is not None and not (isinstance(flags, dict) and set(flags) <= vocab.PAGE_FLAGS
                                   and all(v is None or isinstance(v, bool)
                                           for v in flags.values())):
         out.append(f"{where}: flags is null or {{{', '.join(sorted(vocab.PAGE_FLAGS))}}} "
                    f"each true, false or null")
+    return out
+
+
+def adopted_from_problems(adopted: Any) -> list[str]:
+    """What is wrong with an entry's ``adopted_from``; empty when absent or well formed.
+
+    ``{consumer, pins_sha256}``, plus ``layer_sha256`` -- the producer's sha of
+    the text layer -- when the pin carried one.
+    """
+    if adopted is None:
+        return []
+    if not isinstance(adopted, dict):
+        return ["adopted_from is an object"]
+    out: list[str] = []
+    unknown = sorted(set(adopted) - set(ADOPTED_FROM_FIELDS) - set(ADOPTED_FROM_OPTIONAL))
+    if unknown:
+        out.append(f"adopted_from has unknown field(s) {', '.join(unknown)}")
+    missing = [f for f in ADOPTED_FROM_FIELDS if f not in adopted]
+    if missing:
+        out.append(f"adopted_from is missing {', '.join(missing)}")
+    if "consumer" in adopted and not isinstance(adopted["consumer"], str):
+        out.append("adopted_from.consumer is a string")
+    for name in ("pins_sha256",) + ADOPTED_FROM_OPTIONAL:
+        if name in adopted and not _SHA.match(str(adopted[name])):
+            out.append(f"adopted_from.{name} is 64 lowercase hex digits")
+    return out
+
+
+def producer_layer_sha256(record: dict) -> str | None:
+    """The producer's sha of the text layer an entry's pin carried, or None."""
+    adopted = record.get("adopted_from")
+    if isinstance(adopted, dict) and isinstance(adopted.get("layer_sha256"), str):
+        return adopted["layer_sha256"]
+    return None
+
+
+def pin_problems(row: Any) -> list[str]:
+    """What is wrong with one pins row's own fields; empty when adopt may read it.
+
+    Whether its bytes are what it claims, and what page a title pin's revision
+    is of, are the caller's checks, which have the files and the network.  A
+    field outside :data:`PIN_FIELDS` is refused rather than ignored, so a
+    misspelt ``layer_sha256`` cannot silently switch the render's parity check
+    off.
+    """
+    if not isinstance(row, dict):
+        return ["a pin is a JSON object"]
+    out: list[str] = []
+    unknown = sorted(set(row) - set(PIN_FIELDS))
+    if unknown:
+        out.append(f"unknown field(s) {', '.join(unknown)} (a pin carries "
+                   f"{', '.join(PIN_FIELDS)})")
+    for name, required in (("revision", True), ("pageid", False)):
+        value = row.get(name)
+        if value is None and not required:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            out.append(f"{name} is a positive integer"
+                       + (" (it is missing)" if value is None else f", not {value!r}"))
+    if row.get("pageid") is None and not row.get("title"):
+        out.append("a pin names its revision and its page: a pageid or a title")
+    for name in ("title", "wikidata"):
+        if row.get(name) is not None and not isinstance(row[name], str):
+            out.append(f"{name} is a string or null")
+    if isinstance(row.get("wikidata"), str) and not _QID.match(row["wikidata"]):
+        out.append(f"wikidata {row['wikidata']!r} is not a QID")
+    assessment = row.get("assessment")
+    if assessment is not None and not (
+            isinstance(assessment, dict) and set(assessment) <= {"class", "importance"}
+            and all(v is None or isinstance(v, str) for v in assessment.values())):
+        out.append("assessment is null or {class, importance} strings")
+    if row.get("bytes") is not None:
+        problem = pin_bytes_problem(row["bytes"])
+        if problem:
+            out.append(problem)
+    if row.get("fetch") is not None and row["fetch"] != fetch_block():
+        out.append(f"fetch {json.dumps(row['fetch'], sort_keys=True)} is not the fixed fetch "
+                   f"{json.dumps(fetch_block(), sort_keys=True)} (the parameter set of "
+                   f"references/locate-documents.md section 7, 'The fetch')")
+    layer = row.get("layer_sha256")
+    if layer is not None and not (isinstance(layer, str) and _SHA.match(layer)):
+        out.append("layer_sha256 is null or 64 lowercase hex digits")
+    if row.get("bytes") is None:
+        speaking = [name for name in PIN_NEEDS_BYTES if row.get(name) is not None]
+        if speaking:
+            out.append(f"{' and '.join(speaking)} {'speaks' if len(speaking) == 1 else 'speak'} "
+                       f"of the pin's bytes, and the pin names none")
+    return out
+
+
+def pin_bytes_problem(value: Any) -> str | None:
+    """Why a pin's ``bytes`` is not a path inside the pins file's directory, or None.
+
+    A delivery is one self-contained directory: ``bytes`` is relative to the
+    pins file, never absolute, with no ``..`` component and no leading ``~``
+    (nothing expands it).  Where it lands once symlinks are followed is the
+    caller's check, which has the file system (``cf sourceset adopt``).
+    """
+    if not isinstance(value, str) or not value:
+        return "bytes is the path of the response bytes, relative to the pins file"
+    path = PurePosixPath(value)
+    if path.is_absolute() or value.startswith("~") or ".." in path.parts or "\x00" in value:
+        return (f"bytes {value!r} is not a path inside the pins file's directory "
+                f"(relative to it, with no '..' component and no leading '~')")
+    return None
+
+
+def pin_assessment(assessment: dict | None) -> dict | None:
+    """A pin's assessment as an entry records it: importance lower-cased, class as written.
+
+    The PageAssessments catalog a producer reads gives ``High``; an entry says
+    ``high``, the spelling ``cf sourceset enumerate-wikiproject`` records.
+    """
+    if not assessment:
+        return None
+    out = dict(assessment)
+    if isinstance(out.get("importance"), str):
+        out["importance"] = out["importance"].lower()
     return out
 
 

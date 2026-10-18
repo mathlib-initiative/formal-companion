@@ -20,6 +20,17 @@ recorded responses instead): without either, ``enumerate-wikiproject`` and
 ``fetch`` print the first request they would make and stop.  Every write is a
 new manifest version, append-only; every command refreshes the sourceset's
 ``state.json``.
+
+``adopt`` is the import contract a producer delivers through (section 7,
+"Adopting a producer's pins"): each pins row is checked by
+``sources.websource.pin_problems``, and one row that is not a pin refuses the
+whole file; its bytes lie inside the pins file's directory; a source is pinned
+by one row; a row carrying ``fetch`` holds the fixed fetch's exact JSON
+response for its revision and page; the producer's ``layer_sha256`` is
+recorded in ``adopted_from``, and ``render`` refuses, by name, a source whose
+layer is not that sha -- a refusal that stands in ``state.json`` until a render
+writes the layer, and that ``status --verify`` reports -- so every delivery is a
+text-layer parity test on real pages, failing closed.
 """
 from __future__ import annotations
 
@@ -33,7 +44,7 @@ from pathlib import Path
 from cflib import log, vocab
 from cflib import state as state_mod
 from cflib.errors import CfError
-from cflib.jsonio import iter_jsonl, write_json
+from cflib.jsonio import write_json
 from cflib.paths import WorkspacePaths
 from cflib.workspace import from_args
 from sources import render_html, websource, wikinet
@@ -90,9 +101,11 @@ def register(subparsers) -> None:
     adopt.add_argument("sourceset_id")
     adopt.add_argument("--from", dest="pins", required=True, metavar="ROWS",
                        help="JSON lines {revision, pageid | title, wikidata?, assessment?, "
-                            "bytes?: <path>}; a relative bytes path is relative to this file; "
-                            "a pin with no bytes is fetched later, one with no pageid has its "
-                            "page resolved from its revision (--execute)")
+                            "bytes?: <path>, fetch?, layer_sha256?} (references/"
+                            "locate-documents.md section 7); bytes is a path inside this "
+                            "file's directory, relative to it; a pin with no bytes is fetched "
+                            "later, one with no pageid has its page resolved from its revision "
+                            "(--execute)")
     adopt.add_argument("--consumer", default="consumer",
                        help="who pinned them, recorded in adopted_from")
     adopt.add_argument("--only-known-pages", action="store_true",
@@ -598,49 +611,113 @@ def _page_metadata(entries: list[dict]) -> dict:
     return out
 
 
-def _int_field(row: dict, name: str, where: str, *, required: bool) -> int | None:
-    value = row.get(name)
-    if value is None and not required:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise CfError(f"{where}: {name} is a positive integer"
-                      + (" (it is missing)" if value is None else f", not {value!r}"))
-    return value
+#: the hint of every refusal of a malformed pins row
+PIN_HINT = ("a pins row is references/locate-documents.md section 7's (\"Adopting a "
+            "producer's pins\"); nothing was adopted")
 
 
-def _read_pins(pins_path: Path) -> list[dict]:
-    """The pins file, checked row by row: ``{revision, pageid?, title?, bytes?, ...}``."""
-    rows: list[dict] = []
-    for number, row in enumerate(iter_jsonl(pins_path), 1):
-        where = f"{pins_path.name}:{number}"
-        if not isinstance(row, dict):
-            raise CfError(f"{where}: a pin is a JSON object")
-        revision = _int_field(row, "revision", where, required=True)
-        pageid = _int_field(row, "pageid", where, required=False)
-        if pageid is None and not row.get("title"):
-            raise CfError(f"{where}: a pin names its revision and its page: a pageid or a "
-                          f"title")
-        if row.get("assessment") is not None and not isinstance(row["assessment"], dict):
-            raise CfError(f"{where}: assessment is null or {{class, importance}}")
-        bytes_path = None
-        if row.get("bytes") is not None:
-            bytes_path = Path(str(row["bytes"])).expanduser()
-            if not bytes_path.is_absolute():
-                bytes_path = pins_path.parent / bytes_path
-            if not bytes_path.is_file():
-                raise CfError(f"{where}: no bytes at {bytes_path}")
-        rows.append({"where": where, "row": row, "revision": revision, "pageid": pageid,
-                     "bytes": bytes_path})
+def _pin_lines(pins_path: Path, data: bytes) -> list[tuple[int, object]]:
+    """``[(line number, row)]``: the pins file's UTF-8 JSON lines, blank lines skipped.
+
+    Read from the bytes the pins sha is taken of, so the sha binds exactly the
+    rows adopted and a refusal names the file's own line.
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CfError(f"{pins_path}: a pins file is UTF-8 JSON lines ({exc})") from None
+    rows: list[tuple[int, object]] = []
+    for number, line in enumerate(text.split("\n"), 1):
+        if not line.strip():
+            continue
+        try:
+            rows.append((number, json.loads(line)))
+        except ValueError as exc:
+            raise CfError(f"{pins_path.name}:{number}: not JSON ({exc})", hint=PIN_HINT) from None
     return rows
 
 
+def _read_pins(pins_path: Path, data: bytes) -> list[dict]:
+    """The pins file, checked row by row (``websource.pin_problems``).
+
+    A pin is ``{revision, pageid | title, bytes?, wikidata?, assessment?, fetch?,
+    layer_sha256?}``; the first row that is not one refuses the whole file, so
+    nothing is adopted.  ``bytes`` is a path inside the pins file's directory,
+    relative to it (references/locate-documents.md section 7): a symlink is
+    followed and must land inside that directory too, so a delivery is one
+    self-contained directory and ``pins_sha256`` binds rows that name files in
+    it.
+    """
+    directory = pins_path.parent.resolve()
+    rows: list[dict] = []
+    for number, row in _pin_lines(pins_path, data):
+        where = f"{pins_path.name}:{number}"
+        problems = websource.pin_problems(row)
+        if problems:
+            raise CfError(f"{where}: " + "; ".join(problems), hint=PIN_HINT)
+        bytes_path = None
+        if row.get("bytes") is not None:
+            bytes_path = (pins_path.parent / row["bytes"]).resolve()
+            if not bytes_path.is_relative_to(directory):
+                raise CfError(f"{where}: bytes {row['bytes']!r} resolves to {bytes_path}, "
+                              f"outside the pins file's directory {directory}",
+                              hint="a delivery is one directory: the pins file and every "
+                                   "page's bytes beside or below it, no symlink leading out")
+            if not bytes_path.is_file():
+                raise CfError(f"{where}: no bytes at {pins_path.parent / row['bytes']}")
+        rows.append({"where": where, "line": number, "row": row, "revision": row["revision"],
+                     "pageid": row.get("pageid"), "bytes": bytes_path})
+    return rows
+
+
+def _one_row_per_source(pins: list[dict], sid_of) -> tuple[list[dict], list[str]]:
+    """The pins with each source pinned once, and a note per repeated row.
+
+    Run once every pin's page is known (a title pin has no source id before
+    its revision is resolved).  Rows that name one source and say the same --
+    an absent field and a null one say the same -- are one pin, taken once;
+    rows that disagree on anything (the bytes, the layer sha) leave no way to
+    tell which one the producer meant, and refuse the whole file.
+    """
+    by_sid: dict[str, list[dict]] = {}
+    for pin in pins:
+        by_sid.setdefault(sid_of(pin), []).append(pin)
+    out, notes = [], []
+    for pin in pins:
+        sid = sid_of(pin)
+        same = by_sid[sid]
+        if same[0] is not pin:
+            continue
+        if len(same) > 1:
+            lines = ", ".join(str(p["line"]) for p in same)
+            first = same[0]["row"]
+            differ = sorted({k for p in same for k in set(p["row"]) | set(first)
+                             if p["row"].get(k) != first.get(k)})
+            if differ:
+                raise CfError(f"{pin['where'].rsplit(':', 1)[0]}: lines {lines} all pin {sid} "
+                              f"and disagree on {', '.join(differ)}; nothing was adopted",
+                              hint="a delivery pins each source once: deliver the one row "
+                                   "the producer means")
+            notes.append(f"{pin['where']} ({sid}): lines {lines} repeat one row; it is taken "
+                         f"once")
+        out.append(pin)
+    return out, notes
+
+
 def _pin_bytes(pin: dict) -> tuple[bytes, str, dict]:
-    """``(raw, canonical body, parse)`` of a pin's bytes, checked against the pin."""
-    where, bytes_path = pin["where"], pin["bytes"]
+    """``(raw, canonical body, parse)`` of a pin's bytes, checked against the pin.
+
+    Bytes that are JSON must be an ``action=parse`` response with a
+    ``parse.text``, and a ``revid`` or ``pageid`` they carry must be the pin's.
+    A pin that carries ``fetch`` says its bytes ARE the fixed fetch of that
+    revision, so they must be that JSON response -- ``formatversion=2``
+    (``parse.text`` a string) -- naming the pin's revision and page by integer.
+    """
+    where, bytes_path, row = pin["where"], pin["bytes"], pin["row"]
     raw = bytes_path.read_bytes()
     text, parse = render_html.parse_response_text(raw)
-    if text is None and render_html.response_json(raw) is not None:
-        data = render_html.response_json(raw)
+    data = render_html.response_json(raw)
+    if text is None and data is not None:
         error = data.get("error") if isinstance(data, dict) else None
         raise CfError(f"{where}: {bytes_path.name} is JSON but no action=parse response "
                       f"with a parse.text"
@@ -648,6 +725,22 @@ def _pin_bytes(pin: dict) -> tuple[bytes, str, dict]:
                          if isinstance(error, dict) else ""),
                       hint="adopt the response bytes exactly as the API returned them "
                            "(prop=text), or the HTML body itself")
+    if row.get("fetch") is not None:
+        if text is None:
+            raise CfError(f"{where}: the pin carries fetch, so {bytes_path.name} must be the "
+                          f"action=parse JSON response for revision {pin['revision']}; it is "
+                          f"not JSON",
+                          hint="hand over the response bytes exactly as the API returned "
+                               "them, or drop fetch from the row")
+        if not isinstance(parse.get("text"), str):
+            raise CfError(f"{where}: {bytes_path.name} is a formatversion=1 response "
+                          f"(parse.text is an object); the fixed fetch is formatversion=2")
+        for key in ("revid", "pageid"):
+            got = parse.get(key)
+            if isinstance(got, bool) or not isinstance(got, int):
+                raise CfError(f"{where}: {bytes_path.name} carries no integer parse.{key}; "
+                              f"the fixed fetch of a revision answers with its revid and "
+                              f"pageid")
     for key, want in (("revid", pin["revision"]), ("pageid", pin["pageid"])):
         got = parse.get(key) if parse else None
         if got is not None and got != want:
@@ -663,18 +756,56 @@ def _pin_bytes(pin: dict) -> tuple[bytes, str, dict]:
     return raw, body, parse
 
 
+def _check_held_layer(where: str, sid: str, current: dict, producer: str | None) -> None:
+    """Refuse a pin whose producer layer sha contradicts what the held source records.
+
+    A recorded ``adopted_from`` is never replaced (a version is append-only), so
+    a producer sha that was wrong stays this sourceset's: the hint says the
+    corrected delivery goes into a new sourceset.
+    """
+    if producer is None:
+        return
+    recorded = websource.producer_layer_sha256(current)
+    if recorded is not None and recorded != producer:
+        raise CfError(f"{where}: {sid} is held with the producer's layer sha "
+                      f"{recorded[:12]}... recorded, and this pin says {producer[:12]}... (the "
+                      f"producer's text layer of the same bytes changed); nothing was adopted",
+                      hint="a recorded producer sha is never replaced (a sourceset is "
+                           "append-only), so `cf sourceset render` keeps refusing this "
+                           "source unless its layer is the recorded sha; if the recorded "
+                           "sha was the producer's mistake, adopt its corrected delivery "
+                           "into a new sourceset (`cf sourceset create`)")
+    layer = current.get("layer_sha256")
+    if layer and layer != producer:
+        raise CfError(f"{where}: the layer rendered from {sid}'s bytes is {layer[:12]}... "
+                      f"under {current.get('renderer')}, the producer's is "
+                      f"{producer[:12]}...; nothing was adopted",
+                      hint="this renderer's layer and the producer's differ on this page: a "
+                           "text-layer parity failure (references/locate-documents.md "
+                           "section 7); drop the row, or adopt the delivery into a new "
+                           "sourceset, where render refuses the page by name")
+
+
 def _adopt(workspace, args) -> int:
     """Adopt a consumer's pinned revisions, with their bytes when it holds them.
 
-    A pin is ``{revision, pageid | title, bytes?, wikidata?, assessment?}``.  A pin
-    with no page id has its page resolved from its revision, never from its
-    title, which is metadata: from the sourceset itself when it already holds
-    that revision (a revision id names one page, so a re-run of the same pins
-    asks nothing), else by one request per fifty, under ``--execute`` or
-    ``--fixtures``.  A pin with no bytes is adopted with null shas, and ``fetch``
-    then fetches exactly that revision.  A new revision takes the assessment,
-    QID and title its pin does not carry from the page's other sources, so it
-    stays in every frame its page is in.
+    A pin is ``{revision, pageid | title, bytes?, wikidata?, assessment?, fetch?,
+    layer_sha256?}`` (references/locate-documents.md section 7, "Adopting a
+    producer's pins"), and a pins file that holds one row that is not a pin is
+    refused whole.  A pin with no page id has its page resolved from its
+    revision, never from its title, which is metadata: from the sourceset itself
+    when it already holds that revision (a revision id names one page, so a
+    re-run of the same pins asks nothing), else by one request per fifty, under
+    ``--execute`` or ``--fixtures``; only then is each source known, pinned by
+    one row, and checked.  A pin with no bytes is adopted with null shas, and
+    ``fetch`` then fetches exactly that revision.  A pin carrying ``fetch``
+    holds that fetch's exact response; one carrying ``layer_sha256`` has the
+    producer's sha of the text layer recorded in ``adopted_from``, which
+    ``render`` holds the layer to.  A new revision takes the assessment, QID
+    and title its pin does not carry from the page's other sources, so it stays
+    in every frame its page is in; importance is lower-cased on the way in.
+    Bytes the sourceset fetched itself, pinned by the consumer, become the
+    consumer's pin (``Manifest.preferred()`` plans them).
     """
     ss = Sourceset.open(workspace.paths, args.sourceset_id)
     base = ss.latest()
@@ -682,8 +813,9 @@ def _adopt(workspace, args) -> int:
     pins_path = Path(args.pins).expanduser()
     if not pins_path.is_file():
         raise CfError(f"no pins file at {pins_path}")
-    pins_sha = _sha(pins_path.read_bytes())
-    pins = _read_pins(pins_path)
+    data = pins_path.read_bytes()            # read once: the sha is of the rows read
+    pins_sha = _sha(data)
+    pins = _read_pins(pins_path, data)
     # a MediaWiki revision id names one page, so a pinned revision the sourceset already
     # holds gives its page without a request: a re-run of the same pins asks nothing
     held = {e["revision"]: {"pageid": e["pageid"], "title": e.get("title")} for e in base}
@@ -713,24 +845,33 @@ def _adopt(workspace, args) -> int:
     writes: list[tuple[dict, bytes, str]] = []
     adopted, already, inherited, notes = 0, 0, 0, []
     without_bytes, unknown_pages = 0, []
-    adopted_from = {"consumer": args.consumer, "pins_sha256": pins_sha}
+    with_fetch, with_layer, layer_not_recorded = 0, 0, []
     for pin in pins:
-        where, row, revision = pin["where"], pin["row"], pin["revision"]
-        pageid = pin["pageid"]
-        if pageid is None:
-            page = resolved.get(revision) or held[revision]
-            pageid = page["pageid"]
+        if pin["pageid"] is None:
+            page = resolved.get(pin["revision"]) or held[pin["revision"]]
+            pin["pageid"] = page["pageid"]
+            row = pin["row"]
             if row.get("title") and page.get("title") and row["title"] != page["title"]:
-                notes.append(f"{where}: the pin titles revision {revision} {row['title']!r}, "
-                             f"its page {pageid} is now {page['title']!r}; the pin's title "
-                             f"is kept as metadata")
+                notes.append(f"{pin['where']}: the pin titles revision {pin['revision']} "
+                             f"{row['title']!r}, its page {pin['pageid']} is now "
+                             f"{page['title']!r}; the pin's title is kept as metadata")
+    pins, repeated = _one_row_per_source(pins,
+                                         lambda p: fam.source_id(p["pageid"], p["revision"]))
+    notes.extend(repeated)
+    for pin in pins:
+        where, row, revision, pageid = pin["where"], pin["row"], pin["revision"], pin["pageid"]
+        producer = row.get("layer_sha256")
+        fetched = row.get("fetch") is not None
+        adopted_from = {"consumer": args.consumer, "pins_sha256": pins_sha}
+        if producer is not None:
+            adopted_from["layer_sha256"] = producer
         if pageid not in by_page and args.only_known_pages:
             unknown_pages.append(f"{where}: page {pageid} (revision {revision})")
             continue
         raw = body = None
         parse: dict = {}
         if pin["bytes"] is not None:
-            raw, body, parse = _pin_bytes(dict(pin, pageid=pageid))
+            raw, body, parse = _pin_bytes(pin)
         title = row.get("title") or (parse.get("title") if parse else None)
         if parse and row.get("title") and parse.get("title") and \
                 row["title"] != parse["title"]:
@@ -739,25 +880,42 @@ def _adopt(workspace, args) -> int:
         sid = fam.source_id(pageid, revision)
         current = entries.get(sid)
         raw_sha = _sha(raw) if raw is not None else None
-        if raw is not None and current is not None and current.get("raw_sha256"):
-            if current["raw_sha256"] == raw_sha:
-                already += 1
-                continue
+        if raw is not None and current is not None and current.get("raw_sha256") \
+                and current["raw_sha256"] != raw_sha:
             raise CfError(f"{where}: {sid} already holds other bytes (raw sha "
                           f"{current['raw_sha256'][:12]}..., the consumer's are "
                           f"{raw_sha[:12]}...)",
                           hint="a source's bytes never change; a different rendering of the "
                                "same revision cannot be adopted into this sourceset")
+        if current is not None:
+            _check_held_layer(where, sid, current, producer)
+        if raw is not None and current is not None and current.get("raw_sha256"):
+            if is_adopted(current):
+                already += 1
+                with_fetch += fetched
+                with_layer += producer is not None
+                if producer is not None and websource.producer_layer_sha256(current) is None:
+                    layer_not_recorded.append(sid)
+                continue
+            # bytes the sourceset fetched itself, now pinned by the consumer: the source
+            # becomes the consumer's, so a run plans it (Manifest.preferred)
+            notes.append(f"{where}: the sourceset already held these bytes of {sid}; the "
+                         f"source is now the consumer's pin")
         if raw is None and current is not None and is_adopted(current):
             already += 1                       # pinned before; its bytes come with fetch
             continue
         page_meta = _page_metadata([e for e in by_page.get(pageid, [])
                                     if e["source_id"] != sid])
         own = {"title": title, "wikidata": row.get("wikidata"),
-               "assessment": row.get("assessment")}
+               "assessment": websource.pin_assessment(row.get("assessment"))}
         if current is not None:
             entry = dict(current)
-            entry.setdefault("adopted_from", adopted_from)
+            if entry.get("adopted_from") is None:
+                entry["adopted_from"] = adopted_from
+            elif producer is not None and websource.producer_layer_sha256(entry) is None:
+                # adopted before without the producer's sha (a pin with no bytes), and a
+                # recorded adopted_from never changes: this sha is not recorded
+                layer_not_recorded.append(sid)
             for name in INHERITED_FIELDS:
                 if entry.get(name) is None and own[name]:
                     entry[name] = own[name]
@@ -778,6 +936,10 @@ def _adopt(workspace, args) -> int:
             entry["html_sha256"] = render_html.sha256_text(body)
         else:
             without_bytes += 1
+        if fetched and entry.get("fetch") is None:
+            entry["fetch"] = websource.fetch_block()
+        with_fetch += fetched
+        with_layer += producer is not None
         problems = websource.entry_problems(entry)
         if problems:
             raise CfError(f"{where}: " + "; ".join(problems))
@@ -802,16 +964,26 @@ def _adopt(workspace, args) -> int:
         "already": already, "without_bytes": without_bytes, "inherited_metadata": inherited,
         "resolved_by_revision": sum(1 for r in unresolved if r in resolved),
         "resolved_from_sourceset": from_held,
-        "skipped_unknown_pages": len(unknown_pages)})
+        "skipped_unknown_pages": len(unknown_pages),
+        "with_fetch": with_fetch, "with_layer_sha256": with_layer,
+        "layer_sha256_not_recorded": sorted(set(layer_not_recorded))})
     for note in notes[:50]:
         log.info(f"  {note}")
     if len(notes) > 50:
         log.info(f"  (+{len(notes) - 50} more notes)")
     for line in unknown_pages[:20]:
         log.info(f"  skipped, no other source of its page here: {line}")
+    if layer_not_recorded:
+        missed = sorted(set(layer_not_recorded))
+        log.warn(f"{len(missed)} pin(s) carry the producer's layer sha for a source adopted "
+                 f"before without one, and a recorded adopted_from never changes, so render "
+                 f"does not check it: " + ", ".join(missed[:20])
+                 + (f" (+{len(missed) - 20} more)" if len(missed) > 20 else "")
+                 + "; adopt the delivery into a new sourceset to have it checked")
     log.ok(f"adopted {adopted} revision(s) from {args.consumer} ({already} already held), "
            f"{without_bytes} without bytes (fetch them with `cf sourceset fetch`), "
-           f"{inherited} taking their page's metadata; sourceset {ss.id} version "
+           f"{inherited} taking their page's metadata; {with_fetch} pin(s) carry the fixed "
+           f"fetch, {with_layer} the producer's layer sha; sourceset {ss.id} version "
            f"{manifest.version} (sha {manifest.sha256[:12]})")
     return 0
 
@@ -1037,6 +1209,7 @@ def _render(workspace, args) -> int:
     rendered, unchanged, refused, waiting = 0, 0, [], 0
     older_renderer = 0
     restored = 0
+    not_producers: dict[str, dict] = {}
     for e in base:
         sid = e["source_id"]
         if wanted and sid not in wanted:
@@ -1084,6 +1257,18 @@ def _render(workspace, args) -> int:
             if e.get("renderer") != render_html.RENDERER:
                 older_renderer += 1
             continue
+        producer = websource.producer_layer_sha256(e)
+        if producer is not None and rendering.layer_sha256 != producer:
+            # the producer's sha of its own text layer of these bytes: a layer that
+            # differs is a parity failure on a real page, refused before any file
+            not_producers[sid] = {"layer_sha256": rendering.layer_sha256,
+                                  "producer_layer_sha256": producer,
+                                  "renderer": render_html.RENDERER}
+            refused.append(f"{sid}: the layer is {rendering.layer_sha256[:12]}... under "
+                           f"{render_html.RENDERER}, the producer "
+                           f"({e['adopted_from'].get('consumer')}) recorded "
+                           f"{producer[:12]}...; not rendered")
+            continue
         render_html.write_rendering(directory, rendering)
         entry = dict(e)
         entry["layer_sha256"] = rendering.layer_sha256
@@ -1092,15 +1277,32 @@ def _render(workspace, args) -> int:
         entries[sid] = entry
         rendered += 1
     manifest = ss.write_version(base, entries.values())
+    # the parity refusals stand until a render writes the layer, whichever run visits
+    # the source next: one run's list would forget them after a --source run
+    standing = ss.record_parity_refusals(not_producers)
     ss.refresh_state(command="render", details={"rendered": rendered, "unchanged": unchanged,
                                                 "views_restored": restored,
                                                 "refused": len(refused),
+                                                "not_the_producers_layer": sorted(not_producers),
+                                                "parity_refusals_standing": len(standing),
                                                 "renderer": render_html.RENDERER})
     log.info(f"rendered {rendered} source(s), {unchanged} unchanged"
              + (f" ({restored} with missing views restored)" if restored else "")
-             + f", {waiting} waiting for bytes, {len(refused)} refused")
+             + f", {waiting} waiting for bytes, {len(refused)} refused"
+             + (f", {len(not_producers)} of them because the layer is not the producer's: "
+                + ", ".join(sorted(not_producers)[:20])
+                + (f" (+{len(not_producers) - 20} more)" if len(not_producers) > 20 else "")
+                if not_producers else ""))
     for line in refused[:20]:
         log.warn(f"  {line}")
+    if not_producers:
+        log.warn("  a producer's layer sha is never replaced in a sourceset: if the producer's "
+                 "was wrong, adopt its corrected delivery into a new sourceset")
+    others = sorted(set(standing) - set(not_producers))
+    if others:
+        log.warn(f"  {len(others)} other source(s) still refused by an earlier render, the "
+                 f"layer not the producer's: " + ", ".join(others[:20])
+                 + (f" (+{len(others) - 20} more)" if len(others) > 20 else ""))
     if older_renderer:
         log.warn(f"{older_renderer} source(s) were rendered by an older renderer, and a "
                  f"recorded layer never changes: render them in a new sourceset seeded from "
@@ -1117,16 +1319,25 @@ def _status(workspace, args) -> int:
     ss = Sourceset.open(workspace.paths, args.sourceset_id)
     manifest = ss.latest()
     problems: list[str] = []
+    parity = ss.producer_layer_counts(manifest)
     if args.verify:
         for e in manifest:
             problems.extend(ss.source_problems(e))
+        # a standing parity refusal is a delivered source this sourceset cannot
+        # render: the acceptance check names it, whichever render refused it
+        for sid, r in ss.parity_refusals(manifest).items():
+            problems.append(f"{sid}: render refused it: the layer is "
+                            f"{str(r.get('layer_sha256'))[:12]}... under {r.get('renderer')}, "
+                            f"the producer recorded {str(r.get('producer_layer_sha256'))[:12]}"
+                            f"... (a text-layer parity refusal)")
         # a verification is worth a row of the history; a plain status writes nothing
         counts = ss.refresh_state(command="status", details={
-            "verified": True, "problems": len(problems)})["counts"]
+            "verified": True, "problems": len(problems),
+            "parity_refused": len(parity["refused"])})["counts"]
     else:
         counts = ss.counts(manifest)
     report = {"id": ss.id, "family": manifest.family, "versions": ss.versions(),
-              "manifest": manifest.pin(), "counts": counts,
+              "manifest": manifest.pin(), "counts": counts, "producer_layer": parity,
               "verified": bool(args.verify), "problems": problems}
     if args.as_json:
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -1140,9 +1351,18 @@ def _status(workspace, args) -> int:
             f"{k} {v}" for k, v in counts["by_class"].items()))
         log.info("  pages by importance: " + ", ".join(
             f"{k} {v}" for k, v in counts["by_importance"].items()))
+        if parity["pinned"]:
+            log.info(f"  the producer's layer sha: {parity['pinned']} pinned, "
+                     f"{parity['rendered']} rendered to it, {len(parity['refused'])} refused "
+                     f"(the layer is not the producer's), {parity['waiting']} not rendered yet")
+        if parity["refused"]:
+            log.warn("  refused by render, the layer not the producer's: "
+                     + ", ".join(parity["refused"][:20])
+                     + (f" (+{len(parity['refused']) - 20} more)"
+                        if len(parity["refused"]) > 20 else ""))
         if args.verify:
             if problems:
-                log.warn(f"{len(problems)} problem(s) on disk:")
+                log.warn(f"{len(problems)} problem(s):")
                 for line in problems[:50]:
                     log.warn(f"  {line}")
             else:
