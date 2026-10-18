@@ -192,5 +192,39 @@ class TestD4TheTemplateFindsEscapedModulesSources(unittest.TestCase):
         self.assertIn("def probeRevision : Nat := 2", TEMPLATE.read_text(encoding="utf-8"))
 
 
+class TestD12AtomicWritesKeepTheModeAPlainWriteWould(unittest.TestCase):
+    """D12: ``universe.yaml`` was 0600 (mkstemp's mode) beside 0644 indexes."""
+
+    def with_umask(self, mask: int):
+        old = os.umask(mask)
+        self.addCleanup(os.umask, old)
+
+    def test_a_new_file_gets_the_umask_mode(self):
+        from cflib.jsonio import atomic_write
+        root = _scratch(self)
+        self.with_umask(0o022)
+        self.assertEqual(atomic_write(root / "a.json", "{}\n").stat().st_mode & 0o777, 0o644)
+        os.umask(0o077)
+        self.assertEqual(atomic_write(root / "b.json", "{}\n").stat().st_mode & 0o777, 0o600)
+
+    def test_a_rewrite_keeps_the_files_own_mode(self):
+        from cflib.jsonio import atomic_write
+        root = _scratch(self)
+        self.with_umask(0o022)
+        target = root / "kept.json"
+        target.write_text("{}\n", encoding="utf-8")
+        target.chmod(0o640)
+        atomic_write(target, '{"a": 1}\n')
+        self.assertEqual(target.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"a": 1}\n')
+        self.assertEqual([p.name for p in root.iterdir()], ["kept.json"])
+
+    def test_universe_yaml_is_readable_by_the_group_and_others(self):
+        self.with_umask(0o022)
+        root = _scratch(self)
+        universe = make_universe(root)
+        self.assertEqual(universe.path.stat().st_mode & 0o777, 0o644)
+
+
 if __name__ == "__main__":
     unittest.main()
