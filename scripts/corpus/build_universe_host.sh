@@ -46,12 +46,15 @@
 #
 # Every git, lake and probe command runs in a clean environment (env -i HOME USER PATH LANG)
 # under nice and ionice -c3, with LEAN_NUM_THREADS capped. One library is processed at a
-# time, so at most one heavy job runs. Before each big step the free space on / is checked;
-# below MIN_FREE_GB (+ the step's estimate) the driver stops (exit 3) and says so.
+# time, so at most one heavy job runs. Before each big step the free space is checked on
+# every filesystem the step can write -- the one holding $ATLAS_ROOT (clones, builds,
+# caches, indexes), / and $HOME (elan toolchains) -- and the smallest counts; below
+# MIN_FREE_GB (+ the step's estimate), or when df cannot say, the driver stops (exit 3).
 #
 # Environment (all optional):
 #   ATLAS_ROOT           everything lives here                  (default $HOME/atlas)
-#   MIN_FREE_GB          never let / fall below this             (default 450)
+#   MIN_FREE_GB          never let $ATLAS_ROOT's (or /, $HOME's) filesystem fall below this
+#                        many GiB; a whole number, refused otherwise (default 450)
 #   LEAN_THREADS         LEAN_NUM_THREADS for lake               (default 24)
 #   NICE_LEVEL           nice level                              (default 10)
 #   LINK_FAMILY=0        never hard-link Mathlib-family packages
@@ -77,6 +80,9 @@ probe_host=$here/probe_host.sh
 
 ATLAS_ROOT=${ATLAS_ROOT:-$HOME/atlas}
 MIN_FREE_GB=${MIN_FREE_GB:-450}
+# The floor must be a whole number of GiB: `[ x -lt 450G ]` is an error, the `if` takes
+# its else branch, and a floor that never stops anything is worse than none.
+case $MIN_FREE_GB in ''|*[!0-9]*) die "MIN_FREE_GB must be a whole number of GiB, not '$MIN_FREE_GB'" ;; esac
 LEAN_THREADS=${LEAN_THREADS:-24}
 NICE_LEVEL=${NICE_LEVEL:-10}
 LINK_FAMILY=${LINK_FAMILY:-1}
@@ -134,7 +140,12 @@ for want in "${only_ids[@]}"; do
   printf '%s\n' "${all_ids[@]}" | grep -qxF -- "$want" || die "$want is not in $universe"
 done
 
-avail_gb() { df -BG --output=avail / | tail -n 1 | tr -dc '0-9'; }
+# The free GiB of the fullest filesystem a step can write: $ATLAS_ROOT's, /'s and $HOME's.
+# Empty when df cannot answer, which ensure_space treats as a stop, never as room.
+avail_gb() {
+  df -BG --output=avail "$ATLAS_ROOT" / "$HOME" 2>/dev/null | tail -n +2 | tr -dc '0-9\n' \
+    | grep -E '^[0-9]+$' | sort -n | head -n 1
+}
 
 # ---------------------------------------------------------------------------
 # one library; runs in a subshell, so `fail` and `stop` just exit it
@@ -160,9 +171,10 @@ process_library() {
   ensure_space() {   # <GB the step may add> <what>
     local need=$1 what=$2 avail
     avail=$(avail_gb)
+    case $avail in ''|*[!0-9]*) stop "df could not report the free space before $what" ;; esac
     log "  df: ${avail}G free before $what (estimate +${need}G, floor ${MIN_FREE_GB}G)"
     if [ $(( avail - need )) -lt "$MIN_FREE_GB" ]; then
-      stop "$what may need ~${need}G but / has ${avail}G free; the floor is ${MIN_FREE_GB}G"
+      stop "$what may need ~${need}G but the fullest of \$ATLAS_ROOT, / and \$HOME has ${avail}G free; the floor is ${MIN_FREE_GB}G"
     fi
   }
   step() { log "  $id: $*"; printf '\n=== %s %s\n' "$(ts)" "$*" >>"$lg"; }
@@ -484,8 +496,11 @@ build_and_probe() {
   ensure_space 3 "the probe of $id"
   set_state stage=probing
   step "probe_host.sh SHARD_COUNT=$OPT_SHARD_COUNT ($(wc -l <"$roots_file") root modules)"
+  # SRC_DIRS must be passed by name: cenv is `env -i`, and without it the probe resolves
+  # module paths at the checkout root, so a library whose sources sit under SRC_DIR was
+  # indexed with every path null.
   cenv SHARD_COUNT="$OPT_SHARD_COUNT" ${OPT_MAX_PARALLEL:+MAX_PARALLEL="$OPT_MAX_PARALLEL"} \
-    MODULE_PREFIXES="@$prefixes_file" PROBE_NICE="$NICE_LEVEL" \
+    MODULE_PREFIXES="@$prefixes_file" SRC_DIRS="$OPT_SRC_DIR" PROBE_NICE="$NICE_LEVEL" \
     timeout --kill-after=120 "$OPT_PROBE_TIMEOUT" bash "$probe_host" "$dir" "$id" "@$roots_file" "$out" \
     >>"$lg" 2>&1 || fail "probe_host.sh failed (see $lg and $out/work/)"
   py write-entry --universe "$universe" --id "$id" --commit "$commit" --out-dir "$out" \

@@ -210,10 +210,94 @@ _GIT_SAFE_ENV: dict[str, str] = {
 }
 
 
-def _git(checkout: Path, *args: str) -> str:
-    out = subprocess.run(["git", *_GIT_SAFE_CONFIG, "-C", str(checkout), *args], capture_output=True,
-                         text=True, env={**os.environ, **_GIT_SAFE_ENV})
-    return out.stdout.strip() if out.returncode == 0 else ""
+#: the content-filter hooks gitsafe blanks, and the git that reads GIT_CONFIG_* pairs
+_FILTER_HOOKS = ("clean", "process", "smudge")
+_CONFIG_ENV_SINCE = (2, 31)
+
+
+def _git_env() -> dict[str, str]:
+    return {**os.environ, **_GIT_SAFE_ENV}
+
+
+def _git_version() -> "tuple[int, ...] | None":
+    try:
+        got = subprocess.run(["git", *_GIT_SAFE_CONFIG, "--version"], capture_output=True,
+                             text=True, check=False, env=_git_env())
+    except OSError:
+        return None
+    found = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", got.stdout or "")
+    if got.returncode != 0 or not found:
+        return None
+    return tuple(int(part) for part in found.groups() if part is not None)
+
+
+def _filter_names(checkout: Path) -> list[str]:
+    """``cflib.gitsafe.filter_names``: every content-filter key the checkout resolves."""
+    try:
+        got = subprocess.run(["git", *_GIT_SAFE_CONFIG, "-C", str(checkout), "config", "--list",
+                              "--name-only"], capture_output=True, text=True, check=False,
+                             env=_git_env())
+    except OSError:
+        return []
+    names: list[str] = []
+    for line in (got.stdout or "").splitlines():
+        key = line.strip()
+        if key.startswith("filter.") and key.rsplit(".", 1)[-1] in _FILTER_HOOKS:
+            if key not in names:
+                names.append(key)
+    return names
+
+
+def _filter_pin_args(names: list[str]) -> list[str]:
+    """``cflib.gitsafe.filter_pin_args``: ``-c <key>=`` for each name ``-c`` can express."""
+    return [arg for key in names if "=" not in key for arg in ("-c", key + "=")]
+
+
+def _filter_pairs(names: list[str], have: dict[str, str]) -> dict[str, str]:
+    """``cflib.gitsafe``'s environment pairs blanking every name, ``=`` names included."""
+    if not names:
+        return {}
+    try:
+        start = max(0, int(have.get("GIT_CONFIG_COUNT") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    out = {"GIT_CONFIG_COUNT": str(start + len(names))}
+    for i, key in enumerate(names, start):
+        out[f"GIT_CONFIG_KEY_{i}"] = key
+        out[f"GIT_CONFIG_VALUE_{i}"] = ""
+    return out
+
+
+def _git(checkout: Path, *args: str) -> "str | None":
+    """One read-only git command in a library checkout, as ``cflib.gitsafe.run`` makes it.
+
+    The fixed pins, plus a blank for every content filter the checkout names
+    (``git status`` compares working-tree content, which runs a
+    ``filter.<n>.clean`` the checkout's own ``.git/config`` chose).  A driver
+    whose name holds an ``=`` on a git too old to read the environment pairs has
+    no blank at all, so the read is not made.  None when it failed or was not
+    made: the caller records "unknown", never "clean".
+    """
+    names = _filter_names(checkout)
+    if any("=" in key for key in names):
+        version = _git_version()
+        if version is None or version < _CONFIG_ENV_SINCE:
+            return None
+    environ = _git_env()
+    environ.update(_filter_pairs(names, environ))
+    try:
+        out = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pin_args(names), "-C",
+                              str(checkout), *args], capture_output=True, text=True,
+                             env=environ)
+    except OSError:
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def _dirty(checkout: Path) -> "bool | None":
+    """Tracked files modified in the probed checkout: True, False, or None when unknown."""
+    got = _git(checkout, "status", "--porcelain", "--untracked-files=no")
+    return None if got is None else bool(got)
 
 
 def dumps(record: dict) -> str:
@@ -295,7 +379,7 @@ def merge(work: Path, count: int, checkout: Path, out_dir: Path, template: Path,
         "library": header0["library"],
         "commit": commit or None,
         "commit_date": _git(checkout, "log", "-1", "--format=%cI") or None,
-        "dirty": bool(_git(checkout, "status", "--porcelain", "--untracked-files=no")),
+        "dirty": _dirty(checkout),
         "toolchain": toolchain_file.read_text(encoding="utf-8").strip() if toolchain_file.is_file() else None,
         "lean_version": header0["toolchain"],
         "lean_githash": header0["lean_githash"],
