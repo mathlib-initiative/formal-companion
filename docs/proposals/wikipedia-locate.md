@@ -75,7 +75,7 @@ fetch: {api: action=parse, params_sha256: <sha of the fixed parameter set>}
 raw_sha256: <sha of the bytes as fetched>
 html_sha256: <sha of the canonical body>     # = source_sha
 layer_sha256: <sha of the Literature Links text layer>
-renderer: web-html/1
+renderer: web-html/2
 licence_class: open_share_alike
 assessment: {class: B, importance: high}
 ```
@@ -133,7 +133,7 @@ Links record (§2.7) carries the passage kind as its `kind`.
 
 ```json
 {"source_id": "enwiki-28767-1371234567", "source_sha": "<html_sha256>",
- "layer_sha256": "<hex>", "renderer": "web-html/1",
+ "layer_sha256": "<hex>", "renderer": "web-html/2",
  "item": "In-text #3fa91c07", "head_words": 12,
  "span": [10234, 10612],
  "quote": {"exact": "…", "prefix": "…", "suffix": "…"},
@@ -296,7 +296,7 @@ A location:
               "location": {"quote": {"exact": "…", "prefix": "…", "suffix": "…"}},
               "citation": {"type": "webpage", "title": "Sylow theorems", "container-title": "Wikipedia",
                            "URL": "https://en.wikipedia.org/w/index.php?title=Sylow_theorems&oldid=1371234567"},
-              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "renderer": "web-html/1",
+              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "renderer": "web-html/2",
                                           "span_sha256": "<hex>", "licence": "CC-BY-SA-4.0"}}}],
  "object": [{"type": "lean", "uri": "https://github.com/leanprover-community/mathlib4",
              "version": "<40-hex commit>", "role": "key",
