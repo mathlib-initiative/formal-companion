@@ -228,9 +228,10 @@ A locate task carries at most eight passages of one frozen inventory.
   `uphold`, `overturn` (naming the new `prominence`); `coverage` — `confirm`
   (the claim `survived`, and with it each part whose own record no verdict
   judged: a `not_required` or `sampled_out` part is `survived`, a judged one
-  keeps its verdict) or `refute` (the claim is removed and its parts stay
-  `hasPart` locations with the values they had; the passage's challenge is
-  `downgraded`). A coverage
+  keeps its verdict, and a part a prominence overturn in the same run reopened
+  stays `challenge_pending`, §10) or `refute` (the claim is removed and its
+  parts stay `hasPart` locations with the values they had; the passage's
+  challenge is `downgraded`). A coverage
   verdict names its record by `item` alone, like every passage-level one.
 - Every coverage claim is a record of the challenge, whatever the passage's
   prominence, refuted by default: it upgrades a status. Its record in the task
@@ -1272,7 +1273,10 @@ changed, else `survived` when any was judged, else `sampled_out` or
 passage: §5 refutes such a passage's locations and hunts its absence, so each
 of its records no verdict judged (planned `not_required` or `sampled_out` under
 `supporting`) becomes `challenge_pending` — exported as it is, read by a
-consumer as unchallenged, never as "no rule applied".
+consumer as unchallenged, never as "no rule applied". The reopen wins over a
+coverage claim confirmed in the same run: it is applied before the claim
+confirms its parts, so a part it reopened stays `challenge_pending`, owed its
+own verdict under the stricter rule, while the claim stays `survived`.
 
 A challenge run is applied only to a locate run its plan's `challenged_runs`
 names, only through the plan records whose `run_id` is that run, and a verdict

@@ -67,11 +67,24 @@ release has something to say.
   and a `Prop`-valued definition part does not (Q2), and a definition passage's
   claim with an unfinished part is `statement_only` (Q3); rounds 1 and 2 left
   each of these `partial`, and D04 moves from `formalized` to `statement_only`.
+  The claim is a fixed stand-in, not an `exactMatch` to its least finished
+  part: read that way, a definition passage's claim of `proved` parts would be
+  `partial` and one with a `Prop`-valued definition part `formalized`, where the
+  stand-in makes them `formalized` and `statement_only` (the docs had called it
+  the "weakest" part's; the code never did).
   A confirmed claim also confirms its parts: a part whose own record is
   `not_required` or `sampled_out` is exported `survived`
   (`outcomes.confirm_parts`), a part a verdict judged keeps that verdict, and a
-  refuted claim confirms nothing. The parity table is 117 cases, and the cases
-  that carry `expected_challenges` pin each part's exported challenge.
+  refuted claim confirms nothing. A prominence overturn to `subject` or
+  `central` in the same run wins over the confirmation: the outcomes reopen the
+  passage first and confirm the parts after, so a part the reopen made
+  `challenge_pending` stays pending, owed its own verdict under the stricter
+  rule, while the claim stays `survived` and the status is unchanged (the parts
+  had been confirmed before the reopen ran and exported `survived`, where the
+  consumer kept them pending). The challenger is told the same: a confirm
+  stands in only for the part records the plan did not require. The parity
+  table is 118 cases, and the cases that carry `expected_challenges` pin each
+  part's exported challenge, P05 a reopened part's.
 - A record set's `set_id` and `sourceset.id` are tokens of the consumer's grammar
   (`cflib.vocab.RECORDSET_TOKEN`: letters, digits and `._:-`, at most 128): the
   export refuses any other before a file is written, and `cf sourceset create`

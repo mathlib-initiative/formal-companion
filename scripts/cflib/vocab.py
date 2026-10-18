@@ -526,7 +526,8 @@ CHALLENGE_ACTIONS = CHALLENGE_KEEP | CHALLENGE_CHANGE
 #: default, ``confirm`` or ``refute`` (``COVERAGE_ACTIONS``) -- because it upgrades
 #: a status; a refute removes the claim and leaves its parts ``hasPart``, and a
 #: confirm confirms its parts too (each one no other verdict judged is
-#: ``survived``).  Only a claim whose challenge is ``survived`` counts in
+#: ``survived``, except one a prominence overturn in the same run reopened, which
+#: stays ``CHALLENGE_PENDING``: the reopen wins).  Only a claim whose challenge is ``survived`` counts in
 #: :func:`derive_status`, as one more ``exactMatch`` location.
 MIN_COVERAGE_PARTS = 2
 COVERAGE_ACTIONS = frozenset({"confirm", "refute"})

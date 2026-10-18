@@ -322,9 +322,11 @@ stronger than the passage's (`references/locate-documents.md` §3). Every
 claim is challenged, whatever the passage's prominence (§5), and only one
 whose challenge is `survived` counts; a refute removes it and leaves its parts
 `hasPart`, and a confirm confirms its parts too (each part whose own record no
-verdict judged, `not_required` or `sampled_out`, is `survived`). The best
-status over all the evidence wins. The data row and the coverage rows are the
-maintainer's decision D1 of 2026-10-18 ("D1: yes. Formalized when the hasPart
+verdict judged, `not_required` or `sampled_out`, is `survived`) — unless a
+prominence overturn to `subject` or `central` in the same run reopened the
+part: the reopen wins, and the part stays `challenge_pending`, owed its own
+verdict (§5). The best status over all the evidence wins. The data row and the
+coverage rows are the maintainer's decision D1 of 2026-10-18 ("D1: yes. Formalized when the hasPart
 locations together cover every clause (challenger confirms coverage), and when
 an exact/closeMatch is to an equivalence or data declaration that states the
 theorem (e.g. CRT's RingEquiv). Update vocab and WikiLean's parity table.");
@@ -332,12 +334,12 @@ before it, both were `partial`.
 
 **The reading of D1** (parity round 3, which resolved the questions Q1–Q3 of
 `references/vocabulary.md` §1.11): a survived coverage claim acts, for the
-derived status, exactly like one more `exactMatch` location whose proof status
-and `statement` flag are the weakest of its parts, finished (`proved`; data)
-above unfinished (`statement_only`, `wanted`, `axiom_dependent`; a
-`Prop`-valued definition). Every part finished, it is a `proved` declaration
-to the theorem row and a `definition` to the definition row, so it formalizes
-the passage on either; any part unfinished, it is `statement_only` on both.
+derived status, exactly like one more `exactMatch` location, a fixed stand-in
+rather than any one part. Each part is finished (`proved`; data) or unfinished
+(`statement_only`, `wanted`, `axiom_dependent`; a `Prop`-valued definition).
+Every part finished, the stand-in is a `proved` declaration to the theorem row
+and a `definition` to the definition row, so it formalizes the passage on
+either; any part unfinished, it is a `statement_only` declaration on both.
 An example or `other` passage judges it on both rows, the better winning, as
 for every location (Q1); a data part is finished and a `Prop`-valued
 definition part is not (Q2); and a definition passage's claim with an
@@ -507,9 +509,12 @@ re-runs forty-nine others:
 - a stratified sample of `non_math`/`expository` scopes, `supporting`
   demotions and weak relations (`relatedMatch`, `narrowMatch`, `hasPart`) is
   re-judged;
-- everything else is `not_required` or `sampled_out`, and says so; a passage
-  whose prominence the challenge overturned to `subject` or `central` has its
-  unjudged records marked `challenge_pending`, never left `not_required`.
+- everything else is `not_required` or `sampled_out`, and says so — except a
+  part of a coverage claim the challenge confirmed, which is `survived` with
+  the claim (§2.6); a passage whose prominence the challenge overturned to
+  `subject` or `central` has its unjudged records marked `challenge_pending`,
+  never left `not_required`, and that wins over the claim: a part it reopened
+  stays `challenge_pending` beside a confirmed claim.
 
 Hard rule 5 applies per record: nothing leaves the workspace without a
 `challenge` value.

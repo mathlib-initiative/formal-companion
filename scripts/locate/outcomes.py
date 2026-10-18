@@ -21,13 +21,16 @@ Three steps, in this order, each a function of what landed:
    claim (the maintainer's decision D1) is its own record: ``confirm`` makes
    it ``survived`` and confirms its parts (each part no verdict judged,
    ``not_required`` or ``sampled_out``, is ``survived`` too), ``refute``
-   removes it and leaves its parts ``hasPart``.  A
-   record the challenge plan did not require keeps the value the plan
-   recorded (``not_required``, ``sampled_out``) -- unless a prominence
-   overturn to ``subject`` or ``central`` put it under a rule that requires
-   it, which makes it
-   ``challenge_pending``; a record the plan required and no verdict judged has
-   challenge ``None`` -- owed, which the export refuses (hard rule 5).
+   removes it and leaves its parts ``hasPart``.  A record the challenge plan
+   did not require keeps the value the plan recorded (``not_required``,
+   ``sampled_out``), with two exceptions: a part of a confirmed claim is
+   ``survived``, as just said, and a prominence overturn to ``subject`` or
+   ``central`` that put a record under a rule requiring it makes it
+   ``challenge_pending``.  The reopen wins: it is applied first, and a part it
+   made pending stays pending, owed its own verdict under the stricter rule,
+   while the claim stays ``survived``.  A record the plan required and no
+   verdict judged has challenge ``None`` -- owed, which the export refuses
+   (hard rule 5).
 3. **Status.**  ``proof_status`` and the ``statement`` flag are joined from
    ``corpus.sqlite`` (never read from a document) with ``corpus.query.
    declaration``, and ``cflib.vocab.derive_status`` computes the passage's
@@ -752,8 +755,9 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                         loc["note"] = downgrade_note(verdict, layer_of(sid) if layer_of else None)
         kept.append(loc)
     row["locations"] = _renumbered(kept)
+    confirmed: list[dict] = []
     if row.get("coverage") is not None:
-        _apply_coverage(row, planned, verdicts, problems)
+        confirmed = _apply_coverage(row, planned, verdicts, problems)
     # the passage-level record: an absence, an unresolved outcome, a scope or a prominence
     target = {vocab.OUTCOME_ABSENT: "absence", vocab.OUTCOME_UNRESOLVED: "unresolved"}.get(
         row["outcome"])
@@ -819,19 +823,28 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
             row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
             if row["prominence"] in vocab.REFUTE_BY_DEFAULT_PROMINENCE:
                 _reopen(row)
+    # a confirmed claim confirms its parts only now, after any reopen: the reopen wins, so
+    # a part a prominence overturn put under a rule requiring it is challenge_pending,
+    # owed its own verdict under that rule, and the claim does not stand in for it
+    confirm_parts(confirmed)
 
 
-def _apply_coverage(row: dict, planned: dict, verdicts: dict, problems: list[str]) -> None:
-    """A coverage claim's challenge (the maintainer's decision D1).
+def _apply_coverage(row: dict, planned: dict, verdicts: dict,
+                    problems: list[str]) -> list[dict]:
+    """A coverage claim's challenge (the maintainer's decision D1); the parts it confirms.
 
-    Every claim is refuted by default: ``confirm`` makes it ``survived`` and
-    confirms its parts (:func:`confirm_parts`); ``refute`` removes it (kept
-    under ``coverage_refuted``, ``downgraded``) and leaves its parts ``hasPart``
-    locations.  A verdict applies only while the claim names the parts the plan
-    saw, and an action outside ``cflib.vocab.COVERAGE_ACTIONS`` leaves it owed.
-    A claim whose part a location verdict refuted or downgraded no longer holds:
-    it upgrades nothing, confirms no part, and the passage carries a problem,
-    which the export refuses, until the claim is challenged again.
+    Every claim is refuted by default: ``confirm`` makes it ``survived``, and
+    its parts are returned for :func:`confirm_parts`, which the caller runs
+    once the passage-level records are applied -- after a prominence overturn's
+    :func:`_reopen`, so a part the reopen made ``challenge_pending`` stays
+    pending.  ``refute`` removes it (kept under ``coverage_refuted``,
+    ``downgraded``) and leaves its parts ``hasPart`` locations.  A verdict
+    applies only while the claim names the parts the plan saw, and an action
+    outside ``cflib.vocab.COVERAGE_ACTIONS`` leaves it owed.  A claim whose part
+    a location verdict refuted or downgraded no longer holds: it upgrades
+    nothing, confirms no part, and the passage carries a problem, which the
+    export refuses, until the claim is challenged again.  Anything but a
+    standing survived claim returns no part.
     """
     sid, item, claim = row["source_id"], row["item"], row["coverage"]
     key = record_key(vocab.COVERAGE_TARGET, sid, item)
@@ -854,7 +867,7 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict, problems: list[str
                                            "witness": verdict.get("witness", "")}
                 row["coverage"] = None
                 row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
-                return
+                return []
     standing = {loc["location_key"]: loc for loc in row["locations"]
                 if loc["relation"] == vocab.HAS_PART}
     gone = [k for k in claim["parts"] if k not in standing]
@@ -867,18 +880,23 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict, problems: list[str
                                 "challenge refuted or downgraded; the claim no longer holds "
                                 "and is to be challenged again")
     elif claim["challenge"] == vocab.CHALLENGE_SURVIVED:
-        confirm_parts([standing[k] for k in claim["parts"]])
+        return [standing[k] for k in claim["parts"]]
+    return []
 
 
 def confirm_parts(parts: Iterable[dict]) -> None:
     """A confirmed coverage claim confirms its parts (decision D1, parity round 3).
 
     The challenger matched every clause of the passage to a part, so each part
-    was judged with the claim: one whose own record no verdict judged
-    (``not_required``, ``sampled_out``) is ``survived``.  A part a verdict
-    judged keeps that verdict, and an owed one stays owed; a part refuted or
-    downgraded out of ``hasPart`` is no part any more, and lapses the claim
-    before this is reached.
+    the plan never required was judged with the claim: one whose own record is
+    ``not_required`` or ``sampled_out`` is ``survived``.  A part a verdict
+    judged keeps that verdict, and an owed one stays owed.  So does a
+    ``challenge_pending`` part: a prominence overturn in the same run put it
+    under a rule that requires it (:func:`_reopen`, which runs first), and it
+    needs its own verdict under that stricter rule -- the claim stands in only
+    for parts no rule required.  A part refuted or downgraded out of
+    ``hasPart`` is no part any more, and lapses the claim before this is
+    reached.
     """
     for loc in parts:
         if loc.get("challenge") in (vocab.CHALLENGE_NOT_REQUIRED, vocab.CHALLENGE_SAMPLED_OUT):
@@ -895,7 +913,9 @@ def _reopen(row: dict) -> None:
     (``not_required``, ``sampled_out``) becomes ``challenge_pending`` -- never
     left ``not_required``, which a consumer would read as "no rule applied"
     (field defect CH2: two central absences exported that nobody hunted).  A
-    record a verdict judged keeps its value.
+    record a verdict judged keeps its value.  It runs before a confirmed
+    coverage claim confirms its parts (:func:`confirm_parts`), so a part it
+    makes pending is not confirmed with the claim.
     """
     for loc in row["locations"]:
         if loc.get("challenge") in vocab.CHALLENGE_UNJUDGED:
