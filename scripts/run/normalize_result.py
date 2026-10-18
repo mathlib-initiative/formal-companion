@@ -147,20 +147,35 @@ def worker_result(d, raw_text: str) -> dict:
     return out
 
 
-_VERDICT_MARK = re.compile(r"verdict:\s*(approve|request[_ ]changes)")
+#: ``verdict: approve`` in prose, or ``"verdict": "approve"`` -- the result object
+#: printed instead of written to the result file
+_VERDICT_MARK = re.compile(r"""\bverdict["']?\s*:\s*["']?(approve|request[_ ]changes)\b""")
 _APPROVE_PROSE = re.compile(r"\b(approved|looks good|no changes needed)\b")
+
+
+def explicit_verdict(raw_text: str) -> str | None:
+    """The LAST explicit verdict marker in a reviewer's prose (``approve`` /
+    ``request_changes``), or None when it states none.
+
+    A reviewer that merely DISCUSSES "request_changes" states no verdict.  The
+    attempt cap counts a rejection without a result file only when this says
+    ``request_changes`` (``attempt_cap.stated_rejection``): a verdict guessed
+    from prose -- or from no output at all -- is not a reviewer's rejection.
+    """
+    marks = _VERDICT_MARK.findall((raw_text or "").lower())
+    return marks[-1].replace(" ", "_") if marks else None
 
 
 def scrape_verdict(raw_text: str) -> bool:
     """Read a reviewer verdict out of prose (codex writes no result file).
 
-    Prefers an explicit ``verdict: ...`` marker and takes the LAST one, so a
-    reviewer that merely DISCUSSES "request_changes" is not read as voting for it.
+    Prefers an explicit marker (:func:`explicit_verdict`); without one, approval
+    prose counts only when no "request changes" appears beside it.
     """
+    marked = explicit_verdict(raw_text)
+    if marked is not None:
+        return marked == "approve"
     low = (raw_text or "").lower()
-    marks = _VERDICT_MARK.findall(low)
-    if marks:
-        return marks[-1].replace(" ", "_") == "approve"
     return bool(_APPROVE_PROSE.search(low)) and not re.search(r"\brequest[_ ]changes\b", low)
 
 

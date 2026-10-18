@@ -445,6 +445,12 @@ class Pipeline:
         dropped = json.loads(json.dumps(good))
         dropped["passages"] = [p for p in dropped["passages"] if p["finder"] != "theorem_box"]
         cases["rule 8"] = dropped
+        # the subject passage alone, and one skip over it and everything else
+        skipped = json.loads(json.dumps(good))
+        skipped["passages"] = [p for p in skipped["passages"] if p["prominence"] == "subject"]
+        skipped["skips"] = [{"span": [0, max(p["span"][1] for p in good["passages"])],
+                             "reason": "x"}]
+        cases["rule 8 "] = skipped
         for rule, doc in cases.items():
             # under the task's own directory and the source's own name: a document
             # anywhere else is refused under rule 7 before the rule it breaks is read

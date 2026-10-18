@@ -356,6 +356,19 @@ class TestEveryHostCopyOfTheVocabularyIsPinned(unittest.TestCase):
         self.assertEqual(vl.LOCATE_EXTENSION, vocab.LOCATE_EXTENSION)
         self.assertEqual(vl.NO_MATCH, vocab.NO_MATCH)
         self.assertEqual(vl.RELATION_STRENGTH, vocab.RELATION_STRENGTH)
+        self.assertEqual(vl.UNRESOLVED_ATTEMPT_CAP, vocab.UNRESOLVED_ATTEMPT_CAP)
+        self.assertEqual(vl.LOCATE_ATTEMPT_CAP, vocab.LOCATE_ATTEMPT_CAP)
+
+    def test_the_gate_accepts_exactly_the_cap_reason_the_bridge_writes(self):
+        """The gate's ``by: attempt_cap`` form is the text the bridge writes at the cap."""
+        from gate import verify_locate as vl
+        from run import attempt_cap
+
+        said = vl.ATTEMPT_CAP_REASON.match(attempt_cap.cap_reason(vocab.LOCATE_ATTEMPT_CAP))
+        self.assertIsNotNone(said)
+        self.assertEqual(int(said.group(1)), vocab.LOCATE_ATTEMPT_CAP)
+        self.assertIsNone(vl.ATTEMPT_CAP_REASON.match(
+            attempt_cap.cap_reason(vocab.LOCATE_ATTEMPT_CAP) + " and more"))
 
     def test_one_relation_order(self):
         """The gate and the outcomes accept the same downgrades: one order, in cflib.vocab."""

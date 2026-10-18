@@ -61,7 +61,15 @@ an inventory document then carries `"passages": []`, a locate document carries
 every task passage with `outcome: "unresolved"`, and a challenge document
 carries `"verdicts": []`. `by: "attempt_cap"` (reason
 `cflib.vocab.UNRESOLVED_ATTEMPT_CAP`) is written by the bridge after a task's
-third genuine reviewer rejection (proposal §6), never by a worker.
+third genuine reviewer rejection (proposal §6), never by a worker: the gate
+refuses it (rule 1) unless its reason is the bridge's own text
+(`attempt_cap.cap_reason`, `attempt_cap: <n> genuine reviewer rejections; …`
+with `n` at least `cflib.vocab.LOCATE_ATTEMPT_CAP`) and, in tend's validation
+(`--changed-files`), the task's counter `<tend-root>/attempts/<task-id>.json` is
+at the cap. The gate finds the tend root as the bridge does: it is the directory
+of `gate.json`'s `orchestrator_db` (§9), on a run host the sibling of the gate
+directory, never its parent. A harvested corpus has no counter; there the text
+is enough.
 
 ## 2. Inventory document (`mode: locate-inventory`)
 
@@ -106,7 +114,14 @@ third genuine reviewer rejection (proposal §6), never by a worker.
   covers its whole span.
 - Every paragraph of the source with `formal_math` content — every
   `paragraphs.json` entry with `math: true` — overlaps a passage span or a
-  `skips` span (the coverage floor).
+  `skips` span (the coverage floor). No skip holds the whole span of a passage
+  the inventory keeps (rule 8: a skip drops text no passage keeps); a skip
+  inside a kept passage is how a finder nested in it, a bolded definition in a
+  theorem box, is dropped. What the skips
+  removed is counted at harvest (§10): the receipt's gate block carries
+  `skipped: {skips, chars, math_paragraphs, finder_passages, by_source}`, the
+  math paragraphs and deterministic finders' passages a skip covers and no
+  passage keeps.
 - With L2 curated hits for the article (§5; gate rule 4, off in the blind arm),
   the inventory keeps a passage of prominence `subject` scoped `formal_math`
   (the hits are for the article's own subject, so relabelling it `central`
@@ -964,7 +979,10 @@ like a faithfulness run:
   reads a record's `item`, `target`, `location_key` (location targets only), `span`
   and `passage_kind`.
 - `findings/<task-id>/<source-id>.json` — the documents (§1–§4); a contribution
-  may change only its own task's directory and `tasks/<task-id>.yaml`.
+  may change only its own task's directory and `tasks/<task-id>.yaml`, and that
+  file only in its `status:` line (rule 7: every other line reads as at the
+  merge base, the file is already on the merge target — an added task file is
+  refused — and a `tasks/<task-id>.yml` is another path, refused too).
 - `gate.json` — read by the out-of-tree locate gate,
   `scripts/gate/verify_locate.py`:
 
@@ -988,6 +1006,11 @@ like a faithfulness run:
    "vendor": {"literature_links": "<manifest sha256>",
               "formal_companion_annotations": "<manifest sha256>"}}
   ```
+
+  `orchestrator_db` lies in the tend root, so its directory is also where the
+  gate reads the bridge's `attempts/<task-id>.json` (§1); on a run host the
+  gate directory is `<root>/<run>-gate/`, beside the tend root
+  `<root>/<run>-tend/`, not inside it.
 
   `inventory` names the frozen inventory a `locate` run reads (null for
   `locate-inventory` and `locate-challenge`); it reaches the host only through
@@ -1043,7 +1066,8 @@ like a faithfulness run:
 
   The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
   <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's
-  validation and pre-merge commands, `--findings <file>` for one document,
+  validation command and, with `--pre-merge` added, its pre-merge command,
+  `--findings <file>` for one document,
   `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus, or
   `--self-check`, which validates nothing and exits 0 or 3 (its modules, the
   vendored pins, the task manifests, the sources and `corpus.sqlite`) and is
@@ -1062,7 +1086,12 @@ like a faithfulness run:
   directory cannot be written, where the line adds "read immutably: rows in its
   -wal may be missing" when a `-wal` is there — any other failed read is no
   task id, never an immutable read), or the single-stem rule, followed by why
-  no task id was found. Documents are parsed strictly: a duplicate key, a
+  no task id was found. Without a task id a change set is one task's, and
+  only `--pre-merge` (a batch of several workers' contributions) admits several
+  tasks, each of whose documents must be an addition. A problem list is capped
+  at 200 lines, the rest counted by rule, and a passage over the location cap
+  is refused without its locations being read. Documents are parsed strictly:
+  a duplicate key, a
   `NaN`/`Infinity` or a number that overflows to one, a lone surrogate, or
   nesting deeper than 64 levels is a rule 1 refusal, and so is a value of the
   wrong type where a word or an id belongs; a document is read only from a
@@ -1135,7 +1164,8 @@ null without `--changed-files`), `ownership_note` (why no task id was found),
 `scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
 `~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
 `CF_ATTEMPT_CAP` (unset or 0 is off; a locate run sets 3), `CF_TASK_MANIFESTS`
-(the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the allowlist entries for the two
+(the `gate/tasks` directory), `CF_MERGE_TARGET` (the branch a capped task's
+change set is read against, as the gate reads it; default `main`), `CF_EXTRA_TOOLS` (the allowlist entries for the two
 host tools, each `Bash(python3 <gate>/corpus_search.py --db <tools path>:*)` —
 and in an inventory run the passage-id tool — worker role only),
 `CF_REVIEWER_TOOLS` (the reviewer's read-only default plus the gate, which its
@@ -1148,8 +1178,15 @@ generated wrappers in `bin/`; the planner stages every helper the bridge runs
 program, `Bash(python3 <gate>/verify_locate.py:*)`, derived from `CF_GATE_CMD`:
 the prefix of every gate invocation both prompts render. A timeout exits 124 and
 an empty or 409 envelope 75, with no contribution printed, so tend retries the
-same worktree; only a `request_changes` from a call that completed counts as a
-rejection. Both roles' allowlists carry the gate command's program by absolute
+same worktree; only a `request_changes` from a call that completed, which the
+reviewer stated — in its result file, or with none an explicit `verdict:` in its
+prose (`normalize_result.explicit_verdict`) — counts as a rejection; a verdict
+the normaliser fell back to for want of one does not. At the cap the bridge
+puts every other path the rejected attempts changed since the merge base back
+as it is there (a neighbour's task file, a stray file, a deletion; `.tend/`
+aside) and keeps the task file's lines with `status: complete`, and the reviewer
+side approves mechanically only a change set of exactly those documents and that
+status. Both roles' allowlists carry the gate command's program by absolute
 path (`CF_GATE_CMD` without its flags): the worker runs it before committing and
 the reviewer to confirm the gate passes. When an agent writes no result file,
 the bridge's fallback runs that command with `--findings <file>` for each of the
@@ -1170,7 +1207,9 @@ again with `verify_locate.py` and the run's `gate.local.json`, and the receipt's
 `locate` block counts `documents`, `by_mode`, `tasks`, `passages`, `verdicts`,
 `unresolved_documents`, `attempt_capped_documents` and `unresolved_passages` —
 UNRESOLVED on its own, never as not formalized. That re-gate writes no line to
-any gate log: it is not a worker's attempt.
+any gate log: it is not a worker's attempt. For an inventory run the receipt's
+`gate` block also carries `skipped` (§2: what the skips removed, in total and
+`by_source`), and `cf harvest` prints it beside the gate's verdict.
 
 A remote `cf harvest <run> --execute` also brings home, outside the findings
 rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`

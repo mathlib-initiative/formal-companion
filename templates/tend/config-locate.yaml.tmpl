@@ -21,11 +21,13 @@ workspace_mirror:
 # The locate gate lives OUTSIDE the entrypoint and outside every worktree, like the
 # findings gate. --changed-files refuses any contribution that touched a path other
 # than its own findings/<task>/<source>.json and tasks/<task>.yaml, and the gate
-# validates only the documents that contribution changed.
+# validates only the documents that contribution changed. Only the pre-merge
+# command carries --pre-merge: a batch may hold several tasks' new documents, one
+# worker's worktree only its own task's.
 validation_commands:
   - argv: [python3, {{gate_dir}}/{{gate_script}}, --gate-config, {{gate_dir}}/gate.json, --changed-files, --base, {{merge_target_branch}}]
 pre_merge_validation_commands:
-  - argv: [python3, {{gate_dir}}/{{gate_script}}, --gate-config, {{gate_dir}}/gate.json, --changed-files, --base, {{merge_target_branch}}]
+  - argv: [python3, {{gate_dir}}/{{gate_script}}, --gate-config, {{gate_dir}}/gate.json, --changed-files, --pre-merge, --base, {{merge_target_branch}}]
 merge_target_branch: {{merge_target_branch}}
 merge_validation_worktree: true
 seed_worktree_build: false

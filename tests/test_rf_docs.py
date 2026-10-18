@@ -135,7 +135,7 @@ ARCHIVE = SKILL / "docs" / "design" / "archive"
 PROSE_FLAG_DOCS = ("SKILL.md", "README.md")
 #: flags of other programs that the two entry documents legitimately name.
 FOREIGN_FLAGS = {"--no-verify", "--porcelain", "--offline", "--fixtures",
-                 "--group-by", "--changed-files", "--base", "--gate-config",
+                 "--group-by", "--changed-files", "--base", "--gate-config", "--pre-merge",
                  "--include-statements", "--full-quotes"}
 #: a line starting with one of these is another program's command line.
 OTHER_PROGRAM = re.compile(
