@@ -351,7 +351,7 @@ token grammars (`references/locate-documents.md` §6, the consumer's own): `RECO
 (letters, digits and `._:-`, at most 128, a letter or digit first: a seal's `set_id`, its
 `sourceset.id` and a campaign id, which never starts `RUN_TOKEN_PREFIX`, `run:`) and
 `RUN_TOKEN_ID` (letters, digits and `._-`, at most 64: a run id a run token
-`run:<locate run>[+<challenge run>]` can spell), and the run
+`run:<locate run>[+<challenge run>]` can spell, which `cf plan-locate` checks), and the run
 machinery's: `MAX_TASKS_PER_ROOT` (500 tasks in one tend root; a larger plan is campaign
 shards), `LOCATE_ATTEMPT_CAP` (3: the genuine reviewer rejection that reaches it writes the
 `UNRESOLVED` document), `SESSION_SLOTS` (15 `flock` slots, one below the account's 16 sessions)

@@ -250,6 +250,54 @@ class TestASourcesetIdTheSealCannotCarry(Campaign):
         self.assertEqual(code, 0, out + err)
 
 
+class TestARunIdTheRunTokenCannotSpell(Campaign):
+    """R2-I: ``cf plan-locate`` admits only the run ids the export's run token spells.
+
+    The review's experiment: ``cf plan-locate --preset locate --run-id loc+2`` exited 0
+    and planned ``runs/loc+2/`` with its tend root and gate, and the export's
+    ``campaign_token`` then refused the run -- after the whole run had been paid for,
+    with no way to rename it.
+    """
+
+    def plan(self, *argv):
+        return ws(self.root, "plan-locate", "--sourceset", F.SS, "--universe", F.U, *argv)
+
+    def test_r2_a_run_id_outside_the_grammar_plans_nothing(self):
+        for bad in ("loc+2", "loc:2", "_loc", "l" * 65):
+            with self.subTest(run_id=bad):
+                code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-1",
+                                           "--run-id", bad)
+                self.assertNotEqual(code, 0, out + err)
+                self.assertIn("cannot be spelled in a record set's run token", out + err)
+                self.assertFalse((self.paths.runs_dir / bad).exists())
+                with self.assertRaises(export_mod.CfError):      # what the export would say
+                    export_mod.campaign_token({"locate": {}}, bad, [])
+
+    def test_r2_a_challenge_of_a_run_the_token_cannot_spell_is_refused(self):
+        code, out, err = self.plan("--preset", "locate-challenge", "--challenge-of", "loc+2",
+                                   "--run-id", "chl-1")
+        self.assertNotEqual(code, 0, out + err)
+        self.assertIn("--challenge-of 'loc+2' cannot be spelled", out + err)
+        self.assertFalse((self.paths.runs_dir / "chl-1").exists())
+
+    def test_r2_an_id_the_grammar_admits_plans(self):
+        self.locate(run_id="loc_2.b")
+        code, out, err = self.plan("--preset", "locate-challenge", "--challenge-of", "loc_2.b",
+                                   "--run-id", "chl-2")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(export_mod.campaign_token({"locate": {}}, "loc_2.b", ["chl-2"]),
+                         "run:loc_2.b+chl-2")
+
+    def test_r2_a_campaign_id_is_at_most_128_characters(self):
+        from run import campaign as campaign_mod
+
+        self.assertEqual(campaign_mod.check_campaign_id("c" * 128), "c" * 128)
+        with self.assertRaises(export_mod.CfError):
+            campaign_mod.check_campaign_id("c" * 129)
+        with self.assertRaises(export_mod.CfError):           # the seal would refuse it too
+            export_mod.campaign_token({"locate": {"campaign": "c" * 129}}, "loc-1", [])
+
+
 class TestTheUniverseFile(_Exported):
 
     def setUp(self):
