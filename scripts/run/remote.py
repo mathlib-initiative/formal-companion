@@ -159,6 +159,42 @@ TEND_VERSION_PROBE = (
 )
 
 
+#: the agent CLI each bridge launches, for the preflight's version line
+AGENT_CLIS = {"agentbox-claude": "claude", "claude-p": "claude", "agentbox-codex": "codex"}
+#: the preflight step that prints ``<label>: <version>`` lines, and the run.yaml
+#: ``versions`` key each label fills (references/locate-documents.md section 9)
+VERSIONS_TITLE = "versions: tend, agentbox, the agent CLI (recorded in run.yaml)"
+VERSION_LABELS = {"tend-version": "tend", "agentbox-version": "agentbox",
+                  "agent-cli-version": "agent_cli"}
+
+
+def _versions_step(tend: str, bridge: str) -> str:
+    """Print one ``<label>: <version>`` line per pin; ``unknown`` when a probe finds none."""
+    cli = AGENT_CLIS.get(bridge, "")
+    cli_probe = (f"$( ({cli} --version || echo unknown) 2>/dev/null | head -1)" if cli
+                 else "none (this bridge launches no agent CLI of its own)")
+    return ("printf 'tend-version: %s\\n' \"$( { " + f"{tend} {TEND_VERSION_PROBE}"
+            + "; } 2>/dev/null | tail -1)\"; "
+            "printf 'agentbox-version: %s\\n' \"$( (agentbox --version || echo unknown) "
+            "2>/dev/null | head -1)\"; "
+            f"printf 'agent-cli-version: %s\\n' \"{cli_probe}\"")
+
+
+def recorded_versions(results: Iterable[dict]) -> dict[str, str]:
+    """``{tend, agentbox, agent_cli}`` parsed from the executed versions step, or ``{}``."""
+    for record in results:
+        if record.get("title") != VERSIONS_TITLE or not record.get("ran"):
+            continue
+        out = {}
+        for line in str(record.get("stdout") or "").splitlines():
+            label, _, value = line.partition(":")
+            key = VERSION_LABELS.get(label.strip())
+            if key and value.strip():
+                out[key] = value.strip()
+        return out
+    return {}
+
+
 def _tend_version_step(host: dict, tend: str) -> str:
     """The preflight fragment that checks -- or, unrecorded, only prints -- tend's version."""
     required = str(host.get("tend_version_required") or "")
@@ -211,6 +247,8 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"set -e; uname -sm; df -h {shlex.quote(root)} | tail -1; "
                    f"command -v agentbox >/dev/null && echo 'agentbox: ok' || echo 'agentbox: MISSING'; "
                    + _tend_version_step(host, tend)), safe=True, record_output=True)
+    add("preflight", VERSIONS_TITLE, _ssh(host, _versions_step(tend, str(run.get("bridge") or ""))),
+        safe=True, record_output=True)
 
     if not force:
         # Every transfer commits tasks/ over main, so once tend has merged into
@@ -285,6 +323,19 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                        f"sha256 verified' || {{ echo 'REFUSED: corpus.sqlite on the host is not "
                        f"the database gate.json pins' >&2; exit 1; }}"),
             safe=True, record_output=True, expected=corpus["sha256"])
+    tools = (locate or {}).get("tools_corpus_db") or {}
+    if isinstance(tools, dict) and tools.get("path") and tools.get("sha256") \
+            and tools["path"] != corpus.get("path"):
+        # the blind or planted copy the worker's search tools read (gate.json
+        # tools_corpus_db): pinned the same way, so a worker searches the
+        # database the run recorded
+        line = shlex.quote(f"{tools['sha256']}  {tools['path']}")
+        add("verify", f"the {tools.get('kind') or 'tools'} database the search tools read is the "
+                      f"pinned one (sha256)",
+            _ssh(host, f"echo {line} | sha256sum -c --status - && echo 'tools database: pinned "
+                       f"sha256 verified' || {{ echo 'REFUSED: the tools database on the host is "
+                       f"not the one gate.json pins' >&2; exit 1; }}"),
+            safe=True, record_output=True, expected=tools["sha256"])
     # BEFORE: the companion trees as they landed, hashed on the host. Recorded in
     # run.yaml (run.executed) with the digest they were sent with.
     for entry in entries:

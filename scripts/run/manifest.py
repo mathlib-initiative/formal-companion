@@ -467,8 +467,11 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                                            "digest names what differs"))
         if not companions:
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
-    wants_images = "image" in source_access(run).lower()
-    if include_texts:
+    # A locate run's source text is its rendered layers, which locate_entries
+    # above already sent (or warned about); run.yaml's faithfulness `sources`
+    # list is empty for it, so this branch would only warn that it names none.
+    wants_images = "image" in source_access(run).lower() and not is_locate(run)
+    if include_texts and not is_locate(run):
         source_ids = run_source_ids(run)
         if not source_ids:
             warnings.append("--include-source-text was given but run.yaml names no sources")
@@ -527,15 +530,18 @@ def locate_gate(run_dir: Path) -> tuple[dict, dict]:
 
 
 def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], list[str]]:
-    """What a locate run sends beyond the root: its sources, corpus, L2 and inventory.
+    """What a locate run sends beyond the root: its sources, databases and L2.
 
     The host paths are the ones the planner wrote into ``gate.json`` (the gate
     reads them there) and the local ones its ``gate.local.json``; only THIS run's
-    sources travel, never the whole sourceset.  The rendered sources and the
-    frozen inventory quote the source text, so they leave this machine only with
-    ``--include-source-text`` -- and without them the gate on the host fails
-    closed, which the warning says.  ``corpus.sqlite`` and the candidates are
-    metadata about public libraries and always travel.
+    sources travel, never the whole sourceset.  The rendered sources quote the
+    source text, so they leave this machine only with ``--include-source-text``
+    -- and without them the gate on the host fails closed, which the warning
+    says.  ``corpus.sqlite``, the tools database when it is another file
+    (``tools_corpus_db``: the blind or planted copy the worker's search tools
+    read) and the candidates are metadata about public libraries and always
+    travel.  The frozen inventory does NOT: nothing on the host reads it, and its
+    passages already reach the workers and the gate in the task manifests.
     """
     remote, local = locate_gate(run_dir)
     entries: list[dict] = []
@@ -562,21 +568,20 @@ def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], l
                        note="the universe's declarations; the gate checks every lean end in it")
         entry["sha256"] = (remote.get("corpus_db") or {}).get("sha256")
         entries.append(entry)
+    tools_r = remote.get("tools_corpus_db") if isinstance(remote.get("tools_corpus_db"), dict) else {}
+    tools_l = local.get("tools_corpus_db") if isinstance(local.get("tools_corpus_db"), dict) else {}
+    if tools_r.get("path") and tools_l.get("path") and str(tools_r["path"]) != str(corpus_r):
+        entry = _entry("tools-corpus.sqlite", Path(tools_l["path"]), str(tools_r["path"]),
+                       flags=READONLY_CHMOD,
+                       note=f"the {tools_r.get('kind') or 'tools'} database the worker's search "
+                            "tools read; the gate still checks against corpus.sqlite")
+        entry["sha256"] = tools_r.get("sha256")
+        entries.append(entry)
     if remote.get("candidates_dir") and local.get("candidates_dir"):
         entries.append(_entry("candidates", Path(local["candidates_dir"]),
                               str(remote["candidates_dir"]).rstrip("/") + "/",
                               flags=READONLY_CHMOD + ["--delete"],
                               note="L2: the curated hits gate rule 4 reads itself"))
-    inv_r = (remote.get("inventory") or {}).get("dir") if isinstance(remote.get("inventory"), dict) else None
-    inv_l = (local.get("inventory") or {}).get("dir") if isinstance(local.get("inventory"), dict) else None
-    if inv_r and inv_l:
-        if include_texts:
-            entries.append(_entry("inventory", Path(inv_l), str(inv_r).rstrip("/") + "/",
-                                  flags=READONLY_CHMOD + ["--delete"],
-                                  note="the frozen inventory this locate run reads (it quotes the "
-                                       "source)"))
-        else:
-            warnings.append("the frozen inventory quotes the source, so it was not included either")
     return entries, warnings
 
 
@@ -804,8 +809,18 @@ def check_budget_cap(workspace, run: dict, max_cost: float | None,
         # the watchdog drains at the cap recorded in run.yaml, so a workspace-wide
         # ceiling the run never recorded would leave it with nothing to drain at,
         # and no flag acknowledges running without one.
-        if value is None and run_budget.get("max_cost") is not None:
-            value = float(run_budget["max_cost"])
+        recorded = run_budget.get("max_cost")
+        if value is not None and recorded is not None and float(value) != float(recorded):
+            # The campaign, the sequencer and the shard's watchdog all read the
+            # cap run.yaml records; sending at another one would raise tend's
+            # ceiling past the cap the watchdog drains at, or below it.
+            raise CfError(
+                f"--max-cost {float(value):g} differs from the spend cap this locate run "
+                f"records (budget.max_cost {float(recorded):g} in its run.yaml)",
+                hint="drop --max-cost to send it at the recorded cap, or re-plan it with "
+                     "`cf plan-locate ... --max-cost <usd>`")
+        if value is None and recorded is not None:
+            value = float(recorded)
         if value is None or value <= 0:
             raise CfError(
                 "a locate run needs a spend cap recorded in its run.yaml (budget.max_cost) or "

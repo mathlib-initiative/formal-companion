@@ -23,6 +23,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -361,7 +362,10 @@ class TestCfRunForLocate(WorkspaceCase):
             include_texts=True)
         layer = next(e for e in entries if e["name"] == "source-layer:enwiki-1001-2002")
         self.assertEqual(layer["dest"], f"{self.remote}/locate/wpm/sources/enwiki-1001-2002/")
-        self.assertIn("inventory", {e["name"] for e in entries})
+        # nothing on the host reads the frozen inventory: its passages travel in
+        # the task manifests (#54, #80)
+        self.assertNotIn("inventory", {e["name"] for e in entries})
+        self.assertFalse(any("names no sources" in w for w in warnings))
 
     def test_the_verify_stage_checks_the_corpus_once_and_the_locate_gate(self):
         host = manifest.resolve_host(self.ws, "examplebox")
@@ -375,6 +379,137 @@ class TestCfRunForLocate(WorkspaceCase):
         self.assertEqual(corpus["expected"], "b" * 64)
         self.assertIn("sha256sum -c", corpus["shell"])
         self.assertTrue(any("verify_locate.py" in s["shell"] for s in verify))
+
+    def test_the_tools_database_travels_and_is_verified_when_it_is_another_file(self):
+        rd = self.ws_dir / "runs" / "r-1"
+        blind = self.ws_dir / "corpora" / "u1" / "corpus.blind.sqlite"
+        blind.write_bytes(b"blind")
+        gate = json.loads((rd / "gate.json").read_text())
+        local = json.loads((rd / "gate.local.json").read_text())
+        gate["tools_corpus_db"] = {"path": f"{self.remote}/locate/u1/corpus.blind.sqlite",
+                                   "sha256": "c" * 64, "kind": "blind"}
+        local["tools_corpus_db"] = {"path": str(blind), "sha256": "c" * 64, "kind": "blind"}
+        (rd / "gate.json").write_text(json.dumps(gate))
+        (rd / "gate.local.json").write_text(json.dumps(local))
+        host = manifest.resolve_host(self.ws, "examplebox")
+        entries, _ = manifest.build_manifest(
+            workspace_dir=self.ws_dir, skill_dir=SKILL, run_id="r-1", run=self.run_doc, host=host)
+        tools = next(e for e in entries if e["name"] == "tools-corpus.sqlite")
+        self.assertEqual((tools["src"], tools["dest"], tools["sha256"]),
+                         (str(blind), f"{self.remote}/locate/u1/corpus.blind.sqlite", "c" * 64))
+        steps = remote.plan_commands(host=host, run_id="r-1", run=self.run_doc, entries=[],
+                                     names=manifest.remote_names(self.run_doc, "r-1"),
+                                     budget={"max_cost": 10, "currency": "USD"},
+                                     concurrency={"workers": 3, "reviewers": 2}, locate=gate)
+        checked = [s for s in steps if s["stage"] == "verify" and s.get("expected")]
+        self.assertEqual(sorted(s["expected"] for s in checked), ["b" * 64, "c" * 64])
+        self.assertIn("blind database", next(s for s in checked if s["expected"] == "c" * 64)
+                      ["title"])
+        # kind full: the same file as corpus_db, so nothing more travels or is checked
+        for doc, path in ((gate, gate["corpus_db"]["path"]), (local, local["corpus_db"]["path"])):
+            doc["tools_corpus_db"] = {"path": path, "sha256": "b" * 64, "kind": "full"}
+        (rd / "gate.json").write_text(json.dumps(gate))
+        (rd / "gate.local.json").write_text(json.dumps(local))
+        entries, _ = manifest.build_manifest(
+            workspace_dir=self.ws_dir, skill_dir=SKILL, run_id="r-1", run=self.run_doc, host=host)
+        self.assertNotIn("tools-corpus.sqlite", {e["name"] for e in entries})
+        steps = remote.plan_commands(host=host, run_id="r-1", run=self.run_doc, entries=[],
+                                     names=manifest.remote_names(self.run_doc, "r-1"),
+                                     budget={"max_cost": 10, "currency": "USD"},
+                                     concurrency={"workers": 3, "reviewers": 2}, locate=gate)
+        self.assertEqual(len([s for s in steps if s["stage"] == "verify" and s.get("expected")]), 1)
+
+    def test_a_given_cap_must_agree_with_the_recorded_one(self):
+        doc = dict(self.run_doc, budget={"currency": "USD", "max_cost": 10})
+        with self.assertRaises(CfError) as caught:
+            manifest.check_budget_cap(self.ws, doc, 25.0, False, locate=True)
+        self.assertIn("--max-cost 25 differs", str(caught.exception))
+        self.assertIn("budget.max_cost 10", str(caught.exception))
+        self.assertEqual(manifest.check_budget_cap(self.ws, doc, 10.0, False,
+                                                   locate=True)["max_cost"], 10.0)
+        self.assertEqual(manifest.check_budget_cap(self.ws, doc, None, False,
+                                                   locate=True)["max_cost"], 10.0)
+
+    def cf_run(self, *extra) -> str:
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = cf_main.main(["--workspace", str(self.ws_dir), "run", "r-1", "--host",
+                                 "examplebox", "--i-have-consent", *extra])
+        self.assertEqual(code, 0, out.getvalue())
+        return out.getvalue()
+
+    def test_the_cap_given_to_cf_run_is_the_one_the_campaign_reads(self):
+        from cflib.yamlio import read_yaml
+
+        self.cf_run("--max-cost", "25", "--include-source-text")
+        doc = read_yaml(self.ws_dir / "runs" / "r-1" / "run.yaml")
+        self.assertEqual(doc["budget"]["max_cost"], 25.0)
+        self.assertEqual(campaign_mod.shard_record(self.ws, "r-1", 1, "examplebox")["max_cost"],
+                         25.0)
+        with self.assertRaises(CfError):
+            self.cf_run("--max-cost", "50")
+
+    def test_the_consent_record_names_the_layers_that_left(self):
+        from cflib.yamlio import read_yaml
+
+        out = self.cf_run("--max-cost", "10", "--include-source-text")
+        self.assertNotIn("names no sources", out)
+        block = read_yaml(self.ws_dir / "runs" / "r-1" / "run.yaml")["run"]
+        self.assertEqual(block["sources_transferred"], ["enwiki-1001-2002"])
+        self.cf_run("--max-cost", "10")
+        block = read_yaml(self.ws_dir / "runs" / "r-1" / "run.yaml")["run"]
+        self.assertEqual(block["sources_transferred"], [])
+
+    def test_a_locate_run_planned_for_this_machine_is_refused_first(self):
+        from cflib.yamlio import read_yaml, write_yaml
+
+        path = self.ws_dir / "runs" / "r-1" / "run.yaml"
+        doc = read_yaml(path)
+        doc["host"] = {"name": "local", "kind": "local", "remote_root": ""}
+        write_yaml(path, doc)
+        for extra in ([], ["--local"], ["--host", "examplebox", "--i-have-consent"]):
+            with self.subTest(extra=extra), redirect_stdout(io.StringIO()), \
+                    redirect_stderr(io.StringIO()), self.assertRaises(CfError) as caught:
+                cf_main.main(["--workspace", str(self.ws_dir), "run", "r-1", *extra])
+            self.assertIn("allowlisted host through tend", str(caught.exception))
+            self.assertIn("cf plan-locate", caught.exception.hint)
+        self.assertFalse((self.ws_dir / "runs" / "r-1" / "self-gate").exists())
+
+    def test_the_preflight_records_the_versions_the_bench_pins(self):
+        from cflib.yamlio import read_yaml, write_yaml
+
+        rd = self.ws_dir / "runs" / "r-1"
+        (rd / "tend-root" / "prompts").mkdir(parents=True)
+        (rd / "tend-root" / "gate").mkdir()
+        path = rd / "run.yaml"
+        doc = read_yaml(path)
+        doc["bridge"] = "agentbox-claude"
+        write_yaml(path, doc)
+        fake = self.tmp / "fakebin"
+        fake.mkdir()
+        scripts = {"ssh": '#!/bin/sh\nshift\nexec /bin/bash -c "$*"\n',
+                   "agentbox": "#!/bin/sh\necho 'agentbox 9.9.9'\n",
+                   "claude": "#!/bin/sh\necho '1.2.3 (Claude Code)'\n"}
+        for name, text in scripts.items():
+            (fake / name).write_text(text)
+            (fake / name).chmod(0o755)
+        env = {"PATH": f"{fake}{os.pathsep}{os.environ.get('PATH', '')}"}
+        with mock.patch.dict(os.environ, env):
+            self.cf_run("--max-cost", "10", "--stage", "preflight", "--execute")
+        doc = read_yaml(path)
+        self.assertEqual(doc["versions"]["agentbox"], "agentbox 9.9.9")
+        self.assertEqual(doc["versions"]["agent_cli"], "1.2.3 (Claude Code)")
+        self.assertIn("tend", doc["versions"])
+        self.assertEqual(remote.recorded_versions([{"title": remote.VERSIONS_TITLE, "ran": False,
+                                                    "stdout": "tend-version: 1"}]), {})
+        # a bridge with no CLI of its own says so instead of probing one
+        steps = remote.plan_commands(host=manifest.resolve_host(self.ws, "examplebox"),
+                                     run_id="r-1", run={"bridge": "tend-agent"}, entries=[],
+                                     names=manifest.remote_names(self.run_doc, "r-1"),
+                                     budget={"max_cost": 10, "currency": "USD"},
+                                     concurrency={"workers": 3, "reviewers": 2})
+        probe = next(s for s in steps if s["title"] == remote.VERSIONS_TITLE)
+        self.assertIn("launches no agent CLI", probe["shell"])
 
     def test_the_tend_config_must_call_the_locate_gate(self):
         host = manifest.resolve_host(self.ws, "examplebox")

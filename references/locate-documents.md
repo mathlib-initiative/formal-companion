@@ -636,6 +636,21 @@ like a faithfulness run:
   `cf run --execute` sends a locate run anywhere (proposal §6). The run's counts
   land in the sourceset's `state.json`, not in a companion's.
 
+  `cf run` refuses a locate run planned for `local` (or given `--local`) before
+  it writes anything: a locate run runs on an allowlisted host through tend. It
+  refuses a `--max-cost` that differs from a recorded `budget.max_cost`, and
+  records a given one there when none is, since the campaign, the sequencer and
+  the watchdog read that key. It sends the run's source layers (only with
+  `--include-source-text`, and then `run.sources_transferred` names them),
+  `corpus.sqlite`, the tools database when gate.json's `tools_corpus_db` names
+  another file, and the candidates; the verify stage checks each database
+  against its pinned sha256 once. The frozen inventory is not sent: nothing on
+  the host reads it, and its passages reach the workers and the gate in the task
+  manifests. The preflight prints `tend-version:`, `agentbox-version:` and
+  `agent-cli-version:` lines (the CLI the run's `bridge` launches; `unknown`
+  when a probe finds none), and an executed preflight records them at the top
+  level as `versions: {tend, agentbox, agent_cli}`.
+
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
 JSON envelope per agent call, `<task-id>.<role>.<UTC stamp>.<pid>.json`, kept as
 a cost cross-check), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
