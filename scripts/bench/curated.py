@@ -3,9 +3,15 @@
 New code, implementing docs/proposals/wikipedia-locate.md sections 8.1 (G1's
 curated lists) and 8.5 step 1 (the frame's curated stratum, "Tier A ∩ curated
 QIDs") in the shapes references/locate-bench.md sections 2 and 4 fix.  ``cf bench
-build`` (the stratum) and ``cf bench anchor`` (G1) both read the lists here, so
-an article the build counts as curated is one the anchor looks for a curated
-declaration on, and the other way round.
+build`` reads the lists here for the frame's curated STRATUM.  ``cf bench
+anchor`` does NOT: G1 reads the same files through L2's own join
+(``bench.gold.read_curated_1000``/``read_curated_100`` and ``resolve_g1``, keyed
+on ``locate.candidates.normalise_title``), so the gate's rule 4 and G1 agree on
+what is curated.  This reader is the wider of the two -- it also resolves a
+100.yaml entry through a shared declaration or a 1000.yaml title, and folds
+titles more (:func:`fold_title`) -- so an article of the stratum may carry no
+G1 entry (references/locate-bench.md section 2 says so); the divergence is
+deliberate and open, not a second definition of G1.
 
 * **1000.yaml** maps a Wikidata QID to ``{title, decl | decls, ...}``.  A key
   may carry one capital-letter suffix (``Q180345X``, ``Q4724004A``) that tells
