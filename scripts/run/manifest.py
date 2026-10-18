@@ -33,6 +33,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -72,13 +73,37 @@ def default_remote_root() -> str:
     return f"/home/{user}" if user else "/home/<user>"
 
 
+#: where tend's checkout lives on a host whose workspace entry names no
+#: ``tend_dir``: the operator's home, as references/runbook-server.md has it
+#: (``cd ~/tend && uv run tend --version``) -- never under the run root
+DEFAULT_TEND_DIR = "$HOME/tend"
+
+
+def _remote_dir(path: str) -> str:
+    """*path* for a ``cd`` in the host's shell: ``~/x`` and ``$HOME/x`` expand there, the rest is quoted."""
+    for prefix in ("~/", "$HOME/"):
+        if path.startswith(prefix):
+            rest = path[len(prefix):].strip("/")
+            return '"$HOME"/' + shlex.quote(rest) if rest else '"$HOME"'
+    if path in ("~", "$HOME"):
+        return '"$HOME"'
+    return shlex.quote(path)
+
+
 def resolve_host(workspace, host: str) -> dict:
     """Resolve *host* against ``workspace.yaml: hosts`` or raise.
 
     ``Workspace.check_host`` is the enforcement point (it refuses anything not in
     ``hosts.allowlist``); this adds the connection facts the commands need:
-    ``{name, ssh, remote_root, tend_cmd, agentbox_profile, disk_budget_bytes,
-    tend_version_required}``.
+    ``{name, ssh, remote_root, tend_dir, tend_cmd, agentbox_profile,
+    disk_budget_bytes, tend_version_required}``.
+
+    ``tend_cmd`` is ``hosts.<host>.tend_cmd`` (then ``hosts.tend_cmd``) verbatim
+    when the workspace gives one.  Otherwise it is built from ``tend_dir``
+    (``hosts.<host>.tend_dir``, ``hosts.tend_dir``, else ``$HOME/tend``), which
+    is its own key: the default used to be ``<remote_root>/tend``, so a run root
+    other than the home directory (``~/locate-smoke``) sent every tend command
+    into a directory that does not exist (field defect P4).
 
     ``tend_version_required`` is a comma-separated version spec (``">=0.4,<0.6"``)
     from ``hosts.<host>.tend_version``, ``hosts.tend_version`` or
@@ -94,18 +119,23 @@ def resolve_host(workspace, host: str) -> dict:
     remote_root = str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
                       or default_remote_root()).rstrip("/")
     budget_gb = workspace.default("worktree_budget_gb", None)
+    tend_dir = str(entry.get("tend_dir") or hosts.get("tend_dir") or DEFAULT_TEND_DIR).rstrip("/") \
+        or DEFAULT_TEND_DIR
     return {
         "name": host,
         "ssh": str(ssh),
         "remote_root": remote_root,
+        "tend_dir": tend_dir,
         # `uv` installs into ~/.local/bin, which a non-login ssh shell does not have
         # on PATH: `ssh <host> 'cd ~/tend && uv run tend --version'` exits 127 with
         # "uv: command not found".  references/runbook-server.md has always said to
         # export it; the generated command did not, so the first real preflight
         # against a server failed on exactly that.  Override per host with
-        # `hosts.<name>.tend_cmd` when uv is installed somewhere else.
+        # `hosts.<name>.tend_cmd` when uv is installed somewhere else, or only
+        # `hosts.<name>.tend_dir` when tend's checkout is not ~/tend.
         "tend_cmd": str(entry.get("tend_cmd") or hosts.get("tend_cmd")
-                        or f'export PATH="$HOME/.local/bin:$PATH"; cd {remote_root}/tend && uv run'),
+                        or f'export PATH="$HOME/.local/bin:$PATH"; cd {_remote_dir(tend_dir)} '
+                           f'&& uv run'),
         "agentbox_profile": str(entry.get("agentbox_profile") or entry.get("profile")
                                 or hosts.get("agentbox_profile") or ""),
         "disk_budget_bytes": int(entry.get("disk_budget_bytes")
