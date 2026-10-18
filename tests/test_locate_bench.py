@@ -176,14 +176,16 @@ class TestTheFrameAndTheDraws(unittest.TestCase):
         self.assertEqual(frame["N_curated"], 3)          # article 5 shares article 0's QID
         self.assertTrue(all(a["layer_sha256"] for a in frame["articles"]))
 
-    def test_an_article_the_manifest_lacks_or_holds_unrendered_is_refused_by_name(self):
+    def test_an_article_the_manifest_lacks_is_refused_by_name_and_an_unrendered_one_listed(self):
         with self.assertRaises(CfError) as ctx:
             self.frame([{"pageid": 1001}, {"pageid": 4242}])
         self.assertIn("pageid 4242", str(ctx.exception))
         self.manifest.entries[self.world.sid(1)]["layer_sha256"] = None
-        with self.assertRaises(CfError) as ctx:
-            self.frame([{"pageid": 1002}])
-        self.assertIn(self.world.sid(1), str(ctx.exception))
+        frame = self.frame([{"pageid": 1001}, {"pageid": 1002}])
+        self.assertEqual(frame["N"], 2)
+        self.assertEqual((frame["N_rendered"], frame["unrendered"]), (1, [self.world.sid(1)]))
+        self.assertFalse(next(a for a in frame["articles"]
+                              if a["source_id"] == self.world.sid(1))["rendered"])
 
     def test_the_draws_are_a_function_of_the_seed_with_their_probabilities(self):
         frame = self.frame()
@@ -353,6 +355,90 @@ class TestCuratedLists(unittest.TestCase):
         self.assertLessEqual({curated_mod.LIST_1000, curated_mod.LIST_100}, vocab.CANDIDATE_VIA)
 
 
+class TestAPartlyRenderedSourceset(unittest.TestCase):
+    """The bench builds from a sourceset rendered only where the draw landed.
+
+    The field case, reduced: a frame of every Tier A article, of which only the
+    drawn ones (and a few more) were fetched and rendered.  The build refused
+    every unrendered frame article, so it needed the whole tier rendered first.
+    """
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=6)
+        manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+        frame = draw_mod.build_frame([{"pageid": 1001 + i} for i in range(6)], manifest,
+                                     curated_mod.read_lists([self.world.curated_1000()]))
+        self.drawn = {r["source_id"] for r in
+                      draw_mod.draw(frame, uniform=2, curated=1, seed=5)["articles"]}
+        self.assertLess(len(self.drawn), 6)
+        self.others = sorted(set(self.world.entries) - self.drawn)
+
+    def build(self, *extra):
+        return cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+                  "--frame", self.world.frame_file(), "--curated-qids", self.world.curated_1000(),
+                  "--uniform", 2, "--curated", 1, "--spans-per-article", 2, "--seed", 5, *extra)
+
+    def unrender(self, sid):
+        keys = ("raw_sha256", "html_sha256", "layer_sha256", "renderer")
+        self.rendered = getattr(self, "rendered", {})
+        self.rendered[sid] = {k: self.world.entries[sid][k] for k in keys}
+        self.world.change_entry(sid, **{k: None for k in keys})
+
+    def test_only_the_drawn_articles_need_a_render_and_pi_is_the_whole_frames(self):
+        for sid in self.others:
+            self.unrender(sid)
+        out = self.build()
+        lay = layout_of(self.world)
+        frame = json.loads(lay.frame_json.read_text())
+        draw = json.loads(lay.draw_json.read_text())
+        self.assertEqual(frame["N"], 6)
+        self.assertEqual(sorted(frame["unrendered"]), self.others)
+        self.assertEqual({r["source_id"] for r in draw["articles"]}, self.drawn)
+        self.assertTrue(all(r["pi_uniform"] == 2 / 6 for r in draw["articles"]))
+        self.assertNotIn("excluded", draw)
+        self.assertIn(f"{6 - len(self.others)} rendered, {len(self.others)} not yet", out)
+        self.assertFalse(lay.unrendered_list.exists())
+
+    def test_a_drawn_unrendered_article_is_refused_with_the_step_that_fetches_it(self):
+        gone = sorted(self.drawn)[0]
+        self.unrender(gone)
+        with self.assertRaises(CfError) as ctx:
+            self.build()
+        lay = layout_of(self.world)
+        self.assertIn(gone, str(ctx.exception))
+        self.assertIn("cf sourceset fetch", ctx.exception.hint)
+        self.assertIn("cf sourceset render", ctx.exception.hint)
+        self.assertIn("--exclude-unrendered", ctx.exception.hint)
+        self.assertEqual(lay.unrendered_list.read_text(), f"{gone}\n")
+        for written in (lay.frame_json, lay.draw_json, lay.bench_yaml):
+            self.assertFalse(written.exists(), written)
+
+    def test_or_excluded_with_its_inclusion_probabilities(self):
+        gone = sorted(self.drawn)[0]
+        self.unrender(gone)
+        out = self.build("--exclude-unrendered")
+        lay = layout_of(self.world)
+        draw = json.loads(lay.draw_json.read_text())
+        self.assertEqual([r["source_id"] for r in draw["excluded"]], [gone])
+        row = draw["excluded"][0]
+        self.assertIn("not rendered", row["reason"])
+        self.assertGreater(row["pi"], 0.0)
+        self.assertEqual({r["source_id"] for r in draw["articles"]}, self.drawn - {gone})
+        self.assertIn(gone, sorted(draw["uniform"]["drawn"] + draw["curated"]["drawn"]))
+        host = json.loads(lay.host_manifest.read_text())["articles"]
+        self.assertNotIn(gone, sum(host.values(), []))
+        spans = json.loads(lay.spans_json.read_text())["spans"]
+        self.assertNotIn(gone, {s["source_id"] for s in spans})
+        self.assertIn("excluded : 1 drawn article(s)", out)
+        # rendered later: the same draw, nothing excluded, the list gone
+        self.world.change_entry(gone, **self.rendered[gone])
+        self.build()
+        again = json.loads(lay.draw_json.read_text())
+        self.assertEqual({r["source_id"] for r in again["articles"]}, self.drawn)
+        self.assertNotIn("excluded", again)
+        self.assertFalse(lay.unrendered_list.exists())
+
+
 class TestTheFrameReadsTheAdoptedRevision(unittest.TestCase):
     """A consumer-pinned page is read at its pin, even once a newer revision is rendered.
 
@@ -393,9 +479,8 @@ class TestTheFrameReadsTheAdoptedRevision(unittest.TestCase):
     def test_an_unrendered_pin_is_not_replaced_by_a_rendered_revision(self):
         self.world.change_entry(self.pin0, layer_sha256=None, renderer=None)
         manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
-        with self.assertRaises(CfError) as ctx:
-            draw_mod.build_frame([{"pageid": 1001}], manifest, set())
-        self.assertIn(self.pin0, str(ctx.exception))
+        frame = draw_mod.build_frame([{"pageid": 1001}], manifest, set())
+        self.assertEqual(frame["unrendered"], [self.pin0])     # the pin, waiting for its render
 
     def test_the_build_benches_the_pins(self):
         cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
@@ -821,10 +906,12 @@ class TestTheLabeler(unittest.TestCase):
         cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET, "--frame",
            self.world.frame_file(), "--curated-qids", self.world.curated_1000(), "--uniform", 6,
            "--curated", 3, "--spans-per-article", 2, "--seed", 7)          # same inputs: fine
+        frame_before = layout_of(self.world).frame_json.read_bytes()
         with self.assertRaises(CfError) as ctx:
             cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET, "--frame",
                self.world.frame_file(), "--uniform", 2, "--seed", 8)
         self.assertIn("another draw", str(ctx.exception))
+        self.assertEqual(layout_of(self.world).frame_json.read_bytes(), frame_before)
 
     def test_calibration_measures_h_tag_blind(self):
         transcribe(self.world, "anchor", lambda t: {

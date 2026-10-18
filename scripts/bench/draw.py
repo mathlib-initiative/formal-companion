@@ -11,8 +11,10 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8.3 and 8.5
   one as soon as both are rendered.  The article's QID and assessment are the
   page's: when the resolved entry lacks one, the page's other entries supply
   it, so an adopted revision recorded without them stays in its stratum.  An
-  article the manifest does not hold, or holds unrendered, is refused by name:
-  a frame that silently lost an article would bias every inclusion probability.
+  article the manifest does not hold is refused by name: a frame that silently
+  lost an article would bias every inclusion probability.  An article it holds
+  unrendered stays in the frame -- the draw reads no layer, so the inclusion
+  probabilities are the whole frame's -- and is counted and listed there.
 * **The curated stratum** is the frame articles a curated list names
   (``bench.curated``: a 1000.yaml QID, suffixed keys included; a 100.yaml entry
   by its resolved QIDs or its folded title; a plain QID list).  Each article
@@ -23,6 +25,11 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8.3 and 8.5
   from the frame articles whose QID a curated list names.  They are drawn
   independently, so an article can be in both; its inclusion probability is
   ``1 - (1 - pi_uniform) (1 - pi_curated)``.
+* **The drawn articles must be rendered** (the span sample reads their layer):
+  :func:`unrendered_drawn` names those that are not, which ``cf bench build``
+  refuses with the list of sources to fetch and render, or -- asked to --
+  :func:`exclude` removes from the bench, each recorded in ``excluded`` with
+  its inclusion probabilities and the reason, never silently.
 * **Clusters** are a union-find over the drawn articles: two articles are one
   cluster when they share an article QID or a gold accept-set declaration.
   Clustering runs again whenever gold changes (after anchoring, and at freeze).
@@ -152,7 +159,7 @@ def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str
     pages = manifest.page_entries()
     articles: dict[str, dict] = {}
     seen_pages: dict[int, str] = {}
-    missing, unrendered, duplicate = [], [], []
+    missing, duplicate = [], []
     for row in rows:
         if "source_id" in row:
             entry = manifest.entries.get(row["source_id"])
@@ -167,9 +174,6 @@ def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str
                 continue
             entry = manifest.entries[sid]
             basis = "adopted" if inputs.adopted(entry) else "enumerated"
-        if not entry.get("layer_sha256"):
-            unrendered.append(entry["source_id"])
-            continue
         sid = entry["source_id"]
         pageid = entry.get("pageid")
         if sid in articles or (pageid is not None and int(pageid) in seen_pages):
@@ -185,24 +189,25 @@ def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str
             "title": entry.get("title"), "wikidata": qid,
             "assessment": assessment or {},
             "layer_sha256": entry.get("layer_sha256"), "renderer": entry.get("renderer"),
-            "revision_basis": basis,
+            "rendered": bool(entry.get("layer_sha256")), "revision_basis": basis,
             "page_facts_from": ({"wikidata": qid_from, "assessment": assessment_from}
                                 if qid_from or assessment_from else None),
             "curated": bool(via), "curated_via": [e.label for e in via],
         }
         if pageid is not None:
             seen_pages[int(pageid)] = sid
-    if missing or unrendered:
+    if missing:
         raise CfError(
-            f"the frame names {len(missing)} article(s) the pinned manifest does not hold and "
-            f"{len(unrendered)} it holds unrendered: "
-            + ", ".join((missing + unrendered)[:10]) + (" …" if len(missing + unrendered) > 10 else ""),
+            f"the frame names {len(missing)} article(s) the pinned manifest does not hold: "
+            + ", ".join(missing[:10]) + (" …" if len(missing) > 10 else ""),
             hint="a frame that silently loses an article biases every inclusion probability; "
-                 "enumerate, fetch and render them, or pin the manifest version that has them")
+                 "enumerate them into the sourceset, or pin the manifest version that has them")
     ordered = [articles[s] for s in sorted(articles)]
     return {"articles": ordered, "N": len(ordered),
             "N_curated": sum(1 for a in ordered if a["curated"]),
             "N_adopted": sum(1 for a in ordered if a["revision_basis"] == "adopted"),
+            "N_rendered": sum(1 for a in ordered if a["rendered"]),
+            "unrendered": [a["source_id"] for a in ordered if not a["rendered"]],
             "duplicates": sorted(duplicate),
             "curated_lists": {"files": curated.files, "qids": len(curated.qids),
                               "unmatched_100": curated.unmatched(ordered)}}
@@ -242,6 +247,27 @@ def draw(frame: dict, *, uniform: int, curated: int, seed: int) -> dict:
             "curated": {"n": curated, "N": len(eligible), "drawn": picked_c,
                         "short": curated > len(eligible)},
             "articles": rows}
+
+
+def unrendered_drawn(frame: dict, drawn: dict) -> list[str]:
+    """The drawn articles the pinned manifest holds unrendered, sorted."""
+    rendered = {a["source_id"]: a["rendered"] for a in frame["articles"]}
+    return sorted(r["source_id"] for r in drawn["articles"] if not rendered[r["source_id"]])
+
+
+def exclude(drawn: dict, source_ids: Iterable[str], reason: str) -> dict:
+    """``drawn`` without these articles, each kept in ``excluded`` with its probabilities.
+
+    The two draws' ``drawn`` lists stay as drawn -- the design is what the seed
+    gave -- and ``articles`` (the bench) loses the excluded rows, so a score of
+    the rest can still say what was drawn and not benched, and with what
+    inclusion probability.
+    """
+    out_ids = set(source_ids)
+    kept = [r for r in drawn["articles"] if r["source_id"] not in out_ids]
+    gone = [{**r, "reason": reason} for r in drawn["articles"] if r["source_id"] in out_ids]
+    return {**drawn, "articles": kept,
+            "excluded": sorted(drawn.get("excluded", []) + gone, key=lambda r: r["source_id"])}
 
 
 # --------------------------------------------------------------------------

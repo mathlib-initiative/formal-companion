@@ -16,6 +16,7 @@ benches/<id>/bench.yaml               the bench's config and state (holds the ca
 benches/<id>/frame.json               the frame, resolved against the pinned sourceset
 benches/<id>/draw.json                the two draws with inclusion probabilities
 benches/<id>/clusters.json            article clusters and the split of each
+benches/<id>/unrendered.txt           drawn articles not yet rendered (only while there are any)
 benches/<id>/spans.json               the G3 span sample
 benches/<id>/host/bench-host.json     LABEL-FREE: article ids per split; the only thing a host gets
 benches/<id>/host/canaries.txt        the canary string, for a host-side transcript scan
@@ -49,9 +50,11 @@ stay local too.
   bench a newer revision than the pin as soon as both are rendered. The article's QID and
   assessment are the page's: when the resolved entry has none, the one value the page's
   other entries agree on is used, and `page_facts_from` names the entry it came from. A row
-  the manifest does not hold, or holds unrendered, is **refused by name**, because a frame
-  that quietly lost an article biases every inclusion probability; a second row for a page
-  already in the frame is a duplicate;
+  the manifest does not hold is **refused by name**, because a frame that quietly lost an
+  article biases every inclusion probability; a row it holds **unrendered stays in the frame**
+  (`rendered: false`, listed in `unrendered`) — the draw reads no layer, so the inclusion
+  probabilities are the whole frame's and only the drawn articles need a render; a second row
+  for a page already in the frame is a duplicate;
 - the **curated lists** (`--curated-qids`, repeatable; `scripts/bench/curated.py`, which
   `cf bench anchor` reads its lists with too): Mathlib's `$MATHLIB/docs/1000.yaml` (QID →
   `{title, decl | decls}`; a key with one capital-letter suffix, `Q180345X` or `Q4724004A`,
@@ -70,8 +73,9 @@ stay local too.
 
 `frame.json`: `{schema: cf-bench-frame/1, bench, sourceset: {id, version, manifest_sha256},
 frame_file_sha256, articles: [{source_id, pageid, revision, title, wikidata, assessment,
-layer_sha256, renderer, revision_basis, page_facts_from, curated, curated_via}], N, N_curated,
-N_adopted, duplicates, curated_lists: {files: [{name, sha256, kind, entries, qids, rejected,
+layer_sha256, renderer, rendered, revision_basis, page_facts_from, curated, curated_via}], N,
+N_curated, N_adopted, N_rendered, unrendered, duplicates, curated_lists: {files: [{name, sha256,
+kind, entries, qids, rejected,
 resolved, title_only}], qids, unmatched_100: [{list, key, title, qids}]}}`. `revision_basis` is
 `adopted`, `enumerated` or `source_id` (the frame file named the source); `curated_via` names
 the entries that make an article curated (`mathlib_1000 Q180345X`, `mathlib_100 #57`,
@@ -85,6 +89,23 @@ independent, so an article can be in both, and each row records `pi_uniform = n/
 `pi_curated = n_c/N_c` (0 off the curated stratum) and
 `pi = 1 - (1 - pi_uniform)(1 - pi_curated)`. A draw larger than its stratum takes all of it and
 says `short: true`.
+
+**A drawn article must be rendered** (its spans are drawn from its layer). When the pinned
+manifest holds one unrendered, the build writes the drawn unrendered source ids to
+`benches/<id>/unrendered.txt` and either:
+
+- **refuses** (the default), naming them and the step that settles it: fetch and render
+  exactly the listed sources (`cf sourceset fetch`, then `cf sourceset render --source <id>`)
+  and build again with the newer manifest; the draw depends on the frame and the seed alone,
+  and source ids order by page id, so the same pages are drawn whichever revision each page
+  resolves to; or
+- with `--exclude-unrendered`, **benches the rest**: `articles` loses the excluded rows, which
+  move, with their `pi_uniform`, `pi_curated`, `pi`, `in_uniform`, `in_curated` and a
+  `reason`, to `excluded` (a key the file carries only then); `uniform.drawn` and
+  `curated.drawn` stay as drawn, and the gold manifest carries `excluded` too, so a score of
+  the rest says what was drawn and not benched, and with what probability.
+
+The list is removed by a build that finds every drawn article rendered.
 
 ## 3. Clusters, splits, spans and the host
 
@@ -221,6 +242,8 @@ a run's.
  "sourceset": {"id": "wpm", "version": 3, "manifest_sha256": "<hex>"},
  "universe": {"id": "u1", "sha256": "<hex>"}, "library": "mathlib",
  "frame_sha256": "<hex>", "draw_sha256": "<hex>", "spans_sha256": "<hex>",
+ "excluded": [{"source_id": "enwiki-1009-2010", "reason": "not rendered in sourceset wpm version 3",
+               "pi": 0.04}],
  "clusters_sha256": "<hex>", "clusters": {"c-…": ["enwiki-1001-2002"]},
  "splits": {"dev": ["…"], "eval": ["…"], "test": []},
  "tiers": {"G1": {"file": "gold/g1.jsonl", "sha256": "<hex>", "rows": 20, "positives": 18,
@@ -364,7 +387,7 @@ From other packages, by `references/locate-documents.md`, through `scripts/bench
 
 | file | fields |
 |---|---|
-| `sourcesets/<id>/manifest-<n>.jsonl` (§7) | header `schema`; entries `source_id, pageid, revision, title, wikidata, assessment, layer_sha256, renderer` |
+| `sourcesets/<id>/manifest-<n>.jsonl` (§7) | header `schema`; entries `source_id, pageid, revision, title, wikidata, assessment, origin, adopted_from, layer_sha256, renderer`; which source of a page is read is `Manifest.preferred()` of `scripts/sources/sourceset.py`, called, not copied |
 | `sourcesets/<id>/sources/<source>/layer.txt`, `paragraphs.json`, `sections.json`, `finders.json` (§7) | the layer (sha checked), block `span`/`section`/`block`, section `path`/`fragment`/`span`, finder `finder`/`span` |
 | `corpora/<u>/universe.yaml` (§8) | `libraries[].id, repo, commit, brain_lib`, `universe_sha256` |
 | `corpora/<u>/corpus.sqlite` (§8) | `decls(library, commit_sha, name, module, path, line, proof_status, statement, signature)`, `tags(decl_id, tag, value)`, `libraries(id, commit_sha)`, `decls_fts` (P only) |

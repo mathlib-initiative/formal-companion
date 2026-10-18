@@ -72,6 +72,11 @@ class BenchLayout:
         return self.root / "clusters.json"
 
     @property
+    def unrendered_list(self) -> Path:
+        """The drawn articles a build found unrendered: the sources to fetch and render."""
+        return self.root / "unrendered.txt"
+
+    @property
     def spans_json(self) -> Path:
         return self.root / "spans.json"
 
