@@ -196,7 +196,10 @@ Read-only on the run host at `candidates/<source-id>.json` (in the workspace,
 
 `via` ∈ `cflib.vocab.CANDIDATE_VIA`. `terms` are the title, its redirects or
 aliases where known and the lead's bold terms, which lexical retrieval queried;
-`matched` names which. Only `curated` hits bind gate rule 4. In the G1-blind
+`matched` names which. A bold term is a term only when it has at least three
+letters, is not only a paragraph label (`cflib.vocab.is_bold_label`: "Proof.",
+"Example:") and is not only stop words (`candidates.is_lexical_term`); a bold
+"R" or "1'" is never queried. Only `curated` hits bind gate rule 4. In the G1-blind
 arm (proposal §8.1) `curated` is empty and the file says `"blind": true`.
 
 `cf locate candidates` writes it (`scripts/locate/candidates.py`). Every curated
