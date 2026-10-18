@@ -2123,7 +2123,9 @@ class TestFieldS3S4AdoptWithoutBytes(_FieldCase):
             {"pageid": 1001, "ns": 0, "title": "Widget lemma", "revisions": [{"revid": 1990}]},
             {"pageid": 1002, "ns": 0, "title": "Gadget theorem",
              "revisions": [{"revid": 2003}]}]}}
-        fixtures = _fixtures_with(self, {"revids": (_revids_query(1990, 2003), answer)})
+        # revision 2003 is the enumerated one, so the sourceset names its page already:
+        # only revision 1990 is asked
+        fixtures = _fixtures_with(self, {"revids": (_revids_query(1990), answer)})
         code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
                        "--fixtures", str(fixtures))
         self.assertEqual(code, 0, out)
@@ -2135,7 +2137,30 @@ class TestFieldS3S4AdoptWithoutBytes(_FieldCase):
         same = m.get("enwiki-1002-2003")                         # the enumerated revision
         self.assertEqual((same["origin"], same["adopted_from"]["consumer"]),
                          ("enumerated", "consumer"))
-        self.assertEqual(self.ss.read_state()["commands"]["adopt"]["resolved_by_revision"], 2)
+        adopt = self.ss.read_state()["commands"]["adopt"]
+        self.assertEqual((adopt["resolved_by_revision"], adopt["resolved_from_sourceset"]), (1, 1))
+
+    def test_a_re_run_of_title_pins_asks_nothing(self):
+        """The same title pins again: every one is held, so no request and exit 0, with or
+        without --execute (CLAUDE.md section 4: every command may be re-run)."""
+        self.enumerate()
+        pins = self.pins([{"title": "Widget lemma (moved)", "revision": 1990}])
+        answer = {"query": {"pages": [
+            {"pageid": 1001, "ns": 0, "title": "Widget lemma", "revisions": [{"revid": 1990}]}]}}
+        fixtures = _fixtures_with(self, {"revids": (_revids_query(1990), answer)})
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--fixtures", str(fixtures))
+        self.assertEqual(code, 0, out)
+        version = self.ss.latest().version
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 already held", out)
+        self.assertEqual(self.ss.latest().version, version)
+        empty = _scratch(self)                     # a replay that holds no answer at all
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--fixtures", str(empty))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ss.read_state()["commands"]["adopt"]["resolved_by_revision"], 0)
 
     def test_s3_a_revision_that_does_not_exist_is_refused(self):
         self.enumerate()

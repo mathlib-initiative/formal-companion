@@ -666,9 +666,11 @@ def _adopt(workspace, args) -> int:
     """Adopt a consumer's pinned revisions, with their bytes when it holds them.
 
     A pin is ``{revision, pageid | title, bytes?, wikidata?, assessment?}``.  A pin
-    with no page id has its page resolved from its revision (one request per
-    fifty, under ``--execute`` or ``--fixtures``), never from its title, which
-    is metadata.  A pin with no bytes is adopted with null shas, and ``fetch``
+    with no page id has its page resolved from its revision, never from its
+    title, which is metadata: from the sourceset itself when it already holds
+    that revision (a revision id names one page, so a re-run of the same pins
+    asks nothing), else by one request per fifty, under ``--execute`` or
+    ``--fixtures``.  A pin with no bytes is adopted with null shas, and ``fetch``
     then fetches exactly that revision.  A new revision takes the assessment,
     QID and title its pin does not carry from the page's other sources, so it
     stays in every frame its page is in.
@@ -681,7 +683,12 @@ def _adopt(workspace, args) -> int:
         raise CfError(f"no pins file at {pins_path}")
     pins_sha = _sha(pins_path.read_bytes())
     pins = _read_pins(pins_path)
-    unresolved = sorted({p["revision"] for p in pins if p["pageid"] is None})
+    # a MediaWiki revision id names one page, so a pinned revision the sourceset already
+    # holds gives its page without a request: a re-run of the same pins asks nothing
+    held = {e["revision"]: {"pageid": e["pageid"], "title": e.get("title")} for e in base}
+    unresolved = sorted({p["revision"] for p in pins
+                         if p["pageid"] is None and p["revision"] not in held})
+    from_held = len({p["revision"] for p in pins if p["pageid"] is None} - set(unresolved))
     resolved: dict[int, dict] = {}
     if unresolved:
         transport = _transport(args, base.family, workspace)
@@ -710,7 +717,7 @@ def _adopt(workspace, args) -> int:
         where, row, revision = pin["where"], pin["row"], pin["revision"]
         pageid = pin["pageid"]
         if pageid is None:
-            page = resolved[revision]
+            page = resolved.get(revision) or held[revision]
             pageid = page["pageid"]
             if row.get("title") and page.get("title") and row["title"] != page["title"]:
                 notes.append(f"{where}: the pin titles revision {revision} {row['title']!r}, "
@@ -792,7 +799,9 @@ def _adopt(workspace, args) -> int:
     ss.refresh_state(command="adopt", details={
         "consumer": args.consumer, "pins_sha256": pins_sha, "adopted": adopted,
         "already": already, "without_bytes": without_bytes, "inherited_metadata": inherited,
-        "resolved_by_revision": len(resolved), "skipped_unknown_pages": len(unknown_pages)})
+        "resolved_by_revision": sum(1 for r in unresolved if r in resolved),
+        "resolved_from_sourceset": from_held,
+        "skipped_unknown_pages": len(unknown_pages)})
     for note in notes[:50]:
         log.info(f"  {note}")
     if len(notes) > 50:
