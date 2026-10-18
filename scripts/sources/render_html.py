@@ -7,15 +7,21 @@ parsed with ``html.parser`` into a small tree, and every view is computed from
 that one tree in one pass, so they cannot disagree about which characters a
 passage covers.
 
-**The renderer is frozen as** ``web-html/2`` (``cflib.vocab.RENDERER_WEB_HTML``):
+**The renderer is frozen as** ``web-html/3`` (``cflib.vocab.RENDERER_WEB_HTML``):
 a source's ``layer_sha256`` is pinned by every run, gate and score document, so
 any change to the rule below that can move one character of any view -- the
-layout of a view's file included -- is a new renderer id, never an edit of this
-one; ``tests/test_locate_sources.py`` pins every view of a synthetic page to the
-id.  ``web-html/1`` kept ``style`` and ``script`` text in the layer and
-collapsed ASCII whitespace only, so it was no port of the consumer's text layer
+layout of a view's file included, and the paragraph-label rule the finders read
+(``cflib.vocab.is_bold_label`` and its two label sets) -- is a new renderer id,
+never an edit of this one; ``tests/test_locate_sources.py`` pins every view of
+a synthetic page, and the label rule's fingerprint, to the id.  ``web-html/1``
+kept ``style`` and ``script`` text in the layer and collapsed ASCII whitespace
+only, so it was no port of the consumer's text layer
 (docs/proposals/wikipedia-locate.md section 2.1) and its layers matched none;
-references/locate-documents.md section 7 lists what ``/2`` changed.  The rule,
+``web-html/2`` took the bold of a named concept or statement for a label
+("property (T)", "Axiom A", "Theorem (Widget lemma).") and made no passage of
+it, silently, and its ``render.json`` recorded no sha of the finders or the
+blocks, so a view rewritten under the same id went unseen.
+references/locate-documents.md section 7 lists what each id changed.  The rule,
 in full:
 
 * **The canonical body** (:func:`canonical_body`): the bytes are decoded as
@@ -105,8 +111,11 @@ in full:
   ``table``, ``caption`` or heading around it, ``term`` the first such ``b``'s
   text: one with at least :data:`MIN_TERM_LETTERS` letters that is not only a
   paragraph label (``cflib.vocab.is_bold_label``: "Proof.", "Example 2:",
-  "Definition:"), so a paragraph whose every bold is a label or a symbol makes
-  no passage; ``lead`` -- the first ``p`` of the lead section with at least
+  "Definition:"; a label word with a parenthesised name, "Theorem (Widget
+  lemma).", names a statement and is a term), so a paragraph whose every bold
+  is a label or a symbol makes no passage, and ``render.json`` counts the
+  paragraphs a label alone kept from one (``bold_labels_dropped``); ``lead`` --
+  the first ``p`` of the lead section with at least
   :data:`LEAD_MIN_WORDS` words of kept text and no ``table`` around it.  A
   passage starts at its element's kept span start and must be a word start of
   the head text (``locate_text.check_start`` at ``HeadMap.to_head``); one that
@@ -127,6 +136,12 @@ in full:
   is 1 (a formula, whatever the two lengths are).  Characters the copy adds
   (heading marks, bullets, separators, breaks, an image-only formula) are in no
   segment.
+
+* **The record** (``render.json``): the renderer, the body's, layer's, head's
+  and reading copy's shas, the counts, and ``views`` -- the sha256 of the bytes
+  of every other file a rendering writes (``body.html`` and ``render.json``
+  itself excepted), so a view that is not this rendering's is caught by
+  ``cf sourceset status --verify`` and by the planner's check of a source.
 
 Offsets everywhere are code-point offsets.  Nothing here fetches anything:
 ``scripts/sources/wikinet.py`` is the one module that does.
@@ -152,7 +167,7 @@ if str(_SCRIPTS) not in sys.path:  # pragma: no cover - imported through cf.py n
 from cflib import vocab  # noqa: E402
 from gate import locate_text  # noqa: E402
 
-RENDERER = "web-html/2"
+RENDERER = "web-html/3"
 #: the lead finder skips a lead paragraph shorter than this (a stub's empty line)
 LEAD_MIN_WORDS = 5
 #: a bold run with fewer letters than this is a symbol (a bold R, a 1'), not a term
@@ -162,6 +177,9 @@ MIN_TERM_LETTERS = 2
 RENDER_FILES = ("body.html", "layer.txt", "formulas.json", "head.txt", "text.txt",
                 "layer_map.json", "sections.json", "paragraphs.json", "finders.json",
                 "render.json")
+#: the views whose shas ``render.json`` records under ``views`` (every other file:
+#: the body's sha is ``html_sha256``, and the record cannot hold its own)
+VIEW_FILES = tuple(name for name in RENDER_FILES if name not in ("body.html", "render.json"))
 
 #: the HTML tokenizer's whitespace (where a tag ends, a tag name stops)
 _HTML_WS = "\t\n\f\r "
@@ -737,10 +755,12 @@ class Rendering:
         return sha256_text(self.text)
 
     def record(self) -> dict:
-        """``render.json``."""
+        """``render.json``: the shas, the counts, and every view's sha (``views``)."""
+        views = self._views()
         return {"renderer": RENDERER, "html_sha256": self.html_sha256,
                 "layer_sha256": self.layer_sha256, "head_sha256": self.head_sha256,
-                "text_sha256": self.text_sha256, "counts": dict(self.counts)}
+                "text_sha256": self.text_sha256, "counts": dict(self.counts),
+                "views": {name: sha256_text(views[name]) for name in VIEW_FILES}}
 
     def layer_map(self) -> dict:
         return {"schema": LAYER_MAP_SCHEMA, "renderer": RENDERER,
@@ -755,8 +775,7 @@ class Rendering:
     def layer_to_text(self, offset: int) -> int | None:
         return layer_to_text(self.segments, offset)
 
-    def files(self) -> dict[str, str]:
-        """``{file name: content}`` for every file :func:`write_rendering` writes."""
+    def _views(self) -> dict[str, str]:
         return {
             "body.html": self.body,
             "layer.txt": self.layer,
@@ -767,8 +786,11 @@ class Rendering:
             "sections.json": _dump(self.sections),
             "paragraphs.json": _dump(self.paragraphs),
             "finders.json": _dump(self.finders),
-            "render.json": _dump(self.record()),
         }
+
+    def files(self) -> dict[str, str]:
+        """``{file name: content}`` for every file :func:`write_rendering` writes."""
+        return {**self._views(), "render.json": _dump(self.record())}
 
 
 def _dump(obj: Any) -> str:
@@ -1107,14 +1129,22 @@ def is_term(text: str) -> bool:
             and not vocab.is_bold_label(text))
 
 
-def _defined_term(node: _Node, raw: str) -> str | None:
-    """The kept text of the first ``b`` of a paragraph that names a term, or None."""
+def _defined_term(node: _Node, raw: str) -> tuple[str | None, bool]:
+    """``(the kept text of the first b of a paragraph that names a term, labelled)``.
+
+    ``labelled`` is True when there is no such ``b`` but one with enough letters
+    to be a term was refused only because it is a label: the paragraphs
+    ``render.json`` counts as ``bold_labels_dropped``.
+    """
+    labelled = False
     for el in _iter_kept(node):
         if el.tag == "b":
             text = _collapse_ws("".join(raw[a:b] for a, b in _texts(el, kept=True)))
             if text and is_term(text):
-                return text
-    return None
+                return text, False
+            if text and sum(1 for ch in text if ch.isalpha()) >= MIN_TERM_LETTERS:
+                labelled = True
+    return None, labelled
 
 
 def render(body: str) -> Rendering:
@@ -1167,6 +1197,7 @@ def render(body: str) -> Rendering:
     # deterministic finders
     finder_rows: list[dict] = []
     dropped = 0
+    labels_dropped = 0
 
     def propose(finder: str, span: tuple[int, int], term: str | None) -> None:
         nonlocal dropped
@@ -1187,9 +1218,10 @@ def render(body: str) -> Rendering:
     for node, span, in_table, in_heading in walker.paras:
         if in_table or in_heading:
             continue
-        term = _defined_term(node, raw)
+        term, labelled = _defined_term(node, raw)
         if term:
             propose("bold_definition", span, term)
+        labels_dropped += labelled
     for node, span, in_table, _in_heading in walker.paras:
         if in_table or span[0] >= lead_end:
             continue
@@ -1232,6 +1264,7 @@ def render(body: str) -> Rendering:
         "finders": {name: sum(1 for r in finders if r["finder"] == name)
                     for name in ("theorem_box", "bold_definition", "lead")},
         "finders_dropped": dropped,
+        "bold_labels_dropped": labels_dropped,
     }
     return Rendering(body=body, layer=layer, formulas=formulas, head=head, text=text,
                      segments=segments, sections=sections, paragraphs=paragraphs,
@@ -1241,6 +1274,27 @@ def render(body: str) -> Rendering:
 # --------------------------------------------------------------------------
 # files
 # --------------------------------------------------------------------------
+
+def view_differences(directory: str | Path, rendering: Rendering) -> tuple[list[str], list[str]]:
+    """``(missing, differing)``: the files of ``rendering`` absent from ``directory``, and
+    those present with other bytes than this rendering writes, in :data:`RENDER_FILES` order.
+
+    Under one renderer id the same body renders to the same bytes, so a file
+    that differs was written by another rule under this id (an edited label set,
+    an edited file) -- what ``cf sourceset render`` refuses to rewrite.
+    """
+    directory = Path(directory)
+    missing, differing = [], []
+    for name, content in rendering.files().items():
+        try:
+            data = (directory / name).read_bytes()
+        except FileNotFoundError:
+            missing.append(name)
+            continue
+        if data != content.encode("utf-8"):
+            differing.append(name)
+    return missing, differing
+
 
 def write_rendering(directory: str | Path, rendering: Rendering) -> dict:
     """Write every file of :data:`RENDER_FILES` into ``directory``; returns ``render.json``.

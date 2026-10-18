@@ -418,9 +418,12 @@ LOCATE_DOCUMENT_SCHEMA = "cf-locate/1"
 #: the renderer of every web source of the first corpus (section 2.1); a source's
 #: ``renderer`` field, and a pin of every run, gate and score document.
 #: ``web-html/1`` kept style and script text in the layer and collapsed ASCII
-#: whitespace only; ``web-html/2`` is the Literature Links rule
-#: (scripts/sources/render_html.py states it in full)
-RENDERER_WEB_HTML = "web-html/2"
+#: whitespace only; ``web-html/2`` is the Literature Links rule; ``web-html/3``
+#: keeps the bold of a named concept or statement that ``/2``'s label rule took
+#: for a label ("property (T)", "Axiom A", "Theorem (Widget lemma).") and records
+#: every view's sha in ``render.json`` (scripts/sources/render_html.py states it
+#: in full)
+RENDERER_WEB_HTML = "web-html/3"
 #: Where a sourceset entry came from (references/locate-documents.md section 7):
 #: ``enumerated`` -- the PageAssessments listing, at the page's latest revision;
 #: ``adopted`` -- a consumer's pinned revision and bytes, recorded in
@@ -469,8 +472,9 @@ BOLD_LABELS = frozenset({
     "propositions", "remark", "remarks", "notation", "exercise", "exercises", "claim",
     "conjecture", "case", "cases", "step", "base case", "inductive step", "induction step",
     "hint", "note", "notes", "warning", "caution"})
-#: ... and these only with a label's punctuation or enumerator ("Solution:",
-#: "Problem 3."), since bare they may be the term a sentence defines.
+#: ... and these only with a label's punctuation ("Solution:", "Problem 3."),
+#: since without it they may be the term a sentence defines -- an enumerator
+#: alone is no such mark: "Axiom A", "Problem P", "property (T)" name concepts.
 BOLD_LABELS_PUNCTUATED = frozenset({
     "solution", "answer", "problem", "question", "input", "output", "statement",
     "observation", "axiom", "axioms", "fact", "result", "construction", "algorithm",
@@ -478,8 +482,6 @@ BOLD_LABELS_PUNCTUATED = frozenset({
 _LABEL_TRIM = " \t.:;,!?\u2013\u2014-"
 #: an enumerator a label may carry after its word: 2, 2.1, 3a, iv, (b), (2)
 _LABEL_ENUMERATOR = re.compile(r"(?:\s+(?:\(?(?:\d+(?:\.\d+)*[a-z]?|[ivxlc]+|[a-z])\)?))+$")
-#: a name a label may carry in parentheses: "Theorem (Widget lemma)."
-_LABEL_NAME = re.compile(r"\s*\([^()]*\)$")
 #: a location's ``confidence``: the worker's own, recorded, never a status input
 CONFIDENCES = frozenset({"high", "medium", "low"})
 #: a receipt candidate's ``verdict``: every curated candidate handed to a task is
@@ -631,20 +633,25 @@ def witness_required(mode: str, kind: str) -> bool:
 def is_bold_label(text: str) -> bool:
     """Is a bold run's text only a paragraph label, in :data:`BOLD_LABELS`?
 
-    Case-folded, with its punctuation stripped and an enumerator or a
-    parenthesised name after the label word dropped ("Case 2:", "Step 1a.",
-    "Example (iii)", "Theorem (Widget lemma)."); a word of
-    :data:`BOLD_LABELS_PUNCTUATED` counts only when one of those marks was there,
-    and a proof of something ("Proof of the lemma:") is a label too.
+    Case-folded, with its punctuation stripped and an enumerator after the label
+    word dropped ("Case 2:", "Step 1a.", "Example (iii)"); a word of
+    :data:`BOLD_LABELS_PUNCTUATED` counts only when a label's punctuation was
+    there ("Solution:", "Problem 3."), never for an enumerator alone, which is
+    how a concept is named ("Axiom A", "Problem P", "property (T)"); and a proof
+    of something ("Proof of the lemma:", "Proof (sketch).") is a label too.  A
+    label word followed by a parenthesised NAME ("Theorem (Widget lemma).") is
+    no label: it names a statement, and its paragraph is a passage.
+
+    The renderer's finders read this rule (``sources.render_html``), so any
+    change to it, or to the two label sets, is a new renderer id:
+    ``tests/test_locate_sources.py`` pins the rule's fingerprint to the id.
     """
     spaced = " ".join(str(text or "").split()).casefold()
     bare = spaced.strip(_LABEL_TRIM)
+    punctuated = bare != spaced
     core = _LABEL_ENUMERATOR.sub("", bare).strip(_LABEL_TRIM)
-    named = _LABEL_NAME.sub("", core).strip(_LABEL_TRIM)
-    marked = bare != spaced.strip() or core != bare or named != core
-    for word in {core, named}:
-        if word in BOLD_LABELS or (marked and word in BOLD_LABELS_PUNCTUATED):
-            return True
+    if core in BOLD_LABELS or (punctuated and core in BOLD_LABELS_PUNCTUATED):
+        return True
     return core.startswith("proof of ") or core.startswith("proof (")
 
 
