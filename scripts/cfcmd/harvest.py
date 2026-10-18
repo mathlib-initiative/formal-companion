@@ -224,6 +224,17 @@ def _price(workspace, path, *, model: str | None = None) -> dict:
     return cost_fleet.cost_block(path, table=table, table_source=source, model=model)
 
 
+def _price_envelopes(workspace, path, *, model: str | None = None) -> dict:
+    """The ``cost`` block from the bridge's kept envelopes (``cost.fleet.envelope_cost_block``)."""
+    try:
+        table, source = pricing.from_workspace_data(workspace.data)
+    except ValueError as exc:
+        raise CfError(str(exc),
+                      hint="one entry per model id with input, output, cache_write, cache_read "
+                           "(US dollars per million tokens) and a source note")
+    return cost_fleet.envelope_cost_block(path, table=table, table_source=source, model=model)
+
+
 def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
                    cost: dict | None = None) -> dict:
     if args.source:
@@ -253,10 +264,19 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
         # outside corpus/<run>/, whose tree is the receipt's manifest
         host = host_mod.fetch(source["host"], host_files, host_dir)
         usage = host.get(host_mod.USAGE) or {}
+        envelopes = host.get(host_mod.ENVELOPES) or {}
         if cost is None and usage.get("fetched"):
             cost = _price(workspace, usage["path"],
                           model=getattr(args, "transcripts_model", None))
             log.detail(f"  cost: priced from the sequencer's usage export {usage['path']}")
+        elif cost is None and envelopes.get("fetched"):
+            # no transcripts and no usage export: the bridge's own envelopes, one per
+            # agent call, carry each call's total_cost_usd and its tokens by model
+            cost = _price_envelopes(workspace, envelopes["path"],
+                                    model=getattr(args, "transcripts_model", None)
+                                    or (str(data.get("model") or "") or None))
+            log.detail(f"  cost: priced from {cost['envelope_count']} agent envelope(s) in "
+                       f"{envelopes['path']}")
     return harvest_mod.harvest(
         run_id=args.run_id, source=source, dest=dest,
         sources=(locate_source_shas(workspace, args.run_id) if locate

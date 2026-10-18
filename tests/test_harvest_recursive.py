@@ -263,10 +263,9 @@ class TestTheHarvestRegateWritesNoGateLog(unittest.TestCase):
         self.assertFalse((Path(fx.gate["log_dir"]) / "gate.jsonl").exists())
 
 
-class TestHostArtifactsComeHome(unittest.TestCase):
-    """`cf harvest <locate run> --execute` brings the gate log, the usage export and
-    the canary scan to runs/<run>/host/, prices from the usage export, and moves
-    the sourceset's row for the run to harvested (D3, D5; #43, #58, #68)."""
+class _HostHarvest(unittest.TestCase):
+    """A remote locate run ``r-1`` on a 'host' that is a local directory, shard 2 of
+    campaign ``c-1``, with fake ``rsync`` and ``ssh`` on PATH."""
 
     RSYNC = FAKE_RSYNC
 
@@ -333,6 +332,11 @@ class TestHostArtifactsComeHome(unittest.TestCase):
         with mock.patch.dict(os.environ, env), redirect_stdout(out), redirect_stderr(out):
             code = cf_main.main(["--workspace", str(self.ws), "harvest", "r-1", *extra])
         return code, out.getvalue()
+
+class TestHostArtifactsComeHome(_HostHarvest):
+    """`cf harvest <locate run> --execute` brings the gate log, the usage export and
+    the canary scan to runs/<run>/host/, prices from the usage export, and moves
+    the sourceset's row for the run to harvested (D3, D5; #43, #58, #68)."""
 
     def test_the_dry_run_names_every_transfer(self):
         from cflib.errors import CfError
@@ -475,6 +479,93 @@ class TestHostArtifactsUnderRsync269(TestHostArtifactsComeHome):
         receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
         self.assertIn("kept_previous", receipt["host_artifacts"]["gate.jsonl"])
         self.assertFalse(receipt["complete"])
+
+
+def _envelope(directory: Path, name: str, usd, *, model="claude-opus-5", tokens=(1000, 2000, 300,
+                                                                            40000)) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    inp, out, cw, cr = tokens
+    body = {"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": usd,
+            "duration_ms": 60_000, "num_turns": 9,
+            "usage": {"input_tokens": inp, "output_tokens": out,
+                      "cache_creation_input_tokens": cw, "cache_read_input_tokens": cr},
+            "modelUsage": {model: {"inputTokens": inp, "outputTokens": out,
+                                   "cacheCreationInputTokens": cw, "cacheReadInputTokens": cr,
+                                   "costUSD": usd}}}
+    (directory / name).write_text(json.dumps(body), encoding="utf-8")
+
+
+class TestEnvelopesPriceTheRun(_HostHarvest):
+    """Receipt pricing: a locate run with no transcripts and no campaign usage export
+    is priced from the bridge's kept envelopes (``<tend root>/usage/``), which the
+    harvest brings home beside the gate log; the receipt's cost block says
+    ``source: envelopes``."""
+
+    def setUp(self):
+        super().setUp()
+        (self.remote / "campaigns" / "c-1" / "usage-r-1.jsonl").unlink()
+        usage = self.remote / "r-1-tend" / "usage"
+        _envelope(usage, "t-loc-0001.worker.20261018T090000Z.11.json", 4.67)
+        _envelope(usage, "t-loc-0001.reviewer.20261018T091300Z.12.json", 0.54,
+                  tokens=(10, 200, 0, 5000))
+        from run import agent_call
+
+        (usage / "t-loc-0002.worker.20261018T100000Z.13.json").write_text(json.dumps(
+            agent_call.call_record(outcome="timeout", role="worker", task_id="t-loc-0002",
+                                   slot=2, seconds=2700.0, timeout=2700.0, code=124)))
+        (usage / "t-loc-0002.worker.20261018T100000Z.13.out").write_text("prose")
+
+    def test_pricing_the_receipt_from_the_envelopes(self):
+        code, out = self.harvest("--execute")
+        self.assertEqual(code, 0, out)
+        receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
+        cost = receipt["cost"]
+        self.assertEqual((cost["basis"], cost["source"]["kind"]), ("envelopes", "envelopes"))
+        self.assertEqual((cost["envelope_count"], cost["unpriced_calls"]), (3, 1))
+        self.assertEqual(cost["unpriced_seconds"], 2700.0)
+        self.assertAlmostEqual(cost["usd"], 5.21)
+        self.assertEqual(cost["tokens"], {"claude-opus-5": {
+            "input": 1010, "output": 2200, "cache_write": 300, "cache_read": 45000}})
+        self.assertEqual(cost["messages_by_model"], {"claude-opus-5": 2})
+        self.assertAlmostEqual(cost["usd_by_model"]["claude-opus-5"], 5.21)
+        self.assertGreater(cost["usd_from_price_table"], 0)
+        self.assertIn("cost: $5.21 from 3 agent envelope(s) (source: envelopes", out)
+        self.assertIn("1 call(s) left no priced envelope", out)
+        arts = receipt["host_artifacts"]["envelopes"]
+        self.assertEqual((arts["fetched"], arts["files"]), (True, 3))     # the .json only
+        self.assertTrue(receipt["complete"])
+        # the bench's dollar reader accepts it
+        from bench import score as bench_score
+
+        self.assertAlmostEqual(bench_score.dollars(cost["usd"], "cost.usd"), 5.21)
+
+    def test_an_explicit_transcripts_path_still_wins(self):
+        logs = self.fx.root / "logs"
+        logs.mkdir()
+        (logs / "u.jsonl").write_text(json.dumps(
+            {"model": "claude-opus-5", "usage": {"input": 1, "output": 1, "cache_write": 0,
+                                                 "cache_read": 0}}) + "\n")
+        code, out = self.harvest("--execute", "--transcripts", str(logs))
+        self.assertEqual(code, 0, out)
+        receipt = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())
+        self.assertEqual(receipt["cost"]["basis"], "transcripts")
+
+    def test_an_envelope_without_model_usage_is_filed_under_its_model(self):
+        from cost import fleet, pricing
+
+        d = self.fx.root / "env"
+        d.mkdir()
+        (d / "a.json").write_text(json.dumps({
+            "total_cost_usd": 1.5, "model": "claude-sonnet-5",
+            "usage": {"input_tokens": 3, "output_tokens": 4, "cache_creation_input_tokens": 0,
+                      "cache_read_input_tokens": 0}}))
+        (d / "b.json").write_text(json.dumps({
+            "total_cost_usd": 0.5, "usage": {"input_tokens": 1, "output_tokens": 1}}))
+        block = fleet.envelope_cost_block(d, table=pricing.DEFAULT_PRICE_TABLE,
+                                          table_source="default", model="claude-opus-5")
+        self.assertEqual(sorted(block["tokens"]), ["claude-opus-5", "claude-sonnet-5"])
+        self.assertEqual(block["usd"], 2.0)
+        self.assertEqual(block["usd_by_model"], {"claude-opus-5": 0.5, "claude-sonnet-5": 1.5})
 
 
 class TestNestedCorporaAreCounted(unittest.TestCase):

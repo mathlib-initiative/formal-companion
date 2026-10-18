@@ -35,6 +35,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- A remote locate harvest brings the bridge's kept agent envelopes home
+  (`runs/<run>/host/envelopes/`) and, with no `--transcripts` and no campaign
+  usage export, prices the receipt from them: their own `total_cost_usd`,
+  tokens by model from `modelUsage`, the envelope count, `basis: envelopes`
+  (the second smoke's receipts all had `cost: null`). `cf tally --locate`
+  prints each run's cost line and records it in the tally report.
 - Every locate gate-log line records the call's `ownership` line,
   `task_id_from` (`--task-id`, `$TEND_TASK_ID` or `orchestrator.sqlite`) and
   `changed_files`, and the ownership line says where the id came from: an

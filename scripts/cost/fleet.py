@@ -16,6 +16,7 @@ when a task produced no findings file.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -28,6 +29,14 @@ from harvest.harvest import read_receipt
 
 #: the receipt key
 COST_KEY = "cost"
+#: what a cost block was priced from (its ``basis``): the agents' transcripts (or a
+#: usage export of them), or the bridge's kept envelopes
+BASIS_TRANSCRIPTS = "transcripts"
+BASIS_ENVELOPES = "envelopes"
+#: an envelope's ``modelUsage`` keys -> the four normalised fields
+_MODEL_USAGE_KEYS = {"input": "inputTokens", "output": "outputTokens",
+                     "cache_write": "cacheCreationInputTokens",
+                     "cache_read": "cacheReadInputTokens"}
 
 
 def source_label(path: str | Path) -> str:
@@ -65,6 +74,7 @@ def cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]], tabl
         raise CfError(str(exc), hint="fix workspace.yaml budget.prices (or the --prices file)")
     read = totals.as_dict()
     return {
+        "basis": BASIS_TRANSCRIPTS,
         "source": {"path": source_label(path), "files": read["files"]},
         "tokens": read["tokens"],
         "total_tokens": pricing.total_tokens(read["tokens"]),
@@ -84,8 +94,131 @@ def cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]], tabl
     }
 
 
+def _number(value: Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value == value:
+        return float(value)
+    return None
+
+
+def _model_usage(entry: Any) -> dict[str, int] | None:
+    """One ``modelUsage`` entry (``inputTokens`` ...) -> the four normalised fields."""
+    if not isinstance(entry, Mapping):
+        return None
+    out = {}
+    for field_name, key in _MODEL_USAGE_KEYS.items():
+        value = entry.get(key, 0)
+        if value is None:
+            value = 0
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            return None
+        out[field_name] = int(value)
+    return out
+
+
+def envelope_cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]],
+                        table_source: str, model: str | None = None) -> dict:
+    """The receipt's ``cost`` block from the bridge's kept agent envelopes.
+
+    Each ``*.json`` under *path* is one agent call's envelope
+    (``scripts/run/agent_call.py``): its own ``total_cost_usd`` is the dollars,
+    and its tokens are read per model from ``modelUsage`` (``costUSD`` the
+    model's dollars), else from ``usage`` filed under the envelope's ``model``,
+    else *model* (the run's), else ``usage.UNKNOWN_MODEL``.  A record of a call
+    that left no envelope (``total_cost_usd: null``: a timeout, a signal, an
+    empty stdout) is counted under ``unpriced_calls`` with its seconds, never
+    priced at 0, and makes ``usd`` a lower bound.  The tokens are also priced
+    with *table* (``usd_from_price_table``), a cross-check of the CLI's own
+    figure.  ``basis`` is ``envelopes``.
+    """
+    root = Path(path)
+    if not root.exists():
+        raise CfError(f"no envelopes at {root}",
+                      hint="the bridge keeps one per agent call in the tend root's usage/")
+    files = sorted(p for p in (root.rglob("*.json") if root.is_dir() else [root]) if p.is_file())
+    tokens: dict[str, dict[str, int]] = {}
+    usd_by_model: dict[str, float] = {}
+    messages_by_model: dict[str, int] = {}
+    usd = 0.0
+    envelopes = unpriced_calls = unreadable = without_usage = 0
+    unpriced_seconds = 0.0
+
+    def add(name: str, counts: dict[str, int], dollars: float | None) -> None:
+        block = tokens.setdefault(name, usage_mod.zero())
+        for f in usage_mod.FIELDS:
+            block[f] += counts[f]
+        messages_by_model[name] = messages_by_model.get(name, 0) + 1
+        if dollars is not None:
+            usd_by_model[name] = round(usd_by_model.get(name, 0.0) + dollars, 6)
+
+    for file in files:
+        try:
+            data = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            unreadable += 1
+            continue
+        if not isinstance(data, dict):
+            unreadable += 1
+            continue
+        envelopes += 1
+        cost = _number(data.get("total_cost_usd"))
+        if cost is None:
+            call = data.get("cf_agent_call") if isinstance(data.get("cf_agent_call"), dict) else {}
+            unpriced_calls += 1
+            seconds = _number(call.get("elapsed_s"))
+            if seconds is None and _number(data.get("duration_ms")) is not None:
+                seconds = float(data["duration_ms"]) / 1000.0
+            unpriced_seconds += max(0.0, seconds or 0.0)
+            continue
+        usd += max(0.0, cost)
+        per_model = data.get("modelUsage") if isinstance(data.get("modelUsage"), Mapping) else {}
+        counted = False
+        for name, entry in sorted(per_model.items()):
+            counts = _model_usage(entry)
+            if counts is not None:
+                add(str(name), counts, _number((entry or {}).get("costUSD")))
+                counted = True
+        if counted:
+            continue
+        counts = usage_mod.normalise_usage(data.get("usage"))
+        if counts is None:
+            without_usage += 1
+            continue
+        add(str(data.get("model") or model or usage_mod.UNKNOWN_MODEL), counts, cost)
+    try:
+        priced = pricing.price(tokens, table)
+    except ValueError as exc:
+        raise CfError(str(exc), hint="fix workspace.yaml budget.prices (or the --prices file)")
+    return {
+        "basis": BASIS_ENVELOPES,
+        "source": {"kind": BASIS_ENVELOPES, "path": source_label(path),
+                   "files": {"envelopes": envelopes, "unreadable": unreadable}},
+        "tokens": {m: dict(tokens[m]) for m in sorted(tokens)},
+        "total_tokens": pricing.total_tokens(tokens),
+        "usd": round(usd, 6),
+        "usd_by_model": dict(sorted(usd_by_model.items())),
+        "usd_from_price_table": priced["usd"],
+        "messages_by_model": dict(sorted(messages_by_model.items())),
+        "priced": priced["priced"],
+        "unpriced": priced["unpriced"],
+        "unpriced_tokens": priced["unpriced_tokens"],
+        "price_table_sha256": priced["price_table_sha256"],
+        "price_table_source": table_source,
+        "envelope_count": envelopes,
+        "unpriced_calls": unpriced_calls,
+        "unpriced_seconds": round(unpriced_seconds, 1),
+        "transcript_count": 0,
+        "message_count": envelopes - unpriced_calls,
+        "duplicate_lines": 0,
+        "repeated_events": 0,
+        "skipped_without_usage": without_usage,
+        "unreadable_lines": unreadable,
+    }
+
+
 def describe(block: Mapping[str, Any], indent: str = "  ") -> list[str]:
     """The block as lines a terminal can show; every number is a key of it."""
+    if block.get("basis") == BASIS_ENVELOPES:
+        return _describe_envelopes(block, indent)
     lines = [f"{indent}cost: {pricing.format_usd(float(block.get('usd') or 0.0))} priced over "
              f"{block.get('message_count', 0)} response(s) in {block.get('transcript_count', 0)} "
              f"file(s)"]
@@ -107,6 +240,30 @@ def describe(block: Mapping[str, Any], indent: str = "  ") -> list[str]:
     bad = int(block.get("unreadable_lines") or 0)
     lines.append(f"{indent}  read: {dupes} duplicate line(s) of one response, {repeats} repeated "
                  f"event(s), {skipped} message(s) without usage, {bad} unreadable line(s)")
+    lines.append(f"{indent}  prices: {block.get('price_table_source')} "
+                 f"(sha256 {str(block.get('price_table_sha256') or '')[:12]})")
+    return lines
+
+
+def _describe_envelopes(block: Mapping[str, Any], indent: str) -> list[str]:
+    lines = [f"{indent}cost: {pricing.format_usd(float(block.get('usd') or 0.0))} from "
+             f"{block.get('envelope_count', 0)} agent envelope(s) (source: envelopes; the "
+             f"price table gives "
+             f"{pricing.format_usd(float(block.get('usd_from_price_table') or 0.0))})"]
+    tokens = block.get("tokens") or {}
+    usd_by_model = block.get("usd_by_model") or {}
+    for model in sorted(tokens):
+        counts = tokens[model]
+        amount = (pricing.format_usd(float(usd_by_model[model])) if model in usd_by_model
+                  else "no costUSD")
+        lines.append(f"{indent}  {model}: {amount}  " + ", ".join(
+            f"{f}={int(counts.get(f, 0)):,}" for f in usage_mod.FIELDS))
+    if block.get("unpriced_calls"):
+        lines.append(f"{indent}  {block['unpriced_calls']} call(s) left no priced envelope "
+                     f"({block.get('unpriced_seconds', 0)} s: a timeout, a signal or an empty "
+                     f"stdout), so the total is a lower bound")
+    if block.get("unpriced"):
+        lines.append(f"{indent}  not in the price table: {', '.join(block['unpriced'])}")
     lines.append(f"{indent}  prices: {block.get('price_table_source')} "
                  f"(sha256 {str(block.get('price_table_sha256') or '')[:12]})")
     return lines
@@ -150,6 +307,9 @@ def run_cost(run_id: str, corpus_dir: str | Path) -> dict | None:
         "transcript_count": block.get("transcript_count"),
         "message_count": block.get("message_count"),
         "price_table_sha256": block.get("price_table_sha256"),
+        "basis": block.get("basis") or BASIS_TRANSCRIPTS,
+        "envelope_count": block.get("envelope_count"),
+        "unpriced_calls": block.get("unpriced_calls") or 0,
     }
 
 
@@ -171,13 +331,22 @@ def render_run_costs(costs: Mapping[str, dict | None]) -> list[str]:
         per_task = (f"{pricing.format_usd(entry['usd_per_task'])} a task over {entry['tasks']} "
                     f"tasks, from {entry['tasks_from']}" if entry.get("usd_per_task") is not None
                     else "no task count to divide by")
+        if entry.get("basis") == BASIS_ENVELOPES:
+            note = (f"; {entry['unpriced_calls']} call(s) left no priced envelope, so it is a "
+                    f"lower bound" if entry.get("unpriced_calls") else "")
+            lines.append(f"cost {run_id}: {pricing.format_usd(entry['usd'])} ({per_task}; "
+                         f"models {', '.join(entry['models']) or 'none'}; source: envelopes, "
+                         f"{entry.get('envelope_count') or 0} of them{note})")
+            continue
         note = (f"; UNPRICED: {', '.join(entry['unpriced'])}, so the dollar figures are a "
                 f"lower bound" if entry.get("unpriced") else "")
         lines.append(f"cost {run_id}: {pricing.format_usd(entry['usd'])} ({per_task}; "
                      f"models {', '.join(entry['models']) or 'none'}{note})")
     if missing:
         lines.append(f"cost not recorded for run(s) {', '.join(missing)}: harvest with "
-                     f"--transcripts <path> to price them from the agents' transcripts")
+                     f"--transcripts <path> to price them from the agents' transcripts (a "
+                     f"remote locate run is priced from its agent envelopes when they came "
+                     f"home)")
     return lines
 
 

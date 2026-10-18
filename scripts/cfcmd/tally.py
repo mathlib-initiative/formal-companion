@@ -222,6 +222,13 @@ def _locate(workspace, args) -> int:
               "universe": built["universe"], "challenge_runs": built["challenge_runs"],
               "gate": gate, "gates": built["gates"], "counts": built["counts"],
               "problems": built["problems"], "rows": built["rows"]}
+    # what each run read cost, from its receipt's cost block (transcripts, a usage
+    # export, or the agent envelopes a remote harvest brought home)
+    from cost import fleet as cost_fleet
+
+    result["cost"] = cost_fleet.runs_cost({rid: paths.corpus_run_dir(rid)
+                                           for rid, g in sorted(built["gates"].items())
+                                           if g.get("receipt")})
     if args.as_json:
         print(json.dumps({k: v for k, v in result.items() if k != "rows"}, indent=1,
                          sort_keys=True))
@@ -241,6 +248,9 @@ def _locate(workspace, args) -> int:
                      f"(receipt={g.get('receipt')}, complete={g.get('complete')}, gate "
                      f"ok={g.get('gate_ok')}): the counts above are not ones the export will "
                      "accept")
+    if not args.as_json:
+        for line in cost_fleet.render_run_costs(result["cost"]):
+            log.info(line)
     for problem in built["problems"][:20]:
         log.warn(problem)
     if not args.no_write:
