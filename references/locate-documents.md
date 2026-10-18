@@ -223,7 +223,18 @@ spaces, UTF-8):
 ```
 
 - `origin` is `enumerated` (from the PageAssessments listing) or `adopted` (a
-  consumer's pin and bytes, proposal §11.1, recorded in `adopted_from`).
+  consumer's pin and bytes, proposal §11.1, recorded in `adopted_from`), the
+  values of `cflib.vocab.SOURCE_ORIGINS`. A consumer's bytes adopted into an
+  enumerated entry of the same revision keep its `origin` and add
+  `adopted_from: {consumer, pins_sha256}`.
+- **One source per page is planned** (`Manifest.preferred()` in
+  `scripts/sources/sourceset.py`): a page with an adopted source (either kind
+  above) plans it, the highest such revision when there are several, because the
+  proposal's §2.1 adopts the consumer's revision instead of choosing one; any
+  other page plans its highest enumerated revision. So `cf sourceset
+  enumerate-wikiproject` adds no revision of a page a consumer pinned (unless
+  `--include-adopted`), and `cf sourceset fetch` does not fetch an enumerated
+  revision of a page whose adopted bytes are in.
 - A field the source does not have yet is `null` (`raw_sha256` before the fetch,
   `layer_sha256` before the render). **Append-only**: version n+1 holds every
   `source_id` of version n, and every non-null field of n unchanged — a field
@@ -239,9 +250,16 @@ canonical JSON of that mapping without `oldid`. The response bytes are kept as
 `source.raw.html` and copied, never refetched, to every other machine.
 
 **The canonical body** is the response's `parse.text` (an adopted file that is
-not such a JSON response is taken as the body itself) with every HTML comment
-removed, as UTF-8 bytes in `body.html`; its sha256 is `html_sha256`, which is
-the source's `source_sha` everywhere (hard rule 3).
+not such a JSON response is taken as the body itself; adopt refuses JSON that is
+no parse response with a `parse.text`, an API error included) decoded as UTF-8
+with one leading byte-order mark dropped, with every HTML comment removed as the
+HTML tokenizer delimits one in the data state — `<!--` to the first `-->` or
+`--!>`, `<!-->` and `<!--->` as whole empty comments, an unterminated one to the
+end, while a `<!--` inside a tag or inside the raw text of `script`, `style`,
+`xmp`, `iframe`, `noembed`, `noframes`, `textarea` or `title` is text — as the
+exact UTF-8 bytes in `body.html` (a CR stays a CR); its sha256 is `html_sha256`,
+which is the source's `source_sha` everywhere (hard rule 3). A body holding a
+lone surrogate, or nesting elements more than 256 deep, is refused.
 
 **One source's directory.** `cf sourceset fetch` and `cf sourceset adopt` write
 `source.raw.html`, `body.html` and `source.json`; the renderer,
@@ -254,15 +272,24 @@ when `cf sourceset render` runs:
 | `source.raw.html` | the bytes as fetched or adopted (`raw_sha256`) |
 | `source.json` | the manifest entry, as the source's own record |
 | `body.html` | the canonical body (`html_sha256`) |
-| `layer.txt` | the **Literature Links text layer** (`layer_sha256`): the body's DOM `textContent` — every text node in document order, MathML token text, TeX annotations and citation markers included — then the WHATWG *strip and collapse ASCII whitespace* (each run of U+0009, U+000A, U+000C, U+000D, U+0020 to one space, ends stripped); no Unicode normalisation. The only view quotes are cut from and gated against |
-| `formulas.json` | `[{"span": [a, b], "alttext": "{\\displaystyle G}"}]`: each formula's half-open layer span (the whole `.mwe-math-element`, else the `math` element), sorted and disjoint; the alttext is `math@alttext`, else the `x-tex` annotation, else the fallback image's `alt`. A formula with no text in the layer (an image only) has no span and no entry, and `render.json` counts it as `formulas_without_text` |
+| `layer.txt` | the **Literature Links text layer** (`layer_sha256`): the body's DOM `textContent` — every text node in document order, `style` and `script` text, MathML token text, TeX annotations and citation markers included; the one newline right after a `pre`, `listing` or `textarea` start tag is not text, as the HTML5 tree builder drops it — then the WHATWG *strip and collapse ASCII whitespace* (each run of U+0009, U+000A, U+000C, U+000D, U+0020 to one space, ends stripped); no Unicode normalisation. The only view quotes are cut from and gated against |
+| `formulas.json` | `[{"span": [a, b], "alttext": "{\\displaystyle G}"}]`: each formula's half-open layer span (the whole `.mwe-math-element`, else the `math` element), sorted and disjoint; the alttext is `math@alttext`, else the `x-tex` annotation, else the fallback image's `alt`. A formula with no text in the layer (an image only) has no span and no entry, `render.json` counts it as `formulas_without_text`, and the reading copy still writes it as `$<normalized alttext>$`, in no segment |
 | `head.txt` | the head text: `layer.txt` with each formula span replaced by `⟦normalized alttext⟧`. Derived; the definition is `scripts/gate/locate_text.py`'s `HeadMap`, which also maps offsets both ways |
-| `text.txt` | the **reading copy** for models: math as `$<normalized alttext>$`, references (`sup.reference`), reference lists (`ol.references`, `.reflist`, `.mw-references-wrap`), edit links, style and script dropped, headings as `#`-prefixed lines (one `#` per level), `- ` before a list item, ` \| ` between table cells, a blank line between blocks; it ends with one newline |
-| `layer_map.json` | `{"schema": "cf-layer-map/1", "segments": [[t0, t1, l0, l1], …]}`, sorted: `text.txt[t0:t1]` is `layer.txt[l0:l1]`; equal lengths map character by character, unequal ones (a formula) only as a whole. A character the copy adds — a heading's `#`s, a bullet, a separator, a line break — is in no segment and has no layer offset |
-| `sections.json` | `[{"path": ["Theorems"], "fragment": "Theorems", "level": 2, "span": [l0, l1]}]`, the lead first with `path: []`, `fragment: null` and `level: 0`; a heading's fragment is its `id`, else its `.mw-headline`'s; spans tile the layer |
-| `paragraphs.json` | `[{"span": [l0, l1], "section": ["Theorems"], "block": "p", "formulas": 2, "math": true}]`: every block (`p`, `li`, `dd`, `dt`, `blockquote`, a theorem box, a displayed formula) that holds text, outside the reference lists; blocks may nest (an `li` holding a `p` is two entries). `math` is true when the block holds a formula or a deterministic finder hit, and those are the paragraphs gate rule 8's coverage floor reads |
-| `finders.json` | `[{"finder": "theorem_box", "start": l0, "span": [l0, l1], "section": […], "term": "…"}]`: the deterministic finders' passages (`cflib.vocab.DETERMINISTIC_FINDERS`), sorted by start, each starting at the first character of a word of the head text; a finder hit whose element's text is glued to the word before it is dropped and counted in `render.json`'s `finders_dropped` |
+| `text.txt` | the **reading copy** for models: math as `$<normalized alttext>$`, references (`sup.reference`), reference lists (`ol.references`, `.reflist`, `.mw-references-wrap`), edit links, style and script dropped, headings as `#`-prefixed lines (one `#` per level), `- ` before a list item, ` \| ` between table cells (one space each side), a blank line between blocks (inside a table cell a block, a display formula included, is only a space: a row is one line); it ends with one newline |
+| `layer_map.json` | `{"schema": "cf-layer-map/2", "segments": [[t0, t1, l0, l1, kind], …]}`, sorted: `text.txt[t0:t1]` is `layer.txt[l0:l1]`, character by character when `kind` is `0` (text) and only as a whole when it is `1` (a formula: only `t0` and `l0` correspond, whatever the two lengths are). A character the copy adds — a heading's `#`s, a bullet, a separator, a line break, an image-only formula — is in no segment and has no layer offset |
+| `sections.json` | `[{"path": ["Theorems"], "fragment": "Theorems", "level": 2, "span": [l0, l1]}]`, the lead first with `path: []`, `fragment: null` and `level: 0`; a heading's title is its text outside the reading copy's dropped regions (an edit link, a reference marker, an inline `style`), its fragment its `id`, else its `.mw-headline`'s; spans tile the layer |
+| `paragraphs.json` | `[{"span": [l0, l1], "section": ["Theorems"], "block": "p", "formulas": 2, "math": true}]`: every block (`p`, `li`, `dd`, `dt`, `blockquote`, a theorem box, a displayed formula) that holds text outside the reading copy's dropped regions, its span measured over that kept text alone (an inline TemplateStyles `style` opening a paragraph is outside its span; a paragraph holding only such text is no block), outside the reference lists; blocks may nest (an `li` holding a `p` is two entries). `math` is true when the block holds a formula or a deterministic finder hit, and those are the paragraphs gate rule 8's coverage floor reads |
+| `finders.json` | `[{"finder": "theorem_box", "start": l0, "span": [l0, l1], "section": […], "term": "…"}]`: the deterministic finders' passages (`cflib.vocab.DETERMINISTIC_FINDERS`), sorted by start, each spanning its element's kept text (as for blocks) and starting at the first character of a word of the head text; a finder hit whose kept text is glued to the word before it (a `style` with no space after it, say) is dropped and counted in `render.json`'s `finders_dropped` |
 | `render.json` | `{"renderer": "web-html/1", "html_sha256", "layer_sha256", "head_sha256", "text_sha256", "counts": {…}}` |
+
+The `web-html/1` rule was corrected once, before any rendering under it was
+pinned anywhere, after an adversarial review of the renderer. The corrections:
+comments removed as the tokenizer delimits them (not by a `<!--.*?-->` pattern),
+a byte-order mark dropped, the newline after `pre`/`listing`/`textarea` (this
+one moves `layer.txt`), blocks and finder passages measured over kept text, an
+image-only formula written into the reading copy, one space each side of a cell
+separator, a display formula inside a cell kept on its row, and `layer_map.json`
+moved to `cf-layer-map/2`. Any later change is a new renderer id.
 
 Offsets are code-point offsets. A passage's `span` is a layer span; its id is
 computed on the head text at `HeadMap.to_head(span[0])` (§2 of the proposal,
