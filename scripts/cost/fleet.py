@@ -45,11 +45,27 @@ def source_label(path: str | Path) -> str:
     return p.name if p.name not in ("", ".", "..") else (p.resolve().name or ".")
 
 
+def _count(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def empty_warning(block: Mapping[str, Any]) -> str | None:
-    """A warning when *block* counted no response, else None."""
-    if int(block.get("message_count") or 0) > 0:
+    """A warning when *block* counted no response, else None (envelope-aware)."""
+    if _count(block.get("message_count")) > 0:
         return None
-    files = int(block.get("transcript_count") or 0)
+    if block.get("basis") == BASIS_ENVELOPES:
+        envelopes = _count(block.get("envelope_count"))
+        if not envelopes:
+            return ("no agent envelope was found in the tend root's usage/, so nothing was "
+                    "priced and $0.00 is not a measurement")
+        return (f"{envelopes} agent envelope(s) read and none priced "
+                f"({_count(block.get('unpriced_calls'))} record(s) of a call that left no "
+                f"envelope, {_count(block.get('unreadable_lines'))} unreadable), so $0.00 is "
+                f"not a measurement")
+    files = _count(block.get("transcript_count"))
     if not files:
         return ("no log file (*.jsonl, *.jsonl.gz) was found under the transcripts path, "
                 "so nothing was priced and $0.00 is not a measurement")
@@ -57,6 +73,29 @@ def empty_warning(block: Mapping[str, Any]) -> str | None:
             f"({int(block.get('skipped_without_usage') or 0)} message(s) without usage, "
             f"{int(block.get('unreadable_lines') or 0)} unreadable line(s)), so $0.00 is not "
             f"a measurement")
+
+
+def lower_bound(block: Mapping[str, Any] | None) -> str | None:
+    """Why *block*'s ``usd`` is only a lower bound of the run's spend, or None.
+
+    Under either basis, a call that left no priced envelope (``unpriced_calls``: a
+    timeout, a signal, an empty stdout -- ``scripts/run/agent_call.py``'s record of
+    it) spent what no figure holds; under the transcripts basis a model missing from
+    the price table (``unpriced``) has its tokens counted and priced nowhere.  Under
+    the envelope basis ``usd`` is the agent CLI's own ``total_cost_usd``, which a
+    missing price-table row does not touch (only ``usd_from_price_table``).
+    """
+    if not isinstance(block, Mapping):
+        return None
+    calls = _count(block.get("unpriced_calls"))
+    if calls > 0:
+        return (f"{calls} agent call(s) left no priced envelope "
+                f"({block.get('unpriced_seconds', 0)} s: a timeout, a signal or an empty "
+                f"stdout), so their spend is in no figure")
+    if block.get("unpriced") and block.get("basis") != BASIS_ENVELOPES:
+        return (f"model(s) {', '.join(str(m) for m in block['unpriced'])} are in no price "
+                f"table, so their tokens are priced nowhere")
+    return None
 
 
 def cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]], table_source: str,

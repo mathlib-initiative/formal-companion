@@ -450,7 +450,11 @@ charged the share of every run that covered it; `runs: {run: {usd, sources, shar
 `--article-costs` (`{source id: dollars}` over every session of each article's task) replaces
 the spread for both figures (`by_stage: null`); `basis` says which. Every figure -- a receipt's
 `cost.usd`, an `--article-costs` value -- must be a finite, non-negative number, or the score is
-refused: a cost it cannot read is never read as $0.
+refused: a cost it cannot read is never read as $0. Nor is a lower bound read as a cost: a receipt
+whose `cost.usd` is one (`cost.fleet.lower_bound`: `unpriced_calls` > 0, a call that left no priced
+envelope such as an agent timeout, or under the transcripts basis a model in no price table) is
+refused unless `--article-costs` prices every article, and the score then says
+`usd_total_lower_bound: true` and names the runs under `lower_bound_runs`.
 
 `gate_rejections`: per run of the score, its harvested `runs/<run>/host/gate.jsonl` (or the
 `--gate-log` file or directory, filtered to the run), else `null`: `{attempts, rejected,

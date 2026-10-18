@@ -1140,7 +1140,10 @@ under the envelope's `model`, else the run's), and the block carries
 `envelope_count`, `messages_by_model`, `usd_by_model`, `usd_from_price_table`
 (the same tokens priced with `budget.prices`, a cross-check) and
 `unpriced_calls`/`unpriced_seconds` (records of calls that left no priced
-envelope, which make `usd` a lower bound). `cf tally --locate` prints every
+envelope, which make `usd` a lower bound: `cf harvest` warns `LOWER BOUND`, and
+`NO RESPONSES priced` when no envelope was priced, on whichever block the receipt
+carries, and `cf bench score` refuses such a receipt unless `--article-costs`
+prices every article). `cf tally --locate` prints every
 read run's cost line — its source and envelope count — and records it under
 `cost` in the tally report. The harvest then merges `runs.<run-id>` of the sourceset's
 `state.json` through `Sourceset.record_state` — `{status: harvested,

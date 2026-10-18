@@ -46,6 +46,11 @@ release has something to say.
   carried `licence: null`, which the consumer refuses), and a re-add with
   `--licence` now records a missing licence (it exited 0 and changed nothing); a
   re-add naming another licence or `brain_lib` than recorded is refused.
+- `cf bench score` refuses a receipt whose `cost.usd` is a lower bound (a call
+  that left no priced envelope, e.g. a timeout; or a model in no price table)
+  unless `--article-costs` prices every article: an envelope-priced run whose only
+  call timed out had read as $0.00. `cf harvest` warns `NO RESPONSES priced` and
+  `LOWER BOUND` on the receipt's own cost block, envelopes included.
 - A location's lean end always names `module`, `path` and `line` (only
   `end_line` is optional): a location joined to an index row without one is
   refused per passage, by name, where it had been exported without a path and
