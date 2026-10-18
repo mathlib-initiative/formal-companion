@@ -16,7 +16,7 @@ A library is named by its id (`library`), a declaration by its full Lean name (`
 ## Your tools
 - `{{search_command}} [--library L] [--limit N] <query words…>` — full-text search over declaration names (split at `.`, `_` and case changes), signatures and docstrings; one JSON line per hit.
 - `{{show_command}} <library> <declaration>` — one declaration: module, path, lines, kind, signature, docstring and tags.
-- The sources, read-only, under `{{sources_dir}}/<source-id>/`: `text.txt` (the reading copy: math as `$TeX$`, headings as `#` lines), `layer.txt` (the **text layer**: the only text a quote is ever cut from, character for character), `sections.json`, `paragraphs.json` and `finders.json`.
+- The sources, read-only, under `{{sources_dir}}/<source-id>/`: `text.txt` (the reading copy: math as `$TeX$`, headings as `#` lines), `layer.txt` (the **text layer**: the only text a quote is ever cut from, character for character), `sections.json`, `paragraphs.json`, `finders.json` and `layer_map.json` (which maps `text.txt` offsets to `layer.txt` ones and back).
 - The L2 candidates, read-only: `{{candidates_dir}}/<source-id>.json`. Its `curated` hits were found by deterministic joins (a library's own Wikidata tag on the article, a curated list, a Wikipedia URL in a docstring, a library's list of main results); its `lexical` hits are only search results.
 {{#if is_inventory}}
 - `{{ids_command}} --source-dir {{sources_dir}}/<source-id> --document findings/<your task id>/<source-id>.json --write` — fills every passage's `span`, `head_words` and `item` from its quote and prints what it could not place. Run it after you write the quotes and again after any change.
@@ -30,7 +30,12 @@ A library is named by its id (`library`), a declaration by its full Lean name (`
 - a declaration that is not in the universe's index at its commit, and any `proof_status` field;
 - more than {{max_locations}} locations for one passage, or two with the same rank;
 - an absence whose receipt lists fewer than {{min_queries}} distinct queries;
-- a passage scoped out, or left absent, while the candidates file holds a curated hit that the document neither locates nor rejects with a reason.
+{{#if is_inventory}}
+- an inventory with no `formal_math` passage, or a subject passage scoped out, while the candidates file holds a curated hit.
+{{/if}}
+{{#unless is_inventory}}
+- a curated hit your task manifest lists that the document neither locates nor rejects with a reason.
+{{/unless}}
 
 `exit 1` from the gate is a verdict on your document: fix what it names. **Any other non-zero exit means the gate itself could not run** (a missing config, an unreadable layer, a missing index): that is an infrastructure fault, not a verdict on your work — stop, finish with status `blocked`, quote what the gate printed, and do not weaken your document to make it pass.
 

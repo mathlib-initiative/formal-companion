@@ -8,8 +8,10 @@ sourceset-scoped planner and its three presets (``presets``, ``plan``,
 documents into passage outcomes with a derived status (``outcomes``), and the
 Literature Links export with its sealed record set (``records``, ``export``).
 
-``inputs`` holds the small readers of the formats other packages write (the
-sourceset of section 7, the universe and ``corpus.sqlite`` of section 8);
+``inputs`` is the planner's view of the formats other packages write, through
+their owners (the sourceset of section 7, the universe and ``corpus.sqlite`` of
+section 8, the harvested runs of section 10); ``state`` writes the sourceset's
+``state.json`` through its one writer;
 ``records`` imports nothing from ``cflib`` so the gate can carry it to a run
 host.
 """
