@@ -12,7 +12,9 @@ locate, challenge); the bench articles' layers; and, when ``cf harvest`` brought
 them home, each run's ``runs/<run>/host/gate.jsonl`` and ``canary.json``.
 
 **The refusals**, each a ``CfError`` naming what to fix: a receipt that is not
-complete, not gated, or carries no ``cost`` block; gold whose files changed after
+complete, not gated, or carries no ``cost`` block, or one whose ``usd`` is only a
+lower bound (a call that left no priced envelope, a model priced nowhere) unless
+``--article-costs`` prices every article; gold whose files changed after
 freeze; a run of another universe (or another state of it) than gold was
 labelled at; runs of mixed arms; a subject-only (article-tier) run; an inventory
 that did not plan, or read another rendering of, an article of the split; a
@@ -54,6 +56,8 @@ from cflib import vocab
 from cflib.errors import CfError
 from cflib.jsonio import read_json, write_json
 from cflib.paths import skill_root
+
+from cost import fleet as cost_fleet
 
 from . import gold as gold_mod
 from . import inputs, metrics
@@ -110,20 +114,45 @@ def runs_of(paths, run_id: str, rows: list[dict], locate: dict) -> dict[str, lis
     return {k: sorted(v) for k, v in out.items()}
 
 
-def load_runs(paths, run_ids: list[str]) -> tuple[dict[str, dict], dict[str, dict], dict[str, str]]:
-    """``(run.yaml, receipt, receipt sha)`` per run; refused unless complete, gated and priced."""
+def load_runs(paths, run_ids: list[str], *, lower_bound_ok: bool = False
+              ) -> tuple[dict[str, dict], dict[str, dict], dict[str, str]]:
+    """``(run.yaml, receipt, receipt sha)`` per run; refused unless complete, gated and priced.
+
+    Priced in full: a cost block whose ``usd`` is only a lower bound
+    (:func:`receipt_usd`) is refused unless ``lower_bound_ok`` -- the score's
+    per-article costs then come from ``--article-costs``, not from the receipts.
+    """
     yamls, receipts, shas = {}, {}, {}
     for rid in run_ids:
         receipt, sha = inputs.receipt(paths, rid)
-        if not isinstance(receipt.get("cost"), dict):
-            raise CfError(f"run {rid}'s receipt has no cost block",
-                          hint="the observed model ids and the cost per article come from the "
-                               "agents' transcripts: harvest again with --transcripts")
-        dollars(receipt["cost"].get("usd"), f"run {rid}'s receipt cost.usd")
+        receipt_usd(rid, receipt.get("cost"), lower_bound_ok=lower_bound_ok)
         yamls[rid] = inputs.run_yaml(paths, rid)
         receipts[rid] = receipt
         shas[rid] = sha
     return yamls, receipts, shas
+
+
+def receipt_usd(rid: str, cost, *, lower_bound_ok: bool = False) -> float:
+    """A run receipt's ``cost.usd`` as the run's cost, or refuse.
+
+    No cost block, or a ``usd`` that is no number of dollars, is refused; so is a
+    ``usd`` that is only a lower bound (``cost.fleet.lower_bound``: a call that left
+    no priced envelope -- a timeout, whose spend no envelope recorded -- or a model
+    priced nowhere), which would make a candidate whose calls ran into the agent
+    timeout read cheaper, unless ``lower_bound_ok``.
+    """
+    if not isinstance(cost, dict):
+        raise CfError(f"run {rid}'s receipt has no cost block",
+                      hint="the observed model ids and the cost per article come from the "
+                           "agents' transcripts: harvest again with --transcripts")
+    usd = dollars(cost.get("usd"), f"run {rid}'s receipt cost.usd")
+    why = cost_fleet.lower_bound(cost)
+    if why and not lower_bound_ok:
+        raise CfError(f"run {rid}'s receipt cost.usd (${usd:.2f}) is a lower bound: {why}",
+                      hint="a score never reads a lower bound as a run's cost: re-run what "
+                           "left no priced envelope and harvest again, or pass --article-costs "
+                           "<file> with every article's dollars over all its sessions")
+    return usd
 
 
 def dollars(value, what: str) -> float:
@@ -510,6 +539,13 @@ def article_costs(paths, path: Path | None, runs: dict[str, list[str]], yamls: d
         basis = "each run's receipt spread over the sources it covered"
     info = {"usd_total": round(sum(float(r["cost"]["usd"]) for r in receipts.values()), 6),
             "articles": len(articles), "basis": basis, "by_stage": by_stage}
+    bounds = {rid: why for rid, r in sorted(receipts.items())
+              if (why := cost_fleet.lower_bound(r["cost"]))}
+    if bounds:
+        # only with --article-costs (load_runs refuses them otherwise): the per-article
+        # figures are the file's, and usd_total, the receipts' sum, is a lower bound
+        info["usd_total_lower_bound"] = True
+        info["lower_bound_runs"] = bounds
     if path is None:
         info["runs"] = shares
     return total, locate_only, info
@@ -597,7 +633,8 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
     rows = inputs.outcomes(paths, run_id)
     runs = runs_of(paths, run_id, rows, locate)
     all_runs = sorted({r for v in runs.values() for r in v})
-    yamls, receipts, receipt_shas = load_runs(paths, all_runs)
+    yamls, receipts, receipt_shas = load_runs(paths, all_runs,
+                                              lower_bound_ok=article_costs_path is not None)
     run_arm = check_arms(yamls, run_id)
     if arm is not None and arm != run_arm:
         raise CfError(f"run {run_id} is the {run_arm} arm, not {arm}",

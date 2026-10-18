@@ -1395,6 +1395,37 @@ class TestScore(unittest.TestCase):
             score(self.world, "loc3")
         self.assertIn("no cost block", str(ctx.exception))
 
+    def test_r2_a_lower_bound_cost_is_refused_unless_article_costs_cover_it(self):
+        """The review's pricing_timeout_only case: an envelope-priced receipt whose one call
+        timed out reads $0.00 (envelopes 1, unpriced_calls 1), and the bench read it as the
+        run's cost -- a candidate whose calls ran into the agent timeout read cheaper."""
+        eval_run(self.world, run_id="loc4", inventory_run="inv4")
+        path = WorkspacePaths(self.world.root).receipt_json("loc4")
+        doc = json.loads(path.read_text())
+        doc["cost"].update(basis="envelopes", usd=0.0, envelope_count=1, unpriced_calls=1,
+                           unpriced_seconds=2700.0, message_count=0)
+        path.write_text(json.dumps(doc))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "loc4")
+        self.assertIn("run loc4's receipt cost.usd ($0.00) is a lower bound", str(ctx.exception))
+        self.assertIn("1 agent call(s) left no priced envelope", str(ctx.exception))
+        costs = self.world.write("inputs/costs4.json", json.dumps({s: 2.0 for s in self.eval}))
+        scored = score(self.world, "loc4", "--no-canary-check", "--article-costs", costs)
+        self.assertEqual(scored["cost"]["value"], 2.0)
+        self.assertTrue(scored["cost"]["usd_total_lower_bound"])
+        self.assertEqual(list(scored["cost"]["lower_bound_runs"]), ["loc4"])
+        # a transcripts-priced receipt with a model in no price table is a lower bound too
+        eval_run(self.world, run_id="loc5", inventory_run="inv5")
+        path = WorkspacePaths(self.world.root).receipt_json("inv5")
+        doc = json.loads(path.read_text())
+        doc["cost"]["unpriced"] = ["claude-unknown-9"]
+        path.write_text(json.dumps(doc))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "loc5")
+        self.assertIn("claude-unknown-9 are in no price table", str(ctx.exception))
+        # and a whole receipt still scores with no lower-bound key
+        self.assertNotIn("lower_bound_runs", score(self.world)["cost"])
+
     def test_a_canary_in_a_transcript_fails_the_run(self):
         canary = layout_of(self.world).host_canaries.read_text().strip()
         transcripts = scratch(self) / "t"

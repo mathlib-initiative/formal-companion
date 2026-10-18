@@ -95,14 +95,29 @@ def run(args) -> int:
         receipt = _from_findings(workspace, args, data, dest, run_yaml_path, cost=cost)
 
     log.info(harvest_mod.describe(receipt))
+    # the receipt's own cost block: --transcripts, a campaign usage export, or the
+    # envelopes the remote harvest brought home -- each is warned about alike
+    cost = receipt.get("cost") if isinstance(receipt.get("cost"), dict) else None
+    envelopes = bool(cost and cost.get("basis") == cost_fleet.BASIS_ENVELOPES)
     empty = cost_fleet.empty_warning(cost) if cost else None
     if empty:
-        log.warn(f"NO RESPONSES priced for run {args.run_id}: {empty}. Check --transcripts; "
-                 f"a stage receipt refuses this cost block.")
-    if cost and cost.get("unpriced"):
+        log.warn(f"NO RESPONSES priced for run {args.run_id}: {empty}. "
+                 + ("Check the tend root's usage/ on the host; " if envelopes
+                    else "Check --transcripts; ")
+                 + "a stage receipt refuses this cost block.")
+    if cost and cost.get("unpriced") and not envelopes:
         log.warn(f"UNPRICED model(s) {', '.join(cost['unpriced'])}: their tokens are in the "
                  f"receipt and priced nowhere, so {pricing.format_usd(cost['usd'])} is a lower "
                  f"bound. Add them to workspace.yaml budget.prices and re-run the harvest.")
+    elif cost and cost.get("unpriced"):
+        log.warn(f"model(s) {', '.join(cost['unpriced'])} are not in the price table: the "
+                 f"envelopes' own total is unaffected, but its cross-check "
+                 f"usd_from_price_table leaves them out. Add them to workspace.yaml budget.prices.")
+    bound = cost_fleet.lower_bound(cost) if cost else None
+    if bound and cost.get("unpriced_calls"):
+        log.warn(f"LOWER BOUND cost for run {args.run_id}: {bound}; "
+                 f"{pricing.format_usd(float(cost.get('usd') or 0.0))} is not the run's spend, "
+                 f"and `cf bench score` refuses it unless --article-costs prices every article.")
     if receipt["missing"] or receipt["sha_mismatched"] or receipt.get("sha_unverified"):
         log.warn("harvest INCOMPLETE: the corpus is not the whole corpus, so every number "
                  "derived from it is a lower bound. Re-run the missing tasks, then `cf harvest` again.")

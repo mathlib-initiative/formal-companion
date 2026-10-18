@@ -534,10 +534,43 @@ class TestEnvelopesPriceTheRun(_HostHarvest):
         arts = receipt["host_artifacts"]["envelopes"]
         self.assertEqual((arts["fetched"], arts["files"]), (True, 3))     # the .json only
         self.assertTrue(receipt["complete"])
-        # the bench's dollar reader accepts it
+        # one call timed out and left no envelope: $5.21 is a lower bound, which the
+        # harvest says and the bench refuses as the run's cost (R2-K)
         from bench import score as bench_score
+        from cflib.errors import CfError
+        from cost import fleet
 
-        self.assertAlmostEqual(bench_score.dollars(cost["usd"], "cost.usd"), 5.21)
+        self.assertIn("1 agent call(s) left no priced envelope", fleet.lower_bound(cost))
+        self.assertIn("LOWER BOUND cost for run r-1", out)
+        with self.assertRaises(CfError) as caught:
+            bench_score.receipt_usd("r-1", cost)
+        self.assertIn("is a lower bound", str(caught.exception))
+        self.assertIn("--article-costs", caught.exception.hint)
+        self.assertAlmostEqual(bench_score.receipt_usd("r-1", cost, lower_bound_ok=True), 5.21)
+
+    def test_r2_a_run_whose_only_call_timed_out_is_no_measurement(self):
+        """The review's pricing_timeout_only reproduction: <tend>/usage holds one
+        agent_call timeout record and nothing else.  The receipt said $0.00 from 1
+        envelope, no warning was printed, and the bench read $0.00 as the run's cost."""
+        usage = self.remote / "r-1-tend" / "usage"
+        for path in usage.iterdir():
+            if "t-loc-0002" not in path.name:
+                path.unlink()
+        code, out = self.harvest("--execute")
+        self.assertEqual(code, 0, out)
+        cost = json.loads((self.ws / "corpus" / "r-1" / "RECEIPT.json").read_text())["cost"]
+        self.assertEqual((cost["basis"], cost["usd"], cost["envelope_count"],
+                          cost["unpriced_calls"]), ("envelopes", 0.0, 1, 1))
+        self.assertIn("NO RESPONSES priced for run r-1: 1 agent envelope(s) read and none "
+                      "priced", out)
+        self.assertIn("Check the tend root's usage/ on the host", out)
+        self.assertNotIn("transcripts path", out)
+        self.assertIn("LOWER BOUND cost for run r-1", out)
+        from bench import score as bench_score
+        from cflib.errors import CfError
+
+        with self.assertRaises(CfError):
+            bench_score.receipt_usd("r-1", cost)
 
     def test_an_explicit_transcripts_path_still_wins(self):
         logs = self.fx.root / "logs"
