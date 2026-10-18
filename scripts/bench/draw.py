@@ -55,6 +55,7 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
+from cflib import vocab
 from cflib.errors import CfError
 from cflib.yamlio import load_yaml
 
@@ -65,6 +66,9 @@ from .layout import overlap_words, word_spans
 _INT = re.compile(r"[1-9][0-9]*\Z")
 #: the fewest words a sampled span holds -- the join's overlap floor
 MIN_SPAN_WORDS = 4
+#: a frame article's ``revision_basis`` when the frame file named its source id; a
+#: page id resolves to a ``cflib.vocab.SOURCE_ORIGINS`` basis (adopted, enumerated)
+BASIS_NAMED = "source_id"
 
 
 # --------------------------------------------------------------------------
@@ -171,14 +175,15 @@ def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str
             if entry is None:
                 missing.append(row["source_id"])
                 continue
-            basis = "source_id"
+            basis = BASIS_NAMED
         else:
             sid = preferred.get(row["pageid"])
             if sid is None:
                 missing.append(f"pageid {row['pageid']}")
                 continue
             entry = manifest.entries[sid]
-            basis = "adopted" if inputs.adopted(entry) else "enumerated"
+            basis = (vocab.SOURCE_ORIGIN_ADOPTED if inputs.adopted(entry)
+                     else vocab.SOURCE_ORIGIN_ENUMERATED)
         sid = entry["source_id"]
         pageid = entry.get("pageid")
         if sid in articles or (pageid is not None and int(pageid) in seen_pages):
@@ -210,7 +215,8 @@ def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str
     ordered = [articles[s] for s in sorted(articles)]
     return {"articles": ordered, "N": len(ordered),
             "N_curated": sum(1 for a in ordered if a["curated"]),
-            "N_adopted": sum(1 for a in ordered if a["revision_basis"] == "adopted"),
+            "N_adopted": sum(1 for a in ordered
+                             if a["revision_basis"] == vocab.SOURCE_ORIGIN_ADOPTED),
             "N_rendered": sum(1 for a in ordered if a["rendered"]),
             "unrendered": [a["source_id"] for a in ordered if not a["rendered"]],
             "duplicates": sorted(duplicate),
