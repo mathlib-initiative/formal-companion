@@ -270,9 +270,10 @@ is gated, harvested, tallied and exported as it always was. Under them:
   general"; whole words, so `HasStrictDerivAt` is no such word): a strengthening
   or a generalisation is `broadMatch` (R2), a special case `narrowMatch` (R3). A
   challenge verdict that leaves a `closeMatch` names its convention too — a
-  downgrade's own, a confirm's when the record names none — and the note it
-  leaves (the record's own, else the one `locate_records.downgrade_note` takes
-  from the verdict) is held to the same words.
+  downgrade's own, a confirm's when the record names none — and a downgrade's
+  own note (the one `locate_records.downgrade_note` takes from the verdict when
+  the record has none) is held to the same words; the record's own note, the
+  worker's, is not.
 - **A part of a proof names its step.** `hasPart` and `narrowMatch` need the
   declaration alone, instantiated, to entail a clause the passage asserts (R5;
   a lemma the proof uses, one that needs a second declaration, a neighbouring
@@ -319,10 +320,13 @@ verdict leaves a relation that counts, written before it judges (the FM7 rule,
 A `confirm` of a location whose relation counts, and a `downgrade` to one, names
 the ids it states in `clauses`, every one for a strong relation and none for a
 `downgrade` to `relatedMatch`; an overturn's locations carry them as a locate
-document's do, against the same list. A `confirm` of a strong record whose own
-`note` (the task manifest's, §9) admits a clause it does not state is refused:
-it is a `downgrade` to `hasPart`. A `claims` entry for a passage the task does
-not judge is refused.
+document's do, against the same list. A `downgrade` whose own note — the
+verdict's `note`, or for a `closeMatch` with no note of its own the note the
+outcomes will take from the verdict — admits a gap on a strong relation is
+refused. The rule reads the challenger's words only: a record's own `note` (the
+task manifest's, §9) is its worker's, and when it admits a gap the challenge plan
+refutes the record by default, for the challenger to judge, but never forces its
+verdict. A `claims` entry for a passage the task does not judge is refused.
 
 - `target` ∈ {`location`, `absence`, `unresolved`, `scope`, `prominence`,
   `coverage`}.

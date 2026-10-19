@@ -489,9 +489,16 @@ class TestAChallengersCloseMatchNamesItsConvention(G.GateTestCase):
                                        convention="encoding"))
         self.records("closeMatch", note="the order is a cardinal", convention="encoding")
         self.assertOk(self.run_verdict(action="confirm", clauses=["c1", "c2"]))
-        self.records("closeMatch", note="stronger than stated", convention="encoding")
-        self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"]), 9,
-                        "'stronger'")
+        # the record's own note is the worker's (a strictly increasing list is no
+        # generality): it never forces the challenger's verdict
+        self.records("closeMatch", note="a strictly increasing list of primes",
+                     convention="encoding")
+        self.assertOk(self.run_verdict(action="confirm", clauses=["c1", "c2"]))
+        # a downgrade to closeMatch keeps a record's own note, and the challenger's is
+        # held to the words only where the outcomes would write it
+        self.records("exactMatch", note="the order is a cardinal")
+        self.assertOk(self.run_verdict(action="downgrade", relation="closeMatch",
+                                       clauses=["c1", "c2"], convention="encoding"))
 
 
 class TestAdmitsAMissingClause(unittest.TestCase):
@@ -593,12 +600,21 @@ class TestTheChallengersClaims(G.GateTestCase):
                                "location_key": self.KEY, "action": "refute", "witness": "no"}
         self.assertOk(self.run_body(body))
 
-    def test_a_record_whose_note_admits_a_gap_is_downgraded_never_confirmed(self):
-        self.records(note="the size bound is not part of this declaration")
-        self.assertRule(self.run_body(self.body()), 9, "a downgrade to hasPart")
+    def test_a_downgrades_own_note_admits_no_gap_on_a_strong_relation(self):
+        self.records(relation="exactMatch")
         body = self.body()
-        body["verdicts"][0].update(action="downgrade", relation="hasPart", clauses=["c1"])
+        body["verdicts"][0].update(action="downgrade", relation="broadMatch",
+                                   note="it does not state the size bound")
+        self.assertRule(self.run_body(body), 9, "admits a clause")
+        body["verdicts"][0].update(relation="hasPart", clauses=["c1"])
         self.assertOk(self.run_body(body))
+
+    def test_a_records_own_note_never_forces_the_challengers_verdict(self):
+        """The worker's note is the worker's: a gap it admits makes the plan refute the
+        record by default, and the challenger judges it -- the gate holds the
+        challenger's own words only, so a misworded note forces no relation."""
+        self.records(note="the size bound is not part of this declaration")
+        self.assertOk(self.run_body(self.body()))
 
     def test_an_overturns_locations_are_judged_like_a_workers(self):
         body = self.body()

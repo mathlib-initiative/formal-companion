@@ -1992,20 +1992,23 @@ def _challenge_claims(cfg: GateConfig, problems: Problems, name: str, doc: dict,
     return out
 
 
-def _close_note(v: dict, rec: dict, layer: str) -> str:
-    """The note a downgrade to closeMatch leaves: the record's own, else the verdict's.
+def _challenger_note(v: dict, rec: dict, layer: str, result: Any) -> str:
+    """The note a downgrade's challenger writes for the record it leaves.
 
-    ``locate.outcomes`` keeps a location's non-empty note, else takes
-    ``locate_records.downgrade_note`` (the verdict's ``note``, else a sentence of
-    its witness); the gate reads the same.
+    ``locate.outcomes`` keeps a location's non-empty note, and gives a
+    ``closeMatch`` that has none ``locate_records.downgrade_note`` (the verdict's
+    ``note``, else a sentence of its witness): that is the challenger's text the
+    record will carry.  Otherwise it is the verdict's own ``note``.  Rule 9 reads
+    the challenger's words only: a record's note is its worker's, which the
+    challenge plan refutes by default when it admits a gap, and a challenger is
+    never forced to a relation by text it did not write.
     """
-    own = str(rec.get("note") or "").strip()
-    if own:
-        return own
-    try:
-        return lr.downgrade_note(v, layer or None)
-    except Exception:  # noqa: BLE001 - the note's own check (rule 1) names its fault
-        return str(v.get("note") or "")
+    if result == CLOSE_MATCH and not str(rec.get("note") or "").strip():
+        try:
+            return lr.downgrade_note(v, layer or None)
+        except Exception:  # noqa: BLE001 - the note's own check (rule 1) names its fault
+            pass
+    return str(v.get("note") or "")
 
 
 def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
@@ -2015,11 +2018,11 @@ def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
     A confirm leaves the record's relation and a downgrade the one it names; one
     that counts names the claim ids it states (``clauses``, against the
     document's ``claims`` for the passage), all of them for a strong relation
-    (R4), and a ``relatedMatch`` names none.  A confirm of a strong record whose
-    own note admits a clause it does not state is refused: it is a downgrade.  A
-    ``hasPart`` it leaves on a proof or remark names its displayed ``step`` (FM3),
-    and a ``closeMatch`` its ``convention`` (R1, FM4): a downgrade's own, a
-    confirm's when the record names none.
+    (R4), and a ``relatedMatch`` names none.  A ``hasPart`` it leaves on a proof
+    or remark names its displayed ``step`` (FM3), and a ``closeMatch`` its
+    ``convention`` (R1, FM4): a downgrade's own, a confirm's when the record names
+    none.  A downgrade's own note (:func:`_challenger_note`) admits no gap on a
+    strong relation, and a closeMatch's says no generality.
     """
     action, old = v.get("action"), rec.get("relation")
     result = old if action == "confirm" else v.get("relation") if action == "downgrade" else None
@@ -2032,26 +2035,20 @@ def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
                                f"clauses: [c1, ...] on the verdict")
     else:
         check_clauses(problems, where, result, v.get("clauses"), claims_of.get(item))
-    if action == "confirm" and old in STRONG_RELATIONS:
-        phrase = admits_missing_clause(rec.get("note"))
-        if phrase:
-            problems.add(9, where, f"the record's own note says {phrase!r}: it admits a clause "
-                                   f"the declaration does not state, so it is a downgrade to "
-                                   f"hasPart (R4), not a confirm")
     if result == HAS_PART and rec.get("passage_kind") == PASSAGE_OTHER and (
             action == "downgrade" or not _nonempty_str(rec.get("step"))):
         # the record a verdict leaves is a hasPart of a proof: the step it states, the
         # verdict's own unless the confirmed record names one
         check_step(problems, where, v.get("step"), layer)
+    note = _challenger_note(v, rec, layer, result) if action == "downgrade" else ""
     if result == CLOSE_MATCH:
         # the closeMatch a verdict leaves names its convention: a downgrade's own, a
-        # confirm's when the record names none; its note says no generality
+        # confirm's when the record names none; the challenger's note says no generality
         convention = (v.get("convention") if action == "downgrade" or "convention" in v
                       else rec.get("convention"))
-        note = _close_note(v, rec, layer) if action == "downgrade" else rec.get("note")
         check_convention(problems, where, convention, note)
     if action == "downgrade" and result in STRONG_RELATIONS:
-        phrase = admits_missing_clause(v.get("note"))
+        phrase = admits_missing_clause(note)
         if phrase:
             problems.add(9, where, f"the note says {phrase!r}: it admits a clause the "
                                    f"declaration does not state, so the relation is hasPart "
