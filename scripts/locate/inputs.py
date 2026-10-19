@@ -10,7 +10,8 @@ outcomes and the export.  Nothing here parses one of those formats itself:
   version written as a ``cf-sourceset-delta/1`` delta is replayed onto the
   snapshot before it) and ``preferred()`` one-source-per-page rule; :func:`rendered` is the planner's
   one extra rule (a source is plannable once it has a body, a layer and a
-  renderer);
+  renderer), and :func:`check_renderer` refuses one whose renderer is not this
+  checkout's;
 * a rendered source's views are read through :class:`SourceView`, which takes
   the layer and formulas from ``sources.render_html.read_layer`` and refuses a
   missing view instead of reading it as empty;
@@ -74,26 +75,47 @@ def rendered(entry: dict | None) -> bool:
                 and entry.get("renderer"))
 
 
-def check_source(paths: WorkspacePaths, sourceset_id: str, entry: dict) -> None:
-    """Refuse a source whose files on disk are not the ones its entry pins.
+def check_renderer(entry: dict, sourceset_id: str | None = None) -> None:
+    """Refuse a rendered source whose renderer is not this checkout's.
 
-    A source an older renderer recorded cannot be re-rendered where it is (a
-    recorded layer never changes, references/locate-documents.md section 7), so
-    its refusal names the step that settles it -- a new sourceset seeded from
-    this one's bytes -- instead of a render the sourceset would refuse.
+    An entry that records a layer sha under any renderer id but
+    ``render_html.RENDERER`` -- an older one, one this checkout does not know,
+    or none -- was cut by another rule: its layer, every offset into it and the
+    passage ids computed on them are not this renderer's, so nothing may
+    retrieve candidates for it, plan or pin it, or export it, however
+    consistent its own files are.  An entry with no layer sha is not rendered
+    at all, the caller's other question (:func:`rendered`).  It cannot be
+    re-rendered where it is (a recorded layer never changes,
+    references/locate-documents.md section 7), so the refusal names the step
+    that settles it -- a new sourceset seeded from this one's bytes -- instead
+    of a render the sourceset would refuse.
     """
+    recorded = entry.get("renderer")
+    if not entry.get("layer_sha256") or recorded == render_html.RENDERER:
+        return
+    sid = entry.get("source_id")
+    raise CfError(f"{sid} was rendered by {recorded or 'no recorded renderer'}, not this "
+                  f"checkout's {render_html.RENDERER}: its layer and every offset into it are "
+                  f"another rule's",
+                  hint=f"{sid} was rendered by {recorded or 'no recorded renderer'}, and a "
+                       f"recorded layer never changes: render it under {render_html.RENDERER} "
+                       f"in a new sourceset seeded from this one's bytes -- `cf sourceset "
+                       f"create <new id> --from {sourceset_id or '<sourceset>'}`, then "
+                       f"`cf sourceset render <new id>`")
+
+
+def check_source(paths: WorkspacePaths, sourceset_id: str, entry: dict) -> None:
+    """Refuse a source another renderer rendered, or whose files are not the ones its entry pins.
+
+    The renderer is checked first (:func:`check_renderer`): a source an older
+    renderer recorded is refused even when its own files agree with its entry.
+    """
+    check_renderer(entry, sourceset_id)
     problems = Sourceset(paths, sourceset_id).source_problems(entry)
     if problems:
-        recorded = entry.get("renderer")
-        if recorded and recorded != render_html.RENDERER:
-            hint = (f"{entry['source_id']} was rendered by {recorded}, and a recorded layer "
-                    f"never changes: render it under {render_html.RENDERER} in a new sourceset "
-                    f"seeded from this one's bytes -- `cf sourceset create <new id> --from "
-                    f"{sourceset_id}`, then `cf sourceset render <new id>`")
-        else:
-            hint = (f"re-render it: `cf sourceset render {sourceset_id} --source "
-                    f"{entry['source_id']}`")
-        raise CfError("; ".join(problems), hint=hint)
+        raise CfError("; ".join(problems),
+                      hint=f"re-render it: `cf sourceset render {sourceset_id} --source "
+                           f"{entry['source_id']}`")
 
 
 class SourceView:
@@ -137,10 +159,18 @@ class SourceView:
         return list(self.json("sections.json"))
 
     def layer_map(self) -> list[list[int]]:
-        """``layer_map.json``'s segments (``sources.render_html.LayerMap``)."""
+        """``layer_map.json``'s segments (``sources.render_html.LayerMap``).
+
+        A map another renderer wrote is refused by its reader; that refusal is
+        the user's to settle (:func:`check_renderer`), so it is a CfError here,
+        not a traceback.
+        """
         if not (self.dir / "layer_map.json").is_file():
             raise self._missing("layer_map.json")
-        return render_html.LayerMap.read(self.dir).segments
+        try:
+            return render_html.LayerMap.read(self.dir).segments
+        except render_html.RenderError as exc:
+            raise CfError(f"{self.source_id}: {exc}") from None
 
 
 def source_view(paths: WorkspacePaths, sourceset_id: str, source_id: str) -> SourceView:

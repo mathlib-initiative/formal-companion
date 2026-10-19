@@ -160,6 +160,7 @@ def host_layout(paths: WorkspacePaths, *, host: str, run_id: str, sourceset_id: 
 # --------------------------------------------------------------------------
 
 def _document_pin(entry: dict) -> dict:
+    inputs.check_renderer(entry)          # another renderer's source is pinned nowhere
     return {"source_id": entry["source_id"], "source_sha": entry["html_sha256"],
             "layer_sha256": entry["layer_sha256"], "renderer": entry["renderer"]}
 
@@ -517,6 +518,8 @@ def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict
                 manifest: Manifest, source_ids: list[str], blind: bool,
                 inventory_run: str | None, challenged_runs: list[str]) -> dict:
     """``gate.json`` of references/locate-documents.md section 9, for one layout."""
+    for sid in source_ids:                # another renderer's source is pinned nowhere
+        inputs.check_renderer(manifest.entries[sid], manifest.sourceset_id)
     return {
         "schema": GATE_SCHEMA,
         "mode": preset_mode,

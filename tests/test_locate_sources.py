@@ -19,7 +19,6 @@ except ImportError:  # pragma: no cover
 import hashlib
 import io
 import json
-import os
 import re
 import shutil
 import sys
@@ -498,21 +497,8 @@ class TestTheLayerIsTheLiteratureLinksLayer(unittest.TestCase):
         self.assertIn("a widget group is a group G = H with a spanning gadget.", r.text)
 
 
-@unittest.skipUnless(os.environ.get("CF_WIKILEAN_LAYER"),
-                     "set CF_WIKILEAN_LAYER to a directory of <name>.body.html + "
-                     "<name>.layer.txt pairs from $WIKILEAN's text_layer")
-class TestParityWithTheConsumersTextLayer(unittest.TestCase):
-    """The layer is a port of $WIKILEAN's site/anchor_resolve.text_layer; this pins both."""
-
-    def test_every_pair_agrees(self):
-        directory = Path(os.environ["CF_WIKILEAN_LAYER"]).expanduser()
-        pairs = sorted(directory.glob("*.body.html"))
-        self.assertTrue(pairs, f"no *.body.html in {directory}")
-        for body in pairs:
-            expected = body.with_name(body.name[:-len(".body.html")] + ".layer.txt")
-            with self.subTest(page=body.name):
-                self.assertEqual(rh.render(rh.canonical_body(body.read_bytes())).layer,
-                                 expected.read_text(encoding="utf-8"))
+# parity with $WIKILEAN's own text_layer is tests/test_locate_text_layer.py, which
+# replays the conformance fixture tests/data/locate/text-layer.json
 
 
 # ---------------------------------------------------------------------------
