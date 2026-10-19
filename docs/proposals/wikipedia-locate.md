@@ -83,7 +83,7 @@ family: enwiki
 pageid: 28767
 revision: 1371234567                 # MediaWiki oldid
 title: Sylow theorems                # metadata only
-wikidata: Q207039                    # the article's own QID (pageprops), metadata
+wikidata: Q207039                    # the article's own QID (pageprops); its subject passages' records carry it (§2.2)
 fetch: {api: action=parse, params_sha256: <sha of the fixed parameter set>}
 raw_sha256: <sha of the bytes as fetched>
 html_sha256: <sha of the canonical body>     # = source_sha
@@ -168,7 +168,21 @@ Links record (§2.7) carries the passage kind as its `kind`.
   passages are located. A passage may not be scoped `non_math` or `expository`
   when L2 holds a tag or curated hit for it (§4).
 - `concept`: a passage's own Wikidata QID, set only when a validated method
-  assigned it (§11.3); never the article's QID by default.
+  assigned it (§11.3); a document's `concept` is never the article's QID by
+  default, and no method assigns a passage a QID of its own yet.
+- **The article's QID on its subject passages** is the one method that gives a
+  record a QID, the maintainer's decision B5 of 2026-10-19 ("write the
+  article's QID as identifiers.wikidata on records of subject-prominence
+  passages only"): the export writes the source's `wikidata` (its pageprops at
+  the pinned revision, or the producer's pin) as the subject end's
+  `identifiers.wikidata` on every record of a passage whose prominence after
+  the challenge is `subject`, and on no other passage's, since the article's
+  QID on every passage welds the wrong concepts (a theorem the article only
+  mentions would join the article's concept). A source with no QID gives its
+  records none, and one whose `wikidata` is no QID is refused. The skill does
+  not check that the QID's enwiki sitelink is this article, since library code
+  has no network (`CLAUDE.md` §3): the consumer does, before any concept-level
+  edge (§11.3).
 
 ### 2.3 Universes
 
@@ -406,6 +420,9 @@ A location:
 - The subject end carries the passage's whole `span` (half-open offsets on the
   layer, never text) and the `layer_sha256` it indexes, so a reader holding
   that layer highlights the passage, not only the capped quote.
+- A `subject` passage's subject end carries the article's QID as
+  `identifiers.wikidata` (`"identifiers": {"wikidata": "Q207039"}`, beside
+  `citation`), and no other passage's does (§2.2).
 - A `closeMatch` always names its convention difference in `note`, one a
   challenge downgraded to `closeMatch` too (the challenger's note, else the
   first sentence of its witness that quotes the source within the quote cap).
@@ -793,8 +810,14 @@ inputs are sealed, and non-Mathlib libraries are mentions-only by policy.
 Locate output therefore reaches the Brain only (a) through
 `brain/proposals/*.jsonl` and the offline fold, or (b) after the maintainer
 chooses a gate mode for content changes. Concept-level edges come only from
-`subject` passages whose own QID was validated against a sealed Wikidata
-bundle; each library maps to a `brain_lib` token unique per repository.
+`subject` passages, through the article's QID their records carry as
+`identifiers.wikidata` (§2.2). That QID is the producer's claim, not yet a
+validated one: the consumer validates it by checking its enwiki sitelink
+against the article in a sealed Wikidata bundle (WikiLean's sealed entity
+bundle, or the offline fold's QID and label checks), and a record whose QID
+fails the check gives no concept-level edge. A record of any other passage
+carries no QID and gives none. Each library maps to a `brain_lib` token unique
+per repository.
 
 ## 12. Milestones
 

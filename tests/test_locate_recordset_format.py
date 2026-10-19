@@ -39,6 +39,12 @@ And from the consumer's agreement to the passage span (S5):
   ``layer_sha256``, the source's own, in the shape the consumer's builder admits
   (two ints ``0 <= start < end``, 64 lowercase hex, the quote's ``exact`` the
   span's head and ``span_sha256`` the sha of its characters).
+
+And from the maintainer's decision B5 (proposal sections 2.2 and 11.3):
+
+* B5 -- no record carried a QID, so a consumer could draw no concept-level edge:
+  a ``subject`` passage's records carry the article's QID as the subject end's
+  ``identifiers.wikidata``, and no other passage's records carry one.
 """
 from __future__ import annotations
 
@@ -487,6 +493,28 @@ class TestTheRecords(_Exported):
                 self.assertEqual(layer[start:start + len(exact)], exact)
                 self.assertLessEqual(len(exact), stop - start)
 
+    def test_b5_only_subject_passages_carry_the_articles_qid(self):
+        self.challenge()
+        self.assertEqual(self.export()[0], 0)
+        out_dir = self.paths.export_dir("set-1")
+        qids = {row["source_id"]: row["wikidata"] for row in
+                map(json.loads, (out_dir / "sources.jsonl").read_text(encoding="utf-8")
+                    .splitlines())}
+        carried = 0
+        for rec in _records(out_dir):
+            (end,) = rec["subject"]
+            prominence = rec["extensions"][EXT]["prominence"]
+            with self.subTest(record=rec["id"], prominence=prominence):
+                if prominence == "subject":
+                    qid = qids[rec["id"].split("::")[0]]
+                    self.assertIsNotNone(qid)
+                    self.assertEqual(end["identifiers"], {"wikidata": qid})
+                    self.assertNotIn("wikidata", end["extensions"][EXT])
+                    carried += 1
+                else:
+                    self.assertNotIn("identifiers", end)
+        self.assertGreater(carried, 0)
+
     def test_m6_a_downgrade_to_close_match_keeps_a_note(self):
         witness = ("The declaration indexes gadgets from 0 where the passage counts from 1. "
                    "Otherwise it states the passage.")
@@ -841,6 +869,44 @@ class TestRecordUnits(unittest.TestCase):
                                           self.LAYER, self.universe())
         self.assertEqual(recs[0]["subject"][0]["extensions"][EXT]["span_sha256"],
                          records.sha256_text(self.LAYER))
+
+    def shapes(self, **kw):
+        absent = self.passage(outcome="absent", status="not_formalized", locations=[],
+                              absence={"receipt": {"queries": ["a", "b", "c"], "candidates": []},
+                                       "challenge": "survived"}, **kw)
+        return (self.located(**kw), absent, self.passage(outcome="unresolved", locations=[],
+                                                         **kw))
+
+    def test_b5_a_subject_passage_carries_the_articles_qid(self):
+        source = {**self.source(), "wikidata": "Q99999001"}
+        for passage in self.shapes(prominence="subject"):
+            (rec,), _ = records.passage_records(source, passage, self.LAYER, self.universe())
+            with self.subTest(outcome=passage["outcome"]):
+                self.assertEqual(rec["subject"][0]["identifiers"], {"wikidata": "Q99999001"})
+                self.assertEqual(records.check(rec), [])
+
+    def test_b5_no_other_passage_carries_one(self):
+        source = {**self.source(), "wikidata": "Q99999001"}
+        for prominence in ("central", "supporting"):
+            for passage in self.shapes(prominence=prominence):
+                (rec,), _ = records.passage_records(source, passage, self.LAYER,
+                                                    self.universe())
+                with self.subTest(prominence=prominence, outcome=passage["outcome"]):
+                    self.assertNotIn("identifiers", rec["subject"][0])
+
+    def test_b5_a_source_with_no_qid_gives_none_and_a_bad_one_is_refused(self):
+        for source in (self.source(), {**self.source(), "wikidata": None}):
+            (rec,), _ = records.passage_records(source, self.located(prominence="subject"),
+                                                self.LAYER, self.universe())
+            self.assertNotIn("identifiers", rec["subject"][0])
+        for bad in ("", "Q0", "Q012", "42", "q42", "Q42 ", "Q42\n", 42, ["Q42"]):
+            source = {**self.source(), "wikidata": bad}
+            with self.subTest(wikidata=bad), \
+                    self.assertRaisesRegex(records.RecordError, "is not a Wikidata QID"):
+                records.passage_records(source, self.located(prominence="subject"),
+                                        self.LAYER, self.universe())
+            # a passage that carries no QID does not read it
+            records.passage_records(source, self.located(), self.LAYER, self.universe())
 
     def test_s5_a_span_needs_the_layer_it_indexes(self):
         for layer_sha in (None, "", "A" * 64, "1" * 63):

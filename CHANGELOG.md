@@ -35,6 +35,14 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- A `subject` passage's records carry the article's QID, the source's
+  `wikidata`, as the subject end's `identifiers.wikidata`; no other passage's
+  records carry one (the maintainer's decision B5, proposal §2.2 and §11.3).
+  No record carried a QID before, so a consumer could draw no concept-level
+  edge from a record set at all, and the article's QID on every passage welds
+  the wrong concepts. The skill does not check the QID's enwiki sitelink (no
+  network in library code); the consumer does before any concept-level edge.
+  A source whose `wikidata` is no QID is refused per subject passage.
 - A locate record's subject end carries the passage's whole `span` (its
   half-open code-point offsets on the `web-html/3` layer, never text) and the
   `layer_sha256` of that layer, the source's own in `sources.jsonl`, beside
