@@ -1289,66 +1289,164 @@ class TestThePrompts(unittest.TestCase):
 
     def test_fm5_a_query_for_every_claim_and_the_general_theorem(self):
         worker = self.worker()
-        self.assertIn("**at least one query for every claim**", worker)
-        self.assertIn("**general theorem it is an instance of**, and tag that query `general`",
-                      worker)
-        self.assertIn("Search every library of the universe", worker)
+        self.assertIn("**a query of its own for every claim**", worker)
+        self.assertIn("tag every query you list", worker)
+        self.assertIn("**general theorem it is an instance of**, with a query of its own tagged "
+                      "`general`", worker)
         self.assertIn('"query_clauses": {"<query a>": ["c1"]', worker)
-        self.assertIn("with at least one query for every clause of your claim list",
-                      self.worker(vocab.LOCATE_CHALLENGE))
-        self.assertIn("an absence whose `query_clauses` leave a claim without a query",
-                      self.rendered[vocab.LOCATE]["worker-system.md"])
+        self.assertIn("**Check every candidate against each claim before you reject it.**",
+                      worker)
+        self.assertIn('"not the whole passage" or "not the worked example" is no reason to '
+                      'reject it', worker)
+        challenger = self.worker(vocab.LOCATE_CHALLENGE)
+        self.assertIn("with a query of its own for every clause of your claim list", challenger)
+        self.assertIn("listing the queries you ran (`queries`, at least 3 distinct) tagged with "
+                      "your claims (`query_clauses`", challenger)
+        self.assertIn('"target": "absence", "action": "uphold",', challenger)
+        system = self.rendered[vocab.LOCATE]["worker-system.md"]
+        self.assertIn("an absence whose `query_clauses` leave a query untagged or a claim without "
+                      "a query of its own", system)
+        self.assertIn("or that rejects a candidate for stating part of the passage", system)
+
+    def test_the_search_covers_every_library_at_once(self):
+        """One search covers the universe; --library only when one library fills the result
+        (never a loop over every library: the audit's universe has 48)."""
+        worker = self.worker()
+        self.assertIn("searches every library of the universe at once", worker)
+        self.assertIn("run the query again with `--library <id>` for the libraries of the "
+                      "passage's field, not for every library", worker)
+        self.assertNotIn("Search every library of the universe, not only the largest", worker)
 
     def test_fm6_the_declaration_is_instantiated_at_the_passages_objects(self):
         worker = self.worker()
         self.assertIn("**Instantiate** each declaration you would cite at the passage's own "
                       "objects", worker)
-        self.assertIn("**If the passage's objects cannot meet the declaration's hypotheses**",
-                      worker)
+        self.assertIn("**If the declaration's setting neither contains nor is contained in the "
+                      "passage's**", worker)
         self.assertIn("the relation is `relatedMatch`, however close its statement reads", worker)
+        self.assertIn("When its setting is a special case of the passage's (ℕ where the passage "
+                      "has ℤ, a field where it has a commutative ring, the n = 1 case), it is a "
+                      "`narrowMatch` (R3, PD2, PD3)", worker)
         self.assertIn('"instantiation": "<the passage', worker)
-        self.assertIn("Check the record's `instantiation`", self.worker(vocab.LOCATE_CHALLENGE))
+        challenger = self.worker(vocab.LOCATE_CHALLENGE)
+        self.assertIn("check the record's `instantiation` against the signature, and when it has "
+                      "none and the signature takes an instance argument, write your own",
+                      challenger)
+        self.assertIn("it is `narrowMatch` (R3), never `relatedMatch`", challenger)
         self.assertIn("without its `instantiation` line",
                       self.rendered[vocab.LOCATE]["worker-system.md"])
 
+    def test_a_special_case_is_never_sent_to_related_match(self):
+        """The narrowMatch rules contradicted each other: a special case's objects cannot
+        meet the passage's hypotheses, and three texts sent that to relatedMatch."""
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+            worker = self.worker(mode)
+            with self.subTest(mode=mode):
+                self.assertNotIn("If the passage's objects cannot meet the declaration's "
+                                 "hypotheses", worker)
+                self.assertNotIn("or the declaration needs finite dimension, finite rank or a "
+                                 "field the passage does not have", worker)
+        lines = self.rule_lines()
+        self.assertIn("the passage, instantiated at the declaration's objects, says what the "
+                      "declaration says", lines["R3"])
+        self.assertIn("a setting that neither contains nor is contained in the passage's",
+                      lines["R5"])
+        self.assertIn("A declaration that follows from the passage by weakening states part of "
+                      "it at most", lines["R5"])
+        self.assertIn("narrower in one respect and stronger or broader in another", lines["R5"])
+        message = vl._instantiation_problem({"library": "alpha", "declaration": "X"},
+                                            ["[inst : Foo]"], challenger=False)
+        self.assertIn("A setting that neither contains nor is contained in the passage's is "
+                      "relatedMatch (R5); a special case of it narrowMatch (R3)", message)
+
     def test_fm3_a_part_is_entailed_by_the_declaration_alone(self):
         worker = self.worker()
-        self.assertIn("**`hasPart` and `narrowMatch` need the declaration alone, instantiated at "
-                      "the passage's objects, to entail a clause this passage asserts.**", worker)
+        self.assertIn("**`hasPart` and `narrowMatch` need the declaration alone to entail what "
+                      "they credit it with**", worker)
         self.assertIn("a lemma the proof uses along the way", worker)
-        self.assertIn("names the displayed step it states", worker)
+        self.assertIn("Every `hasPart` and `narrowMatch` says, in `step`", worker)
+        self.assertIn("on a proof, the displayed step it states — the equation, the case, the "
+                      "inequality; on any other passage, the clause, as the declaration states "
+                      "it", worker)
         challenger = self.worker(vocab.LOCATE_CHALLENGE)
         self.assertIn("A `hasPart` or `narrowMatch` stands only when the declaration alone "
-                      "entails a clause of this passage", challenger)
-        self.assertIn("does not name its displayed `step`",
-                      self.rendered[vocab.LOCATE]["worker-system.md"])
+                      "entails what it is credited with", challenger)
+        self.assertIn("a `hasPart` or `narrowMatch` that does not say in `step` what the "
+                      "declaration alone entails", self.rendered[vocab.LOCATE]["worker-system.md"])
 
     def test_fm4_a_close_match_names_a_listed_convention(self):
         worker = self.worker()
-        self.assertIn("the same up to a **convention**, one of `notation`, `encoding`, "
-                      "`junk_value`, `normalisation`, `renaming`, `unfolding` or `bundling`",
-                      worker)
-        self.assertIn('a closeMatch note that says "stronger", "strict" or "more general" is '
-                      'refused', worker)
+        self.assertIn("`closeMatch` — the same up to a convention (R1): name it in `convention`, "
+                      "one of `notation`, `encoding`, `junk_value`, `normalisation`, `renaming`, "
+                      "`unfolding` or `bundling`", worker)
+        self.assertIn("describe the declaration, not what the passage leaves out", worker)
         challenger = self.worker(vocab.LOCATE_CHALLENGE)
         self.assertIn("A downgrade to `closeMatch` also gives `convention`", challenger)
         self.assertIn("a `closeMatch` without a listed `convention`",
                       self.rendered[vocab.LOCATE]["worker-system.md"])
 
+    def test_every_phrase_the_gate_refuses_is_in_every_prompt_that_warns_of_it(self):
+        """The prompts render the generality list from cflib.vocab: none lists fewer words
+        than the gate refuses (it once left out "strictly")."""
+        rendered = [self.worker(), self.worker(vocab.LOCATE_CHALLENGE),
+                    self.rendered[vocab.LOCATE]["worker-system.md"]]
+        for phrase in vocab.CLOSE_MATCH_GENERALITY_PHRASES:
+            said = f'"{phrase[:-1]}…"' if phrase.endswith("*") else f'"{phrase}"'
+            for text in rendered:
+                with self.subTest(phrase=phrase):
+                    self.assertIn(said, text)
+
+    def test_the_challenger_reads_a_records_note_as_a_claim_not_a_verdict(self):
+        """The prompt once said a closeMatch whose note says "strict" is a broadMatch at
+        most: read as the record's note, that pushed the downgrade the gate refuses to
+        force (a strictly increasing list is no strengthening)."""
+        challenger = self.worker(vocab.LOCATE_CHALLENGE)
+        self.assertNotIn("is a `broadMatch` at most", challenger)
+        self.assertIn("A record's own note — the worker's — that uses one of them is a claim to "
+                      "check, not a verdict", challenger)
+        self.assertIn("Your own `note` (and the witness sentence that stands in for it)",
+                      challenger)
+
+    def test_the_challenge_prompt_puts_the_claim_list_check_first(self):
+        challenger = self.worker(vocab.LOCATE_CHALLENGE)
+        location = challenger.index("- **A location** is refuted by default.")
+        first = challenger.index("  - Check it against your claim list first", location)
+        downgrade = challenger.index("downgrade", location)
+        self.assertLess(first, downgrade)
+        self.assertLess(challenger.index("**FM7**"),
+                        challenger.index("## How to judge a relation: rules R1–R7"))
+        self.assertIn("Every verdict on a location, a coverage claim, an absence or an "
+                      "unresolved outcome rests on it", challenger)
+        self.assertIn("your list has at least as many claims as the worker's", challenger)
+        self.assertIn("`part_clauses`", challenger)
+        self.assertIn("(`passage_locations`, read-only", challenger)
+
+    def test_the_reviewer_reads_what_the_plan_now_does(self):
+        reviewer = self.rendered[vocab.LOCATE]["reviewer-system.md"]
+        self.assertNotIn("names its convention in `note`", reviewer)
+        self.assertIn("a `closeMatch` names its `convention`", reviewer)
+        self.assertIn("re-judge every strong location a supporting passage's status rests on",
+                      reviewer)
+
+    def test_no_real_article_title_in_a_prompt_example(self):
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+            with self.subTest(mode=mode):
+                self.assertNotIn("Chinese remainder", self.worker(mode))
+
     @staticmethod
     def rule_lines() -> dict[str, str]:
-        """R1-R7, P1-P3 and FM7 as references/vocabulary.md section 1.11 writes them."""
+        """R1-R7, PD1-PD3 and FM7 as references/vocabulary.md section 1.11 writes them."""
         text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
         start = text.index("**How a relation is judged: rules R1\u2013R7**")
         block = text[start:text.index("**The derived status**", start)]
         return {m.group(1): "- **%s** \u2014 %s" % (m.group(1), " ".join(m.group(2).split()))
-                for m in re.finditer(r"^- \*\*(R[1-7]|P[1-3]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
+                for m in re.finditer(r"^- \*\*(R[1-7]|PD[1-3]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
                                      block, re.M | re.S)}
 
     def test_the_rules_and_the_policy_defaults_are_the_vocabularys_word_for_word(self):
         lines = self.rule_lines()
         self.assertEqual(sorted(lines), sorted([f"R{i}" for i in range(1, 8)]
-                                               + ["P1", "P2", "P3", "FM7"]))
+                                               + ["PD1", "PD2", "PD3", "FM7"]))
         for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
             worker = " ".join(self.worker(mode).split())
             for name, line in lines.items():
@@ -1358,23 +1456,49 @@ class TestThePrompts(unittest.TestCase):
                     self.assertIn(line, worker)
         self.assertNotIn("**FM7**", self.worker())
 
+    def test_the_labeler_judges_by_the_same_rules_word_for_word(self):
+        """The bench's gold is labelled by the rules the workers it scores are given."""
+        from bench import gold as gold_mod
+        text = (HERE.parent / "workflows" / "locate-label.workflow.js").read_text(encoding="utf-8")
+        rules = text[text.index("const RULES = `"):text.index("const huntTools")]
+        rules = " ".join(rules.replace("\\`", "`").split())
+        for name, line in self.rule_lines().items():
+            if name == "FM7":
+                continue
+            with self.subTest(rule=name):
+                self.assertIn(line, rules)
+        self.assertIn(f"const LABELER_VERSION = '{gold_mod.LABELER_VERSION}'", text)
+        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/3")
+
     def test_the_policy_defaults_say_they_can_be_overridden(self):
         lines = self.rule_lines()
-        self.assertIn("any ring where the passage has \u2102) is `broadMatch` (R2)", lines["P1"])
-        self.assertIn("over \u2115 where the passage has \u2124 is `narrowMatch` (R3)", lines["P2"])
-        self.assertIn("is `narrowMatch`, never vacuous", lines["P3"])
+        self.assertIn("any ring where the passage has \u2102) is `broadMatch` (R2)", lines["PD1"])
+        self.assertIn("over \u2115 where the passage has \u2124 is `narrowMatch` (R3)",
+                      lines["PD2"])
+        self.assertIn("is `narrowMatch`, never vacuous", lines["PD3"])
         vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
                               .read_text(encoding="utf-8").split())
         self.assertIn("Each is a default, not a law of the format: it can be overridden",
                       vocabulary)
+        self.assertIn("and to the bench's labeler (`workflows/locate-label.workflow.js`, whose "
+                      "`LABELER_VERSION` it bumps), in one commit", vocabulary)
+        self.assertIn("followed by a relabel of the bench's gold", vocabulary)
         self.assertIn("(each overridable, never by you)", self.worker())
+
+    def test_every_failure_mode_label_resolves_in_the_tree(self):
+        """FM1-FM9 are cited by code, tests and the changelog: section 1.11 defines each."""
+        text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        for i in range(1, 10):
+            with self.subTest(fm=i):
+                self.assertRegex(text, rf"\n\| FM{i} \| ")
 
     def test_fm7_the_challenger_applies_d1_and_keeps_linked_declarations_together(self):
         line = self.rule_lines()["FM7"]
         for needle in ("check the record against your claim list", "Apply D1",
                        "a bijection is the data form of a cardinality equation",
-                       "Keep definitionally linked declarations consistent within your task",
-                       "never a refute"):
+                       "Keep definitionally linked declarations consistent",
+                       "your task holds every required location of a passage",
+                       "`passage_locations`", "never a refute"):
             self.assertIn(needle, line)
 
     def test_fm1_the_challenger_lists_the_clauses_itself(self):

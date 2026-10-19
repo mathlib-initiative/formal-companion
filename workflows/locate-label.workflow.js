@@ -23,7 +23,7 @@ export const meta = {
 // mode no prompt carries the article's Wikidata QID, the labeler judges only what
 // the hunters found, and the transcriber counts only those finds.
 
-const LABELER_VERSION = 'locate-label/2'
+const LABELER_VERSION = 'locate-label/3'
 const A = args || {}
 const MODE = A.mode
 const TASKS = A.tasks || []
@@ -56,11 +56,34 @@ ${libLines}
 
 The relations, subject = the passage, object = the declaration:
   exactMatch    the declaration states the passage
-  closeMatch    the same up to a convention difference (0 in N, junk values, normalisation); name it in evidence
-  broadMatch    the declaration is more general; the passage is an instance of it
-  narrowMatch   the declaration is a special case of the passage
-  hasPart       the declaration states one part of a passage that says several things
-  relatedMatch  relevant, but it states something else
+  closeMatch    the same up to a convention (R1): name it in evidence, one of notation, encoding, junk_value,
+                normalisation, renaming, unfolding, bundling
+  broadMatch    the passage follows from the declaration by instantiation or weakening (R2)
+  narrowMatch   the declaration is the passage at special objects (R3)
+  hasPart       the declaration states one clause of a passage that says several things (R4)
+  relatedMatch  relevant, but it states something else (R5)
+
+Before you judge any declaration, list the passage's claims to yourself: one line per formal clause it asserts
+(each conclusion, each direction of an iff, existence and uniqueness apart, each computation of a worked
+example, each condition of a definition). exactMatch, closeMatch and broadMatch only when the declaration
+states every claim; one that states some of them is hasPart. Instantiate each declaration at the passage's
+objects before you judge it.
+
+How to judge a relation: rules R1-R7, the same the system's workers and challengers are given, pairwise, the
+passage against the one declaration:
+- **R1** — \`closeMatch\` only for a convention: notation, encoding, junk values, normalisation, renaming, unfolding, bundling (the location's \`convention\`). A strengthening, a generalisation or a weakening is never one.
+- **R2** — \`broadMatch\` when the passage follows from the declaration by instantiation or weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all primes for a finite table), with no hypothesis stronger than the passage's.
+- **R3** — \`narrowMatch\` when the declaration is the passage at special objects: the passage, instantiated at the declaration's objects, says what the declaration says (a natural-number statement for an integer one, a field for a commutative ring, the n = 1 case).
+- **R4** — \`hasPart\` when the declaration states one clause of a passage that says several things; \`exactMatch\`, \`closeMatch\` and \`broadMatch\` only when it states every clause.
+- **R5** — \`relatedMatch\` when the connection needs another theorem, or the two statements are incomparable: a setting that neither contains nor is contained in the passage's (a finite-dimensional lemma where the passage's spaces are infinite-dimensional), or a declaration narrower in one respect and stronger or broader in another. A declaration that follows from the passage by weakening states part of it at most: \`hasPart\` when what it states is one of the passage's clauses, else \`relatedMatch\`. So \`hasPart\` needs the declaration alone, instantiated at the passage's objects, to entail a clause the passage asserts, and \`narrowMatch\` needs the passage, instantiated at the declaration's objects, to say what the declaration says.
+- **R6** — relations are pairwise: what else the universe holds never changes a record's relation.
+- **R7** — a definition passage is judged on the data it defines; bundled proof fields are packaging (R1's bundling).
+
+The policy defaults, the maintainer's (the gold follows them; an override changes them here and relabels):
+- **PD1** — a definition stated over a general type parameter where the passage has a specific one (any ring where the passage has ℂ) is \`broadMatch\` (R2).
+- **PD2** — a statement over ℕ where the passage has ℤ is \`narrowMatch\` (R3).
+- **PD3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is \`narrowMatch\`, never vacuous: it is not refuted for being trivial.
+
 A passage's kind: ${KINDS.join(', ')}. A passage's scope: formal_math (a mathematical statement to locate),
 expository (mathematics explained, nothing stated), non_math (history, people, applications, notation tables
 that state nothing).`
