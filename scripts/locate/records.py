@@ -40,10 +40,10 @@ passage with a coverage claim (the maintainer's decision D1), ``coverage:
   names its convention difference in ``note`` (:func:`passage_records`
   refuses one with none);
 * :func:`absence_record` -- ``relation: noMatch``, ``status: not_formalized``,
-  one minimal ``lean`` end per universe library (``type``, ``uri``,
-  ``version`` and nothing else: the spec's checked-absence form, at a few
-  dozen bytes a library), and the search receipt referenced by sha256 and
-  count, never inline;
+  one minimal ``lean`` end per repository the universe searched at its commit
+  (``type``, ``uri``, ``version`` and nothing else: the spec's checked-absence
+  form, at a few dozen bytes a library; :func:`absence_ends`), and the search
+  receipt referenced by sha256 and count, never inline;
 * :func:`unresolved_record` -- ``object: []`` and no status.
 
 The quote is capped (:func:`cap_quote`): at most ``QUOTE_WORDS`` words of
@@ -276,8 +276,9 @@ def lean_end(library: Mapping[str, Any], location: Mapping[str, Any] | None = No
     """A ``lean`` end: at a declaration (``role: key``), or the bare library (an absence).
 
     An absence's end is ``{type, uri, version}`` and nothing else: the record
-    names every library of the universe, and the universe file already says
-    which id each repository is.  A declaration's end carries ``line`` and
+    names every repository of the universe at its commit (:func:`absence_ends`),
+    and the universe file already says which libraries each repository is.  A
+    declaration's end carries ``line`` and
     ``end_line`` only as the index has them.
     """
     end = {"type": "lean", "uri": str(library["repo"]), "version": _commit(library)}
@@ -441,12 +442,32 @@ def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     return record
 
 
+def absence_ends(universe: Mapping[str, Any]) -> list[dict]:
+    """The lean ends of a checked absence: one per distinct ``(repo, commit)``, by library id.
+
+    An absence names what was searched, and two universe libraries split from
+    one repository at one commit (lean-core's ``Init`` and ``Std``, one root
+    each: proposal section 2.3) are one search target, so they are one end; the
+    consumer checks the ends against the universe's ``(repo, commit)`` set, each
+    pair once.  The first library by id of each pair places it.
+    """
+    ends: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for lib in sorted(universe["libraries"], key=lambda lib: str(lib["id"])):
+        end = lean_end(lib)
+        key = (end["uri"], end["version"])
+        if key not in seen:
+            seen.add(key)
+            ends.append(end)
+    return ends
+
+
 def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                    universe: Mapping[str, Any], quote: Mapping[str, str], *,
                    span_sha256: str, receipt: Mapping[str, Any]) -> dict:
     """The checked absence; ``receipt`` is ``{sha256, queries, candidates}`` of the sidecar."""
-    libraries = sorted(universe["libraries"], key=lambda lib: str(lib["id"]))
-    if not libraries:
+    ends = absence_ends(universe)
+    if not ends:
         raise RecordError("an absence names the universe's libraries, and it has none")
     absence = passage.get("absence") or {}
     challenge = absence.get("challenge") or passage.get("challenge")
@@ -455,7 +476,7 @@ def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
         "subject": [subject_end(source, quote, span_sha256=span_sha256,
                                 span=passage_span(passage),
                                 wikidata=article_qid(source, passage))],
-        "object": [lean_end(lib) for lib in libraries],
+        "object": ends,
         "relation": NO_MATCH,
         "status": NOT_FORMALIZED,
         "kind": str(passage["passage_kind"]),

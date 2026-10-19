@@ -491,10 +491,14 @@ What every record carries beyond §2.7's example:
   challenge downgrade to `closeMatch` takes the verdict's `note`, else the first
   sentence of its witness the quote cap admits (§4); a `closeMatch` with no note
   is refused.
-- An absence keeps one lean end per universe library, each **minimal**:
-  `{"type": "lean", "uri": <repo>, "version": <40-hex commit>}` and nothing else
-  (no `role`, no extension; `universe.json` says which library a repository is),
-  about half the bytes of the earlier form at 48 libraries.
+- An absence keeps one lean end per repository the universe searched, at its
+  commit, each **minimal**: `{"type": "lean", "uri": <repo>, "version": <40-hex
+  commit>}` and nothing else (no `role`, no extension; `universe.json` says which
+  libraries a repository is), about half the bytes of the earlier form at 48
+  libraries. Two libraries split from one repository at one commit (lean-core's
+  `Init` and `Std`, proposal §2.3) are one search target and one end, so a
+  consumer checks the ends against the universe's distinct `(repo, commit)`
+  pairs, each once (`records.absence_ends`; the first library by id places it).
 
 `cf export literature-links --run <locate run> --challenge-run <run> --set-id
 <id>` writes it (`scripts/locate/export.py`, the records from

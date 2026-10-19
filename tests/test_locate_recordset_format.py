@@ -45,6 +45,12 @@ And from the maintainer's decision B5 (proposal sections 2.2 and 11.3):
 * B5 -- no record carried a QID, so a consumer could draw no concept-level edge:
   a ``subject`` passage's records carry the article's QID as the subject end's
   ``identifiers.wikidata``, and no other passage's records carry one.
+
+And from the consumer's agreement to several libraries per repository:
+
+* SPLIT -- lean-core split into ``Init`` and ``Std`` at one commit (proposal
+  section 2.3) gave an absence two identical lean4 ends, which the consumer
+  refuses; an absence names each searched ``(repo, commit)`` once.
 """
 from __future__ import annotations
 
@@ -907,6 +913,24 @@ class TestRecordUnits(unittest.TestCase):
                                         self.LAYER, self.universe())
             # a passage that carries no QID does not read it
             records.passage_records(source, self.located(), self.LAYER, self.universe())
+
+    def test_split_one_repository_at_one_commit_is_one_absence_end(self):
+        lean4, core = "https://github.com/leanprover/lean4", "4" * 40
+        universe = {"id": "u2", "sha256": "2" * 64, "libraries": [
+            {"id": "std", "repo": lean4, "commit": core},
+            {"id": "mathlib", "repo": "https://example.org/mathlib4", "commit": "5" * 40},
+            {"id": "init", "repo": lean4, "commit": core}]}
+        (absence,), _ = records.passage_records(self.source(), self.shapes()[1], self.LAYER,
+                                                universe)
+        self.assertEqual(absence["object"], [
+            {"type": "lean", "uri": lean4, "version": core},
+            {"type": "lean", "uri": "https://example.org/mathlib4", "version": "5" * 40}])
+        self.assertEqual(records.check(absence), [])
+        # one repository at two commits is two search targets, and so two ends
+        universe["libraries"][0]["commit"] = "6" * 40
+        self.assertEqual([(e["uri"], e["version"]) for e in records.absence_ends(universe)],
+                         [(lean4, core), ("https://example.org/mathlib4", "5" * 40),
+                          (lean4, "6" * 40)])
 
     def test_s5_a_span_needs_the_layer_it_indexes(self):
         for layer_sha in (None, "", "A" * 64, "1" * 63):

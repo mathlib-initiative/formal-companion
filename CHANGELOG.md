@@ -35,6 +35,13 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- An absence record names each repository the universe searched once, at its
+  commit: two universe libraries split from one repository at one commit
+  (lean-core's `Init` and `Std`, proposal §2.3) gave two identical lean ends,
+  and the record set's consumer checks the ends against the universe's distinct
+  `(repo, commit)` pairs, each once. It agreed (2026-10-19) to admit several
+  libraries per repository, so a universe may split lean-core by root. A
+  universe whose repositories are all distinct writes the same ends as before.
 - A `subject` passage's records carry the article's QID, the source's
   `wikidata`, as the subject end's `identifiers.wikidata`; no other passage's
   records carry one (the maintainer's decision B5, proposal §2.2 and §11.3).
