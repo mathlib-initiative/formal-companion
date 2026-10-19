@@ -73,7 +73,13 @@ release has something to say.
     `agents` is a pin of its own (so every measurement has a new
     `measurement_id`, and a score from before is refused as another scorer's:
     re-score both sides; the A/A check refuses a run that records no `agents`:
-    re-plan it); a score
+    re-plan it), and so is `planning`, each run's `run.yaml` `locate.{per_task,
+    subject_only, sample_rate}`, which the template shas cannot see (a replicate
+    planned with `--per-task 8` of a baseline planned with `--per-task 1` was
+    accepted); every plan records those keys, so this needs a re-score, not a
+    re-plan. The challenge `seed` is a recorded pin only: it picks one draw at
+    the sample rate, and another seed's draw is the sampling variance an A/A
+    replicate measures; a score
     refuses outcome rows tallied before the last harvest (the tally records each
     `receipt_sha256`), and so refuses any tally that records none -- every tally
     written before this change, even one written after its run's last harvest:

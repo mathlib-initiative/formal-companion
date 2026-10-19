@@ -1475,6 +1475,19 @@ class TestPlanLocate(Campaign):
             self.assertEqual(set(lprompts.render_prompts(preset, ctx, tdir=only)),
                              set(lprompts.PROMPT_FILES))
 
+    def test_the_planning_keys_the_aa_check_reads_are_recorded(self):
+        """``--per-task`` changes the tasks a run is cut into and no template or staged
+        file carries it, so ``config_shas`` is equal across task sizes; the bench's
+        ``planning`` pin reads the run.yaml keys themselves, and the planner records each."""
+        from bench import score as score_mod
+        F.plan_locate(self, self.root, "--per-task", "1", run_id="loc-a")
+        F.plan_locate(self, self.root, "--per-task", "8", run_id="loc-b")
+        a, b = (read_yaml(self.paths.run_yaml(r))["locate"] for r in ("loc-a", "loc-b"))
+        self.assertEqual(a["config_shas"], b["config_shas"])
+        self.assertEqual((a["per_task"], b["per_task"]), (1, 8))
+        for block in (a, b, read_yaml(self.paths.run_yaml("inv-1"))["locate"]):
+            self.assertLessEqual(set(score_mod.PLANNING_KEYS) | {"seed"}, set(block))
+
     def test_the_configuration_records_what_the_agents_run_with_seam1(self):
         """Review SEAM-1: the wrappers are left out of ``config_shas.gate_files`` (they
         name the run's paths), and they were the only record of the agent host, the model

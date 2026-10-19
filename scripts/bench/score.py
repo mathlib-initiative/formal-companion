@@ -40,8 +40,9 @@ measurement, never a claim.  Gold must still be frozen; a subset changes which
 articles are read, not what they are scored against.
 
 **``measurement_id``** is the sha of every pin section 8.3 lists -- each run's
-own recorded commit, configuration (``run.yaml`` ``locate.config_shas``) and
-rendered gate files and prompts, models, tool versions, universe, sourceset,
+own recorded commit, configuration (``run.yaml`` ``locate.config_shas``), planning
+settings (:data:`PLANNING_KEYS`, and the challenge seed) and rendered gate files
+and prompts, models, tool versions, universe, sourceset,
 renderer, gold, receipts and prices -- so two score documents with one id
 measured the same runs.  How they were scored -- the split, the bootstrap, the
 cost, gate-log and audit inputs, the canary check -- is the ``scoring`` digest,
@@ -95,6 +96,12 @@ def scorer() -> dict:
 # --------------------------------------------------------------------------
 # the runs a score reads
 # --------------------------------------------------------------------------
+
+#: the run.yaml ``locate`` keys that say how a run was planned and that an A/A
+#: replicate must share (``bench.compare.CONFIG_PINS`` "planning"); ``seed`` is
+#: recorded beside them and compared by nothing
+PLANNING_KEYS = ("per_task", "subject_only", "sample_rate")
+
 
 def _locate_block(run: dict) -> dict:
     block = run.get("locate")
@@ -320,6 +327,13 @@ def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: 
         # what the agent wrappers ran with (the sandbox bypass among it), named by no run
         "agents": {rid: (dict(sorted(c["agents"].items())) if "agents" in c else UNRECORDED)
                    for rid, c in sorted(configs.items())},
+        # how each run was planned (run.yaml's own locate keys, never rendered bytes): the
+        # task size, the subject-only cut and a challenge's sample rate change what a run
+        # does, and no template or staged file carries them
+        "planning": {rid: {k: _locate_block(y).get(k) for k in PLANNING_KEYS}
+                     for rid, y in sorted(yamls.items())},
+        # a challenge's seed picks one draw at its sample rate: recorded only
+        "seed": {rid: _locate_block(y).get("seed") for rid, y in sorted(yamls.items())},
         # what each run staged and rendered, its run id and paths included: recorded only
         "rendered_gate_files": {rid: (sha_of(_locate_block(y)["gate_files"])
                                       if isinstance(_locate_block(y).get("gate_files"), dict)

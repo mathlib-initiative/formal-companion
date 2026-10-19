@@ -530,7 +530,11 @@ configuration -- `gate_files` (the sha of its `locate.config_shas.gate_files` ma
 `locate.config_shas.agents`: the agent CLI, the model, the sandbox bypass, the agentbox profile,
 the attempt cap and the merge target its wrappers ran with), each `unrecorded` for a plan that
 records no `config_shas`
-(and `agents` for one that records none of it) -- then what it staged and rendered, run id and
+(and `agents` for one that records none of it), and `planning` (its `run.yaml`
+`locate.{per_task, subject_only, sample_rate}`, null where the run's mode has none: the task
+size, the subject-only cut and a challenge's sample rate change what a run does, and no template
+or staged file carries them) -- then `seed` (its `locate.seed`, a challenge's draw; null for
+another mode), recorded only -- then what it staged and rendered, run id and
 paths included:
 `rendered_gate_files` (the sha of its `locate.gate_files` map), `rendered_prompts` (its
 `run.yaml` `prompts`) and `gate` (its `gate.json` sha); then `observed_models` (the receipts'
@@ -606,10 +610,17 @@ accepts only when every condition holds:
    refused when any of `universe_sha256`, `sourceset_manifest_sha256`, the tool versions, the
    runs' `skill_commit`, `gate_files` and `prompts` (the configuration shas, never the rendered
    ones, which name each run), `agents` (so a run whose agents ran with the sandbox bypass, or
-   under another agentbox profile, is no replicate of one whose agents did not), or
+   under another agentbox profile, is no replicate of one whose agents did not), `planning` (a
+   run planned with `--per-task 8` is no replicate of one planned with `--per-task 1`, nor one
+   challenged at another `--sample-rate`), or
    `price_table_sha256` differ, and when either score
    holds a run whose `run.yaml` records no `locate.config_shas`, or no `config_shas.agents`
-   (re-plan it);
+   (re-plan it). The challenge's `seed` is recorded and compared by nothing: it picks one
+   draw at the sample rate, not a way of running. Record keys are run-free, so one seed draws
+   the same records of the two runs wherever they agree, and a replicate under another seed
+   re-draws them: that is sampling variance the A/A replicate exists to measure, and requiring
+   one seed would only hide it. Every plan already records the three planning keys, so
+   `planning` needs no re-plan;
 6. multiplicity: the j-th claimed, non-replication entry of the bench's ledger uses
    `alpha · 2^-j` (alpha-spending). `--replication <bench>:<entry id>` replicates an accepted,
    claimed entry of ANOTHER bench's ledger (a fresh draw is a new bench) for the same claim, and
@@ -648,7 +659,7 @@ its reader (`scripts/bench/inputs.py` re-implements none):
 | `runs/<run>/challenge-plan.json` (§9) | `locate.outcomes.challenge_values` | each challenge run's `required` records of the locate run |
 | `corpus/<run>/<task-id>/<source-id>.json` (§1–§3, §10) | `locate.outcomes.inventory` (inventory runs), `locate.inputs.harvested_documents` (any run) | inventory documents' `layer_sha256`, `unresolved`, `passages[].{item, span, scope, passage_kind}`; locate documents' `passages[].receipt.candidates[].{library, declaration, verdict}` |
 | `runs/<run>/tend-root/gate/tasks/*.json` (§9) | `locate.outcomes.task_manifests` | the inventory run's `documents[].source_id` (inventory coverage); any run's, for its cost share when `run.yaml` names no `source_ids` |
-| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, skill_commit, gate_files, config_shas.{prompts, gate_files, agents}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
+| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, per_task, sample_rate, seed, skill_commit, gate_files, config_shas.{prompts, gate_files, agents}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
 | `corpus/<run>/RECEIPT.json` | `locate.inputs.require_gated` | `complete`, `gate.ok`, `cost.{usd, tokens, messages_by_model, price_table_sha256}` |
 | `runs/<run>/host/gate.jsonl` (brought home by `cf harvest`) | the bench | one line per gate call: `run_id, task_id, task_id_from, changed_files, ownership, mode, ok, exit, documents, by_rule, reasons` (each reason `[rule N] <document>: <where>: <message>`) |
 | `runs/<run>/host/canary.json` (brought home by `cf harvest`) | the bench | `{scanned, hits, canary_sha256}` (raw-byte shas, §8) |
