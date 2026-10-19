@@ -10,7 +10,8 @@ shard's ``tend run``; ``cf run`` ships it in the root's ``bin/``.
 
     watchdog.py --root <tend-root> --entrypoint <entrypoint repo> --max-cost 120 \\
         [--p90-cost-per-task 4.1] [--p90-gate-failure-rate 0.12] [--multiple 2] \\
-        [--tend "uv run"] [--interval 300 | --once] [--dry-run]
+        [--tend "uv run"] [--interval 300 | --once] [--dry-run] [--parent <pid>]
+    watchdog.py --root <tend-root> --stop-others
 
 What it reads, all of it outside every worktree:
 
@@ -24,8 +25,10 @@ What it reads, all of it outside every worktree:
   call that timed out used to add nothing at all (field defect T1).  It is
   still not the bill: the transcripts priced by ``scripts/cost`` at harvest
   stay the primary figure;
-* **the gate-failure rate** -- the fraction of calls in
-  ``<root>/gate-log/gate.jsonl`` that did not pass;
+* **the gate-failure rate** -- the fraction of tend's calls in
+  ``<root>/gate-log/gate.jsonl`` (the lines with ``changed_files: true``) that
+  did not pass; an agent's own ``--findings`` check is logged too, and counts
+  for nothing here;
 * **merged tasks** -- the task directories under ``findings/`` on the
   entrypoint's merge target (``git ls-tree``, with the boundary pinned).
 
@@ -40,13 +43,26 @@ drain --root`` (finish what is in flight, start nothing).  Every check is
 appended to ``<root>/watchdog.jsonl`` and the latest is ``<root>/watchdog.json``,
 which the sequencer reads after the shard: a drain, a reason to drain that no
 drain acted on, or a record it cannot read stops the campaign.
+
+It stops on ``<root>/watchdog.stop``, after a drain, or -- given ``--parent``,
+the sequencer's pid -- once that process is gone and no ``tend run --root
+<root>`` is live: a sequencer that is killed leaves its tend run watched to
+the end, and no watchdog behind for ever.  Between checks it looks every
+``POLL`` seconds, so it leaves within seconds of the stop file or of its tend
+run's end, not an interval later.  ``--stop-others`` is what the sequencer runs
+before it launches a shard: it stops every other watchdog on the root (one a
+killed sequencer left, with that sequencer's cap and thresholds), so the
+relaunch is watched by its own watchdog alone.  A progress line it cannot
+print (a full disk) is lost, never the watchdog.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -71,6 +87,11 @@ _GIT_SAFE_ENV: dict[str, str] = {
 MIN_TASKS = 5
 #: below this many gate calls the failure-rate rule does not fire
 MIN_GATE_CALLS = 20
+#: seconds between looks, while it waits for the next check, at the stop file
+#: and (given --parent) at the sequencer and the tend run
+POLL = 2.0
+#: seconds --stop-others gives a watchdog to leave on SIGTERM before SIGKILL
+STOP_GRACE = 10.0
 
 
 def _number(value) -> float | None:
@@ -137,7 +158,14 @@ def spend(usage_dir: Path) -> tuple[float, int]:
 
 
 def gate_calls(log_path: Path) -> tuple[int, int]:
-    """``(calls, failed)`` from the gate log."""
+    """``(calls, failed)`` over tend's calls in the gate log.
+
+    The gate logs every call and says whether it judged a change set
+    (``changed_files``): tend's validation and pre-merge commands do, a worker's
+    or a reviewer's ``--findings`` self-check does not.  Only the former count,
+    so an agent that re-runs the gate on its document neither drains the root
+    nor dilutes its failure rate.
+    """
     calls = failed = 0
     try:
         lines = log_path.read_text(encoding="utf-8").splitlines()
@@ -148,7 +176,7 @@ def gate_calls(log_path: Path) -> tuple[int, int]:
             record = json.loads(line)
         except ValueError:
             continue
-        if isinstance(record, dict):
+        if isinstance(record, dict) and record.get("changed_files") is True:
             calls += 1
             failed += 0 if record.get("ok") else 1
     return calls, failed
@@ -168,6 +196,115 @@ def merged_tasks(entrypoint: Path | None, branch: str) -> int | None:
     if proc.returncode != 0:
         return 0 if "Not a valid object name" in proc.stderr or "not a tree" in proc.stderr else None
     return sum(1 for line in proc.stdout.splitlines() if line.strip())
+
+
+def pid_alive(pid: int) -> bool:
+    """Is process *pid* running (a zombie is not)?"""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        return stat.rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def tend_alive(root: str) -> bool | None:
+    """Is a ``tend run --root <root>`` live?  None when the process table cannot be read.
+
+    The same match as the sequencer's ``pgrep -f``: the joined command line,
+    whatever prefix runs tend (``uv run``, a path to it).
+    """
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return None
+    pattern = re.compile("tend run --root " + re.escape(root) + "( |$)")
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+        except OSError:
+            continue
+        if pattern.search(" ".join(a.decode("utf-8", "replace") for a in argv)):
+            return True
+    return False
+
+
+def watchdogs_on(root: str) -> list[int]:
+    """The pids of the other live ``watchdog.py`` processes given ``--root <root>``.
+
+    Read from each process's argv (``--root R`` or ``--root=R``, the path as
+    given or resolved), never matched as a pattern; this process is not one.
+    """
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return []
+    want = {root, os.path.realpath(root)}
+    out = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+        except OSError:
+            continue
+        argv = [a.decode("utf-8", "replace") for a in raw]
+        if not any(os.path.basename(a) == "watchdog.py" for a in argv):
+            continue
+        roots = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "--root"]
+        roots += [a[len("--root="):] for a in argv if a.startswith("--root=")]
+        if any(r in want or os.path.realpath(r) in want for r in roots) \
+                and pid_alive(int(entry.name)):
+            out.append(int(entry.name))
+    return sorted(out)
+
+
+def stop_others(root: str, grace: float = STOP_GRACE) -> tuple[list[int], list[int]]:
+    """SIGTERM every other watchdog on *root*, SIGKILL what outlives *grace*.
+
+    ``(stopped, survivors)``: the pids found, and those still alive after both.
+    """
+    pids = watchdogs_on(root)
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 2.0)):
+        alive = [p for p in pids if pid_alive(p)]
+        for pid in alive:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+        deadline = time.monotonic() + wait
+        while alive and time.monotonic() < deadline:
+            time.sleep(0.1)
+            alive = [p for p in alive if pid_alive(p)]
+        if not alive:
+            return pids, []
+    return pids, [p for p in pids if pid_alive(p)]
+
+
+def orphaned(args) -> bool:
+    """Given --parent: is the sequencer gone and no ``tend run --root <root>`` live?"""
+    return (args.parent is not None and not pid_alive(args.parent)
+            and tend_alive(str(args.root)) is False)
+
+
+def wait_for_next_check(args, stop: Path) -> str | None:
+    """Sleep one interval, looking every POLL seconds; why it must leave now, or None."""
+    deadline = time.monotonic() + max(1.0, args.interval)
+    while True:
+        if stop.exists():
+            return "stop"
+        if orphaned(args):
+            return "orphaned"
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        time.sleep(min(left, POLL))
 
 
 def decide(*, dollars: float, max_cost: float, calls: int, failed: int, merged: int | None,
@@ -249,8 +386,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", required=True, help="the shard's tend root")
     ap.add_argument("--entrypoint", default="", help="the shard's entrypoint repository")
     ap.add_argument("--branch", default="main", help="the merge target (default main)")
-    ap.add_argument("--max-cost", type=float, required=True,
-                    help="the shard's spend cap from its run.yaml, in USD")
+    ap.add_argument("--max-cost", type=float, default=None,
+                    help="the shard's spend cap from its run.yaml, in USD (required)")
     ap.add_argument("--p90-cost-per-task", type=float, default=None)
     ap.add_argument("--p90-gate-failure-rate", type=float, default=None)
     ap.add_argument("--multiple", type=float, default=2.0)
@@ -265,7 +402,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--interval", type=float, default=300.0, help="seconds between checks")
     ap.add_argument("--once", action="store_true", help="check once and exit")
     ap.add_argument("--dry-run", action="store_true", help="never drain; record what it would do")
+    ap.add_argument("--parent", type=int, default=None, metavar="PID",
+                    help="the sequencer's pid: once it is gone, watch only while a "
+                         "`tend run --root <root>` is live")
+    ap.add_argument("--stop-others", action="store_true",
+                    help="stop every other watchdog on --root, print their pids and exit "
+                         "(1 when one would not stop); nothing is checked")
     args = ap.parse_args(argv)
+    if args.stop_others:
+        stopped, survivors = stop_others(str(args.root))
+        print(" ".join(map(str, stopped)), flush=True)
+        if survivors:
+            print(f"watchdog: {' '.join(map(str, survivors))} on {args.root} would not stop",
+                  file=sys.stderr)
+            return 1
+        return 0
+    if args.max_cost is None:
+        ap.error("the following arguments are required: --max-cost")
     if args.max_cost <= 0:
         print("watchdog: --max-cost must be positive (a locate shard needs a recorded cap)",
               file=sys.stderr)
@@ -276,10 +429,22 @@ def main(argv: list[str] | None = None) -> int:
     stop = Path(args.root) / "watchdog.stop"
     while True:
         record = check(args)
-        print(json.dumps(record, sort_keys=True), flush=True)
+        try:
+            print(json.dumps(record, sort_keys=True), flush=True)
+        except OSError:
+            pass        # a full disk loses this line; watchdog.jsonl is the record
         if args.once or record["drained"] or stop.exists():
             return 2 if record["drained"] else 0
-        time.sleep(max(1.0, args.interval))
+        why = wait_for_next_check(args, stop)
+        if why == "stop":
+            return 0
+        if why == "orphaned":
+            try:
+                print(f"watchdog: the sequencer (pid {args.parent}) is gone and no tend run is "
+                      f"live on {args.root}; stopping", file=sys.stderr)
+            except OSError:
+                pass
+            return 0
 
 
 if __name__ == "__main__":

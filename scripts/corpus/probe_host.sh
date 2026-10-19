@@ -35,6 +35,12 @@
 # <output-dir>/work/ (rendered probe, shard files, per-shard logs and timings).
 # Exit status: 0 indexed; 1 a shard failed (its log is named); 2 bad arguments
 # or a merge refusal.
+#
+# Needs bash 4.3 or later (`wait -n`). Each shard records its own exit status
+# in work/shard-<i>.exit, since `wait -n -p` (which would name the shard that
+# finished) is bash 5.1 and later; and a driver that stops early (a refusal, a
+# failed merge, a signal from the universe driver's timeout) takes every shard
+# still running with it.
 set -euo pipefail
 
 die() { printf 'probe_host: %s\n' "$*" >&2; exit 2; }
@@ -98,23 +104,44 @@ run_one() {
     lake env lean "$work/probe.lean" >"$work/shard-$i.log" 2>&1
 }
 
-declare -A pid_of=()
-failed=()
+# a shard is its subshell and everything under it (env, nice, python, lake, lean)
+kill_tree() {
+  local pid
+  for pid in "$@"; do
+    kill -STOP "$pid" 2>/dev/null || true
+    kill_tree $(pgrep -P "$pid" 2>/dev/null || true)
+    kill -TERM "$pid" 2>/dev/null || true
+    kill -CONT "$pid" 2>/dev/null || true
+  done
+}
+trap 'kill_tree $(jobs -pr)' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+run_recorded() {
+  local i=$1 status=0
+  run_one "$i" || status=$?
+  printf '%s\n' "$status" >"$work/shard-$i.exit"
+}
 running=0
 reap() {
-  # Wait for any one shard; record it if it failed.
-  local done_pid status=0
-  wait -n -p done_pid || status=$?
+  # Wait for any one shard to finish; its exit status is in its .exit file.
+  wait -n || true
   running=$((running - 1))
-  if [ "$status" -ne 0 ]; then failed+=("${pid_of[$done_pid]}"); fi
 }
 for ((i = 0; i < shard_count; i++)); do
   if [ "$running" -ge "$parallel" ]; then reap; fi
-  run_one "$i" &
-  pid_of[$!]=$i
+  run_recorded "$i" &
   running=$((running + 1))
 done
 while [ "$running" -gt 0 ]; do reap; done
+wait || true
+
+failed=()
+for ((i = 0; i < shard_count; i++)); do
+  if [ "$(cat "$work/shard-$i.exit" 2>/dev/null || echo missing)" != 0 ]; then failed+=("$i"); fi
+done
 
 if [ "${#failed[@]}" -gt 0 ]; then
   for i in "${failed[@]}"; do
