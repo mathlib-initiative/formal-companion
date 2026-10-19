@@ -2902,7 +2902,9 @@ class TestRound3Score(unittest.TestCase):
         base, seeded, rate = (score(self.world, r) for r in ("loc2", "loc5", "loc6"))
         self.assertEqual(base["pins"]["planning"]["chl2"],
                          {"per_task": None, "subject_only": False, "sample_rate": 0.2})
-        self.assertEqual((base["pins"]["seed"]["chl2"], seeded["pins"]["seed"]["chl5"]), (0, 7))
+        self.assertEqual((base["pins"]["challenge_seed"]["chl2"],
+                          seeded["pins"]["challenge_seed"]["chl5"]), (0, 7))
+        self.assertIsNone(base["pins"]["challenge_seed"]["loc2"])
         compare_mod.check_replicate(base, seeded)
         with self.assertRaises(CfError) as ctx:
             compare_mod.check_replicate(base, rate)
