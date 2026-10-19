@@ -815,6 +815,14 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
             continue
         row["runs"]["challenge"] = verdict["challenge_run"]
         action = verdict.get("action")
+        if isinstance(verdict.get("claims"), list) and t != "prominence":
+            row["challenge_claims"] = verdict["claims"]
+        if action == "uphold" and t in ("absence", "unresolved") \
+                and isinstance(verdict.get("queries"), list):
+            # what the challenger searched before it upheld the record (the judgment
+            # rules): its queries, tagged with its own claims
+            row["challenge_receipt"] = {"queries": verdict["queries"],
+                                        "query_clauses": verdict.get("query_clauses")}
         if action == "overturn" and t in ("absence", "unresolved", "scope"):
             new, dropped = _join_locations(sid, item, verdict.get("locations") or [], universe,
                                            db, problems)
@@ -857,9 +865,10 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
 
 
 #: what a confirm or downgrade verdict may say of the record it leaves, which replaces
-#: the worker's: the displayed step a hasPart of a proof states, and the convention a
-#: closeMatch differs by
-_VERDICT_FIELDS = ("step", "convention")
+#: the worker's: what a hasPart or narrowMatch states (its step), the convention a
+#: closeMatch differs by, and how the declaration is instantiated at the passage's
+#: objects
+_VERDICT_FIELDS = ("step", "convention", "instantiation")
 
 
 def _judged_fields(loc: dict, verdict: dict) -> None:
@@ -868,15 +877,29 @@ def _judged_fields(loc: dict, verdict: dict) -> None:
     Called for a confirm, and for a downgrade once it is applied.  ``clauses``
     name the challenger's own claim list of the passage (the row's
     ``challenge_claims``), so the location keeps them as ``challenge_clauses``,
-    its worker's ``clauses`` unchanged; a ``step`` or ``convention`` the verdict
-    names is the record it leaves, and replaces the worker's.  Nothing is added for a verdict that
-    names none (every verdict of a run planned before the rules).
+    its worker's ``clauses`` unchanged; a ``step``, ``convention`` or
+    ``instantiation`` the verdict names is the record it leaves, and replaces the
+    worker's.  Then a field that does not describe the relation the location now
+    has is dropped (:func:`_fit_fields`): a ``convention`` belongs to a
+    ``closeMatch`` and a ``step`` to a ``hasPart`` or ``narrowMatch``, so a
+    downgrade from ``closeMatch`` to ``broadMatch`` leaves no convention behind.
+    Nothing changes for a verdict that names none of them on a record that carries
+    none (every verdict of a run planned before the rules).
     """
     if isinstance(verdict.get("clauses"), list):
         loc["challenge_clauses"] = verdict["clauses"]
     for key in _VERDICT_FIELDS:
         if isinstance(verdict.get(key), str) and verdict[key].strip():
             loc[key] = verdict[key]
+    _fit_fields(loc)
+
+
+def _fit_fields(loc: dict) -> None:
+    """Drop a judgment field the location's relation does not take (see :func:`_judged_fields`)."""
+    if loc.get("relation") != vocab.CLOSE_MATCH:
+        loc.pop("convention", None)
+    if loc.get("relation") not in vocab.STEP_RELATIONS:
+        loc.pop("step", None)
 
 
 def _apply_coverage(row: dict, planned: dict, verdicts: dict,
@@ -912,6 +935,13 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict,
         claim["challenge"] = _challenge_value(key, planned, verdicts)
         if verdict is not None:
             row["runs"]["challenge"] = verdict["challenge_run"]
+            if isinstance(verdict.get("claims"), list):
+                row["challenge_claims"] = verdict["claims"]
+            if verdict.get("action") == "confirm" and isinstance(verdict.get("part_clauses"),
+                                                                 dict):
+                # the challenger's clauses of each part (the judgment rules), beside the
+                # claim: the claim itself keeps exactly its record keys
+                row["coverage_challenge_clauses"] = verdict["part_clauses"]
             if verdict.get("action") == "refute":
                 row["coverage_refuted"] = {**claim, "challenge": vocab.CHALLENGE_DOWNGRADED,
                                            "witness": verdict.get("witness", "")}
@@ -1082,7 +1112,8 @@ def outcome_row(row: dict) -> dict:
     out = {k: row.get(k) for k in keep}
     # the judgment rules' claim lists, only where a document wrote one: a run planned
     # before them writes the rows it always did
-    for key in ("claims", "challenge_claims"):
+    for key in ("claims", "challenge_claims", "challenge_receipt",
+                "coverage_challenge_clauses"):
         if row.get(key) is not None:
             out[key] = row[key]
     if row.get("problem"):

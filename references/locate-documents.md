@@ -196,10 +196,14 @@ A locate task carries at most eight passages of one frozen inventory.
 
   ```json
   {"item": "In-text #3fa91c07", "outcome": "located",
+   "claims": [{"id": "c1", "text": "a spanning gadget exists"},
+              {"id": "c2", "text": "its size divides the order"}],
    "locations": [{"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
-                  "relation": "hasPart", "rank": 1, "…": "…"},
+                  "relation": "hasPart", "rank": 1, "clauses": ["c1"],
+                  "step": "the existence of a spanning gadget", "…": "…"},
                  {"library": "alpha", "declaration": "Widget.card_dvd",
-                  "relation": "hasPart", "rank": 2, "…": "…"}],
+                  "relation": "hasPart", "rank": 2, "clauses": ["c2"],
+                  "step": "the divisibility of the gadget's size", "…": "…"}],
    "coverage": {"complete": true, "parts": [1, 2],
                 "note": "existence and the divisibility of its size together state it"},
    "receipt": {"…": "…"}}
@@ -226,10 +230,23 @@ is gated, harvested, tallied and exported as it always was. Under them:
   existence and uniqueness apart, each computation of a worked example, each
   condition of a definition — written before any declaration is judged. Each
   claim is exactly `{id, text}`; ids are `c1`, `c2`, … (`cflib.vocab.CLAIM_ID`),
-  distinct, at most `MAX_PASSAGE_CLAIMS` (12); `text` is one line of at most
-  `MAX_CLAIM_CHARS` (300) characters, a paraphrase in the worker's own words:
-  more than `EXPORT_QUOTE_WORDS` consecutive words of the layer is a rule 1
-  refusal, like a note's.
+  distinct, at most `MAX_PASSAGE_CLAIMS` (12); `text` is one line (no line break
+  of any kind, `\r` and U+2028 included) of at most `MAX_CLAIM_CHARS` (300)
+  characters, a paraphrase in the worker's own words: more than
+  `EXPORT_QUOTE_WORDS` consecutive words of the source is a rule 1 refusal,
+  like a note's — in a claim, and in the claims read one after the other (a
+  sentence split over two claims is still the source).
+- **The source in every spelling.** Rule 1's cap holds a worker's free text to
+  the layer as it is, to the layer without its format characters (Unicode
+  category Cf: a zero-width space after every word is still the source's words)
+  and to the reading copy's spelling of it: `text.txt` writes a formula as
+  `$<normalized alttext>$` (§7) where the layer carries `{\displaystyle …}`, so
+  a sentence copied from the reading copy with a formula in it never matches
+  the layer. The gate builds that spelling from `layer.txt` and
+  `formulas.json`, which it pins already. Under the judgment rules this holds
+  every free text a document writes — claims, `instantiation`, `step`, notes,
+  queries, reasons, a coverage note; a run planned before them is held to the
+  layer alone, as the export is.
 - **Clauses.** Every location whose relation counts carries `clauses`, the
   non-empty, distinct ids of the claims the declaration states; an `exactMatch`,
   `closeMatch` or `broadMatch` (`cflib.vocab.STRONG_RELATIONS`) names **every**
@@ -241,57 +258,93 @@ is gated, harvested, tallied and exported as it always was. Under them:
   ["c1", …]}`: each key one of its `queries` exactly as written, each value the
   non-empty, distinct ids of the claims that query targets, or `general`
   (`cflib.vocab.GENERAL_QUERY_TAG`) for the general theorem a worked example is
-  an instance of. An **absence** carries it and leaves no claim without a query
-  — the smoke-2 audit's false absences searched the method, the complexity or
-  the theorem's name and never the formal clause — and an `example` passage's
-  absence tags at least one query `general`; on a located passage it is
+  an instance of. An **absence** carries it and tags **every** query it lists,
+  and each claim — with `general`, for an `example` passage — has a **query of
+  its own** among the tags: a matching of distinct queries (queries that differ
+  only in case or spacing are one) to the claims, so one query tagged with
+  every claim, beside untagged others, searched for one of them, and an absence
+  lists at least as many distinct queries as it has claims (and `general`). The
+  smoke-2 audit's false absences searched the method, the complexity or the
+  theorem's name and never the formal clause. On a located passage it is
   optional and checked when given. The export's receipt sidecar (§6) is built
   from `queries` and `candidates` alone, so the tags are not exported.
+- **A rejection is not a part.** An absent passage's receipt rejects no candidate
+  for stating part of the passage, a case of it or a generalisation of it — a
+  reason that says one of `cflib.vocab.CANDIDATE_PART_PHRASES` ("only part",
+  "one clause", "not the whole", "special case", "not the worked example",
+  "more general…", …) — since such a declaration is a `hasPart`, `narrowMatch` or
+  `broadMatch` location (R2–R4) and the passage is located.
 - **Instantiation.** A location whose relation counts, on a declaration whose
-  signature takes an **instance-implicit argument**, carries `instantiation`: one
-  line (at most `MAX_JUDGMENT_LINE_CHARS`, 300 characters, in the worker's own
-  words) saying at which of the passage's objects the declaration applies and
-  which instance or hypothesis makes it apply there. The gate sees the signature
-  `corpus.sqlite` recorded for the declaration at the universe's commit
-  (`decls.signature`, the probe's printed type, §8) and reads its leading binder
-  telescope: after an optional `∀`, each balanced group in `()`, `{}`, `[]` or
-  `⦃⦄`, separated by spaces or `→`, up to the first `,` or the first token that
-  opens no group; an instance-implicit argument is a `[…]` group (`[inst : Group
-  G]`, `[Finite G]`). A binder written later in the type, and a bracket in the
-  statement (`a ≡ b [MOD n]`), are not leading binders, and a declaration whose
-  signature the index did not record is not held to the rule (the gate cannot
-  see its binders). Objects that cannot meet the hypotheses make the relation
-  `relatedMatch` (R5): that is the worker's judgment, which a challenger checks.
-- **A closeMatch names its convention.** A `closeMatch` location carries
-  `convention`, one of `cflib.vocab.CLOSE_MATCH_CONVENTIONS` — `notation`,
-  `encoding`, `junk_value`, `normalisation`, `renaming`, `unfolding`, `bundling`
-  (R1) — beside the `note` that says how, and its note says none of
-  `CLOSE_MATCH_GENERALITY_PHRASES` ("stronger", "strict", "strictly", "more
-  general"; whole words, so `HasStrictDerivAt` is no such word): a strengthening
-  or a generalisation is `broadMatch` (R2), a special case `narrowMatch` (R3). A
-  challenge verdict that leaves a `closeMatch` names its convention too — a
-  downgrade's own, a confirm's when the record names none — and a downgrade's
-  own note (the one `locate_records.downgrade_note` takes from the verdict when
-  the record has none) is held to the same words; the record's own note, the
+  signature takes an **instance-implicit argument at a binder position**, carries
+  `instantiation`: one line (at most `MAX_JUDGMENT_LINE_CHARS`, 300 characters,
+  and at least `MIN_JUDGMENT_LINE_WORDS`, 3, words with a letter: "n/a" is none;
+  in the worker's own words) saying at which of the passage's objects the
+  declaration applies and which instance or hypothesis makes it apply there. The
+  gate sees the signature `corpus.sqlite` recorded for the declaration at the
+  universe's commit (`decls.signature`, the probe's printed type, §8) and reads
+  it as a telescope (`verify_locate.binder_groups`): `∀ <binders>, <rest>` gives
+  each balanced group of its binder list in `()`, `{}`, `[]` or `⦃⦄`, and
+  `<segment> → <rest>` gives the segment when it is one balanced group; a segment
+  that is no group — an anonymous explicit argument (`Set M →`), a
+  non-dependent hypothesis (`p.Prime →`) — is passed over and the scan goes on,
+  so a binder after one is found; it stops at the conclusion (no arrow after a
+  segment, or a `,` outside every bracket before the next arrow: an `∃`'s body).
+  An instance-implicit argument is a `[…]` group (`[inst : Group G]`, `[Finite
+  G]`). A bracket in the statement (`a ≡ b [MOD n]`) is at no binder position,
+  and a declaration whose signature the index did not record is not held to the
+  rule (the gate cannot see its binders). A setting that neither contains nor is
+  contained in the passage's makes the relation `relatedMatch` (R5), and a
+  special case of it `narrowMatch` (R3): that is the worker's judgment, which a
+  challenger checks. `instantiation` may sit on any relation, and is checked
+  wherever it does.
+- **A closeMatch names its convention, and only a closeMatch.** A `closeMatch`
+  location carries `convention`, one of `cflib.vocab.CLOSE_MATCH_CONVENTIONS` —
+  `notation`, `encoding`, `junk_value`, `normalisation`, `renaming`,
+  `unfolding`, `bundling` (R1) — beside the `note` that says what the
+  declaration does by it; a `convention` on any other relation is refused (it
+  contradicts the relation). An `exactMatch` or `closeMatch` note says none of
+  `CLOSE_MATCH_GENERALITY_PHRASES` ("stronger", "strengthen…", "weaker",
+  "weaken…", "more general…", "generali…", "special case", "particular case",
+  "broader", "narrower", "strict derivative…", "strict differentiab…", "strictly
+  differentiab…"; whole
+  words, a trailing `…` any ending, so `HasStrictDerivAt` and "a strict
+  inequality" are no such words): a strengthening or a generalisation is
+  `broadMatch` (R2), a special case `narrowMatch` (R3), a weakening `hasPart` or
+  `relatedMatch` (R5). The prompts render the list from that tuple. A challenge
+  verdict that leaves a `closeMatch` names its convention too — a downgrade's
+  own, a confirm's when the record names none — and the challenger's own note
+  (the one `locate_records.downgrade_note` takes from the verdict when the
+  record has none) is held to the same words; the record's own note, the
   worker's, is not.
-- **A part of a proof names its step.** `hasPart` and `narrowMatch` need the
-  declaration alone, instantiated, to entail a clause the passage asserts (R5;
-  a lemma the proof uses, one that needs a second declaration, a neighbouring
-  passage's fact is `relatedMatch`), and on a proof or remark passage
-  (`passage_kind` `other`, read from the task manifest) a `hasPart` location
-  carries `step`, one line (at most `MAX_JUDGMENT_LINE_CHARS`) naming the
-  displayed step it states. A challenge verdict that leaves a `hasPart` there
-  names it too: a downgrade's own `step`, a confirm's when the record has none.
-- **A note that admits a gap.** A strong location whose `note` says it leaves a
-  clause unstated — a phrase of `cflib.vocab.CLAUSE_GAP_PHRASES` ("does not
-  state", "not stated", "is not part of", "rather than asserting", "only the
-  existence", "only one direction", "not the converse", "without uniqueness",
-  "does not cover", "not covered", …; whole words, case-folded) — is refused:
-  its own note makes it `hasPart`. The challenge plan refutes such a record by
-  default in a run planned before the rules too (§9).
+- **A part names what the declaration alone entails.** `hasPart` and
+  `narrowMatch` (`cflib.vocab.STEP_RELATIONS`) need the declaration alone to
+  entail what they credit it with (R5; a lemma the proof uses, one that needs a
+  second declaration, a neighbouring passage's fact is `relatedMatch`), and
+  every such location carries `step`, one line (as `instantiation`) saying what
+  the declaration alone entails of this passage: on a proof the displayed step,
+  on any other passage — whatever its `passage_kind` — the clause, as the
+  declaration states it. A `step` on any other relation is refused. A challenge
+  verdict that leaves a `hasPart` or `narrowMatch` names it too: a downgrade's
+  own `step`, a confirm's when the record has none.
+- **A note that admits a gap.** A strong location whose `note` or
+  `instantiation` says it leaves a clause unstated — a phrase of
+  `cflib.vocab.CLAUSE_GAP_PHRASES` ("does not state", "not stated", "not part
+  of", "rather than asserting", "only proves", "only the existence", "one
+  direction only", "converse is not", "without uniqueness", "does not cover",
+  "omits", "leaves out", …; whole words, case-folded, a contraction spelled out)
+  — is refused: its own words make it `hasPart`. A phrase that is negated ("not
+  only the existence"), whose subject is the passage ("the passage does not
+  cover n = 0", "not part of the passage": a junk-value note says what the
+  passage leaves out) or that sits in a relative clause on an "unlike …"
+  clause's object is set aside; the message says to reword a note it misreads,
+  describing what the declaration does. The challenge plan refutes such a record
+  by default in a run planned before the rules too (§9).
 
 None of these fields is exported: a record carries what it always did, and the
-record set's format is unchanged (§6).
+record set's format is unchanged (§6). Every structural check rests on the claim
+list the worker writes: a list that drops a clause, with an `exactMatch` naming
+every claim on it, passes the gate, and only the challenge, which writes its own
+list, re-checks it.
 
 ## 4. Challenge document (`mode: locate-challenge`)
 
@@ -299,34 +352,75 @@ record set's format is unchanged (§6).
 {"…header…": "…",
  "verdicts": [
    {"item": "In-text #3fa91c07", "target": "location",
-    "location_key": "<run-free sha>", "action": "confirm",
+    "location_key": "<run-free sha>", "action": "confirm", "clauses": ["c1"],
     "witness": "<quoted signature fragment and why it states the passage>"},
    {"item": "In-text #3fa91c07", "target": "location",
-    "location_key": "<sha>", "action": "downgrade", "relation": "broadMatch",
+    "location_key": "<sha>", "action": "downgrade", "relation": "closeMatch",
+    "clauses": ["c1"], "convention": "encoding",
+    "note": "the declaration writes the gadget as a finite set", "witness": "…"},
+   {"item": "In-text #3fa91c07", "target": "location",
+    "location_key": "<sha>", "action": "downgrade", "relation": "hasPart",
+    "clauses": ["c1"], "step": "the existence of a spanning gadget for each widget",
     "witness": "…"},
    {"item": "In-text #91aa02de", "target": "absence", "action": "overturn",
     "locations": [{"library": "beta", "declaration": "…", "relation": "exactMatch",
-                   "rank": 1, "confidence": "high", "note": "", "witness": "…"}],
+                   "rank": 1, "confidence": "high", "clauses": ["c1"], "note": "",
+                   "witness": "…"}],
     "witness": "found with a type search the worker did not run"},
+   {"item": "In-text #77e01b2c", "target": "absence", "action": "uphold",
+    "queries": ["gadget cover finite", "spanning gadget card", "Widget.cover"],
+    "query_clauses": {"gadget cover finite": ["c1"], "spanning gadget card": ["c2"],
+                      "Widget.cover": ["c1", "c2"]},
+    "witness": "…"},
+   {"item": "In-text #5be3a910", "target": "coverage", "action": "confirm",
+    "part_clauses": {"<part 1's location_key>": ["c1"], "<part 2's>": ["c2"]},
+    "witness": "…"},
    {"item": "In-text #0c4d77b1", "target": "scope", "action": "uphold", "witness": "…"}],
  "claims": {"In-text #3fa91c07": [{"id": "c1", "text": "…"}],
-            "In-text #91aa02de": [{"id": "c1", "text": "…"}]}}
+            "In-text #91aa02de": [{"id": "c1", "text": "…"}],
+            "In-text #77e01b2c": [{"id": "c1", "text": "…"}, {"id": "c2", "text": "…"}],
+            "In-text #5be3a910": [{"id": "c1", "text": "…"}, {"id": "c2", "text": "…"}]}}
 ```
 
 Under the judgment rules (§3) a challenge document carries `claims`, `{<item>:
-[{id, text}, …]}`: the challenger's own claim list of each passage on which a
-verdict leaves a relation that counts, written before it judges (the FM7 rule,
-`references/vocabulary.md` §1.11), each list checked as a locate document's.
-A `confirm` of a location whose relation counts, and a `downgrade` to one, names
-the ids it states in `clauses`, every one for a strong relation and none for a
-`downgrade` to `relatedMatch`; an overturn's locations carry them as a locate
-document's do, against the same list. A `downgrade` whose own note — the
-verdict's `note`, or for a `closeMatch` with no note of its own the note the
-outcomes will take from the verdict — admits a gap on a strong relation is
-refused. The rule reads the challenger's words only: a record's own `note` (the
-task manifest's, §9) is its worker's, and when it admits a gap the challenge plan
-refutes the record by default, for the challenger to judge, but never forces its
-verdict. A `claims` entry for a passage the task does not judge is refused.
+[{id, text}, …]}`: the challenger's own claim list of each passage it judges a
+location, a coverage claim, an absence or an unresolved outcome of — **whatever
+the verdict**, a refute, a downgrade to `relatedMatch` and an uphold as much as
+a confirm — written before it judges (the FM7 rule, `references/vocabulary.md`
+§1.11), each list checked as a locate document's. Then:
+
+- A `confirm` of a location whose relation counts, and a `downgrade` to one,
+  names the ids it states in `clauses`, every one for a strong relation and none
+  for a `downgrade` to `relatedMatch`; an overturn's locations carry them as a
+  locate document's do, against the same list. A verdict that keeps or leaves a
+  strong relation rests on a claim list at least as long as the worker's
+  `claims` for the passage (the task manifest's): a challenger splits a
+  worker's clause, never drops one.
+- A verdict that leaves a `hasPart` or `narrowMatch` names its `step`, and one
+  that leaves a `closeMatch` its `convention`, as §3 has them (a downgrade's
+  own, a confirm's when the record names none); a `step` or `convention` on a
+  verdict that leaves any other relation is refused, and a blank one is none.
+- A verdict that keeps a counting relation on a declaration whose signature
+  takes an instance argument, when the record names no `instantiation` (every
+  record of a run planned before the rules), carries the challenger's own.
+- A `downgrade` whose own note — the verdict's `note`, or for a `closeMatch`
+  with no note of its own the note the outcomes will take from the verdict —
+  or own `instantiation` admits a gap on a strong relation is refused, and an
+  exact or close one's note is held to the generality words. The rule reads the
+  challenger's words only: a record's own `note` (the task manifest's, §9) is
+  its worker's, and when it admits a gap the challenge plan refutes the record
+  by default, for the challenger to judge, but never forces its verdict.
+- A coverage `confirm` names, per part, the challenger's claim ids it states:
+  `part_clauses`, `{<part's location_key>: [c1, …]}`, one entry for each part of
+  the record and no other, each a non-empty list of distinct ids, together
+  naming every claim (decision D1's verdict, which raises the passage's status,
+  is checked against the challenger's own clauses as a location's is).
+- An `uphold` of an absence or an unresolved outcome lists the challenger's own
+  search: `queries` (at least `min_absence_queries` distinct, in its own words)
+  and `query_clauses`, every query tagged and each claim — with `general` for an
+  `example` passage — with a query of its own, as an absence's receipt (§3).
+
+A `claims` entry for a passage the task does not judge is refused.
 
 - `target` ∈ {`location`, `absence`, `unresolved`, `scope`, `prominence`,
   `coverage`}.
@@ -1207,9 +1301,14 @@ like a faithfulness run:
   `rank` and `note` (when it has one); for a coverage claim, its `parts`
   (`[{location_key, library, declaration, relation, rank}]`) and `note`; and,
   where the locate document wrote them (§3, the judgment rules), the passage's
-  `claims` and a location's `clauses` — for the challenger to check, never
-  evidence. A passage with a coverage claim
-  is never split over two challenge tasks. Every task manifest of the plan is also kept beside `run.yaml`, in
+  `claims` and a location's `clauses`, `instantiation`, `step` and `convention`
+  — for the challenger to check, never evidence. A location record also carries
+  `passage_locations`, the passage's other locations of the same run
+  (`[{location_key, library, declaration, relation, rank, planned}]`, best rank
+  first, `planned` the plan's value for each): read-only context for the FM7
+  rule, never records the task gives a verdict for. A passage's records are
+  never split over two challenge tasks — a coverage claim with the parts it
+  names, and every required location of one passage with the others. Every task manifest of the plan is also kept beside `run.yaml`, in
   `runs/<run-id>/planned.json` (`{schema: "cf-locate-planned/1", run_id,
   tasks}`), which the outcomes read the planned passages from — the tend root is
   not something a workspace commits.
@@ -1220,10 +1319,10 @@ like a faithfulness run:
   item, location_key, library, declaration, relation, run_id, prominence, scope,
   outcome, rule, stratum, planned, task_id}]}` (a coverage record adds `parts`, its
   parts' location keys). `rule` is `refute_by_default`, `hunt`, `basis`,
-  `sample` or `none` — every coverage claim is `refute_by_default`, and a
-  `supporting` passage's basis (the best-ranked location whose own derived status
-  is the passage's) is `basis` when its relation is `exactMatch`, `closeMatch` or
-  `broadMatch`; `stratum` is `relation:<relation>`, `scope:<scope>`,
+  `sample` or `none` — every coverage claim is `refute_by_default`, and each of a
+  `supporting` passage's bases (every location whose own derived status is the
+  passage's: the passage keeps that status while any one of them stands) is
+  `basis` when its relation is `exactMatch`, `closeMatch` or `broadMatch`; `stratum` is `relation:<relation>`, `scope:<scope>`,
   `prominence:supporting` or `outcome:absent` (a `supporting` passage's absence),
   each drawn at its rate — a strong relation's at `strong_sample_rate`, the
   absences' at `absence_sample_rate`, every other at `sample_rate` — at least one
@@ -1642,11 +1741,17 @@ refuted, with the verdict's `witness`, or null), `task_id`, and `problem` when s
 the passage is wrong. Under the judgment rules (§3, §4) a row also carries
 `claims` — the claim list its locations' `clauses` name: the worker's, or the
 challenger's once an overturn replaced the locations — and `challenge_claims`,
-the challenger's own list when a verdict document gave one; a location keeps
-the fields its document wrote (`clauses`, `instantiation`, `step`, `convention`)
-and, when a confirm or an applied downgrade named them, the verdict's `clauses`
-as `challenge_clauses` and its `step` and `convention` in place of the
-worker's. Each is written only where a document wrote it,
+the challenger's own list when a verdict document gave one; `challenge_receipt`,
+`{queries, query_clauses}`, the search an uphold of the passage's absence or
+unresolved outcome lists; and `coverage_challenge_clauses`, a coverage confirm's
+`part_clauses` (beside the claim, whose keys stay `COVERAGE_RECORD_KEYS`). A
+location keeps the fields its document wrote (`clauses`, `instantiation`, `step`,
+`convention`) and, when a confirm or an applied downgrade named them, the
+verdict's `clauses` as `challenge_clauses` and its `step`, `convention` and
+`instantiation` in place of the worker's; then a field the relation it is left
+with does not take is dropped — a `convention` off a `closeMatch`, a `step` off a
+`hasPart` or `narrowMatch` — so a downgrade from `closeMatch` to `broadMatch`
+leaves no convention behind. Each is written only where a document wrote it,
 so a run planned before the rules yields the rows it always did, and none is
 exported (§6). What else can be wrong about a passage: a location that could not be joined, a document whose
 universe or `source_sha`/`layer_sha256` is not the run's pin, an outcome that is
