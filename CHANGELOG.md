@@ -43,7 +43,9 @@ release has something to say.
     cap, the note a downgrade to `closeMatch` exports (its `note`, else a
     witness sentence) included: the note helpers moved from `locate.outcomes`
     into the staged `locate.records`, so the gate computes the outcomes' note. Rule 7 reads the task file: `tasks/<id>.yaml` only, never added,
-    changed in its `status:` line alone; a worktree's change set is one task's,
+    changed in its `status:` line alone, which holds one status word (a flow
+    mapping such as `status: {id: …, priority: 99}`, an unparseable value or a
+    YAML tag on that line passed before); a worktree's change set is one task's,
     and tend's pre-merge command carries the gate's new `--pre-merge`, the only
     call that admits several tasks. Rule 6's duplicate check is linear and a
     call keeps at most 200 problem lines. Rule 8 refuses a skip that holds a

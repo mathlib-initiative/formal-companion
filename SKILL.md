@@ -300,7 +300,8 @@ you use it.
   command is unverified here. Without it the gate's ownership check falls back
   to the weaker single-stem rule and says so in its last line — read that line
   once per tend version (`references/runbook-server.md` §4). Either way the
-  task file is `tasks/<task-id>.yaml`, changed in its `status:` line only, and
+  task file is `tasks/<task-id>.yaml`, changed in its one `status:` line only,
+  to one status word, and
   one worktree's change set is one task's: only the batched pre-merge check
   (`--pre-merge`) admits several.
 - **`detect-proxies --lean`** needs a `deps.json` from a built `.lake` and a
