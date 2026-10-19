@@ -2873,6 +2873,41 @@ class TestRound3Score(unittest.TestCase):
             compare_mod.check_replicate(one, old)
         self.assertIn("agents of loc3", str(ctx.exception))
 
+    def test_an_aa_replicate_is_planned_as_the_baseline_was(self):
+        """The task size, the subject-only cut and the challenge's sample rate change what a
+        run does, and no template or staged file carries them, so config_shas cannot tell
+        two plans apart: the planning pin compares run.yaml's own keys.  The seed is
+        recorded only."""
+        eval_run(self.world, run_id="loc2", inventory_run="inv2", planning={"per_task": 1})
+        eval_run(self.world, run_id="loc3", inventory_run="inv3", planning={"per_task": 8})
+        eval_run(self.world, run_id="loc4", inventory_run="inv4", planning={"per_task": 1})
+        one, eight, again = (score(self.world, r) for r in ("loc2", "loc3", "loc4"))
+        self.assertEqual(one["pins"]["planning"]["loc2"],
+                         {"per_task": 1, "subject_only": False, "sample_rate": None})
+        self.assertEqual(one["pins"]["planning"]["inv2"],
+                         {"per_task": None, "subject_only": False, "sample_rate": None})
+        self.assertEqual(compare_mod.pin_differences(
+            one, eight, compare_mod.CONFIG_SHA_PINS), [])        # the shas cannot see it
+        with self.assertRaises(CfError) as ctx:
+            compare_mod.check_replicate(one, eight)
+        self.assertIn("planning differ", str(ctx.exception))
+        self.assertIn("planning differs", compare_mod.refuse_incomparable(one, eight))
+        compare_mod.check_replicate(one, again)
+        # the challenge: another sample rate is another configuration, another seed is not
+        eval_run(self.world, run_id="loc5", inventory_run="inv5", planning={"per_task": 1})
+        eval_run(self.world, run_id="loc6", inventory_run="inv6", planning={"per_task": 1})
+        self.world.challenge_run("chl2", of="loc2", planning={"seed": 0})
+        self.world.challenge_run("chl5", of="loc5", planning={"seed": 7})
+        self.world.challenge_run("chl6", of="loc6", planning={"sample_rate": 0.5})
+        base, seeded, rate = (score(self.world, r) for r in ("loc2", "loc5", "loc6"))
+        self.assertEqual(base["pins"]["planning"]["chl2"],
+                         {"per_task": None, "subject_only": False, "sample_rate": 0.2})
+        self.assertEqual((base["pins"]["seed"]["chl2"], seeded["pins"]["seed"]["chl5"]), (0, 7))
+        compare_mod.check_replicate(base, seeded)
+        with self.assertRaises(CfError) as ctx:
+            compare_mod.check_replicate(base, rate)
+        self.assertIn("planning differ", str(ctx.exception))
+
     def test_outcomes_tallied_before_the_last_harvest_are_refused_m02(self):
         first = score(self.world)
         receipt = self.world.paths.receipt_json("loc1")

@@ -76,7 +76,8 @@ TIERS = vocab.BENCH_TIER_ORDER
 #: between a baseline and its A/A replicate (corpus_db_sha256 is a recorded pin only:
 #: a rebuild of one universe state is not byte-identical, references/locate-documents.md)
 CONFIG_PINS = ("universe_sha256", "sourceset_manifest_sha256", "agent_cli", "tend", "agentbox",
-               "skill_commit", "gate_files", "prompts", "agents", "price_table_sha256")
+               "skill_commit", "gate_files", "prompts", "agents", "planning",
+               "price_table_sha256")
 NOTED_PINS = CONFIG_PINS[:1] + ("corpus_db_sha256",) + CONFIG_PINS[1:]
 #: the per-run configuration pins a plan records in run.yaml locate.config_shas: the
 #: gate code and prompt templates without the bytes a plan renders per run (run id,
