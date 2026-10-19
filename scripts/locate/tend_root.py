@@ -106,9 +106,9 @@ def agent_settings(settings: dict[str, Any], env: dict[str, dict[str, str]]) -> 
     ``env`` is :func:`wrapper_env`'s map, whose ``CF_ATTEMPT_CAP`` and
     ``CF_MERGE_TARGET`` both roles export.  The
     wrappers' own shas name the run's paths, so ``config_shas.gate_files`` leaves
-    them out; this map is what the bench's A/A check compares instead (review
-    SEAM-1: a run whose agents ran with the sandbox bypass was otherwise accepted
-    as a replicate of one whose agents did not).
+    them out; this map is what the bench's A/A check compares instead, since
+    without it a run whose agents ran with the sandbox bypass was accepted as a
+    replicate of one whose agents did not.
     """
     common = env["worker"]
     return {**settings, "attempt_cap": int(common["CF_ATTEMPT_CAP"]),
