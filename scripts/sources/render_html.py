@@ -37,8 +37,12 @@ in full:
   stays.  A body holding a lone surrogate is refused.  Its sha256 is
   ``html_sha256``, the source's ``source_sha``.
 * **The tree.**  Tags are lower-cased by the parser; character references are
-  decoded except inside ``script`` and ``style``, whose content is raw text.
-  The void elements (``area base br col embed hr img input link meta param
+  decoded except inside ``script style xmp iframe noembed noframes``, whose
+  content is raw text, and the content of ``textarea`` and ``title`` is text with
+  references decoded: no tag inside any of the eight is read.  ``plaintext`` and
+  ``noscript`` are ordinary elements.  These sets are the renderer's own, never
+  the interpreter's (CPython changed its tuples within 3.14), and an
+  ``html.parser`` with no escapable raw-text mode is refused.  The void elements (``area base br col embed hr img input link meta param
   source track wbr``) never hold content.  A self-closing flag is honoured on a
   MathML or SVG element (``<mspace/>`` holds nothing) and ignored on an HTML one,
   as the HTML5 tree builder does: an element is MathML or SVG when it is a
@@ -149,6 +153,7 @@ Offsets everywhere are code-point offsets.  Nothing here fetches anything:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -450,10 +455,41 @@ class _Node:
             stack.extend(c for c in reversed(node.children) if isinstance(c, _Node))
 
 
+def _check_parser() -> None:
+    """Refuse an ``html.parser`` that has no escapable raw-text (RCDATA) mode.
+
+    Without ``set_cdata_mode(..., escapable=True)`` the interpreter reads the
+    markup inside ``textarea`` and ``title`` as tags, and the class attributes
+    below cannot change that, so the layer would be another one under the same
+    renderer id.  The refusal names the interpreter instead.
+    """
+    if "escapable" not in inspect.signature(HTMLParser.set_cdata_mode).parameters:
+        raise RenderError(
+            f"this interpreter's html.parser (Python {sys.version.split()[0]}) has no "
+            f"escapable raw-text mode, so it cannot compute the {vocab.RENDERER_WEB_HTML} "
+            f"layer (textarea and title would be read as markup); render with a Python "
+            f"whose html.parser has set_cdata_mode(..., escapable=...)")
+
+
 class _TreeBuilder(HTMLParser):
-    """``html.parser`` events into a :class:`_Node` tree plus the raw text."""
+    """``html.parser`` events into a :class:`_Node` tree plus the raw text.
+
+    The raw-text sets are pinned here rather than inherited: CPython's own
+    tuples changed within one minor release (3.14.0 reads only ``script`` and
+    ``style`` as raw text, 3.14.5 adds ``xmp iframe noembed noframes`` and reads
+    ``plaintext`` to the end of the body), and the layer must not depend on the
+    patch release.  :data:`_RAW_TEXT` is the one list; the two tuples below are it,
+    split by whether references are decoded, and :meth:`set_cdata_mode` refuses
+    any other element an interpreter would put into raw text.
+    """
+
+    #: raw text: no tag and no reference inside is read
+    CDATA_CONTENT_ELEMENTS = ("script", "style", "xmp", "iframe", "noembed", "noframes")
+    #: escapable raw text: references are decoded, no tag inside is read
+    RCDATA_CONTENT_ELEMENTS = ("textarea", "title")
 
     def __init__(self):
+        _check_parser()
         super().__init__(convert_charrefs=True)
         self.pieces: list[str] = []
         self.length = 0
@@ -463,6 +499,16 @@ class _TreeBuilder(HTMLParser):
         #: how many ``script``/``style``/``template`` elements are open: their text
         #: is no part of the layer, so it never enters the raw text
         self.skipping = 0
+
+    def set_cdata_mode(self, elem, *, escapable=False):
+        """Enter raw text only for an element of :data:`_RAW_TEXT`.
+
+        A newer ``html.parser`` also enters it for ``plaintext`` (and, with
+        ``scripting``, ``noscript``); web-html/3 reads both as ordinary
+        elements, as every interpreter before that one did.
+        """
+        if elem.lower() in _RAW_TEXT:
+            super().set_cdata_mode(elem, escapable=escapable)
 
     # -- helpers -------------------------------------------------------
     def _close_to(self, index: int) -> None:
