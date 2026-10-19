@@ -219,11 +219,13 @@ universe_sha256: <sha over sorted (id, commit, index sha)>
     project's `proof_wanted` statements and the definitions its problems
     share; `FormalConjecturesUtil` (tooling) and `FormalConjecturesTest`
     (tests) are out.
-- `brain_lib` is one token per library. A library whose roots are several of a
-  consumer's libraries (lean-core's `Init` and `Std`) carries one token; a
-  consumer that needs one per root splits it into two universe libraries at the
-  same commit, one root each — a token may name only one repository, and a
-  repository may carry several tokens.
+- `brain_lib` is one token per library: a letter, then letters, digits and `_`,
+  at most 64 (`FF_AdicModules`; the consumer's Brain refuses `FF.AdicModules`),
+  which `cf corpus add` enforces on every library it adds. A library whose
+  roots are several of a consumer's libraries (lean-core's `Init` and `Std`)
+  carries one token; a consumer that needs one per root splits it into two
+  universe libraries at the same commit, one root each — a token may name only
+  one repository, and a repository may carry several tokens.
 - **One universe per campaign**, frozen into every shard's `gate.json`. A
   library that fails to build or probe is `excluded` with its reason, and
   absences honestly name the smaller universe.
