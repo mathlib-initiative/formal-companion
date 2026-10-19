@@ -434,6 +434,24 @@ not define (no index paths, no host instructions).
 
 What every record carries beyond §2.7's example:
 
+- The subject end's `extensions[‹locate›]` carries the passage's whole `span`
+  — `[start, end]`, its half-open code-point offsets on the `web-html/3` layer
+  (two integers, `0 <= start < end`), never its text — and the `layer_sha256`
+  of the layer they index (64 lowercase hex, the source's own in
+  `sources.jsonl`), beside `span_sha256`, the sha256 of those characters. A
+  consumer holding that layer (the producer's, when its `layer_sha256` is this
+  one) highlights the whole passage, not only the capped quote, whose `exact`
+  is the span's head. The export writes both on every record; a consumer
+  treats the pair as optional (a set exported before them still builds) but
+  never one without the other. The gate's rule-1 preview builds the same pair
+  from `gate.json`'s pin. `records.passage_span` refuses a span that is not two
+  integers with `0 <= start < end`, and the export one that leaves the layer.
+
+  ```json
+  {"pageid": 1001, "html_sha256": "<hex>", "layer_sha256": "<hex>",
+   "renderer": "web-html/3", "span": [10234, 10612], "span_sha256": "<hex>",
+   "licence": "CC-BY-SA-4.0"}
+  ```
 - `extensions[‹locate›].section` — the passage's heading path (a list of
   non-empty strings; `[]` is the lead) — and `.prominence` (`subject`,
   `central`, `supporting`), after the challenge (a prominence overturn moves

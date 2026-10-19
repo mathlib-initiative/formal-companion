@@ -35,6 +35,17 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- A locate record's subject end carries the passage's whole `span` (its
+  half-open code-point offsets on the `web-html/3` layer, never text) and the
+  `layer_sha256` of that layer, the source's own in `sources.jsonl`, beside
+  `span_sha256`, so a consumer holding the layer highlights the whole passage
+  and not only the capped quote. The record set's consumer agreed the shape
+  (both optional to it, together or not at all); the export writes both on
+  every record, and the gate's rule-1 preview builds them from `gate.json`'s
+  pin. A span that is not two integers `0 <= start < end`, or that leaves the
+  layer, is refused by name (`records.passage_span`). `records.py` is staged
+  in the gate directory, so `locate.config_shas.gate_files` changes: a run
+  planned before this is no A/A replicate of one planned after.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.

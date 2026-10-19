@@ -1927,7 +1927,8 @@ class TestRecords(unittest.TestCase):
 
     def source(self):
         return {"source_id": F.W1, "pageid": 1001, "revision": 2002, "title": "Widget lemma",
-                "html_sha256": "1" * 64, "renderer": "web-html/1",
+                "html_sha256": "1" * 64, "layer_sha256": records.sha256_text(self.LAYER),
+                "renderer": "web-html/1",
                 "uri": "https://en.wikipedia.org/w/index.php?curid=1001&oldid=2002",
                 "container_title": "Wikipedia", "licence": "CC-BY-SA-4.0"}
 

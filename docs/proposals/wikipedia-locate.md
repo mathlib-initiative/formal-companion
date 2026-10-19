@@ -378,7 +378,8 @@ A location:
               "location": {"quote": {"exact": "…", "prefix": "…", "suffix": "…"}},
               "citation": {"type": "webpage", "title": "Sylow theorems", "container-title": "Wikipedia",
                            "URL": "https://en.wikipedia.org/w/index.php?title=Sylow_theorems&oldid=1371234567"},
-              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "renderer": "web-html/3",
+              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "layer_sha256": "<hex>",
+                                          "renderer": "web-html/3", "span": [10234, 10612],
                                           "span_sha256": "<hex>", "licence": "CC-BY-SA-4.0"}}}],
  "object": [{"type": "lean", "uri": "https://github.com/leanprover-community/mathlib4",
              "version": "<40-hex commit>", "role": "key",
@@ -400,6 +401,9 @@ A location:
   `line` alone); a reader treats it as optional.
 - `section` (the passage's heading path) and `prominence` ride on every record
   of the passage, so a reader can single out the subject passage.
+- The subject end carries the passage's whole `span` (half-open offsets on the
+  layer, never text) and the `layer_sha256` it indexes, so a reader holding
+  that layer highlights the passage, not only the capped quote.
 - A `closeMatch` always names its convention difference in `note`, one a
   challenge downgraded to `closeMatch` too (the challenger's note, else the
   first sentence of its witness that quotes the source within the quote cap).
