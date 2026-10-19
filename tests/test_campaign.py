@@ -43,6 +43,12 @@ from run import manifest, remote, watchdog  # noqa: E402
 
 WATCHDOG = SCRIPTS / "run" / "watchdog.py"
 
+#: the process table the watchdog reads (``--parent``, ``--stop-others``): the
+#: Linux run host's /proc, which macOS does not have
+HAS_PROC = Path("/proc/self/stat").exists()
+NEEDS_PROC = unittest.skipUnless(HAS_PROC, "no /proc here; the watchdog reads the Linux run "
+                                           "host's process table")
+
 
 def scratch(case: unittest.TestCase) -> Path:
     path = Path(tempfile.mkdtemp(prefix="cf-campaign-"))
@@ -118,6 +124,7 @@ class TestTheWatchdog(_WatchdogRoot):
                 self.assertEqual(proc.returncode, 64, proc.stderr)
                 self.assertNotIn("Traceback", proc.stderr)
 
+    @unittest.skipUnless(os.path.exists("/dev/full"), "no /dev/full here (a Linux device)")
     def test_a_full_disk_does_not_kill_it(self):
         """OPS-11: the progress print raised ENOSPC and the watchdog died."""
         with open("/dev/full", "w") as full:
@@ -131,6 +138,7 @@ class TestTheWatchdog(_WatchdogRoot):
         self.assertEqual(proc.wait(timeout=10), 0)
         proc.stderr.close()
 
+    @NEEDS_PROC
     def test_an_orphan_watches_the_tend_run_to_its_end_then_goes(self):
         """OPS-06: a watchdog whose sequencer died looped forever.
 
@@ -161,6 +169,7 @@ class TestTheWatchdog(_WatchdogRoot):
             time.sleep(0.2)
         self.assertFalse(alive(), "the orphaned watchdog outlived its tend run")
 
+    @NEEDS_PROC
     def test_stop_others_stops_every_other_watchdog_on_the_root_alone(self):
         other = self.tmp / "r-1-tend-b"
         other.mkdir()
@@ -563,19 +572,21 @@ class TestTheSequencer(WorkspaceCase):
             del env["CF_TRANSCRIPT_DIRS"]
         return clean_env(PATH=f"{self.bin}:{os.environ['PATH']}", CF_WATCH_INTERVAL="0.3", **env)
 
-    def sequence(self, **env) -> subprocess.CompletedProcess:
+    def sequencer(self) -> Path:
+        """The rendered sequencer, or a skip where it cannot run."""
         if shutil.which("flock") is None:
             # the sequencer is the Linux run host's: it holds its campaign with
             # util-linux flock, which macOS does not ship
             self.skipTest("flock is not installed here; the sequencer runs on the Linux run host")
-        sequencer = self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh"
-        return subprocess.run(["bash", str(sequencer)], capture_output=True, text=True,
+        return self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh"
+
+    def sequence(self, **env) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", str(self.sequencer())], capture_output=True, text=True,
                               timeout=180, env=self.sequencer_env(**env))
 
     def start(self, **env) -> subprocess.Popen:
         """The sequencer in the background, in its own session (so a test can kill it all)."""
-        sequencer = self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh"
-        proc = subprocess.Popen(["bash", str(sequencer)], stdout=subprocess.DEVNULL,
+        proc = subprocess.Popen(["bash", str(self.sequencer())], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True,
                                 env=self.sequencer_env(**env))
 
@@ -642,9 +653,11 @@ class TestTheSequencer(WorkspaceCase):
 
     def test_it_runs_in_order_and_stops_when_a_watchdog_drains(self):
         self.render()
-        # a transcript older than the campaign is neither exported nor pruned
+        # a transcript older than the campaign is neither exported nor pruned, though
+        # it names r-1's root (an earlier run there): the baseline alone leaves it out
         old = self.transcripts / "operator.jsonl"
-        old.write_text(json.dumps({"model": "claude-opus-5", "usage": {"input": 7}}) + "\n")
+        old.write_text(json.dumps({"model": "claude-opus-5", "usage": {"input": 7},
+                                   "cwd": f"{self.remote}/r-1-tend/worktrees/w-0"}) + "\n")
         proc = self.sequence()
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertEqual(self.runs(), [str(self.remote / "r-1-tend"), str(self.remote / "r-2-tend")])
@@ -837,6 +850,7 @@ class TestTheSequencer(WorkspaceCase):
                 self.assertIn(needle, proc.stderr)
                 self.assertFalse(self.log.exists(), "a shard was launched")
 
+    @NEEDS_PROC
     def test_a_killed_sequencer_leaves_no_watchdog_holding_the_lock(self):
         """OPS-06: the orphaned watchdog held sequencer.lock, so every restart exited 3."""
         self.render()
@@ -863,6 +877,7 @@ class TestTheSequencer(WorkspaceCase):
         self.assertIn("settling what its earlier attempt left", proc.stderr)
         self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 2)
 
+    @NEEDS_PROC
     def test_a_watchdog_left_on_the_root_is_stopped_before_the_relaunch(self):
         """A killed sequencer's watchdog, sleeping out its interval, watched the relaunch too.
 
@@ -915,6 +930,68 @@ class TestTheSequencer(WorkspaceCase):
         self.assertIn("accepted as it stands", done)
         self.assertIn("never (it was interrupted)", done)
         # what the interrupted attempt left is still settled: exported and pruned
+        self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 1)
+        self.assertFalse((self.transcripts / "r-1-tend.jsonl").exists())
+
+    def test_an_accept_is_refused_while_what_the_shard_left_cannot_be_scanned(self):
+        """CF_ACCEPT marked a shard done though the scan of what it left could not run.
+
+        Its transcripts were then neither scanned nor exported, and every later
+        shard's baseline took them in, so no harvest would have priced them.
+        """
+        self.render(canaries=str(self.canaries()))
+        r1 = self.remote / "r-1-tend"
+        (r1 / "sleep").write_text("30")
+        first = self.start()
+        leaked = self.transcripts / "r-1-tend.jsonl"
+        self.wait_for(leaked.exists, what="r-1's transcript")
+        os.killpg(first.pid, signal.SIGKILL)
+        first.wait()
+        host = self.ws_dir / "campaigns" / "c1" / "host"
+        scan = host / "canary_scan.py"
+        real = scan.read_text()
+        scan.write_text("import sys\nsys.exit(3)\n")
+        proc = self.sequence(CF_ACCEPT="r-1")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("shard 1 (r-1): CF_ACCEPT names it, but the canary scan of what it left "
+                      "could not run, so it is not accepted", proc.stderr)
+        self.assertFalse((self.state() / "shard-r-1.done").exists())
+        self.assertTrue((self.state() / "STOPPED").exists())
+        self.assertTrue(leaked.exists())
+        self.assertFalse((self.state() / "usage-r-1.jsonl").exists())
+        self.assertEqual(self.runs(), [str(r1)])
+        # once the scan works, the same accept settles it and the campaign moves on
+        scan.write_text(real)
+        (self.state() / "STOPPED").unlink()
+        proc = self.sequence(CF_ACCEPT="r-1")
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains
+        self.assertIn("accepted as it stands", (self.state() / "shard-r-1.done").read_text())
+        self.assertEqual(json.loads((self.state() / "canary-r-1.json").read_text())["hits"], [])
+        self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 1)
+        self.assertFalse(leaked.exists())
+        self.assertEqual(self.runs(), [str(r1), str(self.remote / "r-2-tend")])
+
+    def test_a_baseline_an_older_sequencer_wrote_in_the_locales_order_still_holds(self):
+        """The trunk's sequencer sorted the baseline in the host's locale; comm now runs in C.
+
+        An interrupted shard resumed under the new template compared that file as
+        it stood, and judged a file that was already there new: exported and deleted.
+        """
+        self.render()
+        r1 = self.remote / "r-1-tend"
+        # two transcripts of an earlier run in r-1's root, there before the shard started
+        old = [self.transcript("alpha.jsonl", r1), self.transcript("Zeta.jsonl", r1)]
+        self.assertLess(b"Zeta", b"alpha")                 # C order, which en_US reverses
+        self.state().mkdir(parents=True, exist_ok=True)
+        (self.state() / "shard-r-1.before").write_bytes(
+            b"".join(os.fsencode(p) + b"\0" for p in old))
+        (self.state() / "shard-r-1.started").write_text("")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains
+        self.assertIn("settling what its earlier attempt left", proc.stderr)
+        for path in old:
+            self.assertTrue(path.exists(), f"{path.name}, there before the shard, was pruned")
+        # the relaunch's own transcript, and nothing else, is r-1's
         self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 1)
         self.assertFalse((self.transcripts / "r-1-tend.jsonl").exists())
 

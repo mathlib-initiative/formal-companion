@@ -3,10 +3,11 @@
 New code, for docs/proposals/wikipedia-locate.md sections 2.3 to 2.5
 (universes, library indexes, the probe): the driver the operator runs on the
 run host.  The driver runs SHARD_COUNT ``lake env lean`` shards in the
-background; these tests stand a stub ``lake`` in for Lean (on the clean PATH
-the driver gives its shards, under a temporary HOME) and check that a failed
-shard is reported by number on a bash older than 5.1, and that no shard
-outlives the driver.  No Lean, no network.
+background; these tests stand a stub ``lake`` in for Lean, and stubs for
+``ionice`` and ``python3`` beside it (on the clean PATH the driver gives its
+shards, under a temporary HOME), and check that a failed shard is reported by
+number on a bash older than 5.1, and that no shard outlives the driver.  No
+Lean, no network.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -48,16 +50,55 @@ OLD_WAIT = """wait() {
 """
 
 
+def driver_bash() -> str | None:
+    """A bash the driver runs on (``wait -n``: 4.3 or later), or None.
+
+    A stock macOS ``bash`` is 3.2; the Linux run host's is 5.x.
+    """
+    for candidate in (shutil.which("bash"), "/bin/bash", "/usr/bin/bash",
+                      "/opt/homebrew/bin/bash", "/usr/local/bin/bash"):
+        if not candidate or not os.path.exists(candidate):
+            continue
+        got = subprocess.run([candidate, "-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"],
+                             capture_output=True, text=True)
+        try:
+            major, minor = (int(x) for x in got.stdout.split())
+        except ValueError:
+            continue
+        if (major, minor) >= (4, 3):
+            return candidate
+    return None
+
+
+def alive(pid: int) -> bool:
+    """Is *pid* a live process (a zombie is not)?  /proc where there is one, else ps."""
+    stat = Path(f"/proc/{pid}/stat")
+    if Path("/proc/self/stat").exists():
+        try:
+            return stat.read_text().rsplit(")", 1)[1].split()[0] != "Z"
+        except OSError:
+            return False
+    got = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return got.returncode == 0 and bool(got.stdout.strip()) and not got.stdout.strip().startswith("Z")
+
+
 class TestTheProbeDriver(unittest.TestCase):
 
     def setUp(self):
+        self.bash = driver_bash()
+        if self.bash is None:
+            self.skipTest("the probe driver needs bash 4.3 or later (`wait -n`)")
         self.tmp = Path(tempfile.mkdtemp(prefix="cf-probe-host-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.home = self.tmp / "home"
-        (self.home / ".elan" / "bin").mkdir(parents=True)
-        lake = self.home / ".elan" / "bin" / "lake"
-        lake.write_text(STUB_LAKE)
-        lake.chmod(0o755)
+        bindir = self.home / ".elan" / "bin"
+        bindir.mkdir(parents=True)
+        # the clean PATH the driver gives Lean starts here: the stub lake, an
+        # ionice (a Linux tool) that only runs its command, and this python3
+        for name, text in (("lake", STUB_LAKE), ("ionice", '#!/bin/sh\nshift\nexec "$@"\n')):
+            (bindir / name).write_text(text)
+            (bindir / name).chmod(0o755)
+        (bindir / "python3").symlink_to(sys.executable)
         self.checkout = self.tmp / "alpha"
         (self.checkout / ".lake" / "build").mkdir(parents=True)
         (self.checkout / "lean-toolchain").write_text("leanprover/lean4:v4.0.0\n")
@@ -70,15 +111,7 @@ class TestTheProbeDriver(unittest.TestCase):
         return [int(x) for x in path.read_text().split()] if path.exists() else []
 
     def live_shards(self) -> list[int]:
-        out = []
-        for pid in self.pids():
-            try:
-                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-            except OSError:
-                continue
-            if state != "Z":
-                out.append(pid)
-        return out
+        return [pid for pid in self.pids() if alive(pid)]
 
     def kill_shards(self) -> None:
         for pid in self.live_shards():
@@ -94,7 +127,7 @@ class TestTheProbeDriver(unittest.TestCase):
         return env
 
     def argv(self) -> list[str]:
-        return ["bash", str(PROBE_HOST), str(self.checkout), "alpha", "Alpha",
+        return [self.bash, str(PROBE_HOST), str(self.checkout), "alpha", "Alpha",
                 str(self.tmp / "out")]
 
     def test_a_failed_shard_is_named_on_a_bash_without_wait_p(self):

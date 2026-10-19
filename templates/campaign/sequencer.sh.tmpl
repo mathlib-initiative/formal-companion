@@ -23,8 +23,10 @@
 # A stopped shard is never relaunched as it stands: a resumed shard first
 # settles what its earlier attempt left (scan, export, prune), and is refused
 # while one of its canary reports holds a hit or the watchdog already finds a
-# reason to drain it. Raise its cap (re-plan the shard, then `cf campaign plan`
-# and `render` again) or accept it as it stands with CF_ACCEPT. Before a shard is
+# reason to drain it. Only CF_ACCEPT, which accepts it as it stands, passes a
+# canary hit. A higher cap (re-plan the shard, then `cf campaign plan` and
+# `render` again) passes only a stop at the cap: a gate-failure rate or a cost
+# per merged task past its threshold is the same at any cap. Before a shard is
 # launched, a watchdog still on its root (a killed sequencer's) is stopped, so
 # the relaunch is watched at this sequencer's figures alone.
 #
@@ -45,9 +47,11 @@
 #   CF_WATCH_INTERVAL    seconds between watchdog checks (default 300)
 #   CF_ACCEPT            run ids (separated by commas, colons or spaces) the operator
 #                        accepts as they stand: such a shard, if it has started (it
-#                        stopped, or was interrupted), is marked done, with the reason
-#                        it stopped, and the campaign moves on to the next. An id that
-#                        names a shard that never started, or no shard of this
+#                        stopped, or was interrupted), has what it left settled, is
+#                        marked done, with the reason it stopped, and the campaign
+#                        moves on to the next. While the canary scan of what it left
+#                        cannot run, it is not accepted and the campaign stops. An id
+#                        that names a shard that never started, or no shard of this
 #                        campaign, is ignored with a log line: that shard runs.
 set -uo pipefail
 
@@ -198,7 +202,9 @@ finish_transcripts() {   # <index> <run id> <tend root> <entrypoint> <gate dir>
     log "shard $index ($run): no transcript directories (CF_TRANSCRIPT_DIRS); usage not exported"
     return 0
   fi
-  mapfile -d '' -t new < <(LC_ALL=C comm -z -13 "$STATE/shard-$run.before" <(transcripts))
+  # the baseline is re-sorted for comm: an older sequencer wrote it in the locale's order
+  mapfile -d '' -t new < <(LC_ALL=C comm -z -13 <(LC_ALL=C sort -z -- "$STATE/shard-$run.before") \
+    <(transcripts))
   if [ "${#new[@]}" -gt 0 ]; then
     mapfile -d '' -t files < <(own_transcripts "$3" "$4" "$5" "${new[@]}")
   fi
@@ -341,6 +347,14 @@ run_shard() {   # <index> <run id> <tend root> <entrypoint> <gate dir> <max cost
   elif accepted "$run"; then
     if [ -e "$STATE/shard-$run.started" ] && [ -e "$STATE/shard-$run.before" ]; then
       finish_transcripts "$index" "$run" "$root" "$entrypoint" "$gate"
+      if [ "$?" = 2 ]; then
+        # marked done, its unscanned transcripts would never be exported or scanned
+        log "shard $index ($run): CF_ACCEPT names it, but the canary scan of what it left could" \
+            "not run, so it is not accepted: its transcripts stay unexported; make the scan" \
+            "work, then accept it again"
+        touch "$STATE/STOPPED"
+        return 2
+      fi
     fi
     hit="$(canary_hit "$run")"
     printf 'accepted as it stands by the operator (CF_ACCEPT) at %s; it had stopped: %s%s\n' \
