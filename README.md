@@ -438,9 +438,12 @@ about which is which:
   the fleet path that has been driven from this repo.
 - **Locate is exercised on synthetic inputs only**: a made-up WikiProject in
   recorded API responses, two made-up libraries and a synthetic probe index,
-  driven through every stage by `tests/e2e/locate_synthetic/` (universe,
-  sourceset, candidates, the three presets, the out-of-tree gate over good and
-  bad documents, harvest, tally, the sealed export, the bench). No real page,
+  driven through every stage by `tests/e2e/locate_synthetic/` (universe, a
+  sourceset adopted from a producer's delivery of those responses, candidates,
+  the three presets, the out-of-tree gate over good and bad documents, harvest,
+  tally, the sealed export, the bench; `tests/test_e2e_locate_synthetic.py`
+  replays the enumeration and the fetch from the same responses, offline, beside
+  it). No real page,
   no real library index, no host and no model has been through it; the run
   host's library indexes were built by the probe drivers outside this repo.
 - **Not generalized yet, and where a second book will hurt first**: a numbering
