@@ -93,8 +93,10 @@ release has something to say.
     junk_value, normalisation, renaming, unfolding, bundling) as its
     `convention`, and rule 9 refuses one without, or whose note says
     "stronger", "strict" or "more general" (`CLOSE_MATCH_GENERALITY_PHRASES`);
-    a challenge verdict that leaves a `closeMatch` is held to the same, its note
-    read as the outcomes will write it.
+    a challenge verdict that leaves a `closeMatch` names its convention too, and
+    a downgrade's own note is held to the same words. Rule 9 reads a
+    challenger's own words only: a record's note is its worker's, which the plan
+    refutes by default when it admits a gap and which never forces a verdict.
   - **Rules R1–R7, the policy defaults and the challenger's rule.**
     `references/vocabulary.md` §1.11 states the audit resolver's relation
     rules R1–R7, the maintainer's overridable policy defaults (P1: a definition
