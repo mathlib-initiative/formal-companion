@@ -661,6 +661,13 @@ class Pipeline:
             p.update(outcome="absent", locations=[])
             p["receipt"]["queries"] = ["widget", "Widget "]
             p["receipt"]["query_clauses"] = {"widget": ["c1"]}
+        def close_without_convention(doc):
+            doc["passages"][located]["locations"][0].update(
+                relation="closeMatch", note="the gadget is written as a subset")
+        def close_and_general(doc):
+            doc["passages"][located]["locations"][0].update(
+                relation="closeMatch", convention="encoding",
+                note="more general: any widget-like type")
         def stepless(doc):
             for p in doc["passages"]:
                 for loc in p["locations"]:
@@ -711,7 +718,8 @@ class Pipeline:
                  # the judgment rules (rule 9): the claim list, and every clause on a strong one
                  "rule 9 claims": no_claims, "rule 9 clauses": strong_missing_a_clause,
                  "rule 9 queries": untagged_absence, "rule 9 instantiation": uninstantiated,
-                 "rule 9 step": stepless,
+                 "rule 9 step": stepless, "rule 9 convention": close_without_convention,
+                 "rule 9 generality": close_and_general,
                  # the export's verbatim-source cap, applied by the gate (rule 1)
                  "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
         check(any(loc.get("instantiation") for p in good["passages"] for loc in p["locations"]),

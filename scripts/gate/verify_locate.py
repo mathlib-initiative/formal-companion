@@ -87,7 +87,9 @@ references/locate-documents.md sections 2-4 and 9):
    declaration whose signature (``corpus.sqlite``'s ``decls.signature``) takes
    an instance argument says how it is instantiated (``instantiation``); a
    ``hasPart`` of a proof or remark passage names the displayed step it states
-   (``step``); a challenge document
+   (``step``); a ``closeMatch`` names its convention from a closed list
+   (``convention``) and its note says no "stronger", "strict" or "more
+   general"; a challenge document
    carries the challenger's own claim lists, which its verdicts and overturn
    locations name.
 
@@ -264,6 +266,11 @@ GENERAL_QUERY_TAG = "general"
 PASSAGE_EXAMPLE = "example"
 #: a proof or a remark: its hasPart locations name the displayed step they state
 PASSAGE_OTHER = "other"
+#: the conventions a closeMatch names, and the words its note may not say
+#: (cflib.vocab.CLOSE_MATCH_CONVENTIONS, CLOSE_MATCH_GENERALITY_PHRASES)
+CLOSE_MATCH_CONVENTIONS = frozenset({"notation", "encoding", "junk_value", "normalisation",
+                                     "renaming", "unfolding", "bundling"})
+CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strict", "strictly", "more general")
 #: a judgment rule's one-line field (cflib.vocab.MAX_JUDGMENT_LINE_CHARS)
 MAX_JUDGMENT_LINE_CHARS = 300
 #: the brackets of a binder group in a signature as the index prints it
@@ -1271,6 +1278,25 @@ def admits_missing_clause(note: Any) -> str | None:
     return _phrase_in(note, CLAUSE_GAP_PHRASES)
 
 
+def says_generality(note: Any) -> str | None:
+    """The ``CLOSE_MATCH_GENERALITY_PHRASES`` word a closeMatch note says (cflib.vocab's)."""
+    return _phrase_in(note, CLOSE_MATCH_GENERALITY_PHRASES)
+
+
+def check_convention(problems: Problems, where: str, convention: Any, note: Any) -> None:
+    """Rule 9 (R1, FM4): a closeMatch names its convention, and its note no generality."""
+    if convention not in CLOSE_MATCH_CONVENTIONS:
+        problems.add(9, where, f"a closeMatch names the convention it differs by, one of "
+                               f"{', '.join(sorted(CLOSE_MATCH_CONVENTIONS))} (convention: "
+                               f"<one>); a difference that is none of them is no closeMatch "
+                               f"(R1)")
+    word = says_generality(note)
+    if word:
+        problems.add(9, where, f"a closeMatch note says {word!r}: a strengthening or a "
+                               f"generalisation is broadMatch (R2), a special case "
+                               f"narrowMatch (R3), never a convention (R1)")
+
+
 def _verbatim(problems: Problems, where: str, what: str, text: str, layer: str) -> None:
     """Rule 1's cap on a worker's free text that the gate reads but the export does not."""
     run = lr.verbatim_run(text, layer) if layer else None
@@ -1460,7 +1486,8 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
                    layer: str) -> None:
     """Rule 9 over one location a document asserts: what it states of its passage.
 
-    Its ``clauses`` (R4); a strong one's note admits no gap; a ``hasPart`` of a
+    Its ``clauses`` (R4); a strong one's note admits no gap; a ``closeMatch``
+    names its ``convention`` and its note no generality (R1, FM4); a ``hasPart`` of a
     proof or remark (``passage_kind`` ``other``) names its ``step`` (FM3); and, when the
     declaration's signature in ``corpus.sqlite`` (``decls.signature``, the
     probe's printed type) takes an instance argument among its leading binders,
@@ -1479,6 +1506,8 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
                                    f"(R4), not {relation}")
     if relation == HAS_PART and passage_kind == PASSAGE_OTHER:
         check_step(problems, where, location.get("step"), layer)
+    if relation == CLOSE_MATCH:
+        check_convention(problems, where, location.get("convention"), location.get("note"))
     if relation in LOCATE_RELATIONS and relation != RELATED_MATCH:
         given = _one_line(problems, where, "instantiation", location.get("instantiation"),
                           layer)
@@ -1963,6 +1992,22 @@ def _challenge_claims(cfg: GateConfig, problems: Problems, name: str, doc: dict,
     return out
 
 
+def _close_note(v: dict, rec: dict, layer: str) -> str:
+    """The note a downgrade to closeMatch leaves: the record's own, else the verdict's.
+
+    ``locate.outcomes`` keeps a location's non-empty note, else takes
+    ``locate_records.downgrade_note`` (the verdict's ``note``, else a sentence of
+    its witness); the gate reads the same.
+    """
+    own = str(rec.get("note") or "").strip()
+    if own:
+        return own
+    try:
+        return lr.downgrade_note(v, layer or None)
+    except Exception:  # noqa: BLE001 - the note's own check (rule 1) names its fault
+        return str(v.get("note") or "")
+
+
 def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
                             claims_of: dict[str, list[str] | None], layer: str) -> None:
     """Rule 9 over a location verdict: the relation it leaves states what it says.
@@ -1972,8 +2017,9 @@ def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
     document's ``claims`` for the passage), all of them for a strong relation
     (R4), and a ``relatedMatch`` names none.  A confirm of a strong record whose
     own note admits a clause it does not state is refused: it is a downgrade.  A
-    ``hasPart`` it leaves on a proof or remark names its displayed ``step`` (FM3):
-    a downgrade's own, a confirm's when the record names none.
+    ``hasPart`` it leaves on a proof or remark names its displayed ``step`` (FM3),
+    and a ``closeMatch`` its ``convention`` (R1, FM4): a downgrade's own, a
+    confirm's when the record names none.
     """
     action, old = v.get("action"), rec.get("relation")
     result = old if action == "confirm" else v.get("relation") if action == "downgrade" else None
@@ -1997,6 +2043,13 @@ def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
         # the record a verdict leaves is a hasPart of a proof: the step it states, the
         # verdict's own unless the confirmed record names one
         check_step(problems, where, v.get("step"), layer)
+    if result == CLOSE_MATCH:
+        # the closeMatch a verdict leaves names its convention: a downgrade's own, a
+        # confirm's when the record names none; its note says no generality
+        convention = (v.get("convention") if action == "downgrade" or "convention" in v
+                      else rec.get("convention"))
+        note = _close_note(v, rec, layer) if action == "downgrade" else rec.get("note")
+        check_convention(problems, where, convention, note)
     if action == "downgrade" and result in STRONG_RELATIONS:
         phrase = admits_missing_clause(v.get("note"))
         if phrase:

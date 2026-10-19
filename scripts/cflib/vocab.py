@@ -595,11 +595,30 @@ GENERAL_QUERY_TAG = "general"
 #: alone, instantiated, to entail a clause the passage asserts, and on a proof or
 #: remark passage (``passage_kind`` ``other``) a ``hasPart`` names, in one line,
 #: the displayed step it states.
+#: The conventions a ``closeMatch`` may differ from its passage by (rule R1; the
+#: smoke-2 audit's FM4: closeMatch for a strict derivative, a Banach codomain, a
+#: weaker statement): the location names one as its ``convention`` and says how in
+#: its ``note``.  A strengthening, a generalisation or a weakening is none of them.
+CONVENTION_NOTATION = "notation"
+CONVENTION_ENCODING = "encoding"
+CONVENTION_JUNK_VALUE = "junk_value"
+CONVENTION_NORMALISATION = "normalisation"
+CONVENTION_RENAMING = "renaming"
+CONVENTION_UNFOLDING = "unfolding"
+CONVENTION_BUNDLING = "bundling"
+CLOSE_MATCH_CONVENTIONS = frozenset({CONVENTION_NOTATION, CONVENTION_ENCODING,
+                                     CONVENTION_JUNK_VALUE, CONVENTION_NORMALISATION,
+                                     CONVENTION_RENAMING, CONVENTION_UNFOLDING,
+                                     CONVENTION_BUNDLING})
+#: the words a ``closeMatch`` note may not say: each describes generality, which is
+#: ``broadMatch`` (R2) or ``narrowMatch`` (R3), never a convention (R1)
+#: (:func:`says_generality`; whole words, case-folded)
+CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strict", "strictly", "more general")
 #: the fields the judgment rules add to a location of a locate document (and to an
 #: overturn's): the outcomes keep each one a document wrote, and a challenge task's
 #: manifest shows them to the challenger; none is exported (the record set's format
 #: is unchanged, references/locate-documents.md section 6)
-JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step")
+JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step", "convention")
 #: the longest one-line field a judgment rule asks of a location (``instantiation``,
 #: ``step``)
 MAX_JUDGMENT_LINE_CHARS = 300
@@ -802,6 +821,16 @@ def admits_missing_clause(note) -> str | None:
     or None for a note that admits nothing.
     """
     return _phrase_in(note, CLAUSE_GAP_PHRASES)
+
+
+def says_generality(note) -> str | None:
+    """The :data:`CLOSE_MATCH_GENERALITY_PHRASES` word a ``closeMatch`` note says, or None.
+
+    A closeMatch differs from its passage by a convention only (rule R1): a note
+    that calls the declaration "stronger", "strict" or "more general" describes
+    a ``broadMatch`` or ``narrowMatch``, and the record is refused.
+    """
+    return _phrase_in(note, CLOSE_MATCH_GENERALITY_PHRASES)
 
 
 def locate_mode(mode: str) -> bool:

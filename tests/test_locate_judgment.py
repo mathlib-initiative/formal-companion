@@ -397,6 +397,102 @@ class TestAChallengersPartOfAProofNamesItsStep(G.GateTestCase):
         self.assertOk(self.run_verdict(action="confirm", clauses=["c1"]))
 
 
+# --------------------------------------------------------------------------- #
+# FM4: a closeMatch differs by a convention, named from a closed list
+# --------------------------------------------------------------------------- #
+
+class TestACloseMatchNamesItsConvention(JudgedLocate):
+
+    def body(self, **loc) -> dict:
+        body = judged_body()
+        body["passages"][0]["locations"][0].update(relation="closeMatch", **loc)
+        return body
+
+    def test_a_close_match_names_a_listed_convention(self):
+        note = "the size is written as a cardinal"
+        self.assertRefusedOnlyUnderTheRules(self.body(note=note), "names the convention it "
+                                                                   "differs by")
+        self.assertRule(self.run_body(self.body(note=note, convention="generality")), 9,
+                        "bundling, encoding, junk_value, normalisation, notation, renaming, "
+                        "unfolding")
+        for convention in sorted(vocab.CLOSE_MATCH_CONVENTIONS):
+            with self.subTest(convention=convention):
+                self.assertOk(self.run_body(self.body(note=note, convention=convention)))
+
+    def test_a_close_match_note_says_no_generality(self):
+        for note, word in (("a strictly faster derivative", "strictly"),
+                           ("Stronger: any Banach codomain", "stronger"),
+                           ("the strict version of it", "strict"),
+                           ("it is more general than the passage", "more general")):
+            with self.subTest(note=note):
+                self.assertRefusedOnlyUnderTheRules(self.body(note=note, convention="encoding"),
+                                                    f"says {word!r}")
+        # inside a name, the word is no claim of generality
+        self.assertOk(self.run_body(self.body(note="written with HasStrictDerivAt's notation",
+                                              convention="notation")))
+
+    def test_the_closed_lists_are_cflibs(self):
+        self.assertEqual(vl.CLOSE_MATCH_CONVENTIONS, vocab.CLOSE_MATCH_CONVENTIONS)
+        self.assertEqual(vl.CLOSE_MATCH_GENERALITY_PHRASES, vocab.CLOSE_MATCH_GENERALITY_PHRASES)
+        self.assertEqual(vocab.CLOSE_MATCH_CONVENTIONS,
+                         {"notation", "encoding", "junk_value", "normalisation", "renaming",
+                          "unfolding", "bundling"})
+        for note in ("strictly stronger", "more general", "stronger", "strict"):
+            self.assertEqual(vocab.says_generality(note), vl.says_generality(note))
+        self.assertIsNone(vocab.says_generality("a restriction of the codomain"))
+
+
+class TestAChallengersCloseMatchNamesItsConvention(G.GateTestCase):
+
+    TASK = "t-chl-0001"
+    KEY = "9" * 64
+
+    def setUp(self):
+        self.fx = G.Fixture(self, "locate-challenge")
+        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.write_gate()
+
+    def records(self, relation, **extra):
+        doc = G.locate_manifest_doc(self.fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                           "span": G.THEOREM_SPAN, "passage_kind": "theorem",
+                           "relation": relation, **extra}]
+        self.fx.manifest(self.TASK, doc)
+
+    def run_verdict(self, **verdict) -> dict:
+        body = {"verdicts": [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                              "witness": "Read at the pin.", **verdict}],
+                "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
+        return self.fx.run(self.fx.document(self.TASK, body))
+
+    def test_a_downgrade_to_close_match_names_its_convention(self):
+        self.records("exactMatch")
+        down = dict(action="downgrade", relation="closeMatch", clauses=["c1", "c2"],
+                    note="the order is a cardinal")
+        self.assertRule(self.run_verdict(**down), 9, "names the convention")
+        self.assertOk(self.run_verdict(**down, convention="encoding"))
+        self.assertRule(self.run_verdict(**{**down, "note": "a strictly stronger form"},
+                                         convention="encoding"), 9, "'stronger'")
+        # without a note, the witness sentence the outcomes would take is the one read
+        self.assertRule(self.run_verdict(**{k: v for k, v in down.items() if k != "note"},
+                                         convention="encoding",
+                                         witness="It is more general than the passage."),
+                        9, "'more general'")
+
+    def test_a_confirm_names_it_when_the_record_does_not(self):
+        self.records("closeMatch", note="the order is a cardinal")
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"]), 9,
+                        "names the convention")
+        self.assertOk(self.run_verdict(action="confirm", clauses=["c1", "c2"],
+                                       convention="encoding"))
+        self.records("closeMatch", note="the order is a cardinal", convention="encoding")
+        self.assertOk(self.run_verdict(action="confirm", clauses=["c1", "c2"]))
+        self.records("closeMatch", note="stronger than stated", convention="encoding")
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"]), 9,
+                        "'stronger'")
+
+
 class TestAdmitsAMissingClause(unittest.TestCase):
 
     def test_the_closed_phrase_list(self):
@@ -723,6 +819,18 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("A `hasPart` or `narrowMatch` stands only when the declaration alone "
                       "entails a clause of this passage", challenger)
         self.assertIn("does not name its displayed `step`",
+                      self.rendered[vocab.LOCATE]["worker-system.md"])
+
+    def test_fm4_a_close_match_names_a_listed_convention(self):
+        worker = self.worker()
+        self.assertIn("the same up to a **convention**, one of `notation`, `encoding`, "
+                      "`junk_value`, `normalisation`, `renaming`, `unfolding` or `bundling`",
+                      worker)
+        self.assertIn('a closeMatch note that says "stronger", "strict" or "more general" is '
+                      'refused', worker)
+        challenger = self.worker(vocab.LOCATE_CHALLENGE)
+        self.assertIn("A downgrade to `closeMatch` also gives `convention`", challenger)
+        self.assertIn("a `closeMatch` without a listed `convention`",
                       self.rendered[vocab.LOCATE]["worker-system.md"])
 
     def test_fm1_the_challenger_lists_the_clauses_itself(self):

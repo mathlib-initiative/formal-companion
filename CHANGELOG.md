@@ -88,6 +88,13 @@ release has something to say.
     displayed step it states (`step`), and a challenge verdict that leaves one
     there name it too; the outcomes keep the step, a confirm's or an applied
     downgrade's replacing the worker's.
+  - **A closeMatch names its convention (FM4).** A `closeMatch` location names
+    one of `cflib.vocab.CLOSE_MATCH_CONVENTIONS` (notation, encoding,
+    junk_value, normalisation, renaming, unfolding, bundling) as its
+    `convention`, and rule 9 refuses one without, or whose note says
+    "stronger", "strict" or "more general" (`CLOSE_MATCH_GENERALITY_PHRASES`);
+    a challenge verdict that leaves a `closeMatch` is held to the same, its note
+    read as the outcomes will write it.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.
