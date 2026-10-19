@@ -670,8 +670,9 @@ gate shas, observed model ids (from transcripts, with counts), agent CLI,
 tend and agentbox versions, universe sha, sourceset manifest sha, renderer
 version, gold manifest sha, receipts, price table. An A/A replicate is matched
 on the configuration shas a plan records (`run.yaml` `locate.config_shas`: the
-prompt templates and the gate code, without run-specific bytes), not on the
-rendered prompts. `cf bench compare` refuses
+prompt templates and the gate code, without run-specific bytes, and what the
+agent wrappers run with -- agent CLI, model, sandbox bypass, agentbox profile,
+attempt cap, merge target), not on the rendered prompts. `cf bench compare` refuses
 arms whose observed model sets or renderers differ, and `cf bench score`
 refuses an incomplete receipt.
 

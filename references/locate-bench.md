@@ -527,8 +527,9 @@ stale `canaries.txt` looked for something else).
 `run.yaml` `locate.skill_commit`, the checkout it was planned from, else `unrecorded`), the
 configuration -- `gate_files` (the sha of its `locate.config_shas.gate_files` map), `prompts`
 (its `locate.config_shas.prompts`, the template shas) and `agents` (its
-`locate.config_shas.agents`: the agent CLI, the model, the sandbox bypass, the attempt cap and the
-merge target its wrappers ran with), each `unrecorded` for a plan that records no `config_shas`
+`locate.config_shas.agents`: the agent CLI, the model, the sandbox bypass, the agentbox profile,
+the attempt cap and the merge target its wrappers ran with), each `unrecorded` for a plan that
+records no `config_shas`
 (and `agents` for one that records none of it) -- then what it staged and rendered, run id and
 paths included:
 `rendered_gate_files` (the sha of its `locate.gate_files` map), `rendered_prompts` (its
@@ -604,8 +605,9 @@ accepts only when every condition holds:
    measurement, run or locate receipt -- of the baseline's configuration: the comparison is
    refused when any of `universe_sha256`, `sourceset_manifest_sha256`, the tool versions, the
    runs' `skill_commit`, `gate_files` and `prompts` (the configuration shas, never the rendered
-   ones, which name each run), `agents` (so a run whose agents ran with the sandbox bypass is no
-   replicate of one whose agents did not), or `price_table_sha256` differ, and when either score
+   ones, which name each run), `agents` (so a run whose agents ran with the sandbox bypass, or
+   under another agentbox profile, is no replicate of one whose agents did not), or
+   `price_table_sha256` differ, and when either score
    holds a run whose `run.yaml` records no `locate.config_shas`, or no `config_shas.agents`
    (re-plan it);
 6. multiplicity: the j-th claimed, non-replication entry of the bench's ledger uses

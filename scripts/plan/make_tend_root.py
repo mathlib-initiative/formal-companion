@@ -122,9 +122,10 @@ def make_tend_root(
 ) -> dict[str, Any]:
     """Write the tend root. Returns {"files": [...], "warnings": [...], "agent_settings": {...}}
 
-    ``agent_settings`` is ``{agent_host, model, allow_sandbox_bypass}``: the
-    ``CF_AGENT_HOST``, ``CF_MODEL`` and ``CF_ALLOW_SANDBOX_BYPASS`` the wrappers
-    export (each null or false when they export none), as decided here.
+    ``agent_settings`` is ``{agent_host, model, allow_sandbox_bypass,
+    agentbox_profile}``: the ``CF_AGENT_HOST``, ``CF_MODEL``,
+    ``CF_ALLOW_SANDBOX_BYPASS`` and ``CF_AGENTBOX_PROFILE`` the wrappers export
+    (each null or false when they export none), as decided here.
 
     ``model`` is the run's RESOLVED worker model (``cf plan-run --model`` wins,
     then the workspace, then the preset -- see ``plan.models.resolve``).  It
@@ -230,7 +231,8 @@ def make_tend_root(
     # what the wrappers export that names no run: a locate plan records it in run.yaml
     # locate.config_shas.agents, since the wrappers' own shas name the run's paths
     settings = {"agent_host": host or None, "model": model or None,
-                "allow_sandbox_bypass": bool(allow_sandbox_bypass)}
+                "allow_sandbox_bypass": bool(allow_sandbox_bypass),
+                "agentbox_profile": agent.get("agentbox_profile") or None}
     bindir = root / "bin"
     bindir.mkdir(exist_ok=True)
     if bridge_file:

@@ -342,6 +342,19 @@ class TestCandidates(Campaign):
         self.assertIn("cf sourceset adopt <new id>", out + err)
         self.assertNotIn("render it:", out + err)
 
+    def test_an_unnamed_source_render_refused_for_parity_is_reported_so_seam2(self):
+        """Review SEAM-2, its residual: a run over every source reports a standing parity
+        refusal apart, never as a source with "no candidates file yet"."""
+        parity_refuse(self.paths, F.W3)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("1 source(s) have no candidates file because render refused them, the "
+                      f"layer not the producer's: {F.W3}", out + err)
+        self.assertIn(f"no render of {F.SS} settles that", out + err)
+        self.assertNotIn("not rendered and have no candidates file yet", out + err)
+        self.assertFalse(self.paths.candidates_json(F.SS, F.U, F.W3).exists())
+
     def test_the_state_file_records_the_run_through_its_one_writer(self):
         st = read_json(self.paths.sourceset_state_json(F.SS))
         self.assertEqual((st["schema"], st["id"]), ("cf-sourceset-state/1", F.SS))
@@ -1479,6 +1492,7 @@ class TestPlanLocate(Campaign):
         run = read_yaml(self.paths.run_yaml("loc-a"))
         self.assertEqual(a["agents"], {"agent_host": "claude", "model": run["model"],
                                        "allow_sandbox_bypass": False,
+                                       "agentbox_profile": None,
                                        "attempt_cap": vocab.LOCATE_ATTEMPT_CAP,
                                        "merge_target": "main"})
         wrapper = (self.paths.tend_root("loc-a") / "bin" / "worker-agent.sh").read_text()
@@ -1493,6 +1507,30 @@ class TestPlanLocate(Campaign):
                 self.assertEqual(other["agents"], {**a["agents"], key: value})
         self.assertIn("export CF_ALLOW_SANDBOX_BYPASS=1\n",
                       (self.paths.tend_root("loc-c") / "bin" / "worker-agent.sh").read_text())
+
+    def test_the_agentbox_profile_the_wrappers_export_is_configuration_too_seam1(self):
+        """Review SEAM-1, its residual: ``CF_AGENTBOX_PROFILE`` (the workspace's
+        ``hosts.agentbox_profile``) picks the sandbox profile the agents run under, so
+        two runs under two profiles are no A/A replicates; ``config_shas.agents``
+        records it, and a plan that differs from another only in it differs only there."""
+        from cflib.yamlio import write_yaml
+        allow_host(self.paths)
+        extra = ("--host", "examplebox", "--max-cost", "5")
+        F.plan_locate(self, self.root, *extra, run_id="loc-a")
+        data = read_yaml(self.paths.workspace_yaml)
+        data["hosts"]["agentbox_profile"] = "example-profile"
+        write_yaml(self.paths.workspace_yaml, data)
+        F.plan_locate(self, self.root, *extra, run_id="loc-p")
+        F.plan_locate(self, self.root, *extra, run_id="loc-q")
+        a, p, q = (read_yaml(self.paths.run_yaml(r))["locate"]["config_shas"]
+                   for r in ("loc-a", "loc-p", "loc-q"))
+        self.assertEqual(p, q)
+        self.assertIsNone(a["agents"]["agentbox_profile"])
+        self.assertEqual(p["agents"], {**a["agents"], "agentbox_profile": "example-profile"})
+        self.assertEqual({k: v for k, v in p.items() if k != "agents"},
+                         {k: v for k, v in a.items() if k != "agents"})
+        self.assertIn("export CF_AGENTBOX_PROFILE=example-profile\n",
+                      (self.paths.tend_root("loc-p") / "bin" / "worker-agent.sh").read_text())
 
     def test_a_re_plan_keeps_the_campaign_stamp(self):
         """Review OPS-05: a shard re-planned (with another cap, as `cf run`'s refusal tells

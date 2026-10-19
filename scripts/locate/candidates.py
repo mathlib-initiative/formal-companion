@@ -479,7 +479,13 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
         source_ids: Iterable[str] = (), version: int | None = None,
         lists: CuratedLists | None = None, blind: bool = False,
         planted: Path | None = None, limit: int = DEFAULT_LIMIT, workspace=None) -> dict:
-    """Write one candidates file per rendered source; return the counts."""
+    """Write one candidates file per rendered source; return the counts.
+
+    ``skipped_unrendered`` names every unrendered source left without a file, and
+    ``parity_refused`` those of them whose render stands refused because the
+    layer is not the producer's (:func:`inputs.parity_refusals`), which no render
+    of the sourceset settles.
+    """
     manifest = inputs.manifest(paths, sourceset_id, version)
     universe = inputs.load_universe(paths, universe_id)
     fam = websource.family(manifest.family, workspace)
@@ -491,8 +497,9 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
     for sid in wanted:          # another renderer's source: refused before anything is written
         if inputs.rendered(manifest.entries[sid]):
             inputs.check_renderer(manifest.entries[sid], sourceset_id)
-    # a named source render refused for parity is no render away (review SEAM-2)
-    refused = inputs.parity_refusals(paths, sourceset_id, manifest) if source_ids else {}
+    # a source render refused for parity is no render away (review SEAM-2): a named one
+    # is refused as such, and an unnamed one is skipped and reported apart
+    refused = inputs.parity_refusals(paths, sourceset_id, manifest)
     lists = lists or CuratedLists()
     curated_library = None if blind else lists.resolve_library(universe)
     db = inputs.tools_database(paths, universe, blind=blind, planted=planted)
@@ -509,7 +516,7 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
         for sid in wanted:
             entry = manifest.entries[sid]
             if not inputs.rendered(entry):
-                if sid in refused:
+                if source_ids and sid in refused:
                     raise CfError(f"source {sid} is not rendered in version {manifest.version}: "
                                   f"render refused it because the layer is not the producer's: "
                                   + inputs.parity_refused_text({sid: refused[sid]}),
@@ -537,4 +544,5 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
         conn.close()
     return {"sourceset": manifest.pin(), "universe": universe.pin(), "blind": bool(blind),
             "corpus_db": {"kind": db["kind"], "sha256": db["sha256"]}, "dir": str(out_dir),
-            "written": written, "skipped_unrendered": skipped, **counts}
+            "written": written, "skipped_unrendered": skipped,
+            "parity_refused": [sid for sid in skipped if sid in refused], **counts}
