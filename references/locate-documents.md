@@ -453,6 +453,18 @@ What every record carries beyond §2.7's example:
    "renderer": "web-html/3", "span": [10234, 10612], "span_sha256": "<hex>",
    "licence": "CC-BY-SA-4.0"}
   ```
+- A `subject` passage's records carry the article's QID — the source's
+  `wikidata` in `sources.jsonl` — as the subject end's `identifiers.wikidata`
+  (`"identifiers": {"wikidata": "Q99999001"}`, beside `citation`, outside the
+  locate extension), and no other passage's records do: the prominence is the
+  one the record's extension carries, after the challenge, so a prominence
+  overturn to `subject` adds it and one away removes it (the maintainer's
+  decision B5, proposal §2.2; `records.article_qid`). A source with no QID
+  gives none, and one whose `wikidata` is no QID (`Q[1-9][0-9]*`) is refused
+  per passage. The QID is the producer's claim: the consumer checks its enwiki
+  sitelink against the article before it draws a concept-level edge
+  (proposal §11.3). The gate's rule-1 preview writes none (its passages carry
+  no prominence after a challenge, and the checker admits either form).
 - `extensions[‹locate›].section` — the passage's heading path (a list of
   non-empty strings; `[]` is the lead) — and `.prominence` (`subject`,
   `central`, `supporting`), after the challenge (a prominence overturn moves

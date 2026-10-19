@@ -9,8 +9,9 @@ build the same records a worker's document will become, and check them.
 Every input is a plain mapping:
 
 * ``source`` -- the sourceset entry (``source_id``, ``pageid``, ``revision``,
-  ``title``, ``html_sha256``, ``layer_sha256``, ``renderer``) plus ``uri`` (the
-  revision's permalink), ``container_title`` and ``licence`` (an SPDX id);
+  ``title``, ``wikidata``, ``html_sha256``, ``layer_sha256``, ``renderer``) plus
+  ``uri`` (the revision's permalink), ``container_title`` and ``licence`` (an
+  SPDX id);
 * ``passage`` -- the outcome row (``item``, ``passage_kind``, ``span``,
   ``status``, ``challenge``, ``section``, ``prominence``) of
   references/locate-documents.md section 10;
@@ -25,12 +26,14 @@ Three record shapes, all with ``id = <source_id>::<item>``, the same subject
 end -- the capped quote, and in its locate extension the passage's whole
 ``span`` (half-open code-point offsets on the layer, never its text) beside the
 ``layer_sha256`` they index and the ``span_sha256`` of those characters, so a
-consumer holding that layer highlights the passage, not only its quote -- and
-the passage's ``section`` (its heading path) and ``prominence`` in the locate
-extension when the passage row carries them -- :func:`passage_records`, the
-export's entry, requires both -- and, for a passage with a coverage claim (the
-maintainer's decision D1), ``coverage: {complete, parts: [location_key, ...],
-challenge}`` on every one of its records (:func:`coverage_problem`):
+consumer holding that layer highlights the passage, not only its quote, and on
+a ``subject`` passage the article's QID as ``identifiers.wikidata``
+(:func:`article_qid`) -- and the passage's ``section`` (its heading path) and
+``prominence`` in the locate extension when the passage row carries them --
+:func:`passage_records`, the export's entry, requires both -- and, for a
+passage with a coverage claim (the maintainer's decision D1), ``coverage:
+{complete, parts: [location_key, ...], challenge}`` on every one of its records
+(:func:`coverage_problem`):
 
 * :func:`location_record` -- one ``lean`` end at the declaration, ``role:
   key``, the relation and the passage's derived status; a ``closeMatch``
@@ -99,6 +102,10 @@ PROMINENCES = frozenset({"subject", "central", "supporting"})
 RECEIPT_CANDIDATE_KEYS = ("library", "declaration", "verdict", "reason")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_QID = re.compile(r"Q[1-9][0-9]*\Z")
+#: ``cflib.vocab.PROMINENCE``'s subject: the one prominence whose records carry the
+#: article's QID
+SUBJECT = "subject"
 _SPACE = re.compile(r"\s")
 
 
@@ -197,14 +204,39 @@ def passage_span(passage: Mapping[str, Any]) -> list[int]:
     return [start, end]
 
 
+def article_qid(source: Mapping[str, Any], passage: Mapping[str, Any]) -> str | None:
+    """The article's QID a passage's records carry, or None.
+
+    The maintainer's decision B5 (docs/proposals/wikipedia-locate.md sections 2.2
+    and 11.3): only a ``subject`` passage -- its prominence after the challenge --
+    carries its source's ``wikidata``, the page's own QID, as the subject end's
+    ``identifiers.wikidata``; no other passage does, since the article's QID on
+    every passage welds the wrong concepts.  The skill does not check that the
+    QID's enwiki sitelink is this article (no network in library code): its
+    consumer does, before any concept-level edge.  A source with no QID gives
+    None; one whose ``wikidata`` is no QID is refused, never guessed.
+    """
+    if passage.get("prominence") != SUBJECT:
+        return None
+    qid = source.get("wikidata")
+    if qid is None:
+        return None
+    if not isinstance(qid, str) or not _QID.match(qid):
+        raise RecordError(f"{source.get('source_id')}: wikidata {qid!r} is not a Wikidata QID, "
+                          "and a subject passage's records carry it")
+    return qid
+
+
 def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
-                span_sha256: str, span: Iterable[int]) -> dict:
+                span_sha256: str, span: Iterable[int], wikidata: str | None = None) -> dict:
     """The ``html`` end: the revision's permalink, the quote, the CSL citation, the licence.
 
     Its locate extension carries the passage's ``span`` on the layer whose sha is
     the source's ``layer_sha256`` (offsets only: a consumer highlights its own
     copy of that layer), beside ``span_sha256``, the sha of those characters.  A
     span is offsets on one layer, so a source with no layer sha is refused.
+    ``wikidata`` (:func:`article_qid`) is written as ``identifiers.wikidata``,
+    outside the extension, where the format carries an end's identifiers.
     """
     layer_sha = str(source.get("layer_sha256") or "")
     if not _HEX64.match(layer_sha):
@@ -225,9 +257,12 @@ def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
            "layer_sha256": layer_sha, "renderer": str(source["renderer"]),
            "span": [int(start), int(end)], "span_sha256": span_sha256,
            "licence": str(source.get("licence") or "")}
-    return {"type": "html", "uri": uri, "version": revision,
-            "location": {"quote": quote_out}, "citation": citation,
-            "extensions": {EXTENSION: ext}}
+    end = {"type": "html", "uri": uri, "version": revision,
+           "location": {"quote": quote_out}, "citation": citation,
+           "extensions": {EXTENSION: ext}}
+    if wikidata is not None:
+        end["identifiers"] = {"wikidata": wikidata}
+    return end
 
 
 def _commit(library: Mapping[str, Any]) -> str:
@@ -388,7 +423,8 @@ def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     record = {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
         "subject": [subject_end(source, quote, span_sha256=span_sha256,
-                                span=passage_span(passage))],
+                                span=passage_span(passage),
+                                wikidata=article_qid(source, passage))],
         "object": [lean_end(library, location)],
         "relation": str(location["relation"]),
         "kind": str(passage["passage_kind"]),
@@ -417,7 +453,8 @@ def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     record = {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
         "subject": [subject_end(source, quote, span_sha256=span_sha256,
-                                span=passage_span(passage))],
+                                span=passage_span(passage),
+                                wikidata=article_qid(source, passage))],
         "object": [lean_end(lib) for lib in libraries],
         "relation": NO_MATCH,
         "status": NOT_FORMALIZED,
@@ -437,7 +474,8 @@ def unresolved_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     return {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
         "subject": [subject_end(source, quote, span_sha256=span_sha256,
-                                span=passage_span(passage))],
+                                span=passage_span(passage),
+                                wikidata=article_qid(source, passage))],
         "object": [],
         "kind": str(passage["passage_kind"]),
         "extensions": {EXTENSION: _record_ext(passage, universe)},
