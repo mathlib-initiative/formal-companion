@@ -52,7 +52,7 @@ run with a model, and no task has yet gone through worker, gate, reviewer and me
 | the passage head id of §2.2 | `scripts/cflib/passages.py`, `scripts/gate/locate_text.py` | the frozen head rule, restated stdlib-only for the gate in lockstep (a test pins the two) with the layer/head offset map and the exact-once quote match |
 | the locate vocabulary of §2.2, §2.4, §2.6, §5, §8 and §9 | `scripts/cflib/vocab.py`, `references/vocabulary.md` §1.11 | values, bounds, `decide_proof_status`, `derive_status` |
 | licence classes and web-source families of §10 | `scripts/cflib/registry.py`, `registry/sources.yaml`, `POLICY.md` §4.1 | ships `enwiki`; `cf export literature-links` exports quotes only from an open class |
-| L1: web sources, the renderer, sourcesets | `scripts/sources/render_html.py`, `websource.py`, `wikinet.py`, `sourceset.py`; `cf sourceset` | renderer `web-html/3` (layer, formulas, head text, reading copy and its map, sections, blocks, deterministic finders, every view's sha in `render.json`); append-only manifests with page flags and `create --from` to a new renderer; the one Wikipedia client, under `--execute` only, which also asks Wikidata for `flag-biographies`. Parity with `$WIKILEAN`'s text layer is a test that runs only when `CF_WIKILEAN_LAYER` names its output: **unverified** |
+| L1: web sources, the renderer, sourcesets | `scripts/sources/render_html.py`, `websource.py`, `wikinet.py`, `sourceset.py`; `cf sourceset` | renderer `web-html/3` (layer, formulas, head text, reading copy and its map, sections, blocks, deterministic finders, every view's sha in `render.json`); append-only manifests with page flags and `create --from` to a new renderer; the one Wikipedia client, under `--execute` only, which also asks Wikidata for `flag-biographies`. Parity with `$WIKILEAN`'s text layer is pinned by a fixture its own `text_layer` generated (`tests/data/locate/text-layer.json`, synthetic bodies with recorded divergences) and checked per page at render against a producer's `layer_sha256`: **unverified on real pages** |
 | L0: universes, ingest, `corpus.sqlite`, the host tools | `scripts/corpus/`, `templates/corpus/`; `cf corpus` | §2.4's proof status re-decided at ingest; the canary gate per toolchain; the exact table, FTS5 and tags; a blind build for G1-blind; the probe and its host drivers as run on `$HOST` (44 of 45 libraries, before two driver fixes, §12) |
 | L2: candidates | `scripts/locate/candidates.py`; `cf locate candidates` | curated joins and lexical retrieval over `corpus.sqlite` |
 | L3a/L3b/L5: the locate planner and presets | `scripts/locate/`, `scripts/cfcmd/plan_locate.py`, `templates/prompts/locate-*.md.tmpl`; `cf plan-locate` | sourceset-scoped runs, task manifests, the tend root with the out-of-tree gate directory |
@@ -100,7 +100,10 @@ assessment: {class: B, importance: high}
   `source.raw.html` and copied, never refetched, to every other machine.
 - **Adopt the consumer's bytes.** When a consumer (WikiLean) already pins a
   revision of the page and holds the cached parse bytes, the sourceset adopts
-  that revision and those bytes instead of choosing its own (§11.1).
+  that revision and those bytes instead of choosing its own (§11.1). The pins
+  row is the import contract of `references/locate-documents.md` §7: a row may
+  carry the fixed `fetch` and the producer's `layer_sha256`, and `render` refuses
+  a page whose layer is not that sha.
 - **Two text views of one document.** `scripts/sources/render_html.py`
   (stdlib) computes from the canonical body:
   1. the **Literature Links text layer** — the HTML `textContent`
@@ -489,7 +492,14 @@ locate document answers each hit the planner handed its task (the manifest's
 with a location whose relation counts, or with a rejection that gives a reason.
 A `relatedMatch` discharges nothing, and an `accepted` candidate must be one of
 its passage's counting locations. Rule 4 is off in the blind arm. Rule 6 also
-allows only one location per declaration.
+allows only one location per declaration. Rule 1 also holds a worker's free text
+(notes, absence queries, candidate reasons) to the export's verbatim-source cap.
+Rule 7 reads the task file: `tasks/<task-id>.yaml`, never added, changed in its
+`status:` line only, and one task per change set unless `--pre-merge`. Rule 8
+refuses a skip that holds a kept passage's whole span. A `by: attempt_cap`
+document is the bridge's: its reason at a count of at least
+`LOCATE_ATTEMPT_CAP`, and under `--changed-files` the counter in
+`<tend root>/attempts/` at the cap.
 
 ## 5. Challenge
 
@@ -567,7 +577,11 @@ As built (`scripts/run/campaign.py`, `templates/campaign/sequencer.sh.tmpl`;
 smoke test is recorded, which then stands for every shard's. The sequencer
 holds a lock, so one runs per campaign. It keys its state by run id, refuses a
 root with a live `tend run`, and scans each shard's transcripts for the bench's
-label canaries before it prunes them.
+label canaries before it prunes them. A restarted shard keeps its first
+transcript baseline and settles what its earlier attempt left first; a stopped
+shard is never relaunched as it stands (only `CF_ACCEPT` passes a canary hit),
+and a killed sequencer's watchdog never outlives its tend run or watches the
+relaunch.
 
 ## 7. Budget and scale
 
@@ -631,7 +645,8 @@ All per tier, never pooled, with article-clustered intervals:
   confusion over six relations (consumer `special_case` labels are excluded:
   their direction is unknown);
 - pre-gate rejection rates by reason (phantom declaration, outside the
-  universe) from the gate log over every attempt;
+  universe) from the gate log over every worker attempt (an agent's own
+  `--findings` checks counted apart);
 - cost per article over every session of its task, from transcripts;
   benchmark-construction spend in its own receipt.
 
@@ -653,7 +668,10 @@ passages whose gold declaration also appears in dev form a separate
 A score document's `measurement_id` hashes every pin: skill commit, prompt and
 gate shas, observed model ids (from transcripts, with counts), agent CLI,
 tend and agentbox versions, universe sha, sourceset manifest sha, renderer
-version, gold manifest sha, receipts, price table. `cf bench compare` refuses
+version, gold manifest sha, receipts, price table. An A/A replicate is matched
+on the configuration shas a plan records (`run.yaml` `locate.config_shas`: the
+prompt templates and the gate code, without run-specific bytes), not on the
+rendered prompts. `cf bench compare` refuses
 arms whose observed model sets or renderers differ, and `cf bench score`
 refuses an incomplete receipt.
 
