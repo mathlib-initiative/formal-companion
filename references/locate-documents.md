@@ -345,8 +345,8 @@ link copied from the page, whose last mark the reader strips as punctuation.
 A title ending in `?` is also read without it, since the reader ends a link
 typed with that `?` raw at the `?`, as a browser does; either trade-off also
 joins the article named by the same words less the mark. A raw `?` inside a
-title is not read that way: what it leaves (`Who` of `Who? (film)`) is another
-article's whole name, so such a link joins only that article.
+title is not read that way: what it leaves (`Widget` of `Widget? (film)`) is
+another article's whole name, so such a link joins only that article.
 `--blind` reads `corpus.blind.sqlite` and `--tools-corpus-db <file>` a planted
 database. The curated joins and their checks are always the full
 `corpus.sqlite`'s, so a `dropped` reason is true of the universe; a planted file
