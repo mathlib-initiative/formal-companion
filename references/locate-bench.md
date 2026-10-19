@@ -16,7 +16,7 @@ benches/<id>/bench.yaml               the bench's config and state (holds the ca
 benches/<id>/frame.json               the frame, resolved against the pinned sourceset
 benches/<id>/draw.json                the two draws with inclusion probabilities
 benches/<id>/clusters.json            article clusters and the split of each
-benches/<id>/unrendered.txt           drawn articles not yet rendered (only while there are any)
+benches/<id>/unrendered.txt           drawn articles a fetch and a render settle (only while there are any)
 benches/<id>/spans.json               the G3 span sample
 benches/<id>/host/bench-host.json     LABEL-FREE: article ids per split; the only thing a host gets
 benches/<id>/host/canaries.txt        the canary string, for a host-side transcript scan
@@ -92,18 +92,22 @@ independent, so an article can be in both, and each row records `pi_uniform = n/
 says `short: true`.
 
 **A drawn article must be rendered** (its spans are drawn from its layer). When the pinned
-manifest holds one unrendered, the build writes the drawn unrendered source ids to
-`benches/<id>/unrendered.txt` and either:
+manifest holds one unrendered, the build writes the drawn unrendered source ids a fetch and a
+render settle to `benches/<id>/unrendered.txt` -- not a standing parity refusal (a source whose
+render was refused because its layer is not the producer's, `Sourceset.parity_refusals`), which
+every render of the sourceset refuses again and which the build names apart, with its two shas
+-- and either:
 
 - **refuses** (the default), naming them and the step that settles it: fetch and render
   exactly the listed sources (`cf sourceset fetch <set> --select benches/<id>/unrendered.txt
   --execute`, then `cf sourceset render <set> --source <id>`)
   and build again with the newer manifest; the draw depends on the frame and the seed alone,
   and source ids order by page id, so the same pages are drawn whichever revision each page
-  resolves to; or
+  resolves to (a parity refusal is settled only by adopting the producer's corrected delivery
+  into a new sourceset and building the bench on that); or
 - with `--exclude-unrendered`, **benches the rest**: `articles` loses the excluded rows, which
   move, with their `pi_uniform`, `pi_curated`, `pi`, `in_uniform`, `in_curated` and a
-  `reason`, to `excluded` (a key the file carries only then); `uniform.drawn` and
+  `reason` (`not rendered …`, or `parity refused …`), to `excluded` (a key the file carries only then); `uniform.drawn` and
   `curated.drawn` stay as drawn, and the gold manifest carries `excluded` too, so a score of
   the rest says what was drawn and not benched, and with what probability.
 
@@ -521,9 +525,12 @@ stale `canaries.txt` looked for something else).
 
 **Pins and `measurement_id`** (§8.3): `pins` holds, per run of the score, `skill_commit` (its
 `run.yaml` `locate.skill_commit`, the checkout it was planned from, else `unrecorded`), the
-configuration -- `gate_files` (the sha of its `locate.config_shas.gate_files` map) and `prompts`
-(its `locate.config_shas.prompts`, the template shas), each `unrecorded` for a plan that records
-no `config_shas` -- then what it staged and rendered, run id and paths included:
+configuration -- `gate_files` (the sha of its `locate.config_shas.gate_files` map), `prompts`
+(its `locate.config_shas.prompts`, the template shas) and `agents` (its
+`locate.config_shas.agents`: the agent CLI, the model, the sandbox bypass, the attempt cap and the
+merge target its wrappers ran with), each `unrecorded` for a plan that records no `config_shas`
+(and `agents` for one that records none of it) -- then what it staged and rendered, run id and
+paths included:
 `rendered_gate_files` (the sha of its `locate.gate_files` map), `rendered_prompts` (its
 `run.yaml` `prompts`) and `gate` (its `gate.json` sha); then `observed_models` (the receipts'
 `cost.tokens` models, counted by `messages_by_model` when present, else by tokens), `agent_cli`, `tend`, `agentbox` (from
@@ -597,8 +604,10 @@ accepts only when every condition holds:
    measurement, run or locate receipt -- of the baseline's configuration: the comparison is
    refused when any of `universe_sha256`, `sourceset_manifest_sha256`, the tool versions, the
    runs' `skill_commit`, `gate_files` and `prompts` (the configuration shas, never the rendered
-   ones, which name each run), or `price_table_sha256` differ, and when either score holds a run
-   whose `run.yaml` records no `locate.config_shas` (re-plan it);
+   ones, which name each run), `agents` (so a run whose agents ran with the sandbox bypass is no
+   replicate of one whose agents did not), or `price_table_sha256` differ, and when either score
+   holds a run whose `run.yaml` records no `locate.config_shas`, or no `config_shas.agents`
+   (re-plan it);
 6. multiplicity: the j-th claimed, non-replication entry of the bench's ledger uses
    `alpha · 2^-j` (alpha-spending). `--replication <bench>:<entry id>` replicates an accepted,
    claimed entry of ANOTHER bench's ledger (a fresh draw is a new bench) for the same claim, and
@@ -637,7 +646,7 @@ its reader (`scripts/bench/inputs.py` re-implements none):
 | `runs/<run>/challenge-plan.json` (§9) | `locate.outcomes.challenge_values` | each challenge run's `required` records of the locate run |
 | `corpus/<run>/<task-id>/<source-id>.json` (§1–§3, §10) | `locate.outcomes.inventory` (inventory runs), `locate.inputs.harvested_documents` (any run) | inventory documents' `layer_sha256`, `unresolved`, `passages[].{item, span, scope, passage_kind}`; locate documents' `passages[].receipt.candidates[].{library, declaration, verdict}` |
 | `runs/<run>/tend-root/gate/tasks/*.json` (§9) | `locate.outcomes.task_manifests` | the inventory run's `documents[].source_id` (inventory coverage); any run's, for its cost share when `run.yaml` names no `source_ids` |
-| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, skill_commit, gate_files, config_shas.{prompts, gate_files}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
+| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, skill_commit, gate_files, config_shas.{prompts, gate_files, agents}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
 | `corpus/<run>/RECEIPT.json` | `locate.inputs.require_gated` | `complete`, `gate.ok`, `cost.{usd, tokens, messages_by_model, price_table_sha256}` |
 | `runs/<run>/host/gate.jsonl` (brought home by `cf harvest`) | the bench | one line per gate call: `run_id, task_id, task_id_from, changed_files, ownership, mode, ok, exit, documents, by_rule, reasons` (each reason `[rule N] <document>: <where>: <message>`) |
 | `runs/<run>/host/canary.json` (brought home by `cf harvest`) | the bench | `{scanned, hits, canary_sha256}` (raw-byte shas, §8) |

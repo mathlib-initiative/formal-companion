@@ -453,6 +453,45 @@ class TestAPartlyRenderedSourceset(unittest.TestCase):
         args = mock.Mock(sources=[], select=str(lay.unrendered_list))
         self.assertEqual(sourceset_cmd._selection(base, args), [gone])
 
+    def test_a_drawn_article_render_refused_for_parity_is_named_so_seam2(self):
+        """Review SEAM-2: a standing parity refusal is no fetch or render away; the build
+        names it with the step that settles it, and unrendered.txt lists only what a fetch
+        and a render do settle."""
+        from sources import render_html
+        from sources.sourceset import Sourceset
+        refused, plain = sorted(self.drawn)[:2]
+        for sid in (refused, plain):
+            self.unrender(sid)
+        producer, ours = "1" * 64, "2" * 64
+        self.world.change_entry(refused, adopted_from={"consumer": "wikilean",
+                                                       "pins_sha256": "3" * 64,
+                                                       "layer_sha256": producer})
+        ss = Sourceset.open(WorkspacePaths(self.world.root), fx.SOURCESET)
+        ss.record_parity_refusals({refused: {"layer_sha256": ours, "renderer": render_html.RENDERER,
+                                             "producer_layer_sha256": producer}})
+        with self.assertRaises(CfError) as ctx:
+            self.build()
+        lay = layout_of(self.world)
+        self.assertIn(f"render refused 1 of them because the layer is not the producer's: "
+                      f"{refused} (the layer is {ours[:12]}", str(ctx.exception))
+        self.assertIn("adopt the producer's corrected delivery into a new sourceset",
+                      ctx.exception.hint)
+        self.assertIn("build the bench on it", ctx.exception.hint)
+        self.assertIn("--exclude-unrendered", ctx.exception.hint)
+        self.assertIn("cf sourceset fetch", ctx.exception.hint)        # for the plain one
+        self.assertEqual(lay.unrendered_list.read_text(), f"{plain}\n")
+        # rendered, the plain one leaves only the refusal: nothing to fetch, no list
+        self.world.change_entry(plain, **self.rendered[plain])
+        with self.assertRaises(CfError) as ctx:
+            self.build()
+        self.assertNotIn("cf sourceset fetch", ctx.exception.hint)
+        self.assertFalse(lay.unrendered_list.exists())
+        out = self.build("--exclude-unrendered")
+        draw = json.loads(lay.draw_json.read_text())
+        self.assertEqual([r["source_id"] for r in draw["excluded"]], [refused])
+        self.assertTrue(draw["excluded"][0]["reason"].startswith("parity refused"))
+        self.assertIn("1 of them render refused for parity", out)
+
     def test_or_excluded_with_its_inclusion_probabilities(self):
         gone = sorted(self.drawn)[0]
         self.unrender(gone)
@@ -1684,6 +1723,7 @@ def score_doc(fnf_cells, *, models=("m1",), renderer=("web-html/1",), split="eva
                      # the configuration pins (run.yaml locate.config_shas), one per run
                      "gate_files": {f"loc-{mid[:8]}": "9" * 64},
                      "prompts": {f"loc-{mid[:8]}": dict(fx.CONFIG_SHAS["prompts"])},
+                     "agents": {f"loc-{mid[:8]}": dict(fx.CONFIG_SHAS["agents"])},
                      **(pins or {})},
             "canary_check": {"ran": canary},
             "gold_manifest": {"version": 1, "sha256": gold},
@@ -2789,6 +2829,30 @@ class TestRound3Score(unittest.TestCase):
                 compare_mod.check_replicate(base, rep)
             self.assertIn("locate.config_shas", str(ctx.exception))
             self.assertIn("re-plan", ctx.exception.hint or "")
+
+    def test_an_aa_replicate_runs_its_agents_as_the_baseline_did_seam1(self):
+        """Review SEAM-1: a run whose agents ran with the sandbox bypass is not a replicate
+        of one whose agents did not, though its gate code and prompts are the same."""
+        one = score(self.world, "loc1")
+        self.assertEqual(one["pins"]["agents"], {r: fx.CONFIG_SHAS["agents"]
+                                                 for r in one["pins"]["agents"]})
+        bypass = {**fx.CONFIG_SHAS,
+                  "agents": {**fx.CONFIG_SHAS["agents"], "allow_sandbox_bypass": True}}
+        eval_run(self.world, run_id="loc2", inventory_run="inv2", config_shas=bypass)
+        two = score(self.world, "loc2")
+        self.assertEqual(compare_mod.pin_differences(one, two, ("gate_files", "prompts")), [])
+        with self.assertRaises(CfError) as ctx:
+            compare_mod.check_replicate(one, two)
+        self.assertIn("agents differ", str(ctx.exception))
+        self.assertIn("agents differs", compare_mod.refuse_incomparable(one, two))
+        # a plan that recorded the configuration shas but not the agents' settings
+        older = {k: v for k, v in fx.CONFIG_SHAS.items() if k != "agents"}
+        eval_run(self.world, run_id="loc3", inventory_run="inv3", config_shas=older)
+        old = score(self.world, "loc3")
+        self.assertEqual(set(old["pins"]["agents"].values()), {"unrecorded"})
+        with self.assertRaises(CfError) as ctx:
+            compare_mod.check_replicate(one, old)
+        self.assertIn("agents of loc3", str(ctx.exception))
 
     def test_outcomes_tallied_before_the_last_harvest_are_refused_m02(self):
         first = score(self.world)

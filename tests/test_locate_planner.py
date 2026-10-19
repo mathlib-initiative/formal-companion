@@ -75,6 +75,25 @@ def allow_host(paths) -> None:
     write_yaml(paths.workspace_yaml, data)
 
 
+#: the producer's layer sha and this renderer's, for a standing parity refusal
+PRODUCER_SHA, OURS_SHA = "1" * 64, "2" * 64
+
+
+def parity_refuse(paths, sid: str) -> None:
+    """Make ``sid`` (unrendered) a standing parity refusal, as `cf sourceset render` leaves one:
+    its pin carried the producer's layer sha, and the render measured another."""
+    from sources import render_html
+    from sources.sourceset import Sourceset
+    ss = Sourceset.open(paths, F.SS)
+    base = ss.latest()
+    pinned = {**base.get(sid), "adopted_from": {"consumer": "wikilean", "pins_sha256": "3" * 64,
+                                                "layer_sha256": PRODUCER_SHA}}
+    ss.write_version(base, [pinned if e["source_id"] == sid else e for e in base])
+    ss.record_parity_refusals({sid: {"layer_sha256": OURS_SHA, "renderer": render_html.RENDERER,
+                                     "producer_layer_sha256": PRODUCER_SHA}})
+    assert list(ss.parity_refusals()) == [sid]
+
+
 def ablate(source: Path, planted: Path, *modules: tuple[str, str]) -> set[str]:
     """A copy of ``source`` without ``modules`` (``(library, module)``), the way ``cf bench
     freeze --plant`` makes the P tier's database; returns the removed declarations."""
@@ -311,6 +330,18 @@ class TestCandidates(Campaign):
         self.assertNotEqual(code, 0)
         self.assertIn("not rendered", out + err)
 
+    def test_a_named_source_render_refused_for_parity_is_named_so_seam2(self):
+        """Review SEAM-2: no render settles a standing parity refusal, so the refusal names
+        it and the step that does (a corrected delivery in a new sourceset)."""
+        parity_refuse(self.paths, F.W3)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--source", F.W3)
+        self.assertNotEqual(code, 0)
+        self.assertIn("because the layer is not the producer's", out + err)
+        self.assertIn(f"the producer recorded {PRODUCER_SHA[:12]}", out + err)
+        self.assertIn("cf sourceset adopt <new id>", out + err)
+        self.assertNotIn("render it:", out + err)
+
     def test_the_state_file_records_the_run_through_its_one_writer(self):
         st = read_json(self.paths.sourceset_state_json(F.SS))
         self.assertEqual((st["schema"], st["id"]), ("cf-sourceset-state/1", F.SS))
@@ -466,6 +497,24 @@ class TestPlanInventory(Campaign):
         self.assertNotEqual(code, 0)
         self.assertIn(F.W2, out + err)
         self.assertIn(f"cf locate candidates --sourceset {F.SS} --universe {F.U}", out + err)
+
+    def test_a_source_render_refused_for_parity_is_skipped_as_such_seam2(self):
+        """Review SEAM-2: locate.skipped says "parity refused", not "not rendered", and a
+        --source naming it is refused with the step that settles it, not a render."""
+        parity_refuse(self.paths, F.W3)
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-p")
+        self.assertEqual(code, 0, out + err)
+        block = read_yaml(self.paths.run_yaml("inv-p"))["locate"]
+        self.assertEqual(block["skipped"], {F.W3: "parity refused"})
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-q",
+                            "--source", F.W3)
+        self.assertNotEqual(code, 0)
+        self.assertIn("render refused", out + err)
+        self.assertIn(f"{F.W3} (the layer is {OURS_SHA[:12]}", out + err)
+        self.assertIn("adopt the producer's corrected delivery into a new sourceset", out + err)
+        self.assertNotIn("render it:", out + err)
 
     def test_one_source_per_page_the_preferred_one(self):
         """``Manifest.preferred()``: an adopted revision of a page is planned instead."""
@@ -1412,6 +1461,38 @@ class TestPlanLocate(Campaign):
                 shutil.copy2(tdir / template, only / template)
             self.assertEqual(set(lprompts.render_prompts(preset, ctx, tdir=only)),
                              set(lprompts.PROMPT_FILES))
+
+    def test_the_configuration_records_what_the_agents_run_with_seam1(self):
+        """Review SEAM-1: the wrappers are left out of ``config_shas.gate_files`` (they
+        name the run's paths), and they were the only record of the agent host, the model
+        and the sandbox bypass; ``config_shas.agents`` records those, the attempt cap and
+        the merge target as the plan decided them, equal across run ids."""
+        allow_host(self.paths)
+        extra = ("--host", "examplebox", "--max-cost", "5")
+        F.plan_locate(self, self.root, *extra, run_id="loc-a")
+        F.plan_locate(self, self.root, *extra, run_id="loc-b")
+        F.plan_locate(self, self.root, *extra, "--allow-sandbox-bypass", run_id="loc-c")
+        F.plan_locate(self, self.root, *extra, "--model", "claude-opus-5", run_id="loc-d")
+        a, b, c, d = (read_yaml(self.paths.run_yaml(r))["locate"]["config_shas"]
+                      for r in ("loc-a", "loc-b", "loc-c", "loc-d"))
+        self.assertEqual(a, b)
+        run = read_yaml(self.paths.run_yaml("loc-a"))
+        self.assertEqual(a["agents"], {"agent_host": "claude", "model": run["model"],
+                                       "allow_sandbox_bypass": False,
+                                       "attempt_cap": vocab.LOCATE_ATTEMPT_CAP,
+                                       "merge_target": "main"})
+        wrapper = (self.paths.tend_root("loc-a") / "bin" / "worker-agent.sh").read_text()
+        self.assertIn(f"export CF_MODEL={run['model']}\n", wrapper)
+        self.assertIn("export CF_AGENT_HOST=claude\n", wrapper)
+        # the bypass and the model are configuration: only `agents` differs
+        for other, key, value in ((c, "allow_sandbox_bypass", True),
+                                  (d, "model", "claude-opus-5")):
+            with self.subTest(key=key):
+                self.assertEqual({k: v for k, v in other.items() if k != "agents"},
+                                 {k: v for k, v in a.items() if k != "agents"})
+                self.assertEqual(other["agents"], {**a["agents"], key: value})
+        self.assertIn("export CF_ALLOW_SANDBOX_BYPASS=1\n",
+                      (self.paths.tend_root("loc-c") / "bin" / "worker-agent.sh").read_text())
 
     def test_a_re_plan_keeps_the_campaign_stamp(self):
         """Review OPS-05: a shard re-planned (with another cap, as `cf run`'s refusal tells

@@ -200,9 +200,12 @@ def run(args) -> int:
     skipped: dict[str, str] = {}
     challenge_doc = None
     if preset.mode == vocab.LOCATE_INVENTORY:
+        refused = inputs.parity_refusals(paths, args.sourceset, manifest)
         source_ids, unrendered, flagged = lplan.select_sources(
-            manifest, args.sources, include_flagged=args.include_flagged)
-        skipped.update({s: "not rendered" for s in unrendered})
+            manifest, args.sources, include_flagged=args.include_flagged, refused=refused)
+        # a standing parity refusal is no render away: named apart (review SEAM-2)
+        skipped.update({s: inputs.PARITY_REFUSED if s in refused else "not rendered"
+                        for s in unrendered})
         skipped.update(flagged)
         if flagged:
             warnings.append(f"{len(flagged)} source(s) are no concept article and are not "
@@ -353,7 +356,8 @@ def run(args) -> int:
             "config_shas": config_shas(
                 preset, built_root["gate_files"], Path(layouts["local"]["tend_root"]),
                 run_paths=[layouts["host"]["tend_root"], layouts["host"]["gate_dir"],
-                           layouts["host"]["entrypoint"], str(rd)]),
+                           layouts["host"]["entrypoint"], str(rd)],
+                agents=built_root["agents"]),
             "per_task": args.per_task if preset.mode == vocab.LOCATE else None,
             "subject_only": bool(args.subject_only),
             "seed": args.seed if preset.mode == vocab.LOCATE_CHALLENGE else None,
@@ -399,7 +403,7 @@ def run(args) -> int:
 
 
 def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
-                run_paths: list[str]) -> dict[str, dict[str, str]]:
+                run_paths: list[str], agents: dict) -> dict[str, dict]:
     """``locate.config_shas``: the configuration a run was planned with, free of its id.
 
     ``prompts`` is the sha256 of each ``templates/prompts/`` file the plan
@@ -407,7 +411,10 @@ def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
     ``run.yaml``'s ``prompts`` keeps their shas); ``gate_files`` is
     ``locate.gate_files`` less what is the run's own -- ``gate/gate.json``, the
     task manifests, the ``bin/*-agent.sh`` wrappers, and any staged file whose
-    bytes name one of ``run_paths``.  Two plans of one configuration that
+    bytes name one of ``run_paths``; ``agents`` is what those wrappers run with
+    that names no run (``locate.tend_root.agent_settings``: the agent host, the
+    model, the sandbox bypass, the attempt cap and the merge target), as the
+    plan decided it (review SEAM-1).  Two plans of one configuration that
     differ only in run id record equal maps, which is what the bench's A/A
     check compares (review M-01; references/locate-documents.md section 9).
     """
@@ -423,7 +430,7 @@ def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
         if any(needle in data for needle in needles):
             continue
         kept[rel] = sha
-    return {"prompts": prompts, "gate_files": kept}
+    return {"prompts": prompts, "gate_files": kept, "agents": dict(sorted(agents.items()))}
 
 
 def _now() -> str:

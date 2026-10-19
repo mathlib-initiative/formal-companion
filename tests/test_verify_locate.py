@@ -1431,6 +1431,35 @@ class TestRuleOneAppliesTheExportsFreeTextCap(GateTestCase):
                               "witness": "found with a type search"}]}
         self.assertRule(fx.run(fx.document("t-chl-0001", body)), 1, "verbatim")
 
+    def test_the_problem_names_the_passage_once_seam3(self):
+        """Review SEAM-3: the export's message starts with the item, and a locate
+        document's where ends with it; the line names it once.  A challenge verdict's
+        where (``verdicts[i]``) does not name the item, so its message keeps it."""
+        body = locate_body()
+        body["passages"][0]["locations"][0]["note"] = VERBATIM
+        body["passages"][1]["receipt"]["queries"][0] = VERBATIM
+        hits = [p for p in self.run_body(body)["problems"] if "verbatim" in p]
+        self.assertEqual(len(hits), 2, hits)
+        for line, item in zip(hits, (THM_ITEM, LEAD_ITEM)):
+            with self.subTest(item=item):
+                self.assertEqual(line.count(item), 1, line)
+                self.assertIn(f": {item}: a ", line)
+        fx = Fixture(self, "locate-challenge")
+        doc = locate_manifest_doc(fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": LEAD_ITEM, "target": "absence", "span": LEAD_SPAN,
+                           "passage_kind": "theorem"}]
+        fx.manifest("t-chl-0001", doc)
+        verdict = {"verdicts": [{"item": LEAD_ITEM, "target": "absence", "action": "overturn",
+                                 "locations": [location(lib="beta",
+                                                        decl="Beta.Widget.gadget_of_finite",
+                                                        note=VERBATIM)],
+                                 "witness": "found with a type search"}]}
+        hits = [p for p in fx.run(fx.document("t-chl-0001", verdict))["problems"]
+                if "verbatim" in p]
+        self.assertTrue(hits)
+        self.assertIn(f"verdicts[0]: {LEAD_ITEM}: a location's note", hits[0])
+
     def test_the_export_and_the_gate_refuse_the_same_passage(self):
         """One definition: the gate calls the export's check_note and receipt_document."""
         body = locate_body()

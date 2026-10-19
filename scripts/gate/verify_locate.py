@@ -813,6 +813,19 @@ def _preview_universe(cfg: GateConfig) -> dict:
             "libraries": [{"id": lib, **body} for lib, body in sorted(cfg.libraries.items())]}
 
 
+def _own_words(exc: Exception, where: str, item: str) -> str:
+    """Rule 1's message for a free text the export refuses as the source verbatim.
+
+    The export's message starts with the item (``locate_records._free_text``);
+    a ``where`` that already ends with it (a locate document's passage) names it
+    once, while a challenge verdict's ``verdicts[i]`` keeps it (review SEAM-3).
+    """
+    message, lead = str(exc), f"{item}: "
+    if where.endswith(f": {item}") and message.startswith(lead):
+        message = message[len(lead):]
+    return f"{message}; the export refuses it: say it in your own words"
+
+
 def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id: str,
                   layer: str, span: tuple[int, int], quote: dict, item: str,
                   passage_kind: Any, outcome: str | None, locations: list[dict],
@@ -843,7 +856,7 @@ def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id:
             lr.check_note(item, loc.get("note") if isinstance(loc.get("note"), str) else "",
                           layer)
         except lr.RecordError as exc:
-            problems.add(1, where, f"{exc}; the export refuses it: say it in your own words")
+            problems.add(1, where, _own_words(exc, where, item))
             verbatim = True
     reference = {"sha256": _PLACEHOLDER_SHA, "queries": 0, "candidates": 0}
     if outcome == "absent":
@@ -851,7 +864,7 @@ def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id:
             _digest, _text, reference = lr.receipt_document(source_id, item, receipt or {},
                                                             universe, layer)
         except lr.RecordError as exc:
-            problems.add(1, where, f"{exc}; the export refuses it: say it in your own words")
+            problems.add(1, where, _own_words(exc, where, item))
             verbatim = True
     if verbatim:
         return

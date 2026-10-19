@@ -257,18 +257,21 @@ def tools_db(run_universe: dict) -> dict:
 
 
 def config_shas(run: dict) -> dict:
-    """``run.yaml`` ``locate.config_shas`` (``{prompts, gate_files}``), each map or absent.
+    """``run.yaml`` ``locate.config_shas`` (``{prompts, gate_files, agents}``), each map or absent.
 
     ``cf plan-locate`` records the sha of every prompt template it rendered and
-    of every gate and bin file it staged except the run-specific ones, so two
-    plans of one configuration record equal maps (references/locate-documents.md
-    section 9); a plan from before that records none, and its pins read
+    of every gate and bin file it staged except the run-specific ones, and the
+    agent wrappers' settings that name no run (``agents``: host, model, sandbox
+    bypass, attempt cap, merge target), so two plans of one configuration
+    record equal maps (references/locate-documents.md section 9); a plan from
+    before that records none, or no ``agents``, and those pins read
     ``unrecorded``.
     """
     shas = _locate_block(run).get("config_shas")
     if not isinstance(shas, dict):
         return {}
-    return {key: shas[key] for key in ("prompts", "gate_files") if isinstance(shas.get(key), dict)}
+    return {key: shas[key] for key in ("prompts", "gate_files", "agents")
+            if isinstance(shas.get(key), dict)}
 
 
 def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: str,
@@ -314,6 +317,9 @@ def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: 
                        for rid, c in sorted(configs.items())},
         "prompts": {rid: (dict(sorted(c["prompts"].items())) if "prompts" in c else UNRECORDED)
                     for rid, c in sorted(configs.items())},
+        # what the agent wrappers ran with (the sandbox bypass among it), named by no run
+        "agents": {rid: (dict(sorted(c["agents"].items())) if "agents" in c else UNRECORDED)
+                   for rid, c in sorted(configs.items())},
         # what each run staged and rendered, its run id and paths included: recorded only
         "rendered_gate_files": {rid: (sha_of(_locate_block(y)["gate_files"])
                                       if isinstance(_locate_block(y).get("gate_files"), dict)
