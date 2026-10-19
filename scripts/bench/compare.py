@@ -21,13 +21,16 @@ ratio per article cluster) and checks, at once:
    most 0.01 -- a baseline with no such errors counts as a rate of zero, never
    as a pass;
 3. no stratum with n >= 30 drops by more than three points on its interval, for
-   any metric both documents stratify;
+   any metric both documents stratify -- n the stratum's unit count, never its
+   denominator, which G3 weights;
 4. the cost per article rises by at most 20% on its paired interval -- the
    locate and challenge spend alone when the two runs share their inventory
    runs (a shared inventory's cost would dilute the rise), every stage otherwise;
-   two price tables, or a zero-cost baseline the candidate exceeds, fail;
+   two price tables, two cost bases, or a zero-cost baseline the candidate
+   exceeds, fail;
 5. the A/A comparison -- the baseline against a distinct replicate run of its
-   own configuration -- does NOT accept;
+   own configuration (the configuration shas each plan records, never the bytes
+   it rendered for its own run id) -- does NOT accept;
 6. multiplicity: the alpha of the j-th claimed comparison in the bench's ledger
    is ``alpha * 2**-j`` (alpha-spending), unless the comparison replicates an
    accepted claim of ANOTHER bench (a fresh draw), named by its ledger entry,
@@ -52,7 +55,8 @@ from cflib.errors import CfError
 from cflib.jsonio import read_json
 
 from . import metrics
-from .layout import LEDGER_SCHEMA, BenchLayout, now, read_jsonl_rows, sha_of, write_canonical_jsonl
+from .layout import (LEDGER_SCHEMA, UNRECORDED, BenchLayout, now, read_jsonl_rows, sha_of,
+                     write_canonical_jsonl)
 
 #: below both of these a decision is recorded, not claimed
 CLAIM_MIN_ARTICLES = 150
@@ -74,6 +78,10 @@ TIERS = vocab.BENCH_TIER_ORDER
 CONFIG_PINS = ("universe_sha256", "sourceset_manifest_sha256", "agent_cli", "tend", "agentbox",
                "skill_commit", "gate_files", "prompts", "price_table_sha256")
 NOTED_PINS = CONFIG_PINS[:1] + ("corpus_db_sha256",) + CONFIG_PINS[1:]
+#: the per-run configuration pins a plan records in run.yaml locate.config_shas: the
+#: gate code and prompt templates without the bytes a plan renders per run (run id,
+#: run paths), so a run planned before they were recorded cannot be told apart
+CONFIG_SHA_PINS = ("gate_files", "prompts")
 
 
 def load_score(path: Path) -> dict:
@@ -174,11 +182,27 @@ def check_replicate(base: dict, replicate: dict) -> None:
                     b_receipts.get(base.get("run")) == r_receipts.get(replicate.get("run"))):
         raise CfError("the A/A replicate is the baseline's own run, not a replicate of it",
                       hint="re-run the baseline's configuration as a fresh locate run and score it")
+    unrecorded = sorted({f"{pin} of {rid}" for doc in (base, replicate)
+                         for pin in CONFIG_SHA_PINS
+                         for rid, value in _per_run((doc.get("pins") or {}).get(pin), doc)
+                         if value == UNRECORDED})
+    if unrecorded:
+        raise CfError("the A/A check cannot tell the two configurations apart: run.yaml "
+                      "records no locate.config_shas for " + ", ".join(unrecorded),
+                      hint="re-plan those runs with this checkout's cf plan-locate (it records "
+                           "the configuration's shas), then run, harvest, tally and score them")
     differ = pin_differences(base, replicate, CONFIG_PINS)
     if differ:
         raise CfError(f"the A/A replicate is not the baseline's configuration: "
                       f"{', '.join(differ)} differ",
                       hint="an A/A replicate re-runs the baseline's configuration unchanged")
+
+
+def _per_run(pin, doc: dict) -> list[tuple[str, Any]]:
+    """A per-run pin's ``(run, value)`` pairs; a missing one is the score's run, unrecorded."""
+    if isinstance(pin, dict):
+        return sorted(pin.items())
+    return [(str(doc.get("run") or "?"), UNRECORDED if pin is None else pin)]
 
 
 def _metric(name: str) -> tuple[str, str]:
@@ -225,6 +249,15 @@ def _stratum(doc: dict, tier: str, key: str, metric: str) -> dict | None:
     return (((doc.get("strata") or {}).get(tier) or {}).get(key) or {}).get(metric)
 
 
+def _stratum_n(cell: dict, doc: dict, where: str) -> int:
+    """A stratum's unit count (``n``), never its denominator: a G3 denominator is weighted."""
+    n = cell.get("n")
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise CfError(f"{doc.get('measurement_id', '?')[:12]}: stratum {where} counts no units (n)",
+                      hint="re-score both runs with this checkout's cf bench score")
+    return n
+
+
 def evaluate(base: dict, cand: dict, *, claim: str, alpha_j: float, replicates: int,
              seed: int) -> dict[str, Any]:
     """Every condition of the acceptance rule but the A/A and the claim threshold."""
@@ -260,7 +293,8 @@ def evaluate(base: dict, cand: dict, *, claim: str, alpha_j: float, replicates: 
                       & set((cand.get("strata") or {}).get(tier, {}))):
         for name in sorted(set(base["strata"][tier][key]) & set(cand["strata"][tier][key])):
             b, c = base["strata"][tier][key][name], cand["strata"][tier][key][name]
-            n = min(b.get("den") or 0, c.get("den") or 0)
+            n = min(_stratum_n(b, base, f"{tier}.{key}.{name}"),
+                    _stratum_n(c, cand, f"{tier}.{key}.{name}"))
             if n < STRATUM_MIN_N:
                 continue
             d = _improvement(metrics.paired(b["by_cluster"], c["by_cluster"], clusters,
@@ -319,10 +353,15 @@ def _cost(base: dict, cand: dict, clusters: list[str], replicates: int, seed: in
     if tables[0] != tables[1]:
         return {"ok": False, "why": "the two runs were priced from different price tables",
                 "cells": cells}
+    basis = [base.get("cost", {}).get("basis"), cand.get("cost", {}).get("basis")]
+    if basis[0] != basis[1]:
+        # per-article costs price every stage, the receipt spread splits them by stage:
+        # one against the other reads a stage's spend as a rise or hides one
+        return {"ok": False, "why": "the two scores price articles on different bases",
+                "cells": cells, "basis": basis}
     base_value = sum(x[0] for x in b.values()) / max(1.0, sum(x[1] for x in b.values()))
     draws = metrics.paired(b, c, clusters, replicates=replicates, seed=f"{seed}:cost")
     upper = metrics.quantile(draws, 0.95)
-    basis = [base.get("cost", {}).get("basis"), cand.get("cost", {}).get("basis")]
     if base_value <= 0:
         # 20% of nothing is nothing: any rise over a zero-cost baseline exceeds it
         return {"baseline_usd_per_article": base_value, "increase_upper": upper,
@@ -418,7 +457,10 @@ def compare(layout: BenchLayout, base_path: Path, cand_path: Path, *, claim: str
         replicates_pin = (_check_replication(layout, replication, claim, history)
                           if replication is not None else None)
         spent = sum(1 for e in history if e.get("claimed") and not e.get("replication"))
-        if any(e.get("baseline") == base["measurement_id"] for e in history):
+        # a measurement_id names the runs, not the split they were scored on: the dev and
+        # the eval score of one run are two baselines
+        if any(e.get("baseline") == base["measurement_id"] and e.get("split") == base.get("split")
+               for e in history):
             differences.append("baseline reused: an earlier entry compared this same baseline "
                                "measurement")
         alpha_j = float(alpha) if replicates_pin else float(alpha) * (0.5 ** (spent + 1))
@@ -431,13 +473,16 @@ def compare(layout: BenchLayout, base_path: Path, cand_path: Path, *, claim: str
                           seed=seed + 1)
             conditions["aa"] = {"accepted": accepted(aa), "ok": not accepted(aa),
                                 "claim_improvement_lower": aa["claim"]["improvement_lower"],
-                                "replicate": replicate["measurement_id"]}
+                                "replicate": replicate["measurement_id"],
+                                "replicate_score": replicate.get("score_id")}
         decision = "accept" if accepted(conditions) and conditions["aa"]["ok"] else "reject"
         claimed, why = claimable(cand)
         entry = {
             "schema": LEDGER_SCHEMA, "bench": layout.bench_id, "at": now(), "claim": claim,
             "split": cand.get("split"), "arm": cand.get("arm"),
             "baseline": base["measurement_id"], "candidate": cand["measurement_id"],
+            # which score document of each measurement: one run scored two ways is two
+            "baseline_score": base.get("score_id"), "candidate_score": cand.get("score_id"),
             "gold_manifest_sha256": cand["gold_manifest"]["sha256"],
             "alpha": alpha, "alpha_j": alpha_j, "replication": bool(replicates_pin),
             "replicates": replicates_pin, "bootstrap": replicates,

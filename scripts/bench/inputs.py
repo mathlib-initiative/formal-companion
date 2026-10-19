@@ -210,6 +210,23 @@ def tally(paths: WorkspacePaths, run_id: str) -> dict:
     return doc
 
 
+def challenge_required(paths: WorkspacePaths, locate_run: str, challenge_run: str) -> int:
+    """How many records of ``locate_run`` the challenge run's plan required.
+
+    ``locate.outcomes.challenge_values``, the tally's own reader of
+    ``challenge-plan.json``: it refuses a plan of another schema, or one that did
+    not challenge ``locate_run``.
+    """
+    gates = locate_outcomes.challenge_values(paths, locate_run, [challenge_run],
+                                             require_gate=False)[3]
+    return int((gates.get(challenge_run) or {}).get("required") or 0)
+
+
+def challenge_plan_sha(paths: WorkspacePaths, challenge_run: str) -> str:
+    """The sha256 of a challenge run's ``challenge-plan.json``."""
+    return sha256_file(paths.challenge_plan_json(challenge_run))
+
+
 def inventory(paths: WorkspacePaths, run_id: str) -> dict:
     """The frozen inventory of a gated inventory run (``locate.outcomes.inventory``)."""
     return locate_outcomes.inventory(paths, run_id, require_gate=True)
@@ -249,7 +266,8 @@ def gate_log(path: Path) -> list[dict]:
 
 
 def canary_report(path: Path) -> dict:
-    """A host-side canary scan: ``{"scanned": <files>, "hits": [<file names>]}``."""
+    """A host-side canary scan (``scripts/run/canary_scan.py``): ``{"scanned": <files>,
+    "hits": [<file names>], "canaries": <count>, "canary_sha256": [<sha of each>]}``."""
     doc = read_json(path)
     if not isinstance(doc, dict) or not isinstance(doc.get("hits", []), list):
         raise CfError(f"{path} is not a canary scan ({{scanned, hits}})")

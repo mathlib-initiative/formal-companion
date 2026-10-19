@@ -237,15 +237,22 @@ def error_code(cause: str, gold: GoldPassage, run: RunPassage | None) -> str:
 # --------------------------------------------------------------------------
 
 class Ratio:
-    """A ratio kept as ``{cluster: [numerator, denominator]}``."""
+    """A ratio kept as ``{cluster: [numerator, denominator]}``, and ``n``, its units counted.
+
+    ``n`` is the number of units added (gold passages, or (passage, library)
+    pairs), whatever their weight: a G3 span weighs ``1/(pi_span*pi_article)`` in
+    the denominator, so the denominator is no count of anything.
+    """
 
     def __init__(self):
         self.by_cluster: dict[str, list[float]] = {}
+        self.n = 0
 
     def add(self, cluster: str, num: float, den: float = 1.0) -> None:
         cell = self.by_cluster.setdefault(cluster, [0.0, 0.0])
         cell[0] += num
         cell[1] += den
+        self.n += 1
 
     @property
     def num(self) -> float:
@@ -429,11 +436,17 @@ def evaluate_tier(tier: str, gold: list[GoldPassage], run: list[RunPassage], *,
                       for p in passages)
             count("article_fnf_rate", cluster, keys, 0.0 if hit else 1.0)
             if not hit:
-                found = any(set(p.located()) & g.accept for p in passages)
+                state = article_state.get(g.source_id, "ran")
+                if state in ("unresolved", "gate_failed"):
+                    # the inventory never reached the article: that cause, as for a passage
+                    cause, code = state, CAUSE_CODES[state]
+                else:
+                    found = any(set(p.located()) & g.accept for p in passages)
+                    cause, code = "article_level", ("E-WRONG-RELATION" if found
+                                                    else "E-RETRIEVAL-MISS")
                 misses.append({"gold_id": g.gold_id, "tier": tier, "source_id": g.source_id,
-                               "span": None, "kind": "false_not_formalized", "cause": "article_level",
-                               "code": "E-WRONG-RELATION" if found else "E-RETRIEVAL-MISS",
-                               "run_item": None, "run_status": None})
+                               "span": None, "kind": "false_not_formalized", "cause": cause,
+                               "code": code, "run_item": None, "run_status": None})
     return TierResult(ratios=ratios, confusion=confusion, misses=misses, joined=len(joined),
                       gold=len(gold), strata=strata)
 
@@ -522,14 +535,27 @@ EXIT_GATE_BROKEN = 3
 def gate_rejections(lines: list[dict], run_ids: Iterable[str] | None = None) -> dict:
     """Pre-gate rejection rates by rule and reason over every worker attempt of these runs.
 
-    A line with no ``task_id`` is the operator's own call (a harvest re-gate) and is
-    dropped; a line of another run is dropped; a call that exited 3 (the gate
-    could not run) is an infrastructure failure, counted apart and never as a
-    rejection.  A rule is counted from the line's ``by_rule`` when it carries one,
-    else from its reasons' ``[rule N]`` prefixes.
+    An attempt is a gate call that judged a change set (``changed_files: true``):
+    tend's validation of a worker's contribution, whatever ``task_id`` the line
+    names -- a call that found no task id was judged by the single-stem rule
+    (``task_id`` empty, ``task_id_from`` null) and is an attempt all the same.
+    tend's pre-merge command runs the same call over its merge batch, and its
+    line does not say so, so a contribution judged again before its merge is
+    counted again.  The gate logs every call it is asked to make
+    (references/locate-documents.md section 9), so the rest are dropped: an
+    agent's own check of its documents (a worker's or a reviewer's ``--findings``
+    or findings-directory check, and the bridge's observable-state fallback in
+    ``scripts/run/normalize_result.py``, which passes ``--findings``:
+    ``changed_files: false``, with or without a task id), a line of a gate older
+    than the field, and a line of another run.  The harvest's re-gate over the
+    landed corpus writes no line at all (``scripts/harvest/gate_corpus.py`` gives
+    it no log directory).  A call that exited 3 (the gate could
+    not run) is an infrastructure failure, counted apart and never as a
+    rejection.  A rule is counted from the line's ``by_rule`` when it carries
+    one, else from its reasons' ``[rule N]`` prefixes.
     """
     wanted = set(run_ids) if run_ids is not None else None
-    calls = [l for l in lines if str(l.get("task_id") or "").strip()
+    calls = [l for l in lines if l.get("changed_files") is True
              and (wanted is None or str(l.get("run_id") or "") in wanted)]
     broken = [l for l in calls if l.get("exit") == EXIT_GATE_BROKEN]
     attempts = [l for l in calls if l.get("exit") != EXIT_GATE_BROKEN]
