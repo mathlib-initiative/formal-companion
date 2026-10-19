@@ -77,11 +77,6 @@ def rendered(entry: dict | None) -> bool:
                 and entry.get("renderer"))
 
 
-#: ``run.yaml`` ``locate.skipped``'s reason for a source whose render stands refused
-#: because its layer is not the producer's (beside ``"not rendered"``)
-PARITY_REFUSED = "parity refused"
-
-
 def parity_refusals(paths: WorkspacePaths, sourceset_id: str,
                     manifest: Manifest) -> dict[str, dict]:
     """``{source_id: record}`` of ``manifest``'s standing parity refusals.
