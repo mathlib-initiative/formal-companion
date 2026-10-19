@@ -183,16 +183,16 @@ def article_urls(site: str, title: str) -> list[str]:
     exact title, every character but an ASCII letter, digit or underscore
     percent-encoded, which the reader decodes back: a ``?``, ``#`` or quote mark
     is part of the page's name, never the end of its URL, so the join meets a
-    docstring's ``What_Is_Mathematics%3F`` and its ``Widget_lemma%21``.  The
+    docstring's ``What_Is_Widgetry%3F`` and its ``Widget_lemma%21``.  The
     MediaWiki form of ``Widget lemma!`` is ``Widget lemma``'s own URL: the
     docstring side stores the two links alike, so either joins both articles.
 
     The same trade-off keeps a link typed by hand with a title's TRAILING ``?``
-    raw (``What_Is_Mathematics?``): the reader ends the URL at the ``?``, as a
-    browser does, and stores ``What_Is_Mathematics``, so the title less its
+    raw (``What_Is_Widgetry?``): the reader ends the URL at the ``?``, as a
+    browser does, and stores ``What_Is_Widgetry``, so the title less its
     trailing question marks is read too.  A ``?`` inside a title is not: what a
-    raw one leaves (``Who`` of ``Who? (film)``) is another article's whole name,
-    not the same words less a mark.  Nor is a raw ``#``, which no title holds.
+    raw one leaves (``Widget`` of ``Widget? (film)``) is another article's whole
+    name, not the same words less a mark.  Nor is a raw ``#``, which no title holds.
     """
     if not site or not title:
         return []
