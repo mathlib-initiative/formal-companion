@@ -945,6 +945,7 @@ def _preview_source(cfg: GateConfig, source_id: str) -> dict:
             "revision": match.group(2) if match else "0",
             "title": pin.get("title") or source_id,
             "html_sha256": pin.get("html_sha256") or _PLACEHOLDER_SHA,
+            "layer_sha256": pin.get("layer_sha256") or _PLACEHOLDER_SHA,
             "renderer": pin.get("renderer") or "", "uri": pin.get("uri") or source_id,
             "container_title": pin.get("container_title") or "",
             "licence": pin.get("licence") or ""}
@@ -990,7 +991,7 @@ def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id:
     universe = _preview_universe(cfg)
     passage = {"item": item, "source_id": source_id, "challenge": "not_required",
                "passage_kind": passage_kind if passage_kind in PASSAGE_KINDS else "other",
-               "absence": {"challenge": "not_required"}}
+               "span": [span[0], span[1]], "absence": {"challenge": "not_required"}}
     span_sha = lr.sha256_text(layer[span[0]:span[1]])
     verbatim = False
     for loc in locations:

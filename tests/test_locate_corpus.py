@@ -430,7 +430,8 @@ class TestTheUniverse(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(CfError) as caught:
                 universe.add_library(**{**pin, **bad})
             self.assertIn(needle, str(caught.exception))
-        universe.add_library(**{**pin, "brain_lib": "B" * 300, "roots": ["A" * 300]})
+        # a new row's token is also a library token (TestBrainLibIsALibraryToken), at most 64
+        universe.add_library(**{**pin, "brain_lib": "B" * 64, "roots": ["A" * 300]})
         with self.assertRaises(CfError) as caught:
             universe.exclude("delta", "x" * 1001)
         self.assertIn("1001 characters, longer than 1000", str(caught.exception))
@@ -467,6 +468,82 @@ class TestTheUniverse(unittest.TestCase):
         path.write_text("id: u1\nlibraries:\n  - id: alpha\n    commit: nope\n", encoding="utf-8")
         with self.assertRaises(CfError):
             Universe.load(path)
+
+
+class TestBrainLibIsALibraryToken(unittest.TestCase):
+    """B6: u1's ``FF.<Root>`` tokens passed (any non-empty name of at most 300 characters)
+    and the consumer's Brain refuses them; a library added from now on carries a token of
+    ``corpus.universe.BRAIN_LIB``, while a universe written before still loads."""
+
+    def setUp(self):
+        self.root = _scratch(self)
+
+    def pin(self, library_id="gamma", **kw):
+        return dict(library_id=library_id, repo=f"https://example.org/{library_id}",
+                    commit="c" * 40, toolchain=TOOLCHAIN, roots=["G"], **kw)
+
+    def test_a_new_row_outside_the_grammar_is_refused_naming_the_flag(self):
+        universe = make_universe(self.root)
+        for token, hint in (("FF.AdicModules", "FF_AdicModules"), ("Mathlib!", "Mathlib_"),
+                            ("1Lib", "L1Lib"), ("Ma thlib", "Ma_thlib"), ("_Init", "L_Init"),
+                            ("Ä", "L_"), ("A" * 65, "A" * 64)):
+            with self.subTest(brain_lib=token), self.assertRaises(CfError) as caught:
+                universe.add_library(**self.pin(brain_lib=token))
+            self.assertIn(f"brain_lib {token!r} is not a library token", str(caught.exception))
+            self.assertIn(f"--brain-lib {hint}", caught.exception.hint)
+        self.assertEqual(universe.library_ids(), ["alpha"])
+
+    def test_an_id_that_is_no_token_needs_the_flag(self):
+        universe = make_universe(self.root)
+        with self.assertRaises(CfError) as caught:
+            universe.add_library(**self.pin("lean-core"))
+        self.assertIn("brain_lib (the library id, as none was given) 'lean-core'",
+                      str(caught.exception))
+        self.assertIn("--brain-lib lean_core", caught.exception.hint)
+        row = universe.add_library(**self.pin("lean-core", brain_lib="Init"))
+        self.assertEqual(row["brain_lib"], "Init")
+
+    def test_the_consumers_tokens_are_admitted(self):
+        universe = make_universe(self.root)
+        for i, token in enumerate(("Mathlib", "FF_AdicModules", "Init", "Std", "TauCeti",
+                                   "A" * 64, "x")):
+            with self.subTest(brain_lib=token):
+                lid = f"lib{i}"
+                row = universe.add_library(**self.pin(lid, brain_lib=token))
+                self.assertEqual(row["brain_lib"], token)
+        self.assertEqual(universe.library("alpha")["brain_lib"], "alpha")     # the id, a token
+        universe.save()
+
+    def test_a_universe_written_before_the_grammar_still_loads_and_re_adds(self):
+        universe = make_universe(self.root)
+        universe.data["libraries"].append({
+            "id": "ff-adic", "brain_lib": "FF.AdicModules", "repo": "https://example.org/adic",
+            "commit": "d" * 40, "toolchain": TOOLCHAIN, "roots": ["AdicModules"],
+            "licence": None, "conventions": None, "index": None})
+        universe.save()
+        again = Universe.load(universe.path)
+        self.assertEqual(again.validate(), [])
+        self.assertEqual(again.library("ff-adic")["brain_lib"], "FF.AdicModules")
+        pin = dict(library_id="ff-adic", repo="https://example.org/adic", commit="d" * 40,
+                   toolchain=TOOLCHAIN, roots=["AdicModules"])
+        self.assertEqual(again.add_library(**pin, licence="Apache-2.0")["licence"],
+                         {"spdx": "Apache-2.0"})
+        self.assertEqual(again.add_library(**pin, brain_lib="FF.AdicModules")["brain_lib"],
+                         "FF.AdicModules")
+        again.save()
+        self.assertEqual(Universe.load(universe.path).library("ff-adic")["brain_lib"],
+                         "FF.AdicModules")
+
+    def test_cf_corpus_add_refuses_it_and_writes_nothing(self):
+        make_universe(self.root)
+        before = (self.root / "corpora" / "u1" / "universe.yaml").read_bytes()
+        with self.assertRaises(CfError) as caught:
+            cf_main.main(["corpus", "add", "u1", "--library", "gamma", "--repo",
+                          "https://example.org/gamma", "--commit", "c" * 40, "--toolchain",
+                          TOOLCHAIN, "--roots", "G", "--brain-lib", "FF.Gamma",
+                          "--base", str(self.root / "corpora")])
+        self.assertIn("--brain-lib FF_Gamma", caught.exception.hint)
+        self.assertEqual((self.root / "corpora" / "u1" / "universe.yaml").read_bytes(), before)
 
 
 class TestIngest(unittest.TestCase):

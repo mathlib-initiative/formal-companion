@@ -624,15 +624,46 @@ no licence, naming it and the `cf corpus add … --licence <SPDX id>` that recor
 it)`, "display_name"}`, where `display_name` is the library's
 `brain_lib`, the one name the universe gives it, when that is a display name the
 consumer shows (printable ASCII letters, digits, spaces and `,.()/+:'&_-` or `·`,
-at most 100: `export.DISPLAY_NAME_RE`), and null otherwise (`brain_lib` has no
-grammar, and a consumer refuses a set whose display name could read as another
-library's) — and `excluded`, `[{"id",
+at most 100: `export.DISPLAY_NAME_RE`), and null otherwise (a universe written
+before the token grammar of §8 may carry a `brain_lib` outside it, and a consumer
+refuses a set whose display name could read as another library's) — and
+`excluded`, `[{"id",
 "reason"}]`. `brain_lib`, `toolchain` and each root are at most 300 characters,
 a reason at most 1000 (§8, where they are refused). Nothing the universe does
 not define (no index paths, no host instructions).
 
 What every record carries beyond §2.7's example:
 
+- The subject end's `extensions[‹locate›]` carries the passage's whole `span`
+  — `[start, end]`, its half-open code-point offsets on the `web-html/3` layer
+  (two integers, `0 <= start < end`), never its text — and the `layer_sha256`
+  of the layer they index (64 lowercase hex, the source's own in
+  `sources.jsonl`), beside `span_sha256`, the sha256 of those characters. A
+  consumer holding that layer (the producer's, when its `layer_sha256` is this
+  one) highlights the whole passage, not only the capped quote, whose `exact`
+  is the span's head. The export writes both on every record; a consumer
+  treats the pair as optional (a set exported before them still builds) but
+  never one without the other. The gate's rule-1 preview builds the same pair
+  from `gate.json`'s pin. `records.passage_span` refuses a span that is not two
+  integers with `0 <= start < end`, and the export one that leaves the layer.
+
+  ```json
+  {"pageid": 1001, "html_sha256": "<hex>", "layer_sha256": "<hex>",
+   "renderer": "web-html/3", "span": [10234, 10612], "span_sha256": "<hex>",
+   "licence": "CC-BY-SA-4.0"}
+  ```
+- A `subject` passage's records carry the article's QID — the source's
+  `wikidata` in `sources.jsonl` — as the subject end's `identifiers.wikidata`
+  (`"identifiers": {"wikidata": "Q99999001"}`, beside `citation`, outside the
+  locate extension), and no other passage's records do: the prominence is the
+  one the record's extension carries, after the challenge, so a prominence
+  overturn to `subject` adds it and one away removes it (the maintainer's
+  decision B5, proposal §2.2; `records.article_qid`). A source with no QID
+  gives none, and one whose `wikidata` is no QID (`Q[1-9][0-9]*`) is refused
+  per passage. The QID is the producer's claim: the consumer checks its enwiki
+  sitelink against the article before it draws a concept-level edge
+  (proposal §11.3). The gate's rule-1 preview writes none (its passages carry
+  no prominence after a challenge, and the checker admits either form).
 - `extensions[‹locate›].section` — the passage's heading path (a list of
   non-empty strings; `[]` is the lead) — and `.prominence` (`subject`,
   `central`, `supporting`), after the challenge (a prominence overturn moves
@@ -659,10 +690,14 @@ What every record carries beyond §2.7's example:
   challenge downgrade to `closeMatch` takes the verdict's `note`, else the first
   sentence of its witness the quote cap admits (§4); a `closeMatch` with no note
   is refused.
-- An absence keeps one lean end per universe library, each **minimal**:
-  `{"type": "lean", "uri": <repo>, "version": <40-hex commit>}` and nothing else
-  (no `role`, no extension; `universe.json` says which library a repository is),
-  about half the bytes of the earlier form at 48 libraries.
+- An absence keeps one lean end per repository the universe searched, at its
+  commit, each **minimal**: `{"type": "lean", "uri": <repo>, "version": <40-hex
+  commit>}` and nothing else (no `role`, no extension; `universe.json` says which
+  libraries a repository is), about half the bytes of the earlier form at 48
+  libraries. Two libraries split from one repository at one commit (lean-core's
+  `Init` and `Std`, proposal §2.3) are one search target and one end, so a
+  consumer checks the ends against the universe's distinct `(repo, commit)`
+  pairs, each once (`records.absence_ends`; the first library by id places it).
 
 `cf export literature-links --run <locate run> --challenge-run <run> --set-id
 <id>` writes it (`scripts/locate/export.py`, the records from
@@ -1079,7 +1114,15 @@ probed inside a workspace last) and the steps of that library's kind;
 `brain_lib`, `toolchain` and each root are at most 300 characters and an
 exclusion's reason at most 1000 (`corpus.universe.MAX_NAME_CHARS`,
 `MAX_REASON_CHARS`: the record set's consumer refuses a whole set over a longer
-one, so `cf corpus add` refuses it where it is written, as does a load);
+one, so `cf corpus add` refuses it where it is written, as does a load); a
+library `cf corpus add` adds carries a `brain_lib` that is a **library token** —
+a letter, then letters, digits and `_`, at most 64 (`corpus.universe.BRAIN_LIB`,
+the grammar the consumer's Brain admits as a library's name: `Mathlib`,
+`FF_AdicModules`, never `FF.AdicModules`) — the `--brain-lib` given, else the id
+when it is one; any other is refused, naming `--brain-lib` and a spelling it
+admits. Only a new row is held to it: a universe written before (u1's
+`FF.<Root>` tokens) loads, re-adds and exports as it stands, since a frozen
+universe is never rewritten, and the next universe carries tokens;
 `excluded` lists `{id, reason}` (what a universe leaves out WITHIN a library is a
 choice of its `roots`, stated in the proposal's §2.3 for the default universe: Mathlib
 with its `Wanted` library of `proof_wanted` statements, Lean core without the `Lean`

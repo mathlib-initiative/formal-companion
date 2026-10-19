@@ -164,6 +164,39 @@ release has something to say.
     within a task). Both prompts carry the rules word for word, the challenge
     prompt the FM7 rule too, and `tests/test_locate_judgment.py` holds them
     together.
+- An absence record names each repository the universe searched once, at its
+  commit: two universe libraries split from one repository at one commit
+  (lean-core's `Init` and `Std`, proposal §2.3) gave two identical lean ends,
+  and the record set's consumer checks the ends against the universe's distinct
+  `(repo, commit)` pairs, each once. It agreed (2026-10-19) to admit several
+  libraries per repository, so a universe may split lean-core by root. A
+  universe whose repositories are all distinct writes the same ends as before.
+- A `subject` passage's records carry the article's QID, the source's
+  `wikidata`, as the subject end's `identifiers.wikidata`; no other passage's
+  records carry one (the maintainer's decision B5, proposal §2.2 and §11.3).
+  No record carried a QID before, so a consumer could draw no concept-level
+  edge from a record set at all, and the article's QID on every passage welds
+  the wrong concepts. The skill does not check the QID's enwiki sitelink (no
+  network in library code); the consumer does before any concept-level edge.
+  A source whose `wikidata` is no QID is refused per subject passage.
+- A locate record's subject end carries the passage's whole `span` (its
+  half-open code-point offsets on the `web-html/3` layer, never text) and the
+  `layer_sha256` of that layer, the source's own in `sources.jsonl`, beside
+  `span_sha256`, so a consumer holding the layer highlights the whole passage
+  and not only the capped quote. The record set's consumer agreed the shape
+  (both optional to it, together or not at all); the export writes both on
+  every record, and the gate's rule-1 preview builds them from `gate.json`'s
+  pin. A span that is not two integers `0 <= start < end`, or that leaves the
+  layer, is refused by name (`records.passage_span`). `records.py` is staged
+  in the gate directory, so `locate.config_shas.gate_files` changes: a run
+  planned before this is no A/A replicate of one planned after.
+- `cf corpus add` holds a new library's `brain_lib` to the consumer's library
+  token grammar, a letter, then letters, digits and `_`, at most 64
+  (`corpus.universe.BRAIN_LIB`): u1's `FF.<Root>` passed (any name of at most
+  300 characters did) and the consumer's Brain refuses it. A token outside it
+  is refused naming `--brain-lib` and a spelling it admits (`FF_<Root>`), and
+  an id that is no token (`lean-core`) needs `--brain-lib`. A universe written
+  before still loads, re-adds and exports as it stands.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.

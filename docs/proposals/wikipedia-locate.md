@@ -83,7 +83,7 @@ family: enwiki
 pageid: 28767
 revision: 1371234567                 # MediaWiki oldid
 title: Sylow theorems                # metadata only
-wikidata: Q207039                    # the article's own QID (pageprops), metadata
+wikidata: Q207039                    # the article's own QID (pageprops); its subject passages' records carry it (§2.2)
 fetch: {api: action=parse, params_sha256: <sha of the fixed parameter set>}
 raw_sha256: <sha of the bytes as fetched>
 html_sha256: <sha of the canonical body>     # = source_sha
@@ -168,7 +168,21 @@ Links record (§2.7) carries the passage kind as its `kind`.
   passages are located. A passage may not be scoped `non_math` or `expository`
   when L2 holds a tag or curated hit for it (§4).
 - `concept`: a passage's own Wikidata QID, set only when a validated method
-  assigned it (§11.3); never the article's QID by default.
+  assigned it (§11.3); a document's `concept` is never the article's QID by
+  default, and no method assigns a passage a QID of its own yet.
+- **The article's QID on its subject passages** is the one method that gives a
+  record a QID, the maintainer's decision B5 of 2026-10-19 ("write the
+  article's QID as identifiers.wikidata on records of subject-prominence
+  passages only"): the export writes the source's `wikidata` (its pageprops at
+  the pinned revision, or the producer's pin) as the subject end's
+  `identifiers.wikidata` on every record of a passage whose prominence after
+  the challenge is `subject`, and on no other passage's, since the article's
+  QID on every passage welds the wrong concepts (a theorem the article only
+  mentions would join the article's concept). A source with no QID gives its
+  records none, and one whose `wikidata` is no QID is refused. The skill does
+  not check that the QID's enwiki sitelink is this article, since library code
+  has no network (`CLAUDE.md` §3): the consumer does, before any concept-level
+  edge (§11.3).
 
 ### 2.3 Universes
 
@@ -219,11 +233,13 @@ universe_sha256: <sha over sorted (id, commit, index sha)>
     project's `proof_wanted` statements and the definitions its problems
     share; `FormalConjecturesUtil` (tooling) and `FormalConjecturesTest`
     (tests) are out.
-- `brain_lib` is one token per library. A library whose roots are several of a
-  consumer's libraries (lean-core's `Init` and `Std`) carries one token; a
-  consumer that needs one per root splits it into two universe libraries at the
-  same commit, one root each — a token may name only one repository, and a
-  repository may carry several tokens.
+- `brain_lib` is one token per library: a letter, then letters, digits and `_`,
+  at most 64 (`FF_AdicModules`; the consumer's Brain refuses `FF.AdicModules`),
+  which `cf corpus add` enforces on every library it adds. A library whose
+  roots are several of a consumer's libraries (lean-core's `Init` and `Std`)
+  carries one token; a consumer that needs one per root splits it into two
+  universe libraries at the same commit, one root each — a token may name only
+  one repository, and a repository may carry several tokens.
 - **One universe per campaign**, frozen into every shard's `gate.json`. A
   library that fails to build or probe is `excluded` with its reason, and
   absences honestly name the smaller universe.
@@ -378,7 +394,8 @@ A location:
               "location": {"quote": {"exact": "…", "prefix": "…", "suffix": "…"}},
               "citation": {"type": "webpage", "title": "Sylow theorems", "container-title": "Wikipedia",
                            "URL": "https://en.wikipedia.org/w/index.php?title=Sylow_theorems&oldid=1371234567"},
-              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "renderer": "web-html/3",
+              "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "layer_sha256": "<hex>",
+                                          "renderer": "web-html/3", "span": [10234, 10612],
                                           "span_sha256": "<hex>", "licence": "CC-BY-SA-4.0"}}}],
  "object": [{"type": "lean", "uri": "https://github.com/leanprover-community/mathlib4",
              "version": "<40-hex commit>", "role": "key",
@@ -400,6 +417,12 @@ A location:
   `line` alone); a reader treats it as optional.
 - `section` (the passage's heading path) and `prominence` ride on every record
   of the passage, so a reader can single out the subject passage.
+- The subject end carries the passage's whole `span` (half-open offsets on the
+  layer, never text) and the `layer_sha256` it indexes, so a reader holding
+  that layer highlights the passage, not only the capped quote.
+- A `subject` passage's subject end carries the article's QID as
+  `identifiers.wikidata` (`"identifiers": {"wikidata": "Q207039"}`, beside
+  `citation`), and no other passage's does (§2.2).
 - A `closeMatch` always names its convention difference in `note`, one a
   challenge downgraded to `closeMatch` too (the challenger's note, else the
   first sentence of its witness that quotes the source within the quote cap).
@@ -413,10 +436,11 @@ A location:
 - At most **K = 5** locations per passage, ranked.
 
 An absence is one record with `relation: "noMatch"`, `status:
-"not_formalized"`, and **one `lean` end per universe library** (`type`, repo
-`uri` and 40-hex `version`, nothing else: no `location`, no `role`, no
-extension) — the spec's own checked-absence form, readable without fetching
-anything. The universe id and sha ride in the
+"not_formalized"`, and **one `lean` end per repository searched at its
+commit** (`type`, repo `uri` and 40-hex `version`, nothing else: no
+`location`, no `role`, no extension; two libraries split from one repository
+at one commit, §2.3, are one end) — the spec's own checked-absence form,
+readable without fetching anything. The universe id and sha ride in the
 extension; the search receipt (queries, candidates examined, reasons) is a
 sidecar file in the sealed record set, referenced by sha256 and count, never
 inline.
@@ -806,8 +830,14 @@ inputs are sealed, and non-Mathlib libraries are mentions-only by policy.
 Locate output therefore reaches the Brain only (a) through
 `brain/proposals/*.jsonl` and the offline fold, or (b) after the maintainer
 chooses a gate mode for content changes. Concept-level edges come only from
-`subject` passages whose own QID was validated against a sealed Wikidata
-bundle; each library maps to a `brain_lib` token unique per repository.
+`subject` passages, through the article's QID their records carry as
+`identifiers.wikidata` (§2.2). That QID is the producer's claim, not yet a
+validated one: the consumer validates it by checking its enwiki sitelink
+against the article in a sealed Wikidata bundle (WikiLean's sealed entity
+bundle, or the offline fold's QID and label checks), and a record whose QID
+fails the check gives no concept-level edge. A record of any other passage
+carries no QID and gives none. Each library maps to a `brain_lib` token unique
+per repository.
 
 ## 12. Milestones
 

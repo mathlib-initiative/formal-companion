@@ -1528,6 +1528,35 @@ class TestRuleOneAppliesTheExportsFreeTextCap(GateTestCase):
                                   universe)
 
 
+class TestRuleOneBuildsTheExportsSubjectEnd(GateTestCase):
+    """S5: the records rule 1 builds carry the passage's span on the pinned layer, as the
+    export's do, so a document the gate passes is one whose records the export can write."""
+
+    TASK = "t-loc-0001"
+
+    def test_the_preview_records_carry_the_span_and_the_pinned_layer_sha(self):
+        fx = Fixture(self, "locate")
+        fx.manifest(self.TASK, locate_manifest_doc(fx))
+        built = []
+        real = vl.lr.check
+
+        def spy(record):
+            built.append(record)
+            return real(record)
+
+        with mock.patch.object(vl.lr, "check", side_effect=spy):
+            self.assertOk(fx.run(fx.document(self.TASK, locate_body())))
+        spans = {rec["extensions"][vl.lr.EXTENSION]["item"]:
+                 rec["subject"][0]["extensions"][vl.lr.EXTENSION] for rec in built}
+        self.assertEqual(set(spans), {THM_ITEM, LEAD_ITEM})
+        for item, span in ((THM_ITEM, THEOREM_SPAN), (LEAD_ITEM, LEAD_SPAN)):
+            ext = spans[item]
+            with self.subTest(item=item):
+                self.assertEqual(ext["span"], [span[0], span[1]])
+                self.assertEqual(ext["layer_sha256"], fx.layer_sha)
+                self.assertEqual(ext["span_sha256"], _sha(LAYER[span[0]:span[1]].encode("utf-8")))
+
+
 # --------------------------------------------------------------------------- #
 # bounded work, ownership, the log, the cap and the skips
 # --------------------------------------------------------------------------- #

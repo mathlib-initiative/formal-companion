@@ -532,7 +532,7 @@ class TestD5LibrariesProbedInsideAWorkspace(unittest.TestCase):
         universe = make_universe(self.root / "ws-side", libs=())
         universe.add_library(library_id="lean-core", repo="https://example.org/lean4",
                              commit=GITHASH, toolchain="leanprover/lean4:v4.34.0",
-                             roots=["Init.*"])
+                             roots=["Init.*"], brain_lib="LeanCore")
         got = ingest.ingest(universe, "lean-core", self.atlas / "index" / f"lean-core@{GITHASH[:12]}",
                             self.root / "ws-side" / "out")
         self.assertEqual(got["declarations"], 1)
