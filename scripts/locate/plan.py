@@ -572,7 +572,8 @@ def planned_document(run_id: str, tasks: list[TaskSpec]) -> dict:
 def check_root_size(tasks: list[TaskSpec], mode: str = vocab.LOCATE) -> None:
     if len(tasks) > vocab.MAX_TASKS_PER_ROOT:
         hint = ("split the challenged runs over several plans (fewer --challenge-of each, "
-                "each its own --run-id), or lower --sample-rate"
+                "each its own --run-id), or lower --sample-rate, --strong-sample-rate or "
+                "--absence-sample-rate"
                 if mode == vocab.LOCATE_CHALLENGE else
                 "plan the sources in campaign shards of at most "
                 f"{vocab.MAX_TASKS_PER_ROOT} tasks each (references/locate-documents.md "
@@ -588,14 +589,22 @@ def check_root_size(tasks: list[TaskSpec], mode: str = vocab.LOCATE) -> None:
 
 
 def challenge_build(paths: WorkspacePaths, locate_runs: list[str], *, seed: int,
-                    sample_rate: float) -> dict:
-    return cplan.plan(paths, locate_runs, seed=seed, sample_rate=sample_rate)
+                    sample_rate: float,
+                    strong_sample_rate: float = cplan.DEFAULT_STRONG_SAMPLE_RATE,
+                    absence_sample_rate: float = cplan.DEFAULT_ABSENCE_SAMPLE_RATE) -> dict:
+    return cplan.plan(paths, locate_runs, seed=seed, sample_rate=sample_rate,
+                      strong_sample_rate=strong_sample_rate,
+                      absence_sample_rate=absence_sample_rate)
 
 
 def challenge_document(run_id: str, built: dict, tasks: list[TaskSpec], *, seed: int,
-                       sample_rate: float, locate_runs: list[str]) -> dict:
+                       sample_rate: float, locate_runs: list[str],
+                       strong_sample_rate: float = cplan.DEFAULT_STRONG_SAMPLE_RATE,
+                       absence_sample_rate: float = cplan.DEFAULT_ABSENCE_SAMPLE_RATE) -> dict:
     task_of = {key: t.id for t in tasks for key in t.keys}
     return cplan.plan_document(run_id, built, seed=seed, sample_rate=sample_rate,
+                               strong_sample_rate=strong_sample_rate,
+                               absence_sample_rate=absence_sample_rate,
                                task_of=task_of, challenged_runs=locate_runs)
 
 

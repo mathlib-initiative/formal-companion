@@ -1107,12 +1107,22 @@ like a faithfulness run:
   not something a workspace commits.
 - `challenge-plan.json` (a challenge run only) — every record of the challenged
   runs, required or not: `{schema: "cf-locate-challenge-plan/1", run_id,
-  challenged_runs, seed, sample_rate, counts, records: [{key, target, source_id,
+  challenged_runs, seed, sample_rate, strong_sample_rate, absence_sample_rate,
+  counts, records: [{key, target, source_id,
   item, location_key, library, declaration, relation, run_id, prominence, scope,
   outcome, rule, stratum, planned, task_id}]}` (a coverage record adds `parts`, its
-  parts' location keys). `rule` is `refute_by_default`, `hunt`,
-  `sample` or `none` — every coverage claim is `refute_by_default`; `planned` is
-  `required`, `sampled_out` or `not_required`.
+  parts' location keys). `rule` is `refute_by_default`, `hunt`, `basis`,
+  `sample` or `none` — every coverage claim is `refute_by_default`, and a
+  `supporting` passage's basis (the best-ranked location whose own derived status
+  is the passage's) is `basis` when its relation is `exactMatch`, `closeMatch` or
+  `broadMatch`; `stratum` is `relation:<relation>`, `scope:<scope>`,
+  `prominence:supporting` or `outcome:absent` (a `supporting` passage's absence),
+  each drawn at its rate — a strong relation's at `strong_sample_rate`, the
+  absences' at `absence_sample_rate`, every other at `sample_rate` — at least one
+  record of a non-empty stratum whose rate is above zero; `planned` is
+  `required`, `sampled_out` or `not_required`. A plan written before the two later
+  rates carries `sample_rate` alone and no `basis` rule: it drew strong
+  relations and supporting absences at none.
   A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
   for an absence, unresolved outcome, scope, prominence or coverage claim. The outcomes read it
   back: a required record no verdict judged is owed (`challenge: null`). The gate
@@ -1248,7 +1258,9 @@ like a faithfulness run:
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256, tools_corpus_db: {kind, sha256}}, inventory_run,
   challenged_runs, arm, skill_commit, gate_files, config_shas, per_task,
-  subject_only, seed, sample_rate, documents, passages, source_ids, skipped}`.
+  subject_only, seed, sample_rate, strong_sample_rate, absence_sample_rate,
+  documents, passages, source_ids, skipped}` (the three rates null outside a
+  challenge run; a run planned before the two later rates records neither).
   `arm` is `blind` with `--blind`, else `assisted`, and a locate plan whose
   inventory run, or a challenge plan whose challenged runs, are of another arm
   is refused; so is a challenge plan whose tools database is not the one its

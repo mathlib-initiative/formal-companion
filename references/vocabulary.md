@@ -263,8 +263,15 @@ direction, subject the passage, object the declaration.
 
 `noMatch` (`NO_MATCH`) is the relation of an **absence** record only — one `lean` end per universe
 library, no `location` — never of a location. At most `MAX_LOCATIONS_PER_PASSAGE` (5) locations per
-passage, ranked. `WEAK_RELATIONS` (`relatedMatch`, `narrowMatch`, `hasPart`) are the ones the
-challenge sample re-judges. `RELATION_STRENGTH` orders the relations for a challenge's
+passage, ranked. `STRONG_RELATIONS` (`exactMatch`, `closeMatch`, `broadMatch`) are the three that
+formalize a theorem passage against a proved declaration; `WEAK_RELATIONS` (`relatedMatch`,
+`narrowMatch`, `hasPart`) the rest. On a `supporting` passage the challenge plan re-judges both:
+the location that sets the passage's derived status (its **basis**: the best-ranked location
+whose status alone is the passage's) is required whenever its relation is strong, the passage's
+other strong locations are sampled per relation at the plan's `strong_sample_rate`, and its weak
+ones at its `sample_rate` (the smoke-2 audit of 2026-10-19 found the strong relations of
+supporting passages, then never challenged, right about 45% of the time, and every
+formalized supporting passage resting on one). `RELATION_STRENGTH` orders the relations for a challenge's
 `downgrade`, which must name a strictly weaker one: `exactMatch` > `closeMatch` > `broadMatch` >
 `narrowMatch` = `hasPart` > `relatedMatch`.
 
@@ -450,7 +457,7 @@ record no verdict judged.
 | `CHALLENGE_ACTIONS` | `confirm` and `uphold` (`CHALLENGE_KEEP`: the record survives) · `downgrade`, `refute` and `overturn` (`CHALLENGE_CHANGE`: the affected records are `downgraded`) |
 | `UNRESOLVED_ATTEMPT_CAP` | `attempt_cap`: the reason on an `UNRESOLVED` document the bridge writes after a task's third genuine reviewer rejection; never a worker's |
 | `UNRESOLVED_BY` | `worker` (`UNRESOLVED_BY_WORKER`: the worker could not decide) · `attempt_cap` (the bridge, at the cap) — an `UNRESOLVED` document's `unresolved.by` |
-| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, and every coverage claim) · `hunt` (an absence or unresolved outcome on one) · `sample` (the stratified sample's frame: scope demotions, `supporting` demotions, weak relations) · `none` — why the challenge plan put a record where it did |
+| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, and every coverage claim) · `hunt` (an absence or unresolved outcome on one) · `basis` (`CHALLENGE_RULE_BASIS`: the location that sets a `supporting` passage's derived status, when its relation is one of `STRONG_RELATIONS`; required) · `sample` (the stratified sample's frame: scope demotions and `supporting` demotions and weak relations, at `sample_rate`; a `supporting` passage's other strong locations, one stratum per relation, at `strong_sample_rate`; a `supporting` passage's absence, stratum `outcome:absent`, at `absence_sample_rate`, hunted when drawn) · `none` (a `supporting` passage's unresolved outcome) — why the challenge plan put a record where it did |
 | `CHALLENGE_PLANNED` | `required` (`CHALLENGE_REQUIRED`: the record is in a challenge task and its verdict is owed) · `sampled_out` · `not_required` — what the challenge plan says a record is owed, before any verdict |
 | `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
 
@@ -458,7 +465,11 @@ Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an a
 `MIN_COVERAGE_PARTS` (2 distinct `hasPart` parts in a coverage claim), `COVERAGE_RECORD_KEYS`
 (`complete` · `parts` · `challenge`, the keys of a record's claim and of `derive_status`'s),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
-task), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
+task), the challenge plan's default sampling rates `CHALLENGE_SAMPLE_RATE` (0.2: scope and
+`supporting` demotions, weak relations), `CHALLENGE_STRONG_SAMPLE_RATE` (0.5: a `supporting`
+passage's strong locations beside its basis) and `CHALLENGE_ABSENCE_SAMPLE_RATE` (0.25: a
+`supporting` passage's absence; `cf plan-locate --sample-rate`, `--strong-sample-rate`,
+`--absence-sample-rate`, each recorded in `run.yaml`), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
 `EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), the record set's
 token grammars (`references/locate-documents.md` §6, the consumer's own): `RECORDSET_TOKEN`
 (letters, digits and `._:-`, at most 128, a letter or digit first: a seal's `set_id`, its

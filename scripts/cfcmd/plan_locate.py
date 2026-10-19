@@ -89,8 +89,18 @@ def register(subparsers) -> None:
                         "same universe); the gate still checks against the full corpus.sqlite")
     p.add_argument("--seed", type=int, default=0,
                    help="locate-challenge: the stratified sample's seed (default 0)")
-    p.add_argument("--sample-rate", type=float, default=0.2,
-                   help="locate-challenge: the fraction of each stratum re-judged (default 0.2)")
+    p.add_argument("--sample-rate", type=float, default=vocab.CHALLENGE_SAMPLE_RATE,
+                   help="locate-challenge: the fraction of each scope, prominence and weak-"
+                        f"relation stratum re-judged (default {vocab.CHALLENGE_SAMPLE_RATE})")
+    p.add_argument("--strong-sample-rate", type=float, default=vocab.CHALLENGE_STRONG_SAMPLE_RATE,
+                   help="locate-challenge: the fraction of a supporting passage's exactMatch, "
+                        "closeMatch and broadMatch locations re-judged, per relation, beside "
+                        "the one that sets its status, which is always challenged (default "
+                        f"{vocab.CHALLENGE_STRONG_SAMPLE_RATE})")
+    p.add_argument("--absence-sample-rate", type=float,
+                   default=vocab.CHALLENGE_ABSENCE_SAMPLE_RATE,
+                   help="locate-challenge: the fraction of the supporting passages' absences "
+                        f"hunted (default {vocab.CHALLENGE_ABSENCE_SAMPLE_RATE})")
     p.add_argument("--max-open-tasks", type=int, default=None,
                    help="chain depends_on so tend holds at most N open tasks (waves)")
     p.add_argument("--workers", type=int, default=None,
@@ -133,7 +143,7 @@ def _check_mode_flags(args) -> None:
     if args.preset == vocab.LOCATE_CHALLENGE and args.sources:
         raise CfError("--source does not narrow a challenge: it judges every required record "
                       "of the --challenge-of runs",
-                      hint="challenge fewer locate runs per plan, or lower --sample-rate")
+                      hint="challenge fewer locate runs per plan, or lower the sample rates")
     if args.max_open_tasks is not None and args.max_open_tasks < 1:
         raise CfError(f"--max-open-tasks must be at least 1, not {args.max_open_tasks}",
                       hint="omit it to leave tend's open tasks unbounded")
@@ -242,18 +252,24 @@ def run(args) -> int:
             outcomes_pin_check(paths, run, manifest, universe, arm)
             tools_pin_check(paths, run, tools_db)
         built = lplan.challenge_build(paths, list(args.challenge_of), seed=args.seed,
-                                      sample_rate=args.sample_rate)
+                                      sample_rate=args.sample_rate,
+                                      strong_sample_rate=args.strong_sample_rate,
+                                      absence_sample_rate=args.absence_sample_rate)
         tasks = lplan.challenge_tasks(manifest, built, paths)
         challenge_doc = lplan.challenge_document(run_id, built, tasks, seed=args.seed,
                                                  sample_rate=args.sample_rate,
+                                                 strong_sample_rate=args.strong_sample_rate,
+                                                 absence_sample_rate=args.absence_sample_rate,
                                                  locate_runs=list(args.challenge_of))
         source_ids = sorted({d["source_id"] for t in tasks for d in t.documents})
     if preset.mode == vocab.LOCATE_CHALLENGE and not tasks and challenge_doc["records"]:
         # every record is not_required or sampled_out: the plan IS the challenge's result,
         # and it needs no task, no harvest and no gate
         warnings.append(f"no record of {', '.join(args.challenge_of)} is required at sample "
-                        f"rate {args.sample_rate}: every one is not_required or sampled_out, "
-                        "there is no challenge task to run, and the plan needs no harvest")
+                        f"rates {args.sample_rate} (weak), {args.strong_sample_rate} (strong) "
+                        f"and {args.absence_sample_rate} (absences): every one is not_required "
+                        "or sampled_out, there is no challenge task to run, and the plan needs "
+                        "no harvest")
     else:
         lplan.check_root_size(tasks, preset.mode)
     # every refusal is above this line: nothing of a refused re-plan is written
@@ -364,6 +380,10 @@ def run(args) -> int:
             "subject_only": bool(args.subject_only),
             "seed": args.seed if preset.mode == vocab.LOCATE_CHALLENGE else None,
             "sample_rate": args.sample_rate if preset.mode == vocab.LOCATE_CHALLENGE else None,
+            "strong_sample_rate": (args.strong_sample_rate
+                                   if preset.mode == vocab.LOCATE_CHALLENGE else None),
+            "absence_sample_rate": (args.absence_sample_rate
+                                    if preset.mode == vocab.LOCATE_CHALLENGE else None),
             "documents": summary["documents"],
             "passages": summary["passages"],
             "source_ids": source_ids,

@@ -101,11 +101,24 @@ def scorer() -> dict:
 #: replicate must share (``bench.compare.CONFIG_PINS`` "planning"); ``seed`` is
 #: recorded beside them, as the ``challenge_seed`` pin, and compared by nothing
 PLANNING_KEYS = ("per_task", "subject_only", "sample_rate")
+#: the planning keys a later planner records (the challenge's strong-relation and
+#: absence sample rates, references/locate-documents.md section 9): pinned where a
+#: run.yaml records them and left out where it does not, so a run planned before
+#: them keeps the measurement id it had, and is no replicate of one planned after
+LATER_PLANNING_KEYS = ("strong_sample_rate", "absence_sample_rate")
 
 
 def _locate_block(run: dict) -> dict:
     block = run.get("locate")
     return block if isinstance(block, dict) else {}
+
+
+def planning(run: dict) -> dict:
+    """The ``planning`` pin of one run: its :data:`PLANNING_KEYS`, and each of the
+    :data:`LATER_PLANNING_KEYS` its run.yaml records."""
+    block = _locate_block(run)
+    return {**{k: block.get(k) for k in PLANNING_KEYS},
+            **{k: block[k] for k in LATER_PLANNING_KEYS if k in block}}
 
 
 def runs_of(paths, run_id: str, rows: list[dict], locate: dict,
@@ -330,8 +343,7 @@ def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: 
         # how each run was planned (run.yaml's own locate keys, never rendered bytes): the
         # task size, the subject-only cut and a challenge's sample rate change what a run
         # does, and no template or staged file carries them
-        "planning": {rid: {k: _locate_block(y).get(k) for k in PLANNING_KEYS}
-                     for rid, y in sorted(yamls.items())},
+        "planning": {rid: planning(y) for rid, y in sorted(yamls.items())},
         # a challenge's seed picks one draw at its sample rate: recorded only (named
         # apart from the scoring inputs' bootstrap seed)
         "challenge_seed": {rid: _locate_block(y).get("seed")

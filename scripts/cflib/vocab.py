@@ -415,8 +415,16 @@ CHALLENGE_VERDICTS = frozenset({CHALLENGE_SURVIVED, CHALLENGE_DOWNGRADED,
 #: the values of a record no challenge judged
 CHALLENGE_UNJUDGED = frozenset({CHALLENGE_NOT_REQUIRED, CHALLENGE_SAMPLED_OUT,
                                 CHALLENGE_PENDING})
-#: the relations a stratified challenge sample re-judges as weak (section 5)
+#: the weak relations: on a ``supporting`` passage the stratified challenge
+#: sample re-judges them at the plan's ``sample_rate`` (section 5)
 WEAK_RELATIONS = frozenset({RELATED_MATCH, NARROW_MATCH, HAS_PART})
+#: the strong relations: the three that formalize a theorem passage against a
+#: proved declaration (:func:`derive_status`).  On a ``supporting`` passage the
+#: one that sets its status (its basis) is required, and every other is
+#: re-judged in a stratified sample at the plan's ``strong_sample_rate``; the
+#: smoke-2 audit found them right about 45% of the time when nobody challenged
+#: them (references/vocabulary.md section 1.11)
+STRONG_RELATIONS = frozenset({EXACT_MATCH, CLOSE_MATCH, BROAD_MATCH})
 
 # --- the locate documents (references/locate-documents.md): the values the
 # stages exchange, defined once here so the renderer, the planner, the gate and
@@ -592,10 +600,23 @@ AGENT_TIMEOUT = "45m"
 # what the plan says it is owed
 CHALLENGE_RULE_REFUTE = "refute_by_default"
 CHALLENGE_RULE_HUNT = "hunt"
+#: the location that sets a ``supporting`` passage's derived status, when its
+#: relation is one of :data:`STRONG_RELATIONS`: required (the passage's status
+#: rests on it alone)
+CHALLENGE_RULE_BASIS = "basis"
 CHALLENGE_RULE_SAMPLE = "sample"
 CHALLENGE_RULE_NONE = "none"
-CHALLENGE_RULES = frozenset({CHALLENGE_RULE_REFUTE, CHALLENGE_RULE_HUNT, CHALLENGE_RULE_SAMPLE,
-                             CHALLENGE_RULE_NONE})
+CHALLENGE_RULES = frozenset({CHALLENGE_RULE_REFUTE, CHALLENGE_RULE_HUNT, CHALLENGE_RULE_BASIS,
+                             CHALLENGE_RULE_SAMPLE, CHALLENGE_RULE_NONE})
+#: the challenge plan's default sampling rates, each a fraction of its strata
+#: (``cf plan-locate --sample-rate``, ``--strong-sample-rate``,
+#: ``--absence-sample-rate``; run.yaml records the ones a plan used): the scope
+#: and ``supporting`` demotions and the weak relations; the strong relations of
+#: a ``supporting`` passage other than its basis; a ``supporting`` passage's
+#: absence, which the challenger hunts
+CHALLENGE_SAMPLE_RATE = 0.2
+CHALLENGE_STRONG_SAMPLE_RATE = 0.5
+CHALLENGE_ABSENCE_SAMPLE_RATE = 0.25
 #: a record the plan put in a challenge task: its verdict is owed
 CHALLENGE_REQUIRED = "required"
 CHALLENGE_PLANNED = frozenset({CHALLENGE_REQUIRED, CHALLENGE_SAMPLED_OUT,

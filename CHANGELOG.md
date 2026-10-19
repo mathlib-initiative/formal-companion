@@ -35,6 +35,20 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- Locate judgment after the smoke-2 audit (2026-10-19: unchallenged supporting
+  records about 65% right, their strong relations about 45%, every error an
+  overclaim). Old harvested runs tally and export as they did: the record set's
+  format is unchanged, and every new rule applies to runs planned with this code.
+  - **The challenge plan (FM2).** On a `supporting` passage the location that
+    sets its derived status (its basis, `challenge_plan.basis`) is required
+    whenever its relation is `exactMatch`, `closeMatch` or `broadMatch`
+    (`cflib.vocab.STRONG_RELATIONS`, rule `basis`); its other strong locations
+    are sampled per relation at `--strong-sample-rate` (default 0.5), and its
+    absences, hunted, at `--absence-sample-rate` (default 0.25), beside the
+    weak relations and demotions at `--sample-rate` (0.2). `challenge-plan.json`
+    and `run.yaml` record the three rates, and the bench's `planning` pin reads
+    the two new ones where a run.yaml records them, so an older run keeps its
+    measurement id.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.

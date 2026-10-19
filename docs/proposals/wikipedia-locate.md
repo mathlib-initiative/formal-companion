@@ -518,9 +518,17 @@ re-runs forty-nine others:
   by default: the challenger matches each clause of the passage to a part and
   checks that no part adds a hypothesis, then confirms the claim or refutes it
   (the parts stay `hasPart`);
-- a stratified sample of `non_math`/`expository` scopes, `supporting`
-  demotions and weak relations (`relatedMatch`, `narrowMatch`, `hasPart`) is
-  re-judged;
+- on a `supporting` passage, the location that sets its derived status (its
+  basis) is refuted like a central one whenever its relation is strong
+  (`exactMatch`, `closeMatch`, `broadMatch`): the passage's status rests on
+  that one record (the smoke-2 audit of 2026-10-19 found such records, then
+  never challenged, right about 45% of the time);
+- a stratified sample is re-judged: of `non_math`/`expository` scopes,
+  `supporting` demotions and weak relations (`relatedMatch`, `narrowMatch`,
+  `hasPart`) at the plan's `sample_rate` (default 0.2); of a `supporting`
+  passage's other strong locations, one stratum per relation, at its
+  `strong_sample_rate` (default 0.5); and of the `supporting` passages'
+  absences, hunted, at its `absence_sample_rate` (default 0.25);
 - everything else is `not_required` or `sampled_out`, and says so — except a
   part of a coverage claim the challenge confirmed, which is `survived` with
   the claim (§2.6); a passage whose prominence the challenge overturned to
