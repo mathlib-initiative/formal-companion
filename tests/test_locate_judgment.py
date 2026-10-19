@@ -1353,7 +1353,13 @@ class TestThePrompts(unittest.TestCase):
                       lines["R5"])
         self.assertIn("A declaration that follows from the passage by weakening states part of "
                       "it at most", lines["R5"])
-        self.assertIn("narrower in one respect and stronger or broader in another", lines["R5"])
+        self.assertIn("a declaration with stronger hypotheses whose conclusion does not give the "
+                      "passage's", lines["R5"])
+        # PD4 (2026-10-19): stronger hypotheses with the passage's conclusion, or a stronger
+        # one, is R3's special case, never relatedMatch.
+        self.assertIn("under stronger hypotheses that some of the passage's own cases meet",
+                      lines["R3"])
+        self.assertNotIn("narrower in one respect and stronger or broader in another", lines["R5"])
         message = vl._instantiation_problem({"library": "alpha", "declaration": "X"},
                                             ["[inst : Foo]"], challenger=False)
         self.assertIn("A setting that neither contains nor is contained in the passage's is "
@@ -1435,18 +1441,18 @@ class TestThePrompts(unittest.TestCase):
 
     @staticmethod
     def rule_lines() -> dict[str, str]:
-        """R1-R7, PD1-PD3 and FM7 as references/vocabulary.md section 1.11 writes them."""
+        """R1-R7, PD1-PD4 and FM7 as references/vocabulary.md section 1.11 writes them."""
         text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
         start = text.index("**How a relation is judged: rules R1\u2013R7**")
         block = text[start:text.index("**The derived status**", start)]
         return {m.group(1): "- **%s** \u2014 %s" % (m.group(1), " ".join(m.group(2).split()))
-                for m in re.finditer(r"^- \*\*(R[1-7]|PD[1-3]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
+                for m in re.finditer(r"^- \*\*(R[1-7]|PD[1-4]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
                                      block, re.M | re.S)}
 
     def test_the_rules_and_the_policy_defaults_are_the_vocabularys_word_for_word(self):
         lines = self.rule_lines()
         self.assertEqual(sorted(lines), sorted([f"R{i}" for i in range(1, 8)]
-                                               + ["PD1", "PD2", "PD3", "FM7"]))
+                                               + ["PD1", "PD2", "PD3", "PD4", "FM7"]))
         for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
             worker = " ".join(self.worker(mode).split())
             for name, line in lines.items():
@@ -1468,7 +1474,7 @@ class TestThePrompts(unittest.TestCase):
             with self.subTest(rule=name):
                 self.assertIn(line, rules)
         self.assertIn(f"const LABELER_VERSION = '{gold_mod.LABELER_VERSION}'", text)
-        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/3")
+        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/4")
 
     def test_the_policy_defaults_say_they_can_be_overridden(self):
         lines = self.rule_lines()
@@ -1476,6 +1482,8 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("over \u2115 where the passage has \u2124 is `narrowMatch` (R3)",
                       lines["PD2"])
         self.assertIn("is `narrowMatch`, never vacuous", lines["PD3"])
+        self.assertIn("under stronger hypotheses that some of the passage's own cases meet", lines["PD4"])
+        self.assertIn("is `narrowMatch` (R3)", lines["PD4"])
         vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
                               .read_text(encoding="utf-8").split())
         self.assertIn("Each is a default, not a law of the format: it can be overridden",

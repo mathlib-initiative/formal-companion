@@ -288,27 +288,31 @@ labeler judge each record by them, pairwise, the passage against the one declara
   or a weakening is never one.
 - **R2** — `broadMatch` when the passage follows from the declaration by instantiation or
   weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all
-  primes for a finite table), with no hypothesis stronger than the passage's.
+  primes for a finite table), with no hypothesis stronger than the passage's; a stronger
+  hypothesis makes it at most `narrowMatch` (R3).
 - **R3** — `narrowMatch` when the declaration is the passage at special objects: the passage,
   instantiated at the declaration's objects, says what the declaration says (a natural-number
-  statement for an integer one, a field for a commutative ring, the n = 1 case).
+  statement for an integer one, a field for a commutative ring, the n = 1 case). It is also
+  `narrowMatch` when the declaration proves the passage's conclusion, or a stronger one, under
+  stronger hypotheses that some of the passage's own cases meet (global continuity where the
+  passage has local): a special case (PD4).
 - **R4** — `hasPart` when the declaration states one clause of a passage that says several
   things; `exactMatch`, `closeMatch` and `broadMatch` only when it states every clause.
 - **R5** — `relatedMatch` when the connection needs another theorem, or the two statements are
   incomparable: a setting that neither contains nor is contained in the passage's (a
   finite-dimensional lemma where the passage's spaces are infinite-dimensional), or a
-  declaration narrower in one respect and stronger or broader in another. A declaration that
-  follows from the passage by weakening states part of it at most: `hasPart` when what it
-  states is one of the passage's clauses, else `relatedMatch`. So `hasPart` needs the
-  declaration alone, instantiated at the passage's objects, to entail a clause the passage
-  asserts, and `narrowMatch` needs the passage, instantiated at the declaration's objects, to
-  say what the declaration says.
+  declaration with stronger hypotheses whose conclusion does not give the passage's (one whose
+  conclusion does is R3's special case). A declaration that follows from the passage by
+  weakening states part of it at most: `hasPart` when what it states is one of the passage's
+  clauses, else `relatedMatch`. So `hasPart` needs the declaration alone, instantiated at the
+  passage's objects, to entail a clause the passage asserts, and `narrowMatch` needs the
+  passage, instantiated at the declaration's objects, to say what the declaration says.
 - **R6** — relations are pairwise: what else the universe holds never changes a record's
   relation.
 - **R7** — a definition passage is judged on the data it defines; bundled proof fields are
   packaging (R1's bundling).
 
-The **policy defaults**, the maintainer's (2026-10-19), numbered PD1–PD3 apart from the review
+The **policy defaults**, the maintainer's (2026-10-19), numbered PD1–PD4 apart from the review
 patterns' P1–P13 (`references/review-patterns.md`). Each is a default, not a law of the
 format: it can be overridden, and an override is a change to this paragraph, to both prompts
 (`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`) and to the bench's labeler
@@ -322,6 +326,9 @@ three carry these lines word for word, and `tests/test_locate_judgment.py` holds
 - **PD2** — a statement over ℕ where the passage has ℤ is `narrowMatch` (R3).
 - **PD3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is
   `narrowMatch`, never vacuous: it is not refuted for being trivial.
+- **PD4** — a declaration that proves the passage's conclusion, or a stronger one, under
+  stronger hypotheses that some of the passage's own cases meet (global instead of local
+  continuity) is `narrowMatch` (R3), not `relatedMatch` and not `broadMatch`.
 
 PD1 makes a definition passage stated over a specific object `partial` against a definition over
 a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); PD2 and
@@ -351,7 +358,7 @@ the changelog cite):
 | FM5 | an incomplete hunt: a stating declaration missed, or a false absence | a query of its own per claim (`query_clauses`), the rejected-candidate check, the absence sample |
 | FM6 | a setting mismatch: the declaration's hypotheses exclude the passage's objects | `instantiation`, R3 and R5 |
 | FM7 | a challenger's reasoning slip (D1 ignored, a special case refuted, two encodings split) | the challenger's rule above, its own claim list on every verdict |
-| FM8 | policy the rules did not settle | R1–R7 and PD1–PD3 |
+| FM8 | policy the rules did not settle | R1–R7 and PD1–PD4 |
 | FM9 | data and inventory defects (a statement flag, a cut span, a set-up passage scoped formal) | not the judgment rules: ingest and inventory work |
 
 What the gate holds mechanically, under the judgment rules (gate rule 9,
