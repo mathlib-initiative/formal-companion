@@ -56,6 +56,7 @@ def judged_body() -> dict:
     thm["claims"] = copy.deepcopy(THM_CLAIMS)
     thm["locations"] = [judged(loc) for loc in thm["locations"]]
     lead["claims"] = copy.deepcopy(LEAD_CLAIMS)
+    lead["receipt"]["query_clauses"] = {q: ["c1"] for q in lead["receipt"]["queries"]}
     return body
 
 
@@ -196,6 +197,63 @@ class TestTheClaimList(JudgedLocate):
             with self.subTest(value=value), self.assertRaises(vl.GateBroken) as caught:
                 self.fx.gate_cfg()
             self.assertIn(needle, str(caught.exception))
+
+
+# --------------------------------------------------------------------------- #
+# FM5: an absence searched for every clause
+# --------------------------------------------------------------------------- #
+
+class TestAnAbsenceSearchedEveryClause(JudgedLocate):
+
+    def absent_body(self, claims, query_clauses) -> dict:
+        body = judged_body()
+        lead = body["passages"][1]
+        lead["claims"] = claims
+        if query_clauses is None:
+            lead["receipt"].pop("query_clauses", None)
+        else:
+            lead["receipt"]["query_clauses"] = query_clauses
+        return body
+
+    def test_an_absence_tags_its_queries(self):
+        self.assertRefusedOnlyUnderTheRules(self.absent_body(LEAD_CLAIMS, None),
+                                            "tags each query with the claims it targets")
+
+    def test_no_claim_is_left_without_a_query(self):
+        two = LEAD_CLAIMS + [{"id": "c2", "text": "the gadget is unique up to conjugacy"}]
+        body = self.absent_body(two, {"widget lemma": ["c1"], "finite widget spanning": ["c1"]})
+        self.assertRefusedOnlyUnderTheRules(body, "no query targets c2")
+        body["passages"][1]["receipt"]["query_clauses"]["Widget.spanning"] = ["c2"]
+        self.assertOk(self.run_body(body))
+
+    def test_a_tag_names_a_query_and_a_claim(self):
+        body = self.absent_body(LEAD_CLAIMS, {"widget lemma": ["c1"], "a query never run": ["c1"]})
+        self.assertRule(self.run_body(body), 9, "not one of receipt.queries")
+        body = self.absent_body(LEAD_CLAIMS, {"widget lemma": ["c7"]})
+        self.assertRule(self.run_body(body), 9, "c7 are neither claim ids")
+        body = self.absent_body(LEAD_CLAIMS, {"widget lemma": []})
+        self.assertRule(self.run_body(body), 9, "non-empty list")
+        body = self.absent_body(LEAD_CLAIMS, [["widget lemma", "c1"]])
+        self.assertRule(self.run_body(body), 9, "receipt.query_clauses is {<query>")
+
+    def test_a_worked_examples_absence_searches_for_its_general_theorem(self):
+        doc = G.locate_manifest_doc(self.fx)
+        doc["passages"][0]["passage_kind"] = "example"
+        self.fx.manifest(self.TASK, doc)
+        body = judged_body()
+        self.assertRefusedOnlyUnderTheRules(body, "a query tagged general")
+        body["passages"][1]["receipt"]["query_clauses"]["Widget.spanning"] = ["general"]
+        self.assertOk(self.run_body(body))
+        # the general theorem's query does not stand in for a clause's
+        body["passages"][1]["receipt"]["query_clauses"] = {"Widget.spanning": ["general"]}
+        self.assertRule(self.run_body(body), 9, "no query targets c1")
+
+    def test_a_located_passages_tags_are_optional_and_checked(self):
+        body = judged_body()
+        self.assertNotIn("query_clauses", body["passages"][0]["receipt"])
+        self.assertOk(self.run_body(body))
+        body["passages"][0]["receipt"]["query_clauses"] = {"widget spanning gadget": ["c3"]}
+        self.assertRule(self.run_body(body), 9, "c3 are neither claim ids")
 
 
 class TestAdmitsAMissingClause(unittest.TestCase):
@@ -460,6 +518,18 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("their `clauses` together name every claim", worker)
         system = self.rendered[vocab.LOCATE]["worker-system.md"]
         self.assertIn("a located or absent passage without its claim list (`claims`)", system)
+
+    def test_fm5_a_query_for_every_claim_and_the_general_theorem(self):
+        worker = self.worker()
+        self.assertIn("**at least one query for every claim**", worker)
+        self.assertIn("**general theorem it is an instance of**, and tag that query `general`",
+                      worker)
+        self.assertIn("Search every library of the universe", worker)
+        self.assertIn('"query_clauses": {"<query a>": ["c1"]', worker)
+        self.assertIn("with at least one query for every clause of your claim list",
+                      self.worker(vocab.LOCATE_CHALLENGE))
+        self.assertIn("an absence whose `query_clauses` leave a claim without a query",
+                      self.rendered[vocab.LOCATE]["worker-system.md"])
 
     def test_fm1_the_challenger_lists_the_clauses_itself(self):
         worker = self.worker(vocab.LOCATE_CHALLENGE)

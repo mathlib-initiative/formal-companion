@@ -36,7 +36,7 @@ A library is named by its id (`library`), a declaration by its full Lean name (`
 {{#unless is_inventory}}
 - a curated hit your task manifest lists that the document neither locates with a relation that counts (a `relatedMatch` does not) nor rejects with a reason, or an `accepted` candidate that is not one of its passage's counting locations;
 - a coverage claim on a passage that is not located, with fewer than {{min_coverage_parts}} distinct parts, a part that is not the rank of one of the passage's `hasPart` locations, or a note that is empty or quotes the source at length; and a challenge that confirms a coverage claim while it refutes or weakens one of the claim's parts.
-- the judgment rules: a located or absent passage without its claim list (`claims`), a location whose relation counts without the claim ids it states (`clauses`), an `exactMatch`, `closeMatch` or `broadMatch` whose `clauses` leave a claim out or whose note admits a clause it does not state, a `relatedMatch` that names clauses, and a coverage claim whose parts leave a claim unstated;
+- the judgment rules: a located or absent passage without its claim list (`claims`), a location whose relation counts without the claim ids it states (`clauses`), an `exactMatch`, `closeMatch` or `broadMatch` whose `clauses` leave a claim out or whose note admits a clause it does not state, a `relatedMatch` that names clauses, a coverage claim whose parts leave a claim unstated, and an absence whose `query_clauses` leave a claim without a query (a worked example's: or no query tagged `general`);
 {{/unless}}
 
 Read the gate by its exit status. {{gate_exits}} A missing config, an unreadable layer, a missing index or a gate directory missing one of its files is that kind of fault.
