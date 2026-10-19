@@ -188,8 +188,12 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
    --inventory-run <r>`, then `--preset locate-challenge --challenge-of <r>`; each
    run goes through `cf run <r> --host <h> --i-have-consent --include-source-text`
    (a spend cap is required) and `cf harvest`, whose
-   locate gate runs out of tree over each task's own documents. Larger work is a
-   `cf campaign` of shards.
+   locate gate runs out of tree over each task's own documents — for a run
+   planned with this code, under the judgment rules too (gate rule 9: each
+   passage's claim list and the clauses every record states, an absence's
+   queries per clause, the instantiation line, a proof part's step, a
+   closeMatch's convention; rules R1–R7 in `references/vocabulary.md` §1.11).
+   Larger work is a `cf campaign` of shards.
 5. `cf tally --locate --run <r> --challenge-run <c>` — passage outcomes and the
    derived status (`references/vocabulary.md` §1.11: a coverage claim over
    `hasPart` parts counts only once a challenger confirms it); then
