@@ -1867,6 +1867,9 @@ class TestTheChallengePlanReachesStrongRecords(Campaign):
     def setUp(self):
         super().setUp()
         F.plan_locate(self, self.root, run_id="loc-1")
+        self.harvest()
+
+    def harvest(self, *, second_basis: bool = False) -> None:
         docs = F.locate_documents(self.paths, "loc-1")
         for rel, doc in docs.items():
             for p in doc["passages"]:
@@ -1874,6 +1877,13 @@ class TestTheChallengePlanReachesStrongRecords(Campaign):
                 if "Widget.Spanning" in names:
                     p["locations"].append(F._loc("alpha", "Widget.card_dvd", "closeMatch", 3,
                                                  note="the order is written as a cardinal"))
+                    if second_basis:
+                        # a closeMatch to a definition formalizes the definition passage on
+                        # its own too: a second basis
+                        p["locations"].append(F._loc("beta", "Beta.GadgetLattice",
+                                                     "closeMatch", 4,
+                                                     note="the gadget is bundled with its "
+                                                          "lattice"))
                 if p["outcome"] == "unresolved":
                     p.update(outcome="absent", reason="",
                              receipt=F._receipt("gadget induction", "lattice induction",
@@ -1907,6 +1917,36 @@ class TestTheChallengePlanReachesStrongRecords(Campaign):
         # a central passage's locations are refuted by default, as before
         part = self.by_declaration(plan)[("Widget.card_dvd", "hasPart")]
         self.assertEqual((part["prominence"], part["rule"]), ("central", "refute_by_default"))
+
+    def test_every_strong_record_that_sets_the_status_on_its_own_is_required(self):
+        """The passage keeps its status while any one of them stands: requiring the
+        best-ranked one alone left the others to a 50% draw, and a correct downgrade of
+        it changed nothing."""
+        self.harvest(second_basis=True)
+        built = outcomes.build(self.paths, "loc-1", require_gate=True)
+        row = next(r for r in built["outcomes"] if any(
+            l["declaration"] == "Widget.Spanning" for l in r["locations"]))
+        self.assertEqual([l["declaration"] for l in challenge_plan.bases(row)],
+                         ["Widget.Spanning", "Beta.GadgetLattice"])
+        plan = self.plan("--strong-sample-rate", "0", "--sample-rate", "0")
+        drawn = self.by_declaration(plan)
+        for decl in ("Widget.Spanning", "Beta.GadgetLattice"):
+            relation = "exactMatch" if decl == "Widget.Spanning" else "closeMatch"
+            self.assertEqual((drawn[(decl, relation)]["rule"], drawn[(decl, relation)]["planned"]),
+                             ("basis", "required"), decl)
+        self.assertEqual(drawn[("Widget.card_dvd", "closeMatch")]["planned"], "sampled_out")
+        # one challenger judges both, and each record shows the passage's other locations
+        tasks = {drawn[(d, r)]["task_id"] for d, r in (("Widget.Spanning", "exactMatch"),
+                                                       ("Beta.GadgetLattice", "closeMatch"))}
+        self.assertEqual(len(tasks), 1)
+        manifest = read_json(self.paths.tend_root("chl-1") / "gate" / "tasks"
+                             / f"{tasks.pop()}.json")
+        spanning = next(r for d in manifest["documents"] for r in d["records"]
+                        if r.get("declaration") == "Widget.Spanning")
+        siblings = {(o["declaration"], o["planned"]) for o in spanning["passage_locations"]}
+        self.assertEqual(siblings, {("Beta.GadgetLattice", "required"),
+                                    ("Widget.card_dvd", "sampled_out"),
+                                    ("Widget.spanning_conj", "sampled_out")})
 
     def test_the_basis_is_the_location_whose_own_status_is_the_passages(self):
         built = outcomes.build(self.paths, "loc-1", require_gate=True)

@@ -828,10 +828,15 @@ class TestTheBatches(unittest.TestCase):
                                                       for i in range(2)]
         got = [[r["item"] for r in batch] for batch in challenge_plan.batches(records, size=4)]
         self.assertEqual(got, [["p1", "p1", "p1"], ["p2", "p2", "p2"]])
-        # without the claim the old cut applies: four to a task
+        # without the claim a passage is still one unit (the FM7 rule: one challenger
+        # judges every required location of a passage)
         plain = [r for r in records if r["target"] != "coverage"]
         got = [[r["item"] for r in batch] for batch in challenge_plan.batches(plain, size=4)]
-        self.assertEqual(got, [["p1", "p1", "p1", "p2"], ["p2"]])
+        self.assertEqual(got, [["p1", "p1", "p1"], ["p2", "p2"]])
+        # a passage larger than a task is alone in its task
+        big = [self.rec("p1", "location", i) for i in range(5)] + [self.rec("p2", "location", 0)]
+        got = [[r["item"] for r in batch] for batch in challenge_plan.batches(big, size=4)]
+        self.assertEqual(got, [["p1"] * 5, ["p2"]])
 
 
 class TestThePrompts(unittest.TestCase):
