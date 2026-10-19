@@ -557,8 +557,9 @@ class TestPlanInventory(Campaign):
             "schema", "mode", "preset", "run_id", "kinds", "universe", "corpus_db",
             "tools_corpus_db", "sourceset", "sources", "candidates_dir", "blind", "inventory",
             "challenged_runs", "findings_dir", "tasks_dir", "log_dir", "orchestrator_db",
-            "max_locations", "min_absence_queries", "vendor"})
+            "max_locations", "min_absence_queries", "judgment_rules", "vendor"})
         self.assertEqual(gate["schema"], "cf-gate-locate/1")
+        self.assertEqual(gate["judgment_rules"], vocab.JUDGMENT_RULES)
         self.assertEqual(gate["kinds"], ["PASSAGE", "UNRESOLVED"])
         self.assertEqual(sorted(gate["sources"]), [F.W1, F.W2])
         self.assertEqual(gate["universe"]["libraries"]["alpha"]["commit"], F.ALPHA)

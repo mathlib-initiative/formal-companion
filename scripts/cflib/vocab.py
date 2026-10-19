@@ -559,6 +559,39 @@ COVERAGE_ACTIONS = frozenset({"confirm", "refute"})
 COVERAGE_RECORD_KEYS = frozenset({"complete", "parts", "challenge"})
 #: an absence's receipt lists at least this many distinct queries (gate rule 5)
 MIN_ABSENCE_QUERIES = 3
+#: The judgment rules (gate rule 9; references/vocabulary.md section 1.11, rules
+#: R1-R7, and references/locate-documents.md sections 3 and 4): the version a
+#: run's ``gate.json`` names as ``judgment_rules``.  ``cf plan-locate`` writes it
+#: for every locate and challenge run it plans, so the rules bind the runs planned
+#: with this code; a ``gate.json`` without the key -- a run planned before them --
+#: is gated, harvested, tallied and exported as it always was.
+JUDGMENT_RULES = 1
+#: A passage's claim list (rule R4; the smoke-2 audit's FM1): before it judges any
+#: declaration, the worker writes the passage's formal clauses as short
+#: paraphrases, each with an id ``c1``, ``c2``, ... (``CLAIM_ID``), at most
+#: ``MAX_PASSAGE_CLAIMS`` of them, each one line of at most ``MAX_CLAIM_CHARS``
+#: characters and never more than ``EXPORT_QUOTE_WORDS`` consecutive words of the
+#: source; every location whose relation counts names the ids it states
+#: (``clauses``), and an ``exactMatch``, ``closeMatch`` or ``broadMatch`` names
+#: every one.
+CLAIM_ID = re.compile(r"c[1-9][0-9]?\Z")
+MAX_PASSAGE_CLAIMS = 12
+MAX_CLAIM_CHARS = 300
+#: the fields the judgment rules add to a location of a locate document (and to an
+#: overturn's): the outcomes keep each one a document wrote, and a challenge task's
+#: manifest shows them to the challenger; none is exported (the record set's format
+#: is unchanged, references/locate-documents.md section 6)
+JUDGMENT_LOCATION_FIELDS = ("clauses",)
+#: The closed list of phrases by which a strong record's own note admits a clause
+#: its declaration does not state (smoke-2: "rather than asserting its degree
+#: bound", "is not part of this declaration").  The gate refuses such a record
+#: under the judgment rules, and the challenge plan refutes one by default
+#: whatever the run (:func:`admits_missing_clause`).  Matched case-folded, as
+#: whole words, with the apostrophe folded.
+CLAUSE_GAP_PHRASES = ("does not state", "doesn't state", "not stated", "is not part of",
+                      "rather than asserting", "rather than stating", "only the existence",
+                      "only one direction", "not the converse", "without uniqueness",
+                      "does not cover", "not covered")
 #: a locate task carries at most this many formal_math passages (section 3, L3b)
 MAX_PASSAGES_PER_LOCATE_TASK = 8
 #: a challenge task judges about this many records (section 5)
@@ -727,6 +760,27 @@ def is_bold_label(text: str) -> bool:
     if core in BOLD_LABELS or (punctuated and core in BOLD_LABELS_PUNCTUATED):
         return True
     return core.startswith("proof of ") or core.startswith("proof (")
+
+
+def _phrase_in(text: str, phrases: Iterable[str]) -> str | None:
+    """The first of ``phrases`` in ``text`` as whole words, case-folded; or None."""
+    folded = " ".join(str(text or "").replace("’", "'").casefold().split())
+    for phrase in phrases:
+        if re.search(rf"(?<![\w']){re.escape(phrase)}(?![\w'])", folded):
+            return phrase
+    return None
+
+
+def admits_missing_clause(note) -> str | None:
+    """The :data:`CLAUSE_GAP_PHRASES` phrase a record's note admits a missing clause by.
+
+    A strong relation (``exactMatch``, ``closeMatch``, ``broadMatch``) says the
+    declaration states every clause of its passage (rule R4); a note that says
+    the declaration "does not state" one, or proves "only the existence", says
+    the opposite, and the record is ``hasPart`` at most.  Returns the phrase,
+    or None for a note that admits nothing.
+    """
+    return _phrase_in(note, CLAUSE_GAP_PHRASES)
 
 
 def locate_mode(mode: str) -> bool:

@@ -430,7 +430,8 @@ def challenge_tasks(manifest: Manifest, built: dict,
     spans = _TextSpans(paths, manifest.sourceset_id) if paths is not None else None
     keep = ("key", "target", "item", "span", "text_span", "section", "quote", "location_key",
             "library", "declaration", "relation", "rank", "outcome", "prominence", "scope",
-            "passage_kind", "run_id", "parts", "note")
+            "passage_kind", "run_id", "parts", "note", "claims",
+            *vocab.JUDGMENT_LOCATION_FIELDS)
     for number, batch in enumerate(built["batches"], 1):
         docs: list[dict] = []
         for rec in batch:
@@ -554,6 +555,9 @@ def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict
         "orchestrator_db": layout["orchestrator_db"],
         "max_locations": vocab.MAX_LOCATIONS_PER_PASSAGE,
         "min_absence_queries": vocab.MIN_ABSENCE_QUERIES,
+        # rule 9 binds the runs planned with this code; a gate.json without the key is
+        # a run planned before the judgment rules, gated as it always was
+        "judgment_rules": vocab.JUDGMENT_RULES,
         "vendor": vendor_shas(),
     }
 

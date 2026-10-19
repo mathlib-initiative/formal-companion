@@ -3,7 +3,7 @@ You are the worker for task file `tasks/$TEND_TASK_ID.yaml`: **locate** (L3b) at
 Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each source it lists the passages that are yours (`item`, `span`, `head_words`, `prominence`, `passage_kind`, and where to read each: `text_span`, `section`, `quote`). Read each passage in `{{sources_dir}}/<source-id>/text.txt` -- at its `text_span` (offsets into `text.txt`), or under its `section` heading where `quote.exact` begins; `span` is an offset into `layer.txt`, not `text.txt` -- with enough of its section around it to know what it says, then search the universe for the declarations that state it. Every passage of the manifest ends **located**, **absent** or **unresolved** — none is skipped.
 
 ## How to search
-1. Restate the passage to yourself precisely: its objects, its hypotheses, its conclusion.
+1. Restate the passage to yourself precisely: its objects, its hypotheses, its conclusion. Then **write its claim list first**, before you judge any declaration: `claims`, one entry per formal clause the passage asserts — each conclusion, each direction of an "if and only if", existence and uniqueness separately, each computation of a worked example, each condition of a definition — as `{"id": "c1", "text": "<the clause, paraphrased in a few words>"}`, ids `c1`, `c2`, … (at most 12). Paraphrase: a claim's text is one short line in your own words, never more than twelve consecutive words of the article. History, motivation and attribution are not claims.
 2. Read the candidates file `{{candidates_dir}}/<source-id>.json`, and your manifest's `curated` list for the source: the curated candidates THIS task answers for (a source split over several tasks hands them to one of them). **Every curated candidate your manifest lists must be answered in your receipt for the passage it concerns**: either it is one of that passage's locations with a relation that counts (anything but `relatedMatch`) and its verdict is `accepted`, or its verdict is `rejected` with a reason. A `relatedMatch` location answers nothing, and an `accepted` candidate that is not one of the passage's counting locations is refused. The file's `lexical` hits are hints.
 3. Search with several distinct queries: the name a library would give the result, its key words, the objects it is about. `{{search_command}} <query words…>`, then read each plausible hit with `{{show_command}} <library> <declaration>`. Read the signature: a name is not a statement.
 4. Judge each declaration you would cite by its **relation** to the passage (subject = passage, object = declaration):
@@ -15,7 +15,9 @@ Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each
    - `relatedMatch` — relevant, but it states something else.
 
    A declaration that is data can state a theorem: an equivalence, an isomorphism or a structure that IS the theorem's content (the Chinese remainder theorem as a ring isomorphism) is an `exactMatch` or `closeMatch` of it, judged by what it states like any other.
-5. A passage that says several things (a conjunction of clauses, a theorem with several conclusions, a definition with several conditions) may have no one declaration that states it, only several that each state a part (`hasPart`). When your `hasPart` locations **together** state **every** clause of the passage, and no part assumes more than the passage does (a stronger hypothesis, an extra instance argument, a special case), say so with a `coverage` claim (below). Make the claim only after you have matched each clause to a part: a challenger is told to refute every claim, and an unfounded one is removed.
+
+   Every location whose relation is not `relatedMatch` names the ids of the claims it states, in `clauses`. **`exactMatch`, `closeMatch` and `broadMatch` say the declaration states the whole passage: use one only when its `clauses` name every claim.** A declaration that states some of the clauses — existence without uniqueness, one direction of an iff, one computation of several, one theorem of the several the passage names, a group where the passage has a ring — is `hasPart`, however exactly it states that clause; a `relatedMatch` names no clauses. A note that says the declaration "does not state" a clause, or states "only the existence", is a `hasPart` note, and the gate refuses it on a stronger relation.
+5. A passage that says several things (a conjunction of clauses, a theorem with several conclusions, a definition with several conditions) may have no one declaration that states it, only several that each state a part (`hasPart`). When your `hasPart` locations **together** state **every** clause of the passage — their `clauses` together name every claim — and no part assumes more than the passage does (a stronger hypothesis, an extra instance argument, a special case), say so with a `coverage` claim (below). Make the claim only after you have matched each clause to a part: a challenger is told to refute every claim, and an unfounded one is removed.
 
 ## The document
 Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
@@ -28,24 +30,29 @@ Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
  "universe": "{{universe_id}}", "universe_sha256": "{{universe_sha256}}",
  "passages": [
    {"item": "<from the manifest>", "outcome": "located",
+    "claims": [{"id": "c1", "text": "<the first clause, in your own words>"},
+               {"id": "c2", "text": "<the second clause>"}],
     "locations": [
       {"library": "<id>", "declaration": "<full Lean name>", "relation": "exactMatch",
-       "rank": 1, "confidence": "high", "note": "", "witness": "<why this declaration states the passage>"}],
+       "rank": 1, "confidence": "high", "clauses": ["c1", "c2"], "note": "",
+       "witness": "<why this declaration states the passage>"}],
     "receipt": {"queries": ["<query 1>", "<query 2>", "<query 3>"],
                 "candidates": [{"library": "<id>", "declaration": "<name>", "verdict": "accepted", "reason": ""},
                                {"library": "<id>", "declaration": "<name>", "verdict": "rejected", "reason": "<why>"}]}},
    {"item": "<…>", "outcome": "absent", "locations": [],
+    "claims": [{"id": "c1", "text": "<…>"}],
     "receipt": {"queries": ["…", "…", "…"], "candidates": []}},
    {"item": "<…>", "outcome": "unresolved", "locations": [], "reason": "<what you could not decide>",
     "receipt": {"queries": [], "candidates": []}}]}
 ```
 
+- `claims` is required on a `located` and an `absent` passage (and optional on an `unresolved` one): the claim list of step 1. Every location whose relation counts carries `clauses`, the ids it states; a strong relation (`exactMatch`, `closeMatch`, `broadMatch`) names them all.
 - `located`: at least one location whose relation is not `relatedMatch` (with only `relatedMatch` ones, the passage is `absent`); at most {{max_locations}}, ranked 1.. without repeats, best first. `confidence` is `high`, `medium` or `low`.
 - `absent`: you searched and nothing in the universe states it. The receipt lists **at least {{min_queries}} distinct queries** and the candidates you examined. An absence may sit beside `relatedMatch` locations only, and never while a curated candidate is left unexamined.
 - `unresolved`: you could not decide (an ambiguous passage, a declaration you could not read). Say why in `reason`; its receipt still lists each curated candidate it concerns (step 2). It is counted as unresolved, never as not formalized — prefer it to a guess.
-- `coverage` (optional, a `located` passage only): `"coverage": {"complete": true, "parts": [1, 2], "note": "<one sentence>"}` — `parts` are the `rank`s of at least {{min_coverage_parts}} of this passage's `hasPart` locations, and `note` says in your own words, in one sentence, how they together state every clause (no long quote of the source). Without a claim, `hasPart` locations leave the passage partially formalized however many there are; with one a challenger confirms, the parts count together. Never put `coverage` on an `absent` or `unresolved` passage.
+- `coverage` (optional, a `located` passage only): `"coverage": {"complete": true, "parts": [1, 2], "note": "<one sentence>"}` — `parts` are the `rank`s of at least {{min_coverage_parts}} of this passage's `hasPart` locations, whose `clauses` together name every claim, and `note` says in your own words, in one sentence, how they together state every clause (no long quote of the source). Without a claim, `hasPart` locations leave the passage partially formalized however many there are; with one a challenger confirms, the parts count together. Never put `coverage` on an `absent` or `unresolved` passage.
 - Copy `item`, the source's shas and `renderer` from the manifest exactly; write no commit and no `proof_status`.
-- Write each `note`, query and `reason` in your own words: one that copies more than twelve consecutive words of the article is refused, since the published records quote no more than that.
+- Write each claim, `note`, query and `reason` in your own words: one that copies more than twelve consecutive words of the article is refused, since the published records quote no more than that.
 
 ## Before you commit, run the gate
 

@@ -3,7 +3,8 @@ You are the worker for task file `tasks/$TEND_TASK_ID.yaml`: a **challenge** (L5
 Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each source it lists the records that are yours, each with its `target` (`location`, `absence`, `unresolved`, `scope`, `prominence` or `coverage`), its passage `item`, where to read it (`text_span` in `text.txt`, `section`, `quote`; `span` is a `layer.txt` offset), for a location its `location_key`, `library`, `declaration` and `relation`, and for a coverage claim its `parts` (each part's `location_key`, `library`, `declaration`, `relation` and `rank`) and the worker's `note`. Read the passage yourself in `{{sources_dir}}/<source-id>/text.txt` before you judge anything.
 
 ## How to judge each record
-- **A location** is refuted by default. Restate the passage, read the declaration's signature (`{{show_command}} <library> <declaration>`), and either **confirm** it with a quoted fragment of the signature that states the passage, **downgrade** its relation to the one it really has, or **refute** it when it does not state the passage at all.
+- **First, write the claim list of each passage you judge**, in your own words, before any verdict on it: under the document's `claims`, `"<item>": [{"id": "c1", "text": "<one clause>"}, …]` — each conclusion, each direction of an iff, existence and uniqueness separately, each computation of an example. A record's own `claims` and `clauses` (in the manifest, when the worker wrote them) are claims to check, not evidence: the worker may have listed too few clauses.
+- **A location** is refuted by default. Restate the passage, read the declaration's signature (`{{show_command}} <library> <declaration>`), and either **confirm** it with a quoted fragment of the signature that states the passage, **downgrade** its relation to the one it really has, or **refute** it when it does not state the passage at all. A verdict that leaves a relation that counts (a confirm of one, or a downgrade to one) names the ids of your claims the declaration states, in `clauses`; `exactMatch`, `closeMatch` and `broadMatch` stand only when they name every claim — otherwise downgrade to `hasPart` — and a downgrade to `relatedMatch` names none. A record whose own `note` says the declaration does not state a clause is a downgrade, never a confirm.
 - **An absence or an unresolved outcome** is hunted: search first, harder and differently than the worker did (`{{search_command}} <query words…>` with other names, the objects the statement is about, the generalisation a library would state){{#if checkouts_dir}}, and grep the pinned library checkouts under `{{checkouts_dir}}`{{/if}}. **Overturn** it with the locations you found, or **uphold** it, saying what you searched.
 - **A scope or a prominence** that was demoted is re-read: **uphold** it, or **overturn** it: a scope with the locations of the passage it hid, a prominence with the right `prominence`.
 - **A coverage claim** says that the `hasPart` locations in its `parts` together state every clause of the passage. A confirmed claim raises the passage's derived status (to formalized when every part is proved or data, to statement_only otherwise) and confirms with it only the parts whose own record the plan did not require (none, once the passage's prominence is overturned to `subject` or `central`: those parts are then owed a challenge of their own); give a verdict for every part record the task lists as required, judged on its own. So a claim is refuted by default, and more strictly than a location: **refute** it unless every clause of the passage is matched by a part AND no part adds a hypothesis the passage does not have (a stronger assumption, an extra instance argument, a special case, another object). Restate the passage as the list of its clauses, read each part's signature (`{{show_command}} <library> <declaration>`), and **confirm** only when you can name, in your `witness`, the part that states each clause; otherwise refute, naming the clause no part states or the hypothesis a part adds. The worker's `note` is a claim to check, not evidence. A refute leaves the parts as they are: judge each part's own location record on its own, and never confirm a claim while you refute or weaken one of its parts.
@@ -19,21 +20,26 @@ Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
  "universe": "{{universe_id}}", "universe_sha256": "{{universe_sha256}}",
  "verdicts": [
    {"item": "<item>", "target": "location", "location_key": "<from the manifest>",
-    "action": "confirm", "witness": "<quoted signature fragment and why it states the passage>"},
+    "action": "confirm", "clauses": ["c1", "c2"],
+    "witness": "<quoted signature fragment and why it states the passage>"},
    {"item": "<item>", "target": "location", "location_key": "<from the manifest>",
-    "action": "downgrade", "relation": "broadMatch", "witness": "<why>"},
+    "action": "downgrade", "relation": "hasPart", "clauses": ["c1"], "witness": "<why>"},
    {"item": "<item>", "target": "absence", "action": "overturn",
     "locations": [{"library": "<id>", "declaration": "<name>", "relation": "exactMatch",
-                   "rank": 1, "confidence": "high", "note": "", "witness": "<why>"}],
+                   "rank": 1, "confidence": "high", "clauses": ["c1"], "note": "",
+                   "witness": "<why>"}],
     "witness": "<what you searched that the worker did not>"},
    {"item": "<item>", "target": "coverage", "action": "refute",
     "witness": "<the clause no part states, or the hypothesis a part adds>"},
    {"item": "<item>", "target": "scope", "action": "uphold", "witness": "<why>"},
    {"item": "<item>", "target": "prominence", "action": "overturn", "prominence": "central",
-    "witness": "<why>"}]}
+    "witness": "<why>"}],
+ "claims": {"<item>": [{"id": "c1", "text": "<the first clause, in your own words>"},
+                       {"id": "c2", "text": "<the second>"}]}}
 ```
 
 - One verdict per record of the manifest, and only for those records; `action` is `confirm`, `downgrade`, `refute`, `overturn` or `uphold` (a coverage claim takes `confirm` or `refute` only); every verdict carries a non-empty `witness`.
+- `claims` holds your claim list of every passage on which a verdict leaves a relation that counts (a confirm or downgrade of a location, an overturn with locations); each such verdict, and each overturn location, names its `clauses` from it.
 - A downgrade to `closeMatch` also gives `note`: the convention difference (0 ∈ ℕ, a junk value, a normalisation). Without one, the first sentence of your `witness` that copies no more than twelve consecutive words of the article becomes the record's note, so make that sentence name the difference. Both are held to the cap an overturn location's note is: a `note` that copies more than twelve consecutive words of the article is refused, and so is a `witness` without a `note` whose every sentence does.
 - Copy `item`, `location_key`, the source's shas and `renderer` from the manifest exactly; write no commit and no `proof_status`.
 - Write an overturn location's `note` in your own words: one that copies more than twelve consecutive words of the article is refused, since the published records quote no more than that.

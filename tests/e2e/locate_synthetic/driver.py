@@ -554,12 +554,22 @@ class Pipeline:
             self.refused(code, text, rule.strip(), rule.strip())
 
     # ------------------------------------------------------------------ L3b
+    #: the claim lists this run's worker writes (the judgment rules: references/
+    #: vocabulary.md section 1.11), synthetic paraphrases
+    SUBJECT_CLAIMS = [{"id": "c1", "text": "each finite widget has a spanning gadget"}]
+    THEOREM_CLAIMS = [{"id": "c1", "text": "the gadget exists"},
+                      {"id": "c2", "text": "no smaller gadget spans"}]
+    OTHER_CLAIMS = [{"id": "c1", "text": "the paragraph's one formal clause"}]
+
     @staticmethod
     def _location(lib: str, decl: str, relation: str = "exactMatch", rank: int = 1,
-                  note: str = "") -> dict:
-        return {"library": lib, "declaration": decl, "relation": relation, "rank": rank,
-                "confidence": "high", "note": note,
-                "witness": "the signature states the passage (synthetic)"}
+                  note: str = "", clauses=("c1",)) -> dict:
+        loc = {"library": lib, "declaration": decl, "relation": relation, "rank": rank,
+               "confidence": "high", "note": note,
+               "witness": "the signature states the passage (synthetic)"}
+        if relation != "relatedMatch":
+            loc["clauses"] = list(clauses)
+        return loc
 
     def _answer(self, sid: str, passage: dict, curated: list[dict]) -> dict:
         """A worker's answer for one passage: the widget lemma's are located, the rest absent."""
@@ -572,11 +582,15 @@ class Pipeline:
                                   for c in curated]}
         if sid == WIDGET and passage.get("prominence") == "subject":
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
+                    "claims": self.SUBJECT_CLAIMS,
                     "locations": [self._location("alpha", "Widget.exists_spanning_gadget")]}
         if sid == WIDGET and passage.get("passage_kind") == "theorem":
+            # one clause of two: a hasPart, never an exactMatch (R4)
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
+                    "claims": self.THEOREM_CLAIMS,
                     "locations": [self._location("alpha", "Widget.card_dvd", "hasPart")]}
-        return {"item": passage["item"], "outcome": "absent", "locations": [], "receipt": receipt}
+        return {"item": passage["item"], "outcome": "absent", "locations": [], "receipt": receipt,
+                "claims": self.OTHER_CLAIMS}
 
     def locate(self) -> None:
         self.cf("plan-locate", "--preset", "locate", "--sourceset", SS, "--universe", U,
@@ -641,6 +655,11 @@ class Pipeline:
                 p["receipt"]["candidates"] = []
         def close_without_note(doc):
             doc["passages"][located]["locations"][0]["relation"] = "closeMatch"
+        def no_claims(doc):
+            del doc["passages"][located]["claims"]
+        def strong_missing_a_clause(doc):
+            p = doc["passages"][located]
+            p["claims"] = p["claims"] + [{"id": "c2", "text": "a second synthetic clause"}]
         layer = (cf_main_paths(self.ws).sourceset_source_dir(SS, WIDGET) / "layer.txt"
                  ).read_text(encoding="utf-8")
         verbatim = " ".join(layer.split()[:14])     # past the export's twelve-word cap
@@ -656,6 +675,8 @@ class Pipeline:
                  "rule 3 commit": commit, "rule 5": few_queries, "rule 6 count": too_many,
                  "rule 6 rank": duplicate_rank, "rule 4": curated_ignored,
                  "closeMatch note": close_without_note,
+                 # the judgment rules (rule 9): the claim list, and every clause on a strong one
+                 "rule 9 claims": no_claims, "rule 9 clauses": strong_missing_a_clause,
                  # the export's verbatim-source cap, applied by the gate (rule 1)
                  "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
         for name, fn in cases.items():
@@ -707,16 +728,27 @@ class Pipeline:
         for task_id, manifest in self._manifests("chl-1").items():
             for d in manifest["documents"]:
                 doc = self._header("locate-challenge", "chl-1", task_id, d, universe=True)
-                verdicts = []
+                verdicts, claims = [], {}
                 for rec in d["records"]:
                     v = {"item": rec["item"], "target": rec["target"],
                          "witness": "re-read the signature at the pin (synthetic)"}
                     if rec["target"] == "location":
+                        # the challenger's own claim list (the judgment rules), here the
+                        # worker's, which it checked; a strong relation names every claim
+                        mine = claims.setdefault(rec["item"], rec.get("claims")
+                                                 or self.OTHER_CLAIMS)
+                        ids = [c["id"] for c in mine]
                         v.update(location_key=rec["location_key"], action="confirm")
+                        if rec["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
+                            v["clauses"] = ids
+                        elif rec["relation"] != "relatedMatch":
+                            v["clauses"] = rec.get("clauses") or ids[:1]
                     else:
                         v["action"] = "uphold"
                     verdicts.append(v)
                 doc["verdicts"] = verdicts
+                if claims:
+                    doc["claims"] = claims
                 path = self.write_json(out / task_id / f"{d['source_id']}.json", doc)
                 code, text = self.gate("chl-1", path)
                 check(code == 0, f"the gate refused a good challenge document:\n{text}")
@@ -732,6 +764,9 @@ class Pipeline:
         subject = [r for r in rows if r["source_id"] == WIDGET and r.get("prominence") == "subject"]
         check(subject and subject[0]["status"] == "formalized",
               f"the widget lemma's subject passage is not formalized: {subject}")
+        check(subject[0].get("claims") == self.SUBJECT_CLAIMS
+              and subject[0]["locations"][0].get("clauses") == ["c1"],
+              f"the outcomes lost the worker's claim list or clauses: {subject[0]}")
         check(all(r.get("challenge") is not None for r in rows if r.get("outcome")),
               "a passage still owes its challenge after the challenge run")
         theorem = [r for r in rows if r["source_id"] == WIDGET and r.get("passage_kind") == "theorem"
@@ -749,6 +784,11 @@ class Pipeline:
         check(records, "the export wrote no record")
         for record in records:
             check(ll.validate(record) == [], f"an exported record fails the checker: {record}")
+            # the judgment rules' fields are the documents' and the outcomes', never the
+            # record set's: its format is unchanged (references/locate-documents.md section 6)
+            ext = json.dumps(record)
+            check(not any(f'"{key}"' in ext for key in ("claims", "clauses", "challenge_claims")),
+                  f"an exported record carries a judgment-rule field: {record}")
             quote = record["subject"][0].get("location", {}).get("quote") or {}
             check(len((quote.get("exact") or "").split()) <= 12, "an exported quote is over 12 words")
         statuses = {r.get("status") for r in records}

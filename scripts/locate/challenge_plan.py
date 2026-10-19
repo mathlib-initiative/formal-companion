@@ -10,6 +10,10 @@ passage outcomes of harvested locate runs (``locate.outcomes``):
 * every **coverage claim** (the maintainer's decision D1), whatever the
   passage's prominence, is refuted by default -- required: it upgrades the
   passage's derived status, so no claim leaves unchallenged;
+* every strong location whose own note admits a clause it does not state
+  (``cflib.vocab.admits_missing_clause``) is refuted by default too, whatever
+  its passage's prominence (the smoke-2 audit's FM1: three notes said so and
+  the relation still counted);
 * on a ``supporting`` passage, the location that sets its derived status --
   its **basis** (:func:`basis`) -- is required whenever its relation is
   strong (``exactMatch``, ``closeMatch``, ``broadMatch``:
@@ -81,10 +85,14 @@ def _record(row: dict, target: str, *, run_id: str, location: dict | None = None
            "scope": row.get("scope"), "passage_kind": row.get("passage_kind"),
            "outcome": row.get("outcome"), "span": row.get("span"),
            "section": row.get("section"), "quote": row.get("quote")}
+    if row.get("claims") is not None:
+        rec["claims"] = row["claims"]
     if location is not None:
         rec.update({"location_key": location["location_key"], "library": location["library"],
                     "declaration": location["declaration"], "relation": location["relation"],
-                    "rank": location.get("rank")})
+                    "rank": location.get("rank"), "note": location.get("note") or None})
+        rec.update({key: location[key] for key in vocab.JUDGMENT_LOCATION_FIELDS
+                    if key in location})
     rec["key"] = outcomes_mod.record_key(target, row["source_id"], row["item"],
                                          rec.get("location_key"))
     return rec
@@ -127,6 +135,10 @@ def _location_rule(loc: dict, *, hot: bool, base: dict | None) -> tuple[str, str
     """``(rule, stratum)`` of one location record."""
     relation = loc["relation"]
     if hot:
+        return REFUTE, None
+    if relation in vocab.STRONG_RELATIONS and vocab.admits_missing_clause(loc.get("note")):
+        # its own note says it leaves a clause unstated: a strong relation that says the
+        # opposite of itself is refuted by default, whatever the passage's prominence
         return REFUTE, None
     if base is not None and loc is base and relation in vocab.STRONG_RELATIONS:
         return BASIS, None
