@@ -589,6 +589,11 @@ class Pipeline:
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
                     "claims": self.THEOREM_CLAIMS,
                     "locations": [self._location("alpha", "Widget.card_dvd", "hasPart")]}
+        # an absence searched for every claim, each query tagged with the one it targets;
+        # a worked example's also for its general theorem (the judgment rules, FM5)
+        receipt["query_clauses"] = {q: ["c1"] for q in receipt["queries"]}
+        if passage.get("passage_kind") == "example":
+            receipt["query_clauses"][receipt["queries"][-1]] = ["c1", "general"]
         return {"item": passage["item"], "outcome": "absent", "locations": [], "receipt": receipt,
                 "claims": self.OTHER_CLAIMS}
 
@@ -642,6 +647,12 @@ class Pipeline:
             p = doc["passages"][located]
             p.update(outcome="absent", locations=[])
             p["receipt"]["queries"] = ["widget", "Widget "]
+            p["receipt"]["query_clauses"] = {"widget": ["c1"]}
+        def untagged_absence(doc):
+            p = doc["passages"][located]
+            p.update(outcome="absent", locations=[])
+            for cand in p["receipt"]["candidates"]:
+                cand.update(verdict="rejected", reason="states the subject, not this")
         def too_many(doc):
             doc["passages"][located]["locations"] = [
                 self._location("alpha", "Widget.exists_spanning_gadget", "relatedMatch", r)
@@ -669,6 +680,7 @@ class Pipeline:
             p = doc["passages"][located]
             p.update(outcome="absent", locations=[])
             p["receipt"]["queries"][0] = verbatim
+            p["receipt"]["query_clauses"] = {q: ["c1"] for q in p["receipt"]["queries"]}
             for cand in p["receipt"]["candidates"]:
                 cand.update(verdict="rejected", reason="states the subject, not this")
         cases = {"rule 3 phantom": phantom, "rule 3 proof_status": status,
@@ -677,6 +689,7 @@ class Pipeline:
                  "closeMatch note": close_without_note,
                  # the judgment rules (rule 9): the claim list, and every clause on a strong one
                  "rule 9 claims": no_claims, "rule 9 clauses": strong_missing_a_clause,
+                 "rule 9 queries": untagged_absence,
                  # the export's verbatim-source cap, applied by the gate (rule 1)
                  "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
         for name, fn in cases.items():

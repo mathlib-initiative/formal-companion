@@ -66,6 +66,12 @@ release has something to say.
     `clauses`, `challenge_claims` and `challenge_clauses` where a document wrote
     them, and a challenge manifest shows the worker's to the challenger with the
     location's note; nothing new is exported.
+  - **A query for every clause (FM5).** The prompt asks for at least one query
+    per claim, tagged in the receipt's `query_clauses` with the claim ids it
+    targets, a worked example's general theorem (tagged `general`) and every
+    library; rule 9 refuses an absence that leaves a claim without a query, or
+    an example's with no `general` query. The tags are not exported: the
+    receipt sidecar is built from `queries` and `candidates` alone.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.

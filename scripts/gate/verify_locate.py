@@ -80,9 +80,12 @@ references/locate-documents.md sections 2-4 and 9):
    (``claims``); a location whose relation counts names the claim ids it states
    (``clauses``), every one for a strong relation, and a ``relatedMatch`` none;
    a strong location whose note admits a clause it does not state is refused,
-   and so is a coverage claim whose parts leave a clause unstated; a challenge
-   document carries the challenger's own claim lists, which its verdicts and
-   overturn locations name.
+   and so is a coverage claim whose parts leave a clause unstated; an absence's
+   receipt tags its queries with the claims they target
+   (``receipt.query_clauses``) and leaves no claim unsearched, a worked
+   example's also searching for its general theorem; a challenge document
+   carries the challenger's own claim lists, which its verdicts and overturn
+   locations name.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -251,6 +254,10 @@ CLAIM_ID = re.compile(r"c[1-9][0-9]?\Z")
 MAX_PASSAGE_CLAIMS = 12
 MAX_CLAIM_CHARS = 300
 CLAIM_KEYS = frozenset({"id", "text"})
+#: the tag of a query for the general theorem a worked example instantiates
+#: (cflib.vocab.GENERAL_QUERY_TAG)
+GENERAL_QUERY_TAG = "general"
+PASSAGE_EXAMPLE = "example"
 #: the phrases by which a strong record's note admits a clause it does not state
 #: (cflib.vocab.CLAUSE_GAP_PHRASES; the matcher is cflib.vocab._phrase_in's)
 CLAUSE_GAP_PHRASES = ("does not state", "doesn't state", "not stated", "is not part of",
@@ -1343,6 +1350,58 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
                                    f"(R4), not {relation}")
 
 
+def check_query_clauses(problems: Problems, where: str, receipt: Any, ids: list[str] | None, *,
+                        absent: bool, passage_kind: Any) -> None:
+    """Rule 9 (FM5): which claims each query of a receipt targets.
+
+    ``receipt.query_clauses`` maps queries of ``receipt.queries`` (exactly as
+    written) to the claim ids each targets, or ``general`` for the general theorem
+    a worked example instantiates.  An absence carries it, and leaves no claim
+    without a query: an absence of a clause nobody searched for is no absence.
+    An ``example`` passage's absence also searched for its general theorem.  On a
+    located passage it is optional, and checked when given.
+    """
+    raw = receipt.get("query_clauses") if isinstance(receipt, dict) else None
+    if raw is None:
+        if absent:
+            problems.add(9, where, "an absence tags each query with the claims it targets: "
+                                   "receipt.query_clauses: {<query>: [c1, ...]}, every claim "
+                                   "searched for")
+        return
+    if not isinstance(raw, dict):
+        problems.add(9, where, "receipt.query_clauses is {<query>: [<claim id>, ...]}")
+        return
+    queries = receipt.get("queries") if isinstance(receipt.get("queries"), list) else []
+    tags = set(ids or []) | {GENERAL_QUERY_TAG}
+    targeted: set[str] = set()
+    for query, targets in sorted(raw.items()):
+        at = f"{where}.receipt.query_clauses[{query[:40]!r}]"
+        if query not in queries:
+            problems.add(9, at, "is not one of receipt.queries, as written")
+            continue
+        if not isinstance(targets, list) or not targets or not all(
+                isinstance(t, str) for t in targets) or len(set(targets)) != len(targets):
+            problems.add(9, at, "is a non-empty list of distinct claim ids (or general)")
+            continue
+        if ids is not None:
+            unknown = [t for t in targets if t not in tags]
+            if unknown:
+                problems.add(9, at, f"{', '.join(unknown)} are neither claim ids of the passage "
+                                    f"({', '.join(ids)}) nor {GENERAL_QUERY_TAG}")
+                continue
+        targeted.update(targets)
+    if not absent or ids is None:
+        return
+    unsearched = [c for c in ids if c not in targeted]
+    if unsearched:
+        problems.add(9, where, f"an absence searched for every claim, and no query targets "
+                               f"{', '.join(unsearched)}: run one for each, and tag it")
+    if passage_kind == PASSAGE_EXAMPLE and GENERAL_QUERY_TAG not in targeted:
+        problems.add(9, where, f"a worked example's absence also searched for the general "
+                               f"theorem it is an instance of: a query tagged "
+                               f"{GENERAL_QUERY_TAG}")
+
+
 def check_coverage_clauses(problems: Problems, where: str, coverage: dict,
                            locations: list[dict], ids: list[str] | None) -> None:
     """Rule 9: a coverage claim's parts together state every clause of the passage."""
@@ -1680,6 +1739,10 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
                                passage_kind=frozen[item].get("passage_kind"), layer=source.layer)
             if outcome == "located" and isinstance(p.get("coverage"), dict):
                 check_coverage_clauses(problems, where, p["coverage"], locations, ids)
+            if outcome in ("located", "absent"):
+                check_query_clauses(problems, where, p.get("receipt"), ids,
+                                    absent=outcome == "absent",
+                                    passage_kind=frozen[item].get("passage_kind"))
         # Rule 4's "located or rejected with a reason": a location whose relation
         # COUNTS locates a hit (a relatedMatch is "relevant but states something
         # else", so it discharges nothing on its own), and a rejection with a

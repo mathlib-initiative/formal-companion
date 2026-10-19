@@ -577,6 +577,12 @@ JUDGMENT_RULES = 1
 CLAIM_ID = re.compile(r"c[1-9][0-9]?\Z")
 MAX_PASSAGE_CLAIMS = 12
 MAX_CLAIM_CHARS = 300
+#: The search receipt under the judgment rules (the smoke-2 audit's FM5: the
+#: queries covered one clause and skipped the formal one): ``query_clauses`` maps
+#: each query of ``queries`` to the claim ids it targets, and an absence leaves no
+#: claim without a query; a worked example's absence also searches for the general
+#: theorem it is an instance of, a query tagged ``GENERAL_QUERY_TAG``.
+GENERAL_QUERY_TAG = "general"
 #: the fields the judgment rules add to a location of a locate document (and to an
 #: overturn's): the outcomes keep each one a document wrote, and a challenge task's
 #: manifest shows them to the challenger; none is exported (the record set's format

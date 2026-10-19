@@ -150,7 +150,8 @@ A locate task carries at most eight passages of one frozen inventory.
          "verdict": "rejected", "reason": "states the finite case only"}]}},
    {"item": "In-text #91aa02de", "outcome": "absent", "locations": [],
     "claims": [{"id": "c1", "text": "…"}],
-    "receipt": {"queries": ["…", "…", "…"], "candidates": []}},
+    "receipt": {"queries": ["…", "…", "…"], "candidates": [],
+                "query_clauses": {"…": ["c1"]}}},
    {"item": "In-text #0c4d77b1", "outcome": "unresolved", "locations": [],
     "reason": "the passage's quantifier is ambiguous", "receipt": {"queries": [], "candidates": []}}]}
 ```
@@ -236,6 +237,16 @@ is gated, harvested, tallied and exported as it always was. Under them:
   claim when its parts together state them all), and a `relatedMatch` names none
   (an absent or empty `clauses`). A coverage claim's parts' `clauses` together
   name every claim.
+- **Queries per clause.** A receipt may carry `query_clauses`, `{"<query>":
+  ["c1", …]}`: each key one of its `queries` exactly as written, each value the
+  non-empty, distinct ids of the claims that query targets, or `general`
+  (`cflib.vocab.GENERAL_QUERY_TAG`) for the general theorem a worked example is
+  an instance of. An **absence** carries it and leaves no claim without a query
+  — the smoke-2 audit's false absences searched the method, the complexity or
+  the theorem's name and never the formal clause — and an `example` passage's
+  absence tags at least one query `general`; on a located passage it is
+  optional and checked when given. The export's receipt sidecar (§6) is built
+  from `queries` and `candidates` alone, so the tags are not exported.
 - **A note that admits a gap.** A strong location whose `note` says it leaves a
   clause unstated — a phrase of `cflib.vocab.CLAUSE_GAP_PHRASES` ("does not
   state", "not stated", "is not part of", "rather than asserting", "only the
