@@ -95,6 +95,17 @@ release has something to say.
     "stronger", "strict" or "more general" (`CLOSE_MATCH_GENERALITY_PHRASES`);
     a challenge verdict that leaves a `closeMatch` is held to the same, its note
     read as the outcomes will write it.
+  - **Rules R1–R7, the policy defaults and the challenger's rule.**
+    `references/vocabulary.md` §1.11 states the audit resolver's relation
+    rules R1–R7, the maintainer's overridable policy defaults (P1: a definition
+    over a general type parameter where the passage has a specific one is
+    `broadMatch`; P2: a statement over ℕ for one over ℤ is `narrowMatch`; P3: a
+    trivial or degenerate special case is `narrowMatch`, never vacuous) and the
+    FM7 challenger rule (check against your claim list before a downgrade or
+    refute, apply D1, keep definitionally linked declarations at one relation
+    within a task). Both prompts carry the rules word for word, the challenge
+    prompt the FM7 rule too, and `tests/test_locate_judgment.py` holds them
+    together.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.

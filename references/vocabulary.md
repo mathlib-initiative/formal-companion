@@ -275,6 +275,61 @@ formalized supporting passage resting on one). `RELATION_STRENGTH` orders the re
 `downgrade`, which must name a strictly weaker one: `exactMatch` > `closeMatch` > `broadMatch` >
 `narrowMatch` = `hasPart` > `relatedMatch`.
 
+**How a relation is judged: rules R1–R7** (the smoke-2 audit of 2026-10-19, its resolver's
+rules, adopted for every run planned since). A worker and a challenger judge each record by them,
+pairwise, the passage against the one declaration:
+
+- **R1** — `closeMatch` only for a convention: notation, encoding, junk values, normalisation,
+  renaming, unfolding, bundling (the location's `convention`). A strengthening, a generalisation
+  or a weakening is never one.
+- **R2** — `broadMatch` when the passage follows from the declaration by instantiation or
+  weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all
+  primes for a finite table), with no hypothesis stronger than the passage's.
+- **R3** — `narrowMatch` when the declaration follows from the passage by instantiation (a
+  natural-number statement for an integer one).
+- **R4** — `hasPart` when the declaration states one clause of a passage that says several
+  things; `exactMatch`, `closeMatch` and `broadMatch` only when it states every clause.
+- **R5** — `relatedMatch` when the connection needs another theorem, or the two statements are
+  incomparable; `hasPart` and `narrowMatch` need the declaration alone, instantiated at the
+  passage's objects, to entail a clause the passage asserts.
+- **R6** — relations are pairwise: what else the universe holds never changes a record's
+  relation.
+- **R7** — a definition passage is judged on the data it defines; bundled proof fields are
+  packaging (R1's bundling).
+
+The **policy defaults**, the maintainer's (2026-10-19). Each is a default, not a law of the
+format: it can be overridden, and an override is a change to this paragraph, to both prompts
+(`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`, which carry these lines word
+for word; `tests/test_locate_judgment.py` holds them together) and to the bench's gold, in one
+commit:
+
+- **P1** — a definition stated over a general type parameter where the passage has a specific
+  one (any ring where the passage has ℂ) is `broadMatch` (R2).
+- **P2** — a statement over ℕ where the passage has ℤ is `narrowMatch` (R3).
+- **P3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is
+  `narrowMatch`, never vacuous: it is not refuted for being trivial.
+
+P1 makes a definition passage stated over a specific object `partial` against a definition over
+a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); P2 and P3
+make a theorem passage `partial` against such a declaration, never `formalized` or unresolved.
+
+**The challenger's rule** (the audit's FM7: 8 of 25 challenge results were wrong, each a reasoning
+slip, not a search miss), in the challenge prompt word for word:
+
+- **FM7** — before you downgrade or refute, check the record against your claim list of the
+  passage. Apply D1: an exact or close match to an equivalence or other data that states the
+  theorem formalizes it, so a bijection is the data form of a cardinality equation and stays
+  `closeMatch`. Keep definitionally linked declarations consistent within your task: two
+  declarations on one passage defined one from the other, or one object in two encodings, get
+  the same relation unless their statements differ. A trivial special case is `narrowMatch`
+  (P3), never a refute.
+
+What the gate holds mechanically, under the judgment rules (gate rule 9,
+`references/locate-documents.md` §3–§4): R1's closed list and the words a `closeMatch` note may
+not say; R4 through the claim list and each record's `clauses`, and a strong record whose note
+admits a gap; R5 through a declaration's `instantiation` and a proof part's `step`; and the
+absence's queries per clause. The rest is judgment, which the challenge re-checks.
+
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
 absent, coverage=None)`, each location giving its `relation`, `proof_status`, optional `statement`
