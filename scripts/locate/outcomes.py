@@ -755,7 +755,10 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
         if verdict is not None:
             row["runs"]["challenge"] = verdict["challenge_run"]
             action = verdict.get("action")
-            _judged_clauses(row, loc, verdict)
+            if isinstance(verdict.get("claims"), list):
+                row["challenge_claims"] = verdict["claims"]
+            if action in vocab.CHALLENGE_KEEP:
+                _judged_fields(loc, verdict)
             if action == "refute":
                 row["refuted"].append({**loc, "witness": verdict.get("witness", "")})
                 row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
@@ -773,6 +776,7 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                     loc["relation"] = relation
                     if relation == vocab.CLOSE_MATCH and not str(loc.get("note") or "").strip():
                         loc["note"] = downgrade_note(verdict, layer_of(sid) if layer_of else None)
+                    _judged_fields(loc, verdict)
         kept.append(loc)
     row["locations"] = _renumbered(kept)
     confirmed: list[dict] = []
@@ -852,19 +856,26 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
     confirm_parts(confirmed)
 
 
-def _judged_clauses(row: dict, loc: dict, verdict: dict) -> None:
-    """What a challenger says a location states (the judgment rules), kept beside it.
+#: what a confirm or downgrade verdict may say of the record it leaves, which replaces
+#: the worker's: the displayed step a hasPart of a proof states
+_VERDICT_FIELDS = ("step",)
 
-    A confirm or downgrade that names ``clauses`` names them against the
-    challenger's own claim list of the passage, which the row keeps as
-    ``challenge_claims``; the location keeps them as ``challenge_clauses``, its
-    worker's ``clauses`` unchanged.  Nothing is added for a verdict that names
-    none (every verdict of a run planned before the rules).
+
+def _judged_fields(loc: dict, verdict: dict) -> None:
+    """What a challenger says the location it leaves states (the judgment rules).
+
+    Called for a confirm, and for a downgrade once it is applied.  ``clauses``
+    name the challenger's own claim list of the passage (the row's
+    ``challenge_claims``), so the location keeps them as ``challenge_clauses``,
+    its worker's ``clauses`` unchanged; a ``step`` the verdict names is the record
+    it leaves, and replaces the worker's.  Nothing is added for a verdict that
+    names none (every verdict of a run planned before the rules).
     """
-    if isinstance(verdict.get("claims"), list):
-        row["challenge_claims"] = verdict["claims"]
-    if isinstance(verdict.get("clauses"), list) and verdict.get("action") != "refute":
+    if isinstance(verdict.get("clauses"), list):
         loc["challenge_clauses"] = verdict["clauses"]
+    for key in _VERDICT_FIELDS:
+        if isinstance(verdict.get(key), str) and verdict[key].strip():
+            loc[key] = verdict[key]
 
 
 def _apply_coverage(row: dict, planned: dict, verdicts: dict,

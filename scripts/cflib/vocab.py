@@ -590,12 +590,18 @@ GENERAL_QUERY_TAG = "general"
 #: the passage's objects the declaration is instantiated at and which instance or
 #: hypothesis makes it apply there.  Objects that cannot meet the hypotheses make
 #: the relation ``relatedMatch`` (rule R5).
+#: A location's ``step`` (the smoke-2 audit's FM3: a lemma used inside a proof
+#: credited as a part of it): ``hasPart`` and ``narrowMatch`` need the declaration
+#: alone, instantiated, to entail a clause the passage asserts, and on a proof or
+#: remark passage (``passage_kind`` ``other``) a ``hasPart`` names, in one line,
+#: the displayed step it states.
 #: the fields the judgment rules add to a location of a locate document (and to an
 #: overturn's): the outcomes keep each one a document wrote, and a challenge task's
 #: manifest shows them to the challenger; none is exported (the record set's format
 #: is unchanged, references/locate-documents.md section 6)
-JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation")
-#: the longest one-line field a judgment rule asks of a location (``instantiation``)
+JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step")
+#: the longest one-line field a judgment rule asks of a location (``instantiation``,
+#: ``step``)
 MAX_JUDGMENT_LINE_CHARS = 300
 #: The closed list of phrases by which a strong record's own note admits a clause
 #: its declaration does not state (smoke-2: "rather than asserting its degree

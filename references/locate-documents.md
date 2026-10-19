@@ -262,6 +262,14 @@ is gated, harvested, tallied and exported as it always was. Under them:
   signature the index did not record is not held to the rule (the gate cannot
   see its binders). Objects that cannot meet the hypotheses make the relation
   `relatedMatch` (R5): that is the worker's judgment, which a challenger checks.
+- **A part of a proof names its step.** `hasPart` and `narrowMatch` need the
+  declaration alone, instantiated, to entail a clause the passage asserts (R5;
+  a lemma the proof uses, one that needs a second declaration, a neighbouring
+  passage's fact is `relatedMatch`), and on a proof or remark passage
+  (`passage_kind` `other`, read from the task manifest) a `hasPart` location
+  carries `step`, one line (at most `MAX_JUDGMENT_LINE_CHARS`) naming the
+  displayed step it states. A challenge verdict that leaves a `hasPart` there
+  names it too: a downgrade's own `step`, a confirm's when the record has none.
 - **A note that admits a gap.** A strong location whose `note` says it leaves a
   clause unstated — a phrase of `cflib.vocab.CLAUSE_GAP_PHRASES` ("does not
   state", "not stated", "is not part of", "rather than asserting", "only the
@@ -1620,8 +1628,9 @@ the passage is wrong. Under the judgment rules (§3, §4) a row also carries
 `claims` — the claim list its locations' `clauses` name: the worker's, or the
 challenger's once an overturn replaced the locations — and `challenge_claims`,
 the challenger's own list when a verdict document gave one; a location keeps
-the fields its document wrote (`clauses`, …) and, when a verdict named
-`clauses`, `challenge_clauses`. Each is written only where a document wrote it,
+the fields its document wrote (`clauses`, `instantiation`, `step`) and, when a
+confirm or an applied downgrade named them, the verdict's `clauses` as
+`challenge_clauses` and its `step` in place of the worker's. Each is written only where a document wrote it,
 so a run planned before the rules yields the rows it always did, and none is
 exported (§6). What else can be wrong about a passage: a location that could not be joined, a document whose
 universe or `source_sha`/`layer_sha256` is not the run's pin, an outcome that is

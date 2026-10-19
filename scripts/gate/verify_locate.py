@@ -86,7 +86,8 @@ references/locate-documents.md sections 2-4 and 9):
    example's also searching for its general theorem; a counting location on a
    declaration whose signature (``corpus.sqlite``'s ``decls.signature``) takes
    an instance argument says how it is instantiated (``instantiation``); a
-   challenge document
+   ``hasPart`` of a proof or remark passage names the displayed step it states
+   (``step``); a challenge document
    carries the challenger's own claim lists, which its verdicts and overturn
    locations name.
 
@@ -261,6 +262,8 @@ CLAIM_KEYS = frozenset({"id", "text"})
 #: (cflib.vocab.GENERAL_QUERY_TAG)
 GENERAL_QUERY_TAG = "general"
 PASSAGE_EXAMPLE = "example"
+#: a proof or a remark: its hasPart locations name the displayed step they state
+PASSAGE_OTHER = "other"
 #: a judgment rule's one-line field (cflib.vocab.MAX_JUDGMENT_LINE_CHARS)
 MAX_JUDGMENT_LINE_CHARS = 300
 #: the brackets of a binder group in a signature as the index prints it
@@ -1438,12 +1441,27 @@ def _one_line(problems: Problems, where: str, field: str, value: Any, layer: str
     return True
 
 
+def check_step(problems: Problems, where: str, step: Any, layer: str) -> None:
+    """Rule 9 (FM3): a ``hasPart`` of a proof or remark names the displayed step it states.
+
+    A lemma the proof uses, or one that reaches the step only with another, states
+    no part of the passage: it is ``relatedMatch`` (R5).  A part names the step --
+    the displayed equation, the case, the inequality -- in one line of the
+    worker's own words (``step``).
+    """
+    if not _one_line(problems, where, "step", step, layer):
+        problems.add(9, where, "a hasPart of a proof or remark passage (passage_kind other) "
+                               "names the displayed step it states (step: <one line>); a "
+                               "lemma the argument only uses is relatedMatch (R5)")
+
+
 def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
                    location: dict, *, ids: list[str] | None, passage_kind: Any,
                    layer: str) -> None:
     """Rule 9 over one location a document asserts: what it states of its passage.
 
-    Its ``clauses`` (R4); a strong one's note admits no gap; and, when the
+    Its ``clauses`` (R4); a strong one's note admits no gap; a ``hasPart`` of a
+    proof or remark (``passage_kind`` ``other``) names its ``step`` (FM3); and, when the
     declaration's signature in ``corpus.sqlite`` (``decls.signature``, the
     probe's printed type) takes an instance argument among its leading binders,
     the ``instantiation`` that says at which of the passage's objects, and by
@@ -1459,6 +1477,8 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
             problems.add(9, where, f"the note says {phrase!r}: it admits a clause the "
                                    f"declaration does not state, so the relation is hasPart "
                                    f"(R4), not {relation}")
+    if relation == HAS_PART and passage_kind == PASSAGE_OTHER:
+        check_step(problems, where, location.get("step"), layer)
     if relation in LOCATE_RELATIONS and relation != RELATED_MATCH:
         given = _one_line(problems, where, "instantiation", location.get("instantiation"),
                           layer)
@@ -1944,14 +1964,16 @@ def _challenge_claims(cfg: GateConfig, problems: Problems, name: str, doc: dict,
 
 
 def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
-                            claims_of: dict[str, list[str] | None]) -> None:
+                            claims_of: dict[str, list[str] | None], layer: str) -> None:
     """Rule 9 over a location verdict: the relation it leaves states what it says.
 
     A confirm leaves the record's relation and a downgrade the one it names; one
     that counts names the claim ids it states (``clauses``, against the
     document's ``claims`` for the passage), all of them for a strong relation
     (R4), and a ``relatedMatch`` names none.  A confirm of a strong record whose
-    own note admits a clause it does not state is refused: it is a downgrade.
+    own note admits a clause it does not state is refused: it is a downgrade.  A
+    ``hasPart`` it leaves on a proof or remark names its displayed ``step`` (FM3):
+    a downgrade's own, a confirm's when the record names none.
     """
     action, old = v.get("action"), rec.get("relation")
     result = old if action == "confirm" else v.get("relation") if action == "downgrade" else None
@@ -1970,6 +1992,11 @@ def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
             problems.add(9, where, f"the record's own note says {phrase!r}: it admits a clause "
                                    f"the declaration does not state, so it is a downgrade to "
                                    f"hasPart (R4), not a confirm")
+    if result == HAS_PART and rec.get("passage_kind") == PASSAGE_OTHER and (
+            action == "downgrade" or not _nonempty_str(rec.get("step"))):
+        # the record a verdict leaves is a hasPart of a proof: the step it states, the
+        # verdict's own unless the confirmed record names one
+        check_step(problems, where, v.get("step"), layer)
     if action == "downgrade" and result in STRONG_RELATIONS:
         phrase = admits_missing_clause(v.get("note"))
         if phrase:
@@ -2052,7 +2079,7 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                  + " (a downgrade to closeMatch exports its note, else a "
                                    "sentence of its witness, as the location's note)")
         if cfg.judgment_rules and target == "location":
-            _judge_location_verdict(problems, where, v, records[key], claims_of)
+            _judge_location_verdict(problems, where, v, records[key], claims_of, layer)
         if action == "overturn" and target == "prominence" \
                 and not _one_of(v.get("prominence"), PROMINENCE):
             problems.add(1, where, "a prominence overturn names the new prominence")

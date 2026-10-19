@@ -327,6 +327,76 @@ class TestTheInstantiationLine(JudgedLocate):
         self.assertEqual(vl.leading_binders("(a : \u03b1) (b"), ["(a : \u03b1)"])
 
 
+# --------------------------------------------------------------------------- #
+# FM3: a part of a proof is a displayed step it states
+# --------------------------------------------------------------------------- #
+
+class TestAPartOfAProofNamesItsStep(JudgedLocate):
+
+    def setUp(self):
+        super().setUp()
+        doc = G.locate_manifest_doc(self.fx)
+        doc["passages"][1]["passage_kind"] = "other"     # the theorem box, read as a proof
+        self.fx.manifest(self.TASK, doc)
+
+    def body(self, relation="hasPart", **extra) -> dict:
+        body = judged_body()
+        body["passages"][0]["locations"][0].update(relation=relation, clauses=["c1"], **extra)
+        return body
+
+    def test_a_has_part_of_a_proof_names_the_step(self):
+        self.assertRefusedOnlyUnderTheRules(self.body(), "names the displayed step it states")
+        self.assertOk(self.run_body(self.body(step="the displayed existence of the gadget")))
+        self.assertRule(self.run_body(self.body(step="first\nsecond")), 9, "one line")
+
+    def test_only_a_has_part_of_a_proof(self):
+        self.assertOk(self.run_body(self.body("narrowMatch")))
+        body = judged_body()                                   # an exactMatch of every claim
+        self.assertOk(self.run_body(body))
+        doc = G.locate_manifest_doc(self.fx)                   # the theorem passage again
+        self.fx.manifest(self.TASK, doc)
+        self.assertOk(self.run_body(self.body()))
+
+
+class TestAChallengersPartOfAProofNamesItsStep(G.GateTestCase):
+
+    TASK = "t-chl-0001"
+    KEY = "9" * 64
+
+    def setUp(self):
+        self.fx = G.Fixture(self, "locate-challenge")
+        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.write_gate()
+
+    def records(self, relation, **extra):
+        doc = G.locate_manifest_doc(self.fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                           "span": G.THEOREM_SPAN, "passage_kind": "other",
+                           "relation": relation, **extra}]
+        self.fx.manifest(self.TASK, doc)
+
+    def run_verdict(self, **verdict) -> dict:
+        body = {"verdicts": [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                              "witness": "read at the pin", **verdict}],
+                "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
+        return self.fx.run(self.fx.document(self.TASK, body))
+
+    def test_a_downgrade_to_has_part_names_the_step(self):
+        self.records("exactMatch")
+        self.assertRule(self.run_verdict(action="downgrade", relation="hasPart", clauses=["c1"]),
+                        9, "displayed step")
+        self.assertOk(self.run_verdict(action="downgrade", relation="hasPart", clauses=["c1"],
+                                       step="the displayed divisibility"))
+
+    def test_a_confirm_names_it_when_the_record_does_not(self):
+        self.records("hasPart")
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1"]), 9, "displayed step")
+        self.assertOk(self.run_verdict(action="confirm", clauses=["c1"], step="the bound"))
+        self.records("hasPart", step="the worker's step")
+        self.assertOk(self.run_verdict(action="confirm", clauses=["c1"]))
+
+
 class TestAdmitsAMissingClause(unittest.TestCase):
 
     def test_the_closed_phrase_list(self):
@@ -558,6 +628,28 @@ class TestTheFieldsReachTheOutcomesAndTheChallenger(unittest.TestCase):
                          ("hasPart", ["c1"], ["c1"]))
         self.assertEqual(outcomes.outcome_row(row)["challenge_claims"], theirs)
 
+    def test_a_downgrades_step_is_the_record_it_leaves(self):
+        def verdict(rec):
+            v = F.default_verdict(rec)
+            if rec.get("declaration") == "Widget.exists_spanning_gadget":
+                v.update(action="downgrade", relation="hasPart", clauses=["c1"],
+                         step="the displayed existence of the gadget")
+            if rec.get("declaration") == "Widget.card_dvd":     # no downgrade: equally strong
+                v.update(action="downgrade", relation="narrowMatch", clauses=["c1"],
+                         step="ignored with the verdict")
+            return v
+
+        self.challenge(verdict=verdict)
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        locs = {l["declaration"]: l for r in built["outcomes"] for l in r["locations"]}
+        lead = locs["Widget.exists_spanning_gadget"]
+        self.assertEqual((lead["relation"], lead["step"], lead["challenge_clauses"]),
+                         ("hasPart", "the displayed existence of the gadget", ["c1"]))
+        # a verdict that is no downgrade changes nothing of the record, and leaves it owed
+        part = locs["Widget.card_dvd"]
+        self.assertEqual((part["relation"], part["challenge"]), ("hasPart", None))
+        self.assertFalse({"step", "challenge_clauses"} & set(part))
+
 
 # --------------------------------------------------------------------------- #
 # the prompts say each rule the gate holds
@@ -619,6 +711,18 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn('"instantiation": "<the passage', worker)
         self.assertIn("Check the record's `instantiation`", self.worker(vocab.LOCATE_CHALLENGE))
         self.assertIn("without its `instantiation` line",
+                      self.rendered[vocab.LOCATE]["worker-system.md"])
+
+    def test_fm3_a_part_is_entailed_by_the_declaration_alone(self):
+        worker = self.worker()
+        self.assertIn("**`hasPart` and `narrowMatch` need the declaration alone, instantiated at "
+                      "the passage's objects, to entail a clause this passage asserts.**", worker)
+        self.assertIn("a lemma the proof uses along the way", worker)
+        self.assertIn("names the displayed step it states", worker)
+        challenger = self.worker(vocab.LOCATE_CHALLENGE)
+        self.assertIn("A `hasPart` or `narrowMatch` stands only when the declaration alone "
+                      "entails a clause of this passage", challenger)
+        self.assertIn("does not name its displayed `step`",
                       self.rendered[vocab.LOCATE]["worker-system.md"])
 
     def test_fm1_the_challenger_lists_the_clauses_itself(self):

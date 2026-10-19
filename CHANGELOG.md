@@ -80,6 +80,14 @@ release has something to say.
     leading binders (`verify_locate.instance_binders`) and, when one is
     instance-implicit, requires the counting location's `instantiation` line; a
     declaration with no recorded signature is not held to it.
+  - **A part is what the declaration alone entails (FM3).** The prompts say
+    `hasPart` and `narrowMatch` need the declaration alone, instantiated, to
+    entail a clause of this passage, and call a proof ingredient, a bridge
+    lemma or a neighbouring passage's fact `relatedMatch`. Rule 9 has a
+    `hasPart` on a proof or remark passage (`passage_kind` `other`) name the
+    displayed step it states (`step`), and a challenge verdict that leaves one
+    there name it too; the outcomes keep the step, a confirm's or an applied
+    downgrade's replacing the worker's.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.
