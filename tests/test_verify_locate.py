@@ -1726,17 +1726,40 @@ class TestTheGateGroupCitesWhatResolves(unittest.TestCase):
     def owned(self) -> list[Path]:
         return [SCRIPTS / rel for rel in self.MODULES.values() if rel != "gate/verify_findings.py"]
 
+    #: a review's finding ids: "review 12", "Review #59", C-02, M-01, OPS-05, SEAM-1,
+    #: G-04, R-02, S-3 ... (one digit or more)
+    FINDING_ID = r"\b[Rr]eview #?\d+\b|\b(?:SEAM|OPS|[GCMRS])-\d+\b"
+
     def test_no_review_finding_id_is_cited(self):
+        """Not in the gate group, and not anywhere else in scripts/ or templates/: a
+        comment states its reason in words, or cites a section of a document in the
+        tree.  Vendored files are someone else's text and are not read."""
         import re
 
-        finding = re.compile(r"\b[Rr]eview #?\d+\b|\b(?:SEAM|OPS|[GCMRS])-\d+\b")
-        files = (self.owned() + sorted((SKILL / "templates" / "tend").glob("*.tmpl"))
-                 + sorted((SKILL / "templates" / "prompts").glob("locate*.tmpl"))
-                 + sorted((SCRIPTS / "run").glob("bridge-*.sh")))
+        finding = re.compile(self.FINDING_ID)
+        files = sorted(p for p in SCRIPTS.rglob("*") if p.is_file()
+                       and p.suffix in (".py", ".sh", ".tmpl") and "__pycache__" not in p.parts)
+        files += sorted(p for p in (SKILL / "templates").rglob("*") if p.is_file()
+                        and "vendor" not in p.parts and p.suffix != ".pyc")
+        self.assertTrue(set(self.owned()) <= set(files))
+        self.assertGreater(len(files), 200)
         for path in files:
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                with self.subTest(file=path.name, line=n):
+                with self.subTest(file=str(path.relative_to(SKILL)), line=n):
                     self.assertIsNone(finding.search(line), line)
+
+    def test_the_finding_id_pattern_catches_every_form(self):
+        import re
+
+        finding = re.compile(self.FINDING_ID)
+        for cited in ("(review SEAM-3)", "review / SEAM-1:", "Review C-03:", "(review OPS-09)",
+                      "G-04", "R-02", "S-1", "M-01", "review 12", "Review #59"):
+            with self.subTest(cited=cited):
+                self.assertIsNotNone(finding.search(cited))
+        for plain in ("sha256-1", "UTF-8", "web-html/3", "cf-locate/1", "OPS", "SEAM",
+                      "G-x", "reviewer 2", "pull request 16"):
+            with self.subTest(plain=plain):
+                self.assertIsNone(finding.search(plain))
 
     def test_every_named_function_and_value_exists(self):
         import re

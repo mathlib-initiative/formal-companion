@@ -81,8 +81,8 @@ CONFIG_PINS = ("universe_sha256", "sourceset_manifest_sha256", "agent_cli", "ten
 NOTED_PINS = CONFIG_PINS[:1] + ("corpus_db_sha256",) + CONFIG_PINS[1:]
 #: the per-run configuration pins a plan records in run.yaml locate.config_shas: the
 #: gate code and prompt templates without the bytes a plan renders per run (run id,
-#: run paths), and the agent wrappers' settings (the sandbox bypass among them, review
-#: SEAM-1), so a run planned before they were recorded cannot be told apart
+#: run paths), and the agent wrappers' settings (the sandbox bypass among them), which
+#: a run planned before they were recorded does not carry, so it cannot be told apart
 CONFIG_SHA_PINS = ("gate_files", "prompts", "agents")
 
 

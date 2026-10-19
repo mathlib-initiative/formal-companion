@@ -638,7 +638,8 @@ def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], l
     if remote.get("candidates_dir") and local.get("candidates_dir"):
         # THIS run's sources' candidates files only, never the directory: it is
         # the sourceset's, shared by every run of it.  The blind arm's files are
-        # sent too (review C-04): its prompts name them, and they hold the
+        # sent too, or its workers would be told to read files that are not there: its
+        # prompts name them, and they hold the
         # lexical hints the proposal's G1-blind arm keeps (no curated hit, no QID).
         files = [Path(local["candidates_dir"]) / f"{sid}.json"
                  for sid in sorted(remote.get("sources") or {})]
@@ -661,7 +662,8 @@ def candidates_lock_dirs(dest: str, tools_db: dict) -> list[str]:
     each planted database have their own directory inside it
     (references/locate-documents.md section 5).  An earlier transfer leaves each
     one read-only, so a kind directory's transfer opens -- and creates -- the
-    per-universe directory around it as well (review C-05), then closes both.
+    per-universe directory around it as well (a ``mkdir`` inside the closed one
+    fails), then closes both.
     Which kind has its own directory is ``locate.inputs.candidates_subdir``'s
     answer, the one the planner placed ``dest`` by, never a list of kinds here.
     """

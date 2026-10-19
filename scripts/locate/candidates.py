@@ -42,8 +42,9 @@ full ``corpus.sqlite``'s -- the CHECK database, so a ``dropped`` reason is
 true of the universe -- and a planted file then WITHHOLDS every hit its own
 database lacks, from ``curated``, ``dropped`` and the QID refusals alike: the
 file travels to the P run's workers, and a removed declaration is exactly what
-the P tier measures citations of from memory (review C-02).  Only the count of
-withheld hits is reported, on this machine.  Each kind has
+the P tier measures citations of from memory, so naming it in the file would
+hand the workers the answer.  Only the count of withheld hits is reported, on
+this machine.  Each kind has
 its own directory (``candidates_dir`` below), so one arm never overwrites
 another's files, and the planner refuses a plan whose candidates came from
 another kind of database than the one its workers search.
@@ -174,7 +175,8 @@ def article_urls(site: str, title: str) -> list[str]:
     """Every form a docstring's link to the article is stored in, sorted; ``[]`` for none.
 
     The docstring side is ``corpus.ingest.wikipedia_urls``, so the article's
-    side is the same reader over the ways its URL is written (review C-10):
+    side is the same reader over the ways its URL is written, or a docstring
+    linking to the article in another of them would join nothing:
     MediaWiki's own page URL, which leaves ``!``, ``*``, ``,``, ``;`` and ``:``
     literal -- so a trailing ``!`` is read as sentence punctuation and dropped,
     as it is from a docstring's link copied from the page -- and the
@@ -424,7 +426,8 @@ def withhold(hits: list[dict], universe: inputs.Universe, tools: sqlite3.Connect
 
     A hit whose library is not in the universe, or whose declaration the
     planted database does not hold at the universe's commit, is left out
-    without its name -- the file reaches the P run's workers (review C-02).
+    without its name -- the file reaches the P run's workers, and a removed
+    declaration named there is one they would no longer cite from memory.
     """
     kept = [h for h in hits if h["library"] in universe.libraries and query.exists(
         tools, h["library"], universe.commit(h["library"]), h["declaration"])]
@@ -497,8 +500,8 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
     for sid in wanted:          # another renderer's source: refused before anything is written
         if inputs.rendered(manifest.entries[sid]):
             inputs.check_renderer(manifest.entries[sid], sourceset_id)
-    # a source render refused for parity is no render away (review SEAM-2): a named one
-    # is refused as such, and an unnamed one is skipped and reported apart
+    # a source render refused for parity is no render away (only a corrected delivery
+    # settles it): a named one is refused as such, an unnamed one skipped and reported apart
     refused = inputs.parity_refusals(paths, sourceset_id, manifest)
     lists = lists or CuratedLists()
     curated_library = None if blind else lists.resolve_library(universe)

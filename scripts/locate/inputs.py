@@ -88,8 +88,9 @@ def parity_refusals(paths: WorkspacePaths, sourceset_id: str,
 
     ``Sourceset.parity_refusals``: a source a render refused because its layer
     is not the one the producer recorded stays unrendered, and every render of
-    this sourceset refuses it again -- fetching or rendering it settles nothing
-    (review SEAM-2), so a caller names it apart from a source not rendered yet.
+    this sourceset refuses it again -- fetching or rendering it settles nothing,
+    only a corrected delivery in a new sourceset does -- so a caller names it
+    apart from a source not rendered yet, whose fix is a render.
     """
     return Sourceset(paths, sourceset_id).parity_refusals(manifest)
 

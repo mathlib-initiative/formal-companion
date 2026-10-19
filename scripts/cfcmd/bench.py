@@ -336,8 +336,8 @@ def _build(ws, args) -> int:
     drawn = draw_mod.draw(frame, uniform=args.uniform, curated=args.curated, seed=args.seed)
     # the draw reads no layer; the drawn articles' spans do (section 8.5 step 3)
     unrendered = draw_mod.unrendered_drawn(frame, drawn)
-    # a standing parity refusal is no fetch or render away (review SEAM-2): named apart,
-    # and unrendered.txt lists only what a fetch and a render settle
+    # a standing parity refusal is no fetch or render away (only a corrected delivery
+    # settles it): named apart, and unrendered.txt lists only what a fetch and a render settle
     standing = locate_inputs.parity_refusals(paths, args.sourceset, manifest)
     refused = {sid: standing[sid] for sid in unrendered if sid in standing}
     fetchable = [sid for sid in unrendered if sid not in refused]
