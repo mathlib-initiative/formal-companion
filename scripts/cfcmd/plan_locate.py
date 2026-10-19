@@ -51,8 +51,9 @@ from plan import models as models_mod
 from run import manifest as manifest_mod
 
 NAME = "plan-locate"
-#: staged files that are the run's own rather than its configuration's (review M-01):
-#: left out of ``locate.config_shas.gate_files``, with any file naming a run path
+#: staged files that are the run's own rather than its configuration's: left out of
+#: ``locate.config_shas.gate_files``, with any file naming a run path, since their bytes
+#: differ between two runs of one configuration and would refuse every A/A replicate
 RUN_SPECIFIC_STAGED = ("gate/gate.json", "gate/tasks/*", "bin/*-agent.sh")
 
 
@@ -203,7 +204,8 @@ def run(args) -> int:
         refused = inputs.parity_refusals(paths, args.sourceset, manifest)
         source_ids, unrendered, flagged = lplan.select_sources(
             manifest, args.sources, include_flagged=args.include_flagged, refused=refused)
-        # a standing parity refusal is no render away: named apart (review SEAM-2)
+        # a standing parity refusal is no render away (only a corrected delivery settles
+        # it), so it is named apart from a source a render would settle
         skipped.update({s: inputs.PARITY_REFUSED if s in refused else "not rendered"
                         for s in unrendered})
         skipped.update(flagged)
@@ -370,7 +372,7 @@ def run(args) -> int:
         "warnings": warnings,
     }
     # `cf campaign plan` stamped this shard; a re-plan (of the same preset:
-    # _check_run_id) keeps the stamp (review OPS-05), so the export still seals it
+    # _check_run_id) keeps the stamp, so the export still seals it
     # under its campaign rather than as `run:<id>` (export.campaign_token), the
     # harvest still fetches the campaign's host artifacts, and `cf campaign
     # render` can compare the shard with campaign.yaml again
@@ -414,9 +416,11 @@ def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
     bytes name one of ``run_paths``; ``agents`` is what those wrappers run with
     that names no run (``locate.tend_root.agent_settings``: the agent host, the
     model, the sandbox bypass, the agentbox profile, the attempt cap and the
-    merge target), as the plan decided it (review SEAM-1).  Two plans of one configuration that
+    merge target), as the plan decided it: the wrappers' own shas name the run, so
+    without this map a run whose agents ran with the sandbox bypass would pass for
+    a replicate of one whose agents did not.  Two plans of one configuration that
     differ only in run id record equal maps, which is what the bench's A/A
-    check compares (review M-01; references/locate-documents.md section 9).
+    check compares (references/locate-documents.md section 9).
     """
     tdir = templates_dir() / "prompts"
     prompts = {name: sha256_file(tdir / name)
@@ -469,7 +473,7 @@ def outcomes_pin_check(paths, run_id: str, manifest, universe: inputs.Universe,
 def tools_pin_check(paths, run_id: str, tools_db: dict) -> None:
     """A challenge hunts in the tools database its challenged run's workers searched, or is refused.
 
-    Review C-03: a challenge of a P run planned with the default (full)
+    A challenge of a P run planned with the default (full)
     database would hunt with the very declarations the ablation removed, and
     its overturns would reach the outcomes the P tier scores as memory.  The
     kind must be the run's ``locate.universe.tools_corpus_db`` kind and, for a

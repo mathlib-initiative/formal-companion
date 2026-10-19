@@ -97,7 +97,7 @@ def run(args) -> int:
     if pending:
         log.warn(f"{pending} source(s) are not rendered and have no candidates file yet")
     if refused:
-        # a standing parity refusal is no render away (review SEAM-2)
+        # a standing parity refusal is no render away: only a corrected delivery settles it
         log.warn(f"{len(refused)} source(s) have no candidates file because render refused "
                  f"them, the layer not the producer's: " + ", ".join(refused[:5])
                  + (f" (+{len(refused) - 5} more)" if len(refused) > 5 else "")

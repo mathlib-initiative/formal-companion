@@ -207,7 +207,8 @@ def _tend_version_step(host: dict, tend: str) -> str:
                 f"{host.get('name', '<host>')}.tend_version (e.g. \">=0.4,<0.6\") in "
                 "workspace.yaml and cf run will refuse a mismatch'")
     # grouped: a pipeline binds tighter than the probe's own `||`, so ungrouped
-    # the check read the probe's output only when the probe FAILED (review OPS-09)
+    # the check read the probe's output only when the probe FAILED, so a host with tend
+    # installed was never checked at all
     return ("{ " + probe + "; } 2>&1 | tail -1 | python3 -c "
             + shlex.quote(TEND_VERSION_CHECK) + " " + shlex.quote(required))
 
@@ -320,8 +321,8 @@ def layer_check(gate_config: str, want_sha256: str = "") -> str:
     when it is missing or is not gate.json's ``layer_sha256``, and so it does
     when the ``formulas.json`` or ``paragraphs.json`` beside it is missing or
     unreadable; a run whose layers were neither sent (``--include-source-text``)
-    nor already on the host would pass the other checks and fail every task
-    (review OPS-08).  So each one is checked here, from the host's
+    nor already on the host would pass the other checks and fail every task,
+    after the agents' cost was spent.  So each one is checked here, from the host's
     ``gate_config`` -- refused unless
     its sha256 is ``want_sha256``, the gate.json the transfer sent
     (:func:`sent_gate_json_sha256`) -- and the failures are named.  The command
@@ -408,7 +409,7 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
     # An entry that locks its directories (``lock_dirs``, outermost first) creates
     # them inside its own open/close bracket: an earlier transfer left them
     # read-only, so a `mkdir -p` here, before the bracket opens them, fails on a
-    # kind directory inside a closed per-universe one (review C-05).  And an entry
+    # kind directory inside a closed per-universe one.  And an entry
     # whose rsync creates its own directory (``rsync_creates_dest``: rsync makes
     # the last component of a destination) needs only its parent here: a locate
     # run's source layers are one directory each, and naming them all made this
