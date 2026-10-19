@@ -10,6 +10,13 @@ content-addressed and used as a calibration baseline, so the compatibility
 promise is about the keys a corpus and a ledger are joined on, not about the
 Python API.
 
+- Judgment rule PD4 (the maintainer's decision of 2026-10-19). A declaration that proves the
+  passage's conclusion, or a stronger one, under stronger hypotheses that some of the passage's
+  own cases meet (global continuity where the passage has local) is `narrowMatch`, a special
+  case (R3), so the passage counts as `partial`. R2 says a stronger hypothesis makes a record at
+  most `narrowMatch`, and R5's incomparable case no longer covers it. Literature Links' relation
+  field is free text, so no new relation word was needed. The bench labeler is now
+  `locate-label/4`, so gold labelled under /3 is relabelled before scoring.
 - **Major** — a corpus or ledger written by an older version no longer joins.
   The two frozen definitions are `cflib.hashing.finding_id` (five parts,
   `\n`-joined, the item through `items.clean()` first) and

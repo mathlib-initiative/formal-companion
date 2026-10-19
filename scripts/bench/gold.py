@@ -57,9 +57,9 @@ from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GO
 #: the labeler, frozen by its file's sha (its prompts are inline in it)
 LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: bumped whenever the labeler's contract (args or result shape) or the rules it
-#: labels by change (/3: the judgment rules R1-R7 and the policy defaults PD1-PD3 of
+#: labels by change (/4: PD4, a stronger-hypotheses special case is narrowMatch; /3: the judgment rules R1-R7 and the policy defaults PD1-PD3 of
 #: references/vocabulary.md section 1.11, word for word)
-LABELER_VERSION = "locate-label/3"
+LABELER_VERSION = "locate-label/4"
 #: G4: at most this many maintainer spot checks per release (section 8.1)
 G4_MAX_NEGATIVES = 30
 G4_MAX_POSITIVES = 20
