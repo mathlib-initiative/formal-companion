@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The out-of-tree locate gate: rules 1-8 over one task's own documents.
+"""The out-of-tree locate gate: rules 1-9 over one task's own documents.
 
 New code, implementing docs/proposals/wikipedia-locate.md section 4 (gates,
 locate mode) over the formats of references/locate-documents.md sections 1-4

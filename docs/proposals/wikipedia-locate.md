@@ -56,7 +56,7 @@ run with a model, and no task has yet gone through worker, gate, reviewer and me
 | L0: universes, ingest, `corpus.sqlite`, the host tools | `scripts/corpus/`, `templates/corpus/`; `cf corpus` | §2.4's proof status re-decided at ingest; the canary gate per toolchain; the exact table, FTS5 and tags; a blind build for G1-blind; the probe and its host drivers as run on `$HOST` (44 of 45 libraries, before two driver fixes, §12) |
 | L2: candidates | `scripts/locate/candidates.py`; `cf locate candidates` | curated joins and lexical retrieval over `corpus.sqlite` |
 | L3a/L3b/L5: the locate planner and presets | `scripts/locate/`, `scripts/cfcmd/plan_locate.py`, `templates/prompts/locate-*.md.tmpl`; `cf plan-locate` | sourceset-scoped runs, task manifests, the tend root with the out-of-tree gate directory |
-| L4: the locate gate | `scripts/gate/verify_locate.py` | rules 1–8 over only the task's own documents; the ownership rule names itself; the task id read from `orchestrator.sqlite` assumes a schema nobody has checked against tend |
+| L4: the locate gate | `scripts/gate/verify_locate.py` | rules 1–9 over only the task's own documents (rule 9, the judgment rules, for runs planned with them); the ownership rule names itself; the task id read from `orchestrator.sqlite` assumes a schema nobody has checked against tend |
 | the bridge and the host | `scripts/run/agent_call.py`, `attempt_cap.py`, `watchdog.py`, the bridges | 15 flock slots, `timeout 45m`, an empty or 409 envelope exits non-zero, envelopes kept under `usage/` (a call that left none, a timeout included, leaves a record the watchdog estimates), the attempt cap that writes `UNRESOLVED` |
 | L6: harvest, tally, export | `scripts/harvest/` (recursive), `scripts/locate/outcomes.py`, `records.py`, `export.py`; `cf harvest`, `cf tally --locate`, `cf export literature-links` | sealed record sets every record of which the vendored checker accepts |
 | campaigns | `scripts/run/campaign.py`, `templates/campaign/`; `cf campaign` | the host sequencer and the spend watchdog are rendered, never run here |
@@ -482,7 +482,15 @@ documents** (`--findings` from the bridge), loading only the sources they name:
 8. an inventory document (L3a) may not drop a passage the deterministic
    finders found without a reason, and every `formal_math` paragraph of the
    source must be covered by a passage or a recorded skip (a paragraph-coverage
-   floor).
+   floor);
+9. the judgment rules (added after the smoke-2 audit of 2026-10-19, for runs
+   planned since; `gate.json` names `judgment_rules`): a located or absent
+   passage writes its claim list, each counting location names the clauses it
+   states (all of them for `exactMatch`, `closeMatch`, `broadMatch`), an
+   absence searched every clause, a declaration with instance arguments says
+   how it is instantiated, a part of a proof names its step and a
+   `closeMatch` its convention (`references/vocabulary.md` §1.11, rules
+   R1–R7; `references/locate-documents.md` §3–§4).
 
 As built (`scripts/gate/verify_locate.py`; `references/locate-documents.md`
 §3): rule 4 has two sides. An inventory of an article with curated hits keeps a
