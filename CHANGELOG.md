@@ -49,6 +49,23 @@ release has something to say.
     and `run.yaml` record the three rates, and the bench's `planning` pin reads
     the two new ones where a run.yaml records them, so an older run keeps its
     measurement id.
+  - **Gate rule 9, the judgment rules.** `gate.json` names `judgment_rules`
+    (`cflib.vocab.JUDGMENT_RULES`, 1), which `cf plan-locate` writes into every
+    run it plans; the gate applies rule 9 then and only then, so a run planned
+    before it is gated, at harvest too, as it ran.
+  - **The claim list (FM1).** The locate prompt has the worker write a
+    located or absent passage's claims first (`claims: [{id: c1, text}]`, short
+    paraphrases under the quote cap), and every counting location names the
+    claim ids it states (`clauses`). Rule 9 refuses a strong relation that
+    leaves a claim out, a strong one whose note admits a gap (the closed
+    `cflib.vocab.CLAUSE_GAP_PHRASES`), a `relatedMatch` that names clauses and a
+    coverage claim whose parts leave a claim unstated; the challenge plan
+    refutes a gap-admitting strong record by default in any run. A challenge
+    document carries the challenger's own claim lists, which its confirms,
+    downgrades and overturn locations name. The outcomes keep `claims`,
+    `clauses`, `challenge_claims` and `challenge_clauses` where a document wrote
+    them, and a challenge manifest shows the worker's to the challenger with the
+    location's note; nothing new is exported.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.

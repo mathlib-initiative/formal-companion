@@ -136,9 +136,10 @@ A locate task carries at most eight passages of one frozen inventory.
 {"…header…": "…",
  "passages": [
    {"item": "In-text #3fa91c07", "outcome": "located",
+    "claims": [{"id": "c1", "text": "every finite widget has a spanning gadget"}],
     "locations": [
       {"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
-       "relation": "exactMatch", "rank": 1, "confidence": "high",
+       "relation": "exactMatch", "rank": 1, "confidence": "high", "clauses": ["c1"],
        "note": "", "witness": "<why this declaration states the passage>"}],
     "receipt": {
       "queries": ["widget spanning gadget exists", "Widget.exists"],
@@ -148,6 +149,7 @@ A locate task carries at most eight passages of one frozen inventory.
         {"library": "beta", "declaration": "Beta.Widget.gadget_of_finite",
          "verdict": "rejected", "reason": "states the finite case only"}]}},
    {"item": "In-text #91aa02de", "outcome": "absent", "locations": [],
+    "claims": [{"id": "c1", "text": "…"}],
     "receipt": {"queries": ["…", "…", "…"], "candidates": []}},
    {"item": "In-text #0c4d77b1", "outcome": "unresolved", "locations": [],
     "reason": "the passage's quantifier is ambiguous", "receipt": {"queries": [], "candidates": []}}]}
@@ -212,6 +214,39 @@ A locate task carries at most eight passages of one frozen inventory.
   status only once a challenger confirms it (§4), so a passage without one is
   `partial` however many parts it has.
 
+**The judgment rules** (gate rule 9; `references/vocabulary.md` §1.11, R1–R7)
+bind a run whose `gate.json` names `judgment_rules` (§9) — every run `cf
+plan-locate` plans now — and no other: a document of a run planned before them
+is gated, harvested, tallied and exported as it always was. Under them:
+
+- **The claim list.** A `located` or `absent` passage carries `claims` (optional
+  on an `unresolved` one): `[{"id": "c1", "text": "<one clause>"}, …]`, every
+  formal clause the passage asserts — each conclusion, each direction of an iff,
+  existence and uniqueness apart, each computation of a worked example, each
+  condition of a definition — written before any declaration is judged. Each
+  claim is exactly `{id, text}`; ids are `c1`, `c2`, … (`cflib.vocab.CLAIM_ID`),
+  distinct, at most `MAX_PASSAGE_CLAIMS` (12); `text` is one line of at most
+  `MAX_CLAIM_CHARS` (300) characters, a paraphrase in the worker's own words:
+  more than `EXPORT_QUOTE_WORDS` consecutive words of the layer is a rule 1
+  refusal, like a note's.
+- **Clauses.** Every location whose relation counts carries `clauses`, the
+  non-empty, distinct ids of the claims the declaration states; an `exactMatch`,
+  `closeMatch` or `broadMatch` (`cflib.vocab.STRONG_RELATIONS`) names **every**
+  claim (R4: a declaration that states some clauses is `hasPart`, with a coverage
+  claim when its parts together state them all), and a `relatedMatch` names none
+  (an absent or empty `clauses`). A coverage claim's parts' `clauses` together
+  name every claim.
+- **A note that admits a gap.** A strong location whose `note` says it leaves a
+  clause unstated — a phrase of `cflib.vocab.CLAUSE_GAP_PHRASES` ("does not
+  state", "not stated", "is not part of", "rather than asserting", "only the
+  existence", "only one direction", "not the converse", "without uniqueness",
+  "does not cover", "not covered", …; whole words, case-folded) — is refused:
+  its own note makes it `hasPart`. The challenge plan refutes such a record by
+  default in a run planned before the rules too (§9).
+
+None of these fields is exported: a record carries what it always did, and the
+record set's format is unchanged (§6).
+
 ## 4. Challenge document (`mode: locate-challenge`)
 
 ```json
@@ -227,8 +262,22 @@ A locate task carries at most eight passages of one frozen inventory.
     "locations": [{"library": "beta", "declaration": "…", "relation": "exactMatch",
                    "rank": 1, "confidence": "high", "note": "", "witness": "…"}],
     "witness": "found with a type search the worker did not run"},
-   {"item": "In-text #0c4d77b1", "target": "scope", "action": "uphold", "witness": "…"}]}
+   {"item": "In-text #0c4d77b1", "target": "scope", "action": "uphold", "witness": "…"}],
+ "claims": {"In-text #3fa91c07": [{"id": "c1", "text": "…"}],
+            "In-text #91aa02de": [{"id": "c1", "text": "…"}]}}
 ```
+
+Under the judgment rules (§3) a challenge document carries `claims`, `{<item>:
+[{id, text}, …]}`: the challenger's own claim list of each passage on which a
+verdict leaves a relation that counts, written before it judges (the FM7 rule,
+`references/vocabulary.md` §1.11), each list checked as a locate document's.
+A `confirm` of a location whose relation counts, and a `downgrade` to one, names
+the ids it states in `clauses`, every one for a strong relation and none for a
+`downgrade` to `relatedMatch`; an overturn's locations carry them as a locate
+document's do, against the same list. A `confirm` of a strong record whose own
+`note` (the task manifest's, §9) admits a clause it does not state is refused:
+it is a `downgrade` to `hasPart`. A `claims` entry for a passage the task does
+not judge is refused.
 
 - `target` ∈ {`location`, `absence`, `unresolved`, `scope`, `prominence`,
   `coverage`}.
@@ -376,6 +425,13 @@ and `written` when `--source` narrowed it:
 <set>/records/<source-id>.jsonl   Literature Links 2.0 records (proposal §2.7)
 <set>/receipts/<sha256>.json      search receipts referenced from absence records
 ```
+
+**The format is unchanged by the judgment rules** (§3, §4): their fields —
+a passage's `claims`, a location's `clauses` and the rest — live in the locate
+and challenge documents and in the outcomes (§10) only. No record, receipt or
+seal carries one, since the consumer's strict builder refuses a key it does not
+know, and a run planned under the rules exports the same shapes as one planned
+before them.
 
 `SEAL.json` lists every other file with its sha256; a consumer refuses a set
 whose files do not match. Its keys are exactly these, every one always present,
@@ -1098,9 +1154,12 @@ like a faithfulness run:
   finder and start) instead of `passages` and `curated`; a challenge task's carry
   `"records": [...]`, the records it judges: `{key, target, item, span,
   text_span, section, quote, run_id, prominence, scope, passage_kind, outcome}`
-  and, for a location, its `location_key`, `library`, `declaration`, `relation`
-  and `rank`; for a coverage claim, its `parts` (`[{location_key, library,
-  declaration, relation, rank}]`) and `note`. A passage with a coverage claim
+  and, for a location, its `location_key`, `library`, `declaration`, `relation`,
+  `rank` and `note` (when it has one); for a coverage claim, its `parts`
+  (`[{location_key, library, declaration, relation, rank}]`) and `note`; and,
+  where the locate document wrote them (§3, the judgment rules), the passage's
+  `claims` and a location's `clauses` — for the challenger to check, never
+  evidence. A passage with a coverage claim
   is never split over two challenge tasks. Every task manifest of the plan is also kept beside `run.yaml`, in
   `runs/<run-id>/planned.json` (`{schema: "cf-locate-planned/1", run_id,
   tasks}`), which the outcomes read the planned passages from — the tend root is
@@ -1154,10 +1213,17 @@ like a faithfulness run:
    "inventory": {"run_id": "r-…"}, "challenged_runs": [], "findings_dir": "findings",
    "tasks_dir": "<gate dir>/tasks", "log_dir": "<tend root>/gate-log",
    "orchestrator_db": "<tend root>/orchestrator.sqlite",
-   "max_locations": 5, "min_absence_queries": 3,
+   "max_locations": 5, "min_absence_queries": 3, "judgment_rules": 1,
    "vendor": {"literature_links": "<manifest sha256>",
               "formal_companion_annotations": "<manifest sha256>"}}
   ```
+
+  `judgment_rules` is the version of the judgment rules (rule 9, §3 and §4;
+  `cflib.vocab.JUDGMENT_RULES`) the run was planned under: the planner writes it
+  into every gate.json, and the gate applies rule 9 when it is there and not
+  otherwise, so a run planned before the rules — its gate.json has no such key —
+  is gated, also at harvest, by the rules it ran under. A version above the
+  gate's own, or a value that is not a non-negative integer, is exit 3.
 
   `orchestrator_db` lies in the tend root, so its directory is also where the
   gate reads the bridge's `attempts/<task-id>.json` (§1); on a run host the
@@ -1524,7 +1590,14 @@ locations a challenge removed), `coverage` (the passage's coverage claim:
 `{complete, parts: [location_key, …], note, challenge}`, its ranks turned into
 the joined locations' keys, or null) and `coverage_refuted` (a claim a challenge
 refuted, with the verdict's `witness`, or null), `task_id`, and `problem` when something about
-the passage is wrong: a location that could not be joined, a document whose
+the passage is wrong. Under the judgment rules (§3, §4) a row also carries
+`claims` — the claim list its locations' `clauses` name: the worker's, or the
+challenger's once an overturn replaced the locations — and `challenge_claims`,
+the challenger's own list when a verdict document gave one; a location keeps
+the fields its document wrote (`clauses`, …) and, when a verdict named
+`clauses`, `challenge_clauses`. Each is written only where a document wrote it,
+so a run planned before the rules yields the rows it always did, and none is
+exported (§6). What else can be wrong about a passage: a location that could not be joined, a document whose
 universe or `source_sha`/`layer_sha256` is not the run's pin, an outcome that is
 not one of the three, a challenge that no longer fits its record. A passage the
 run planned (`planned.json`, §9; its count must be `run.yaml`'s) and no document

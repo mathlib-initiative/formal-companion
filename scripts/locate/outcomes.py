@@ -362,6 +362,10 @@ def challenge_values(paths: WorkspacePaths, run_id: str, challenge_runs: Iterabl
                 if key in verdicts:
                     raise CfError(f"{rel}: record {key[:12]} is judged twice")
                 verdicts[key] = {**v, "source_id": sid, "challenge_run": challenge_run}
+                claims = doc.get("claims")
+                if isinstance(claims, dict) and isinstance(claims.get(v.get("item")), list):
+                    # the challenger's claim list of the passage, which its clauses name
+                    verdicts[key]["claims"] = claims[v.get("item")]
     return planned, verdicts, problems, gates
 
 
@@ -433,6 +437,9 @@ def _location(source_id: str, item: str, loc: dict, universe: inputs.Universe,
            "relation": loc.get("relation"), "rank": loc.get("rank"),
            "confidence": loc.get("confidence"), "note": loc.get("note") or "",
            "location_key": hashing.location_key(source_id, item, lib, commit, name)}
+    # what the judgment rules have a location say of its passage, kept as written and
+    # only where written: a run planned before them yields the rows it always did
+    out.update({key: loc[key] for key in vocab.JUDGMENT_LOCATION_FIELDS if key in loc})
     if "proof_status" in loc:
         problems.append(f"{source_id} {item}: a document wrote proof_status for {lib}:{name}; "
                         "it is joined from the index, and the written value was ignored")
@@ -664,6 +671,9 @@ def _outcome(run_id: str, sid: str, item: str, p: dict, doc: dict, base: dict,
            "missing": False, "refuted": [], "challenge": None, "status": None,
            "runs": {"inventory": inv_run or None, "locate": run_id, "challenge": None},
            "task_id": task_id}
+    if isinstance(p.get("claims"), list):
+        # the passage's claim list (the judgment rules): what its locations' clauses name
+        row["claims"] = p["claims"]
     for text in own:
         _problem(row, problems, text)
     for text in dropped:
@@ -745,6 +755,7 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
         if verdict is not None:
             row["runs"]["challenge"] = verdict["challenge_run"]
             action = verdict.get("action")
+            _judged_clauses(row, loc, verdict)
             if action == "refute":
                 row["refuted"].append({**loc, "witness": verdict.get("witness", "")})
                 row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
@@ -822,6 +833,9 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                 _problem(row, problems, f"{sid} {item}: an overturn with no location that exists")
                 continue
             row["locations"] = _overturned(new, row["locations"])
+            if isinstance(verdict.get("claims"), list):
+                # the overturn's locations name the challenger's claim list
+                row["claims"] = verdict["claims"]
             row["outcome"] = vocab.OUTCOME_LOCATED
             row["scope"] = vocab.SCOPE_FORMAL_MATH
             row["absence"] = None
@@ -836,6 +850,21 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
     # a part a prominence overturn put under a rule requiring it is challenge_pending,
     # owed its own verdict under that rule, and the claim does not stand in for it
     confirm_parts(confirmed)
+
+
+def _judged_clauses(row: dict, loc: dict, verdict: dict) -> None:
+    """What a challenger says a location states (the judgment rules), kept beside it.
+
+    A confirm or downgrade that names ``clauses`` names them against the
+    challenger's own claim list of the passage, which the row keeps as
+    ``challenge_claims``; the location keeps them as ``challenge_clauses``, its
+    worker's ``clauses`` unchanged.  Nothing is added for a verdict that names
+    none (every verdict of a run planned before the rules).
+    """
+    if isinstance(verdict.get("claims"), list):
+        row["challenge_claims"] = verdict["claims"]
+    if isinstance(verdict.get("clauses"), list) and verdict.get("action") != "refute":
+        loc["challenge_clauses"] = verdict["clauses"]
 
 
 def _apply_coverage(row: dict, planned: dict, verdicts: dict,
@@ -1039,6 +1068,11 @@ def outcome_row(row: dict) -> dict:
             "section", "source_sha", "layer_sha256", "reason", "unresolved_by", "missing",
             "refuted", "coverage_refuted", "task_id")
     out = {k: row.get(k) for k in keep}
+    # the judgment rules' claim lists, only where a document wrote one: a run planned
+    # before them writes the rows it always did
+    for key in ("claims", "challenge_claims"):
+        if row.get(key) is not None:
+            out[key] = row[key]
     if row.get("problem"):
         out["problem"] = row["problem"]
     return out
