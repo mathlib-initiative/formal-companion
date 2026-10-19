@@ -436,10 +436,11 @@ A location:
 - At most **K = 5** locations per passage, ranked.
 
 An absence is one record with `relation: "noMatch"`, `status:
-"not_formalized"`, and **one `lean` end per universe library** (`type`, repo
-`uri` and 40-hex `version`, nothing else: no `location`, no `role`, no
-extension) — the spec's own checked-absence form, readable without fetching
-anything. The universe id and sha ride in the
+"not_formalized"`, and **one `lean` end per repository searched at its
+commit** (`type`, repo `uri` and 40-hex `version`, nothing else: no
+`location`, no `role`, no extension; two libraries split from one repository
+at one commit, §2.3, are one end) — the spec's own checked-absence form,
+readable without fetching anything. The universe id and sha ride in the
 extension; the search receipt (queries, candidates examined, reasons) is a
 sidecar file in the sealed record set, referenced by sha256 and count, never
 inline.
