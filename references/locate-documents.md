@@ -1256,17 +1256,31 @@ like a faithfulness run:
   manifests aside). `config_shas` is the configuration behind those bytes, free
   of the run's own id and paths: `{prompts: {<templates/prompts/ file the plan
   rendered>: sha256 of its bytes}, gate_files: {<path as in gate_files>:
-  sha256}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
+  sha256}, agents: {agent_host, model, allow_sandbox_bypass, attempt_cap,
+  merge_target}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
   the `bin/*-agent.sh` wrappers and any staged file whose bytes name one of the
-  run's paths, so two plans of one configuration that differ only in run id
-  record equal `config_shas` — what the bench's A/A check compares, while the
+  run's paths, and whose `agents` is what those wrappers run with that names no
+  run, as the planner decided it (never read back from the wrappers): the
+  bridge's agent CLI (`CF_AGENT_HOST`, null for a bridge that takes none), the
+  model (`CF_MODEL`), whether the agents run with approvals and the sandbox off
+  (`CF_ALLOW_SANDBOX_BYPASS`, `--allow-sandbox-bypass`), the attempt cap
+  (`CF_ATTEMPT_CAP`) and the merge target (`CF_MERGE_TARGET`). Two plans of one
+  configuration that differ only in run id
+  record equal `config_shas` — what the bench's A/A check compares, so a run whose
+  agents ran with the bypass is no replicate of one whose agents did not, while the
   rendered shas (`gate_files` and the top-level `prompts`) stay recorded pins.
   The planner never stamps `locate.campaign` (`cf campaign plan` does), and a
   re-plan of a stamped shard carries its stamp forward. `passages` counts what
   the tasks owe: an inventory task's distinct finder starts, a locate task's
   passages, a challenge task's records;
   a source the inventory covered with every passage scoped out is planned as
-  `skipped` and still in `source_ids`. `remote` names the host directories of
+  `skipped` and still in `source_ids`. An inventory plan's `skipped` names each
+  source it left out and why: a page that is no concept article (its flags),
+  `not rendered`, or `parity refused` — a source whose render stands refused
+  because its layer is not the producer's (§7, `Sourceset.parity_refusals`),
+  which no render of the sourceset settles; a `--source` naming one is refused
+  with the step that does (the producer's corrected delivery adopted into a new
+  sourceset), as `cf locate candidates --source` refuses it. `remote` names the host directories of
   the sourceset's sources, the universe and the candidates
   (`sourcesets/<id>/sources`, `corpora/<u>`, `sourcesets/<id>/candidates/<u>`);
   `repos` and `sources` are empty. `budget.max_cost` comes only from

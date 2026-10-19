@@ -491,6 +491,8 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
     for sid in wanted:          # another renderer's source: refused before anything is written
         if inputs.rendered(manifest.entries[sid]):
             inputs.check_renderer(manifest.entries[sid], sourceset_id)
+    # a named source render refused for parity is no render away (review SEAM-2)
+    refused = inputs.parity_refusals(paths, sourceset_id, manifest) if source_ids else {}
     lists = lists or CuratedLists()
     curated_library = None if blind else lists.resolve_library(universe)
     db = inputs.tools_database(paths, universe, blind=blind, planted=planted)
@@ -507,6 +509,11 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
         for sid in wanted:
             entry = manifest.entries[sid]
             if not inputs.rendered(entry):
+                if sid in refused:
+                    raise CfError(f"source {sid} is not rendered in version {manifest.version}: "
+                                  f"render refused it because the layer is not the producer's: "
+                                  + inputs.parity_refused_text({sid: refused[sid]}),
+                                  hint=inputs.parity_remedy(manifest))
                 if source_ids:
                     raise CfError(f"source {sid} is not rendered in version {manifest.version}",
                                   hint=f"render it: `cf sourceset render {sourceset_id} "

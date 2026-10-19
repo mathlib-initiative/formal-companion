@@ -391,10 +391,16 @@ class TestD11TheDriversGitCarriesGitsafesPins(unittest.TestCase):
         self.assertIn('g hash-object --no-filters "$stage/$idx"', DRIVER.read_text(encoding="utf-8"))
 
 
-def modern_bash() -> str | None:
-    """A bash that runs the drivers (``mapfile``, ``wait -n -p``: 5.1 or later), or None."""
-    for candidate in (shutil.which("bash"), "/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash",
-                      "/usr/local/bin/bash"):
+#: the oldest bash the host drivers run on: ``mapfile`` (4.0) and ``wait -n`` (4.3).
+#: OPS-10 took ``wait -n -p`` (5.1) out of probe_host.sh (review R-04), as
+#: tests/test_probe_host.py's ``driver_bash`` says for that driver alone.
+DRIVER_BASH = (4, 3)
+
+
+def modern_bash(candidates=None) -> str | None:
+    """A bash that runs the drivers (``mapfile``, ``wait -n``: 4.3 or later), or None."""
+    for candidate in candidates or (shutil.which("bash"), "/bin/bash", "/usr/bin/bash",
+                                    "/opt/homebrew/bin/bash", "/usr/local/bin/bash"):
         if not candidate or not os.path.exists(candidate):
             continue
         got = subprocess.run([candidate, "-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"],
@@ -403,9 +409,35 @@ def modern_bash() -> str | None:
             major, minor = (int(x) for x in got.stdout.split())
         except ValueError:
             continue
-        if (major, minor) >= (5, 1):
+        if (major, minor) >= DRIVER_BASH:
             return candidate
     return None
+
+
+class TestTheDriversBashFloor(unittest.TestCase):
+    """Review R-04: the D5 driver tests skipped below bash 5.1 for a ``wait -n -p`` the
+    drivers no longer use, so a 4.4 or 5.0 host never ran the one end-to-end driver test."""
+
+    def fake_bash(self, version: str) -> str:
+        path = _scratch(self) / "bash"
+        path.write_text(f"#!/bin/sh\necho {version}\n", encoding="utf-8")
+        path.chmod(0o755)
+        return str(path)
+
+    def test_a_bash_4_3_or_later_runs_the_drivers(self):
+        for version in ("4 3", "4 4", "5 0"):
+            with self.subTest(version=version):
+                bash = self.fake_bash(version)
+                self.assertEqual(modern_bash([bash]), bash)
+        self.assertIsNone(modern_bash([self.fake_bash("4 2")]))
+
+    def test_the_drivers_need_nothing_newer(self):
+        for driver in (DRIVER, SCRIPTS / "corpus" / "probe_host.sh"):
+            code = [line for line in driver.read_text(encoding="utf-8").splitlines()
+                    if not line.lstrip().startswith("#")]
+            with self.subTest(driver=driver.name):
+                self.assertFalse([line for line in code if "wait -n -p" in line
+                                  or "wait -p" in line], driver)
 
 
 GITHASH = "c" * 40
@@ -418,7 +450,7 @@ class TestD5LibrariesProbedInsideAWorkspace(unittest.TestCase):
     def setUp(self):
         self.bash = modern_bash()
         if self.bash is None:
-            self.skipTest("the host drivers need bash 5.1 or later")
+            self.skipTest("the host drivers need bash 4.3 or later")
         self.root = _scratch(self)
         self.home = self.root / "home"
         self.bin = self.home / ".elan" / "bin"

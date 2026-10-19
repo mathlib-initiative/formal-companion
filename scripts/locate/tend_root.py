@@ -42,7 +42,9 @@ warning: a gate directory without ``verify_findings.py`` once made every gate
 call die with ``ModuleNotFoundError`` and Python's exit 1, which the worker
 prompt reads as a verdict on the document (field defect P2).  :func:`stage`
 returns the sha256 of every file it staged into ``gate/`` and ``bin/`` (the
-task manifests aside), which ``run.yaml`` pins as ``locate.gate_files``.
+task manifests aside), which ``run.yaml`` pins as ``locate.gate_files``, and
+the wrappers' run-independent settings (:func:`agent_settings`), which it pins
+as ``locate.config_shas.agents``.
 """
 from __future__ import annotations
 
@@ -96,6 +98,22 @@ def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str,
             "reviewer": {**common, "CF_REVIEWER_TOOLS": reviewer_tools}}
 
 
+def agent_settings(settings: dict[str, Any], env: dict[str, dict[str, str]]) -> dict[str, Any]:
+    """``run.yaml`` ``locate.config_shas.agents``: what the wrappers run with, no run's own.
+
+    ``settings`` is ``make_tend_root``'s ``agent_settings`` (``CF_AGENT_HOST``,
+    ``CF_MODEL``, ``CF_ALLOW_SANDBOX_BYPASS``) and ``env`` is :func:`wrapper_env`'s
+    map, whose ``CF_ATTEMPT_CAP`` and ``CF_MERGE_TARGET`` both roles export.  The
+    wrappers' own shas name the run's paths, so ``config_shas.gate_files`` leaves
+    them out; this map is what the bench's A/A check compares instead (review
+    SEAM-1: a run whose agents ran with the sandbox bypass was otherwise accepted
+    as a replicate of one whose agents did not).
+    """
+    common = env["worker"]
+    return {**settings, "attempt_cap": int(common["CF_ATTEMPT_CAP"]),
+            "merge_target": common["CF_MERGE_TARGET"]}
+
+
 def _copy_tree(src: Path, dest: Path) -> list[Path]:
     if dest.exists():
         shutil.rmtree(dest)
@@ -107,7 +125,8 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
           gate_config: dict, prompts: dict[str, str], tasks: list[TaskSpec], model: str | None,
           agent: dict[str, Any] | None, allow_sandbox_bypass: bool,
           context: dict[str, Any]) -> dict[str, Any]:
-    """Write the root and its locate gate directory; ``{"files", "warnings", "gate_files"}``."""
+    """Write the root and its locate gate directory; ``{"files", "warnings", "gate_files",
+    "agents"}``."""
     root = skill_root()
     missing = [str(root / rel) for rel, _name in GATE_FILES if not (root / rel).is_file()]
     if missing:
@@ -121,14 +140,15 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
                         gate_dir=layout_host["gate_dir"],
                         prompts_dir=layout_host["prompts_dir"],
                         gate_script=GATE_SCRIPT)
+    env = wrapper_env(preset, layout_host["gate_dir"], layout_host["tools_corpus_db"],
+                      plan.merge_target_branch)
     built = make_tend_root(
         plan, preset, run_id=run_id, gate_config=gate_config, prompts=prompts, agent=agent,
         task_count=len(tasks), model=model, allow_sandbox_bypass=allow_sandbox_bypass,
         config_template="config-locate.yaml.tmpl", readme_template="README-locate.md.tmpl",
-        gate_files=(), bin_helpers=LOCATE_BIN_HELPERS,
-        extra_env=wrapper_env(preset, layout_host["gate_dir"], layout_host["tools_corpus_db"],
-                              plan.merge_target_branch),
+        gate_files=(), bin_helpers=LOCATE_BIN_HELPERS, extra_env=env,
         context=context, generator="cf plan-locate")
+    built["agents"] = agent_settings(built["agent_settings"], env)
     gate = plan.local / "gate"
     for rel, name in GATE_FILES:
         shutil.copy2(root / rel, gate / name)

@@ -120,7 +120,11 @@ def make_tend_root(
     context: dict[str, Any] | None = None,
     generator: str = "cf plan-run",
 ) -> dict[str, Any]:
-    """Write the tend root. Returns {"files": [...], "warnings": [...]}
+    """Write the tend root. Returns {"files": [...], "warnings": [...], "agent_settings": {...}}
+
+    ``agent_settings`` is ``{agent_host, model, allow_sandbox_bypass}``: the
+    ``CF_AGENT_HOST``, ``CF_MODEL`` and ``CF_ALLOW_SANDBOX_BYPASS`` the wrappers
+    export (each null or false when they export none), as decided here.
 
     ``model`` is the run's RESOLVED worker model (``cf plan-run --model`` wins,
     then the workspace, then the preset -- see ``plan.models.resolve``).  It
@@ -223,6 +227,10 @@ def make_tend_root(
 
     # bin/: generated wrappers + the skill's bridges
     bridge_file, host = BRIDGE_SCRIPTS.get(preset.bridge, ("", ""))
+    # what the wrappers export that names no run: a locate plan records it in run.yaml
+    # locate.config_shas.agents, since the wrappers' own shas name the run's paths
+    settings = {"agent_host": host or None, "model": model or None,
+                "allow_sandbox_bypass": bool(allow_sandbox_bypass)}
     bindir = root / "bin"
     bindir.mkdir(exist_ok=True)
     if bridge_file:
@@ -300,4 +308,4 @@ def make_tend_root(
             f"gate.json names decl_index {gate_config['decl_index']} but no index was staged "
             "in the gate directory; the phantom-name check will fail closed on the host")
 
-    return {"files": [str(p) for p in files], "warnings": warnings}
+    return {"files": [str(p) for p in files], "warnings": warnings, "agent_settings": settings}

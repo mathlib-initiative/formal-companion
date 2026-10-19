@@ -49,7 +49,10 @@ GATE_FILES = {"verify_locate.py": "d" * 64, "locate_text.py": "e" * 64}
 #: run.yaml locate.config_shas: the configuration without the bytes a plan renders per
 #: run, equal for every run of one configuration (references/locate-documents.md section 9)
 CONFIG_SHAS = {"prompts": {"locate.md.tmpl": "a" * 64, "locate-worker-system.md.tmpl": "b" * 64},
-               "gate_files": dict(GATE_FILES)}
+               "gate_files": dict(GATE_FILES),
+               "agents": {"agent_host": "claude", "model": "claude-sonnet-5",
+                          "allow_sandbox_bypass": False, "attempt_cap": 3,
+                          "merge_target": "main"}}
 
 
 def canonical(obj) -> str:

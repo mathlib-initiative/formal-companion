@@ -44,6 +44,7 @@ from bench import score as score_mod
 from bench.layout import (BENCH_SCHEMA, CLUSTERS_SCHEMA, DRAW_SCHEMA, FRAME_SCHEMA, G1_RESOLVED_SCHEMA,
                           GOLD_SCHEMA, HOST_SCHEMA, LABEL_FILES, SPANS_SCHEMA, BenchLayout, now,
                           sha_of)
+from locate import inputs as locate_inputs
 from sources import render_html
 
 NAME = "bench"
@@ -335,9 +336,18 @@ def _build(ws, args) -> int:
     drawn = draw_mod.draw(frame, uniform=args.uniform, curated=args.curated, seed=args.seed)
     # the draw reads no layer; the drawn articles' spans do (section 8.5 step 3)
     unrendered = draw_mod.unrendered_drawn(frame, drawn)
+    # a standing parity refusal is no fetch or render away (review SEAM-2): named apart,
+    # and unrendered.txt lists only what a fetch and a render settle
+    standing = locate_inputs.parity_refusals(paths, args.sourceset, manifest)
+    refused = {sid: standing[sid] for sid in unrendered if sid in standing}
+    fetchable = [sid for sid in unrendered if sid not in refused]
     if unrendered and args.exclude_unrendered:
-        drawn = draw_mod.exclude(drawn, unrendered, reason=f"not rendered in sourceset "
-                                 f"{args.sourceset} version {manifest.version}")
+        for ids, why in ((fetchable, "not rendered"),
+                         (sorted(refused), f"{locate_inputs.PARITY_REFUSED} (the layer is not "
+                                           f"the producer's)")):
+            if ids:
+                drawn = draw_mod.exclude(drawn, ids, reason=f"{why} in sourceset "
+                                         f"{args.sourceset} version {manifest.version}")
     draw_doc = {"schema": DRAW_SCHEMA, "bench": args.bench_id, **drawn}
     fractions = {"dev": args.dev, "eval": args.eval, "test": args.test}
     older = draw_mod.older_renderer_drawn(frame, drawn, render_html.RENDERER)
@@ -372,18 +382,24 @@ def _build(ws, args) -> int:
             ("the seed", (previous or {}).get("seed") == args.seed),
             ("the sourceset pin", (previous or {}).get("sourceset") == manifest.pin()))
             if not same])
-    if unrendered:
-        atomic_write(layout.unrendered_list, "".join(f"{sid}\n" for sid in unrendered))
-        if not args.exclude_unrendered:
-            raise CfError(
-                f"{len(unrendered)} of the {len(drawn['articles'])} drawn article(s) are not rendered "
-                f"in sourceset {args.sourceset} version {manifest.version}: "
-                + ", ".join(unrendered[:10]) + (" …" if len(unrendered) > 10 else ""),
-                hint=_unrendered_step(args.sourceset, layout.unrendered_list)
-                + "; or pass --exclude-unrendered to bench the rest, each excluded article "
-                  "recorded in draw.json with its inclusion probabilities")
+    if fetchable:
+        atomic_write(layout.unrendered_list, "".join(f"{sid}\n" for sid in fetchable))
     elif layout.unrendered_list.is_file():
         layout.unrendered_list.unlink()
+    if unrendered and not args.exclude_unrendered:
+        steps = [_unrendered_step(args.sourceset, layout.unrendered_list)] if fetchable else []
+        if refused:
+            steps.append(f"for the {len(refused)} render refused: " + locate_inputs.parity_remedy(
+                manifest, then="build the bench on it"))
+        raise CfError(
+            f"{len(unrendered)} of the {len(drawn['articles'])} drawn article(s) are not rendered "
+            f"in sourceset {args.sourceset} version {manifest.version}: "
+            + ", ".join(unrendered[:10]) + (" …" if len(unrendered) > 10 else "")
+            + (f"; render refused {len(refused)} of them because the layer is not the "
+               f"producer's: " + locate_inputs.parity_refused_text(refused) if refused else ""),
+            hint="; ".join(steps)
+            + "; or pass --exclude-unrendered to bench the rest, each excluded article "
+              "recorded in draw.json with its inclusion probabilities")
     articles = _articles_of(frame_doc, draw_doc)
     spans = []
     for sid in sorted(articles):
@@ -428,9 +444,13 @@ def _build(ws, args) -> int:
         print(f"  frame    : {frame['N_rendered']} rendered, {len(frame['unrendered'])} not yet "
               f"(frame.json unrendered); the draw is the whole frame's, so only drawn ones must be")
     if drawn.get("excluded"):
-        print(f"  excluded : {len(drawn['excluded'])} drawn article(s) not rendered, benched without "
-              f"them (draw.json excluded, each with its inclusion probabilities; "
-              f"{layout.unrendered_list} lists them)")
+        listed = (f"; {layout.unrendered_list} lists {'the rest' if refused else 'them'}"
+                  if fetchable else "")
+        print(f"  excluded : {len(drawn['excluded'])} drawn article(s) not rendered"
+              + (f" ({len(refused)} of them render refused for parity, which no render of "
+                 f"{args.sourceset} settles)" if refused else "")
+              + f", benched without them (draw.json excluded, each with its inclusion "
+                f"probabilities{listed})")
     _print_curated(frame["curated_lists"])
     print(f"  splits   : dev {counts['dev']}, eval {counts['eval']}, test {counts['test']}")
     print(f"  host     : {layout.host_manifest} (label-free)")

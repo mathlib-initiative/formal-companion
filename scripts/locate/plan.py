@@ -166,7 +166,8 @@ def _document_pin(entry: dict) -> dict:
 
 
 def select_sources(manifest: Manifest, wanted: Iterable[str], *,
-                   include_flagged: bool = False) -> tuple[list[str], list[str], dict[str, str]]:
+                   include_flagged: bool = False, refused: dict[str, dict] | None = None
+                   ) -> tuple[list[str], list[str], dict[str, str]]:
     """``(source ids to plan, unrendered ones, {flagged one: why})``: one source per page.
 
     The page's source is the one ``Manifest.preferred()`` names; with no
@@ -177,7 +178,9 @@ def select_sources(manifest: Manifest, wanted: Iterable[str], *,
     a fleet over a sourceset of null flags planned every stub and list as a paid
     task).  Those are left out and named, or planned with ``include_flagged``.
     A named source must be its page's preferred one, and rendered; it is
-    planned whatever its flags say.
+    planned whatever its flags say.  ``refused`` is the sourceset's standing
+    parity refusals (:func:`inputs.parity_refusals`): a named one is refused as
+    such, with the step that settles it, never with a render that cannot.
     """
     wanted = list(dict.fromkeys(wanted))
     unknown = [s for s in wanted if s not in manifest.entries]
@@ -195,6 +198,11 @@ def select_sources(manifest: Manifest, wanted: Iterable[str], *,
                 hint="a page plans one source: an adopted revision, else its highest "
                      "(`Manifest.preferred()`); name that one")
         bare = [s for s in wanted if not inputs.rendered(manifest.entries[s])]
+        standing = {s: (refused or {})[s] for s in bare if s in (refused or {})}
+        if standing:
+            raise CfError(f"render refused, in version {manifest.version}, because the layer is "
+                          f"not the producer's: " + inputs.parity_refused_text(standing),
+                          hint=inputs.parity_remedy(manifest))
         if bare:
             raise CfError(f"not rendered in version {manifest.version}: " + ", ".join(bare[:5]),
                           hint=f"render it: `cf sourceset render {manifest.sourceset_id} "

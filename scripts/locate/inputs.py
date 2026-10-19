@@ -10,8 +10,10 @@ outcomes and the export.  Nothing here parses one of those formats itself:
   version written as a ``cf-sourceset-delta/1`` delta is replayed onto the
   snapshot before it) and ``preferred()`` one-source-per-page rule; :func:`rendered` is the planner's
   one extra rule (a source is plannable once it has a body, a layer and a
-  renderer), and :func:`check_renderer` refuses one whose renderer is not this
-  checkout's;
+  renderer), :func:`check_renderer` refuses one whose renderer is not this
+  checkout's, and :func:`parity_refusals` names the unrendered ones a render
+  refused because the layer is not the producer's (``Sourceset.parity_refusals``),
+  which no render of the sourceset will render;
 * a rendered source's views are read through :class:`SourceView`, which takes
   the layer and formulas from ``sources.render_html.read_layer`` and refuses a
   missing view instead of reading it as empty;
@@ -73,6 +75,42 @@ def rendered(entry: dict | None) -> bool:
     """Is a manifest entry plannable: a body, a layer and the renderer that made it?"""
     return bool(entry and entry.get("html_sha256") and entry.get("layer_sha256")
                 and entry.get("renderer"))
+
+
+#: ``run.yaml`` ``locate.skipped``'s reason for a source whose render stands refused
+#: because its layer is not the producer's (beside ``"not rendered"``)
+PARITY_REFUSED = "parity refused"
+
+
+def parity_refusals(paths: WorkspacePaths, sourceset_id: str,
+                    manifest: Manifest) -> dict[str, dict]:
+    """``{source_id: record}`` of ``manifest``'s standing parity refusals.
+
+    ``Sourceset.parity_refusals``: a source a render refused because its layer
+    is not the one the producer recorded stays unrendered, and every render of
+    this sourceset refuses it again -- fetching or rendering it settles nothing
+    (review SEAM-2), so a caller names it apart from a source not rendered yet.
+    """
+    return Sourceset(paths, sourceset_id).parity_refusals(manifest)
+
+
+def parity_refused_text(refused: dict[str, dict]) -> str:
+    """``<id> (the layer is <sha>... under <renderer>, the producer recorded <sha>...)``, joined."""
+    return ", ".join(f"{sid} (the layer is {str(r.get('layer_sha256'))[:12]}... under "
+                     f"{r.get('renderer')}, the producer recorded "
+                     f"{str(r.get('producer_layer_sha256'))[:12]}...)"
+                     for sid, r in list(refused.items())[:5]) + (
+        f" (+{len(refused) - 5} more)" if len(refused) > 5 else "")
+
+
+def parity_remedy(manifest: Manifest, then: str = "render and plan on it") -> str:
+    """The step that settles a standing parity refusal, which no render of the sourceset is."""
+    return (f"a producer's layer sha is never replaced in a sourceset, so every render of "
+            f"{manifest.sourceset_id} refuses these again (`cf sourceset status "
+            f"{manifest.sourceset_id} --verify` lists them): adopt the producer's corrected "
+            f"delivery into a new sourceset -- `cf sourceset create <new id> --family "
+            f"{manifest.family}`, then `cf sourceset adopt <new id> --from <its pins file>` -- "
+            f"and {then}")
 
 
 def check_renderer(entry: dict, sourceset_id: str | None = None) -> None:
