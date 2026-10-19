@@ -413,6 +413,9 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
     if unknown:
         raise CfError(f"not in sourceset {sourceset_id} version {manifest.version}: "
                       + ", ".join(unknown[:5]))
+    for sid in wanted:          # another renderer's source: refused before anything is written
+        if inputs.rendered(manifest.entries[sid]):
+            inputs.check_renderer(manifest.entries[sid], sourceset_id)
     lists = lists or CuratedLists()
     curated_library = None if blind else lists.resolve_library(universe)
     db = inputs.tools_database(paths, universe, blind=blind, planted=planted)
