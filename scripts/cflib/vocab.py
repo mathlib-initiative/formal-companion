@@ -452,6 +452,19 @@ PAGE_FLAG_LIST = "list"
 PAGE_FLAG_BIOGRAPHY = "biography"
 PAGE_FLAGS = frozenset({PAGE_FLAG_REDIRECT, PAGE_FLAG_DISAMBIGUATION, PAGE_FLAG_LIST,
                         PAGE_FLAG_BIOGRAPHY})
+#: Why an inventory plan left a source out (``run.yaml`` ``locate.skipped``, and the
+#: reason of a bench draw's excluded article; references/locate-documents.md section
+#: 9): ``not rendered`` -- no layer yet, which a render settles; ``parity refused``
+#: -- its render stands refused because its layer is not the producer's, which no
+#: render of the sourceset settles, only the producer's corrected delivery adopted
+#: into a new one.  A page that is no concept article is skipped too, its reason
+#: ``LOCATE_SKIP_NO_CONCEPT`` followed by its true flags in parentheses
+#: ("no concept article (redirect)").
+LOCATE_SKIP_NOT_RENDERED = "not rendered"
+LOCATE_SKIP_PARITY_REFUSED = "parity refused"
+LOCATE_SKIP_NO_CONCEPT = "no concept article"
+LOCATE_SKIP_REASONS = frozenset({LOCATE_SKIP_NOT_RENDERED, LOCATE_SKIP_PARITY_REFUSED,
+                                 LOCATE_SKIP_NO_CONCEPT})
 #: What one formal_math passage of a locate document ends with (section 2.6), and
 #: the finding kind each one is tallied under.
 OUTCOME_LOCATED = "located"

@@ -71,11 +71,27 @@ class TestTheDocumentValues(unittest.TestCase):
                   | vocab.BENCH_ARMS | vocab.BENCH_SPLITS | vocab.FNF_CAUSES | vocab.ERROR_CODES
                   | vocab.SOURCE_ORIGINS | vocab.UNRESOLVED_BY | vocab.CHALLENGE_RULES
                   | vocab.CHALLENGE_PLANNED | vocab.INDEX_FLAGS | set(vocab.TOOLS_DB_KINDS)
+                  | vocab.LOCATE_SKIP_REASONS
                   | {vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML,
                      vocab.UNRESOLVED_ATTEMPT_CAP, vocab.AGENT_TIMEOUT})
         for value in sorted(values):
             with self.subTest(value=value):
                 self.assertIn(f"`{value}`", VOCABULARY_MD)
+
+    def test_the_skip_reasons_are_one_definition(self):
+        """The planner's ``locate.skipped`` and the bench draw's excluded reasons came
+        from a constant in locate.inputs and two bare literals (CLAUDE.md S4)."""
+        from locate import inputs
+        self.assertEqual(vocab.LOCATE_SKIP_REASONS,
+                         {"not rendered", "parity refused", "no concept article"})
+        self.assertFalse(hasattr(inputs, "PARITY_REFUSED"))
+        self.assertIn("`LOCATE_SKIP_REASONS`", VOCABULARY_MD)
+        for rel in ("cfcmd/plan_locate.py", "cfcmd/bench.py", "locate/plan.py"):
+            text = (SKILL / "scripts" / rel).read_text(encoding="utf-8")
+            with self.subTest(file=rel):
+                for value in sorted(vocab.LOCATE_SKIP_REASONS):
+                    self.assertNotIn(f'"{value}"', text)
+                    self.assertNotIn(f'"{value} (', text)
 
     def test_the_run_bounds_and_the_shared_sets(self):
         """Wave 1 #85: the values packages had defined privately, now one definition."""

@@ -206,8 +206,8 @@ def run(args) -> int:
             manifest, args.sources, include_flagged=args.include_flagged, refused=refused)
         # a standing parity refusal is no render away (only a corrected delivery settles
         # it), so it is named apart from a source a render would settle
-        skipped.update({s: inputs.PARITY_REFUSED if s in refused else "not rendered"
-                        for s in unrendered})
+        skipped.update({s: (vocab.LOCATE_SKIP_PARITY_REFUSED if s in refused
+                            else vocab.LOCATE_SKIP_NOT_RENDERED) for s in unrendered})
         skipped.update(flagged)
         if flagged:
             warnings.append(f"{len(flagged)} source(s) are no concept article and are not "

@@ -215,7 +215,7 @@ def select_sources(manifest: Manifest, wanted: Iterable[str], *,
             flags = websource.effective_flags(manifest.entries[sid])
             true = sorted(name for name, value in flags.items() if value)
             if true:
-                flagged[sid] = f"no concept article ({', '.join(true)})"
+                flagged[sid] = f"{vocab.LOCATE_SKIP_NO_CONCEPT} ({', '.join(true)})"
     ids = [s for s in ids if s not in flagged]
     return ([s for s in ids if inputs.rendered(manifest.entries[s])],
             [s for s in ids if not inputs.rendered(manifest.entries[s])], flagged)

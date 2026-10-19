@@ -342,9 +342,9 @@ def _build(ws, args) -> int:
     refused = {sid: standing[sid] for sid in unrendered if sid in standing}
     fetchable = [sid for sid in unrendered if sid not in refused]
     if unrendered and args.exclude_unrendered:
-        for ids, why in ((fetchable, "not rendered"),
-                         (sorted(refused), f"{locate_inputs.PARITY_REFUSED} (the layer is not "
-                                           f"the producer's)")):
+        for ids, why in ((fetchable, vocab.LOCATE_SKIP_NOT_RENDERED),
+                         (sorted(refused), f"{vocab.LOCATE_SKIP_PARITY_REFUSED} (the layer is "
+                                           f"not the producer's)")):
             if ids:
                 drawn = draw_mod.exclude(drawn, ids, reason=f"{why} in sourceset "
                                          f"{args.sourceset} version {manifest.version}")
