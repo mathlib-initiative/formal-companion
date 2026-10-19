@@ -247,6 +247,21 @@ is gated, harvested, tallied and exported as it always was. Under them:
   absence tags at least one query `general`; on a located passage it is
   optional and checked when given. The export's receipt sidecar (§6) is built
   from `queries` and `candidates` alone, so the tags are not exported.
+- **Instantiation.** A location whose relation counts, on a declaration whose
+  signature takes an **instance-implicit argument**, carries `instantiation`: one
+  line (at most `MAX_JUDGMENT_LINE_CHARS`, 300 characters, in the worker's own
+  words) saying at which of the passage's objects the declaration applies and
+  which instance or hypothesis makes it apply there. The gate sees the signature
+  `corpus.sqlite` recorded for the declaration at the universe's commit
+  (`decls.signature`, the probe's printed type, §8) and reads its leading binder
+  telescope: after an optional `∀`, each balanced group in `()`, `{}`, `[]` or
+  `⦃⦄`, separated by spaces or `→`, up to the first `,` or the first token that
+  opens no group; an instance-implicit argument is a `[…]` group (`[inst : Group
+  G]`, `[Finite G]`). A binder written later in the type, and a bracket in the
+  statement (`a ≡ b [MOD n]`), are not leading binders, and a declaration whose
+  signature the index did not record is not held to the rule (the gate cannot
+  see its binders). Objects that cannot meet the hypotheses make the relation
+  `relatedMatch` (R5): that is the worker's judgment, which a challenger checks.
 - **A note that admits a gap.** A strong location whose `note` says it leaves a
   clause unstated — a phrase of `cflib.vocab.CLAUSE_GAP_PHRASES` ("does not
   state", "not stated", "is not part of", "rather than asserting", "only the

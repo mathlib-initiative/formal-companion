@@ -583,11 +583,20 @@ MAX_CLAIM_CHARS = 300
 #: claim without a query; a worked example's absence also searches for the general
 #: theorem it is an instance of, a query tagged ``GENERAL_QUERY_TAG``.
 GENERAL_QUERY_TAG = "general"
+#: A location's ``instantiation`` (the smoke-2 audit's FM6: a finite-dimensional
+#: lemma credited to an operator on an infinite-dimensional space, an abstract
+#: lattice theorem to subgroups it has no instance for): when the declaration's
+#: signature takes an instance argument, the location says, in one line, which of
+#: the passage's objects the declaration is instantiated at and which instance or
+#: hypothesis makes it apply there.  Objects that cannot meet the hypotheses make
+#: the relation ``relatedMatch`` (rule R5).
 #: the fields the judgment rules add to a location of a locate document (and to an
 #: overturn's): the outcomes keep each one a document wrote, and a challenge task's
 #: manifest shows them to the challenger; none is exported (the record set's format
 #: is unchanged, references/locate-documents.md section 6)
-JUDGMENT_LOCATION_FIELDS = ("clauses",)
+JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation")
+#: the longest one-line field a judgment rule asks of a location (``instantiation``)
+MAX_JUDGMENT_LINE_CHARS = 300
 #: The closed list of phrases by which a strong record's own note admits a clause
 #: its declaration does not state (smoke-2: "rather than asserting its degree
 #: bound", "is not part of this declaration").  The gate refuses such a record

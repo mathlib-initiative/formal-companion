@@ -72,6 +72,14 @@ release has something to say.
     library; rule 9 refuses an absence that leaves a claim without a query, or
     an example's with no `general` query. The tags are not exported: the
     receipt sidecar is built from `queries` and `candidates` alone.
+  - **The instantiation line (FM6).** The prompt has the worker instantiate a
+    declaration at the passage's objects, name the instance or hypothesis that
+    makes it apply and check it exists at the pin, and call a declaration whose
+    hypotheses the objects cannot meet `relatedMatch`. Rule 9 reads the
+    declaration's signature from `corpus.sqlite` (`decls.signature`), takes its
+    leading binders (`verify_locate.instance_binders`) and, when one is
+    instance-implicit, requires the counting location's `instantiation` line; a
+    declaration with no recorded signature is not held to it.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.
