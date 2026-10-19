@@ -22,6 +22,23 @@ Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each
    **`hasPart` and `narrowMatch` need the declaration alone, instantiated at the passage's objects, to entail a clause this passage asserts.** Anything less is `relatedMatch`: a lemma the proof uses along the way, a lemma that reaches the clause only together with another declaration, a fact a neighbouring passage states, a sibling theorem whose hypotheses and conclusion are both different. On a proof or remark passage (`passage_kind` `other`), a `hasPart` names the displayed step it states — the equation, the case, the inequality — in `step`, one line in your own words.
 6. A passage that says several things (a conjunction of clauses, a theorem with several conclusions, a definition with several conditions) may have no one declaration that states it, only several that each state a part (`hasPart`). When your `hasPart` locations **together** state **every** clause of the passage — their `clauses` together name every claim — and no part assumes more than the passage does (a stronger hypothesis, an extra instance argument, a special case), say so with a `coverage` claim (below). Make the claim only after you have matched each clause to a part: a challenger is told to refute every claim, and an unfounded one is removed.
 
+## How to judge a relation: rules R1–R7
+Judge each record pairwise, the passage against the one declaration, by these rules:
+
+- **R1** — `closeMatch` only for a convention: notation, encoding, junk values, normalisation, renaming, unfolding, bundling (the location's `convention`). A strengthening, a generalisation or a weakening is never one.
+- **R2** — `broadMatch` when the passage follows from the declaration by instantiation or weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all primes for a finite table), with no hypothesis stronger than the passage's.
+- **R3** — `narrowMatch` when the declaration follows from the passage by instantiation (a natural-number statement for an integer one).
+- **R4** — `hasPart` when the declaration states one clause of a passage that says several things; `exactMatch`, `closeMatch` and `broadMatch` only when it states every clause.
+- **R5** — `relatedMatch` when the connection needs another theorem, or the two statements are incomparable; `hasPart` and `narrowMatch` need the declaration alone, instantiated at the passage's objects, to entail a clause the passage asserts.
+- **R6** — relations are pairwise: what else the universe holds never changes a record's relation.
+- **R7** — a definition passage is judged on the data it defines; bundled proof fields are packaging (R1's bundling).
+
+The policy defaults, the maintainer's (each overridable, never by you):
+
+- **P1** — a definition stated over a general type parameter where the passage has a specific one (any ring where the passage has ℂ) is `broadMatch` (R2).
+- **P2** — a statement over ℕ where the passage has ℤ is `narrowMatch` (R3).
+- **P3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is `narrowMatch`, never vacuous: it is not refuted for being trivial.
+
 ## The document
 Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
 

@@ -9,6 +9,27 @@ Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each
 - **A scope or a prominence** that was demoted is re-read: **uphold** it, or **overturn** it: a scope with the locations of the passage it hid, a prominence with the right `prominence`.
 - **A coverage claim** says that the `hasPart` locations in its `parts` together state every clause of the passage. A confirmed claim raises the passage's derived status (to formalized when every part is proved or data, to statement_only otherwise) and confirms with it only the parts whose own record the plan did not require (none, once the passage's prominence is overturned to `subject` or `central`: those parts are then owed a challenge of their own); give a verdict for every part record the task lists as required, judged on its own. So a claim is refuted by default, and more strictly than a location: **refute** it unless every clause of the passage is matched by a part AND no part adds a hypothesis the passage does not have (a stronger assumption, an extra instance argument, a special case, another object). Restate the passage as the list of its clauses, read each part's signature (`{{show_command}} <library> <declaration>`), and **confirm** only when you can name, in your `witness`, the part that states each clause; otherwise refute, naming the clause no part states or the hypothesis a part adds. The worker's `note` is a claim to check, not evidence. A refute leaves the parts as they are: judge each part's own location record on its own, and never confirm a claim while you refute or weaken one of its parts.
 
+## How to judge a relation: rules R1–R7
+Judge each record pairwise, the passage against the one declaration, by these rules:
+
+- **R1** — `closeMatch` only for a convention: notation, encoding, junk values, normalisation, renaming, unfolding, bundling (the location's `convention`). A strengthening, a generalisation or a weakening is never one.
+- **R2** — `broadMatch` when the passage follows from the declaration by instantiation or weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all primes for a finite table), with no hypothesis stronger than the passage's.
+- **R3** — `narrowMatch` when the declaration follows from the passage by instantiation (a natural-number statement for an integer one).
+- **R4** — `hasPart` when the declaration states one clause of a passage that says several things; `exactMatch`, `closeMatch` and `broadMatch` only when it states every clause.
+- **R5** — `relatedMatch` when the connection needs another theorem, or the two statements are incomparable; `hasPart` and `narrowMatch` need the declaration alone, instantiated at the passage's objects, to entail a clause the passage asserts.
+- **R6** — relations are pairwise: what else the universe holds never changes a record's relation.
+- **R7** — a definition passage is judged on the data it defines; bundled proof fields are packaging (R1's bundling).
+
+The policy defaults, the maintainer's (each overridable, never by you):
+
+- **P1** — a definition stated over a general type parameter where the passage has a specific one (any ring where the passage has ℂ) is `broadMatch` (R2).
+- **P2** — a statement over ℕ where the passage has ℤ is `narrowMatch` (R3).
+- **P3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is `narrowMatch`, never vacuous: it is not refuted for being trivial.
+
+**The challenger's rule.** Before any downgrade or refute:
+
+- **FM7** — before you downgrade or refute, check the record against your claim list of the passage. Apply D1: an exact or close match to an equivalence or other data that states the theorem formalizes it, so a bijection is the data form of a cardinality equation and stays `closeMatch`. Keep definitionally linked declarations consistent within your task: two declarations on one passage defined one from the other, or one object in two encodings, get the same relation unless their statements differ. A trivial special case is `narrowMatch` (P3), never a refute.
+
 ## The document
 Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
 

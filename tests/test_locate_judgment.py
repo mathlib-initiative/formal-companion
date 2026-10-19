@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover
 
 import copy
 import json
+import re
 import sqlite3
 import sys
 import unittest
@@ -832,6 +833,48 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("A downgrade to `closeMatch` also gives `convention`", challenger)
         self.assertIn("a `closeMatch` without a listed `convention`",
                       self.rendered[vocab.LOCATE]["worker-system.md"])
+
+    @staticmethod
+    def rule_lines() -> dict[str, str]:
+        """R1-R7, P1-P3 and FM7 as references/vocabulary.md section 1.11 writes them."""
+        text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        start = text.index("**How a relation is judged: rules R1\u2013R7**")
+        block = text[start:text.index("**The derived status**", start)]
+        return {m.group(1): "- **%s** \u2014 %s" % (m.group(1), " ".join(m.group(2).split()))
+                for m in re.finditer(r"^- \*\*(R[1-7]|P[1-3]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
+                                     block, re.M | re.S)}
+
+    def test_the_rules_and_the_policy_defaults_are_the_vocabularys_word_for_word(self):
+        lines = self.rule_lines()
+        self.assertEqual(sorted(lines), sorted([f"R{i}" for i in range(1, 8)]
+                                               + ["P1", "P2", "P3", "FM7"]))
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+            worker = " ".join(self.worker(mode).split())
+            for name, line in lines.items():
+                if name == "FM7" and mode == vocab.LOCATE:
+                    continue
+                with self.subTest(mode=mode, rule=name):
+                    self.assertIn(line, worker)
+        self.assertNotIn("**FM7**", self.worker())
+
+    def test_the_policy_defaults_say_they_can_be_overridden(self):
+        lines = self.rule_lines()
+        self.assertIn("any ring where the passage has \u2102) is `broadMatch` (R2)", lines["P1"])
+        self.assertIn("over \u2115 where the passage has \u2124 is `narrowMatch` (R3)", lines["P2"])
+        self.assertIn("is `narrowMatch`, never vacuous", lines["P3"])
+        vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
+                              .read_text(encoding="utf-8").split())
+        self.assertIn("Each is a default, not a law of the format: it can be overridden",
+                      vocabulary)
+        self.assertIn("(each overridable, never by you)", self.worker())
+
+    def test_fm7_the_challenger_applies_d1_and_keeps_linked_declarations_together(self):
+        line = self.rule_lines()["FM7"]
+        for needle in ("check the record against your claim list", "Apply D1",
+                       "a bijection is the data form of a cardinality equation",
+                       "Keep definitionally linked declarations consistent within your task",
+                       "never a refute"):
+            self.assertIn(needle, line)
 
     def test_fm1_the_challenger_lists_the_clauses_itself(self):
         worker = self.worker(vocab.LOCATE_CHALLENGE)
