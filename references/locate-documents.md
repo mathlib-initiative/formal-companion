@@ -515,7 +515,8 @@ sourcesets/<id>/candidates/<universe>/<source-id>.json   L2 (§5)
 `scripts/sources/sourceset.py`: `Sourceset.refresh_state(command=…)` stamps the
 latest version's pin and counts (`manifest`, `counts`, `commands`), and
 `Sourceset.record_state(section, payload, key=None)` writes every other section —
-the planner's, the outcomes', the export's: with no `key` the section becomes
+the planner's, the outcomes', the export's, the render's standing
+`parity_refusals` (below): with no `key` the section becomes
 `payload`, with one `state[section][key]` becomes `{…what it was, …payload, "at":
 <now>}`, its sibling keys kept. The file always carries `schema:
 cf-sourceset-state/1` and `id`; those, `family`, `manifest`, `counts`,
@@ -549,8 +550,10 @@ spaces, UTF-8):
   consumer's pin, with its bytes when it holds them, proposal §11.1, recorded in
   `adopted_from`), the values of `cflib.vocab.SOURCE_ORIGINS`. A consumer's pin
   of an enumerated entry's own revision keeps its `origin` and adds
-  `adopted_from: {consumer, pins_sha256}`. A pin is `{revision, pageid | title,
-  bytes?, wikidata?, assessment?}`: one without bytes is adopted with null shas
+  `adopted_from: {consumer, pins_sha256}` (plus the producer's `layer_sha256`
+  when its pin carried one; below, "Adopting a producer's pins"). A pin is
+  `{revision, pageid | title, bytes?, wikidata?, assessment?, fetch?,
+  layer_sha256?}`: one without bytes is adopted with null shas
   and fetched at exactly that revision by `cf sourceset fetch`; one with a title
   and no page id has its page resolved from its revision, never from the title,
   which moves: from the sourceset when it already holds that revision (a
@@ -626,6 +629,87 @@ spaces, UTF-8):
 canonical JSON of that mapping without `oldid`. The response bytes are kept as
 `source.raw.html` and copied, never refetched, to every other machine.
 
+**Adopting a producer's pins.** `cf sourceset adopt <id> --from <pins.jsonl>
+--consumer <name>` is the import contract a producer — the system that chooses
+the revisions and holds their bytes, `$WIKILEAN` — delivers through. Each line
+of the pins file is one JSON object (`sources.websource.PIN_FIELDS`, checked by
+`pin_problems`):
+
+| field | |
+|---|---|
+| `revision` | a positive integer; required |
+| `pageid`, `title` | one of them required: a positive integer; a string. A pin with no `pageid` has its page resolved from its revision (above), never from its title |
+| `bytes` | optional: the path of the revision's bytes, relative to the pins file's directory and inside it — never absolute, no `..` component, no leading `~` (nothing expands it) — and, symlinks followed, it must resolve inside that directory: a delivery is one self-contained directory, so `pins_sha256` binds rows that name files in it |
+| `wikidata` | a QID or null |
+| `assessment` | null or `{class, importance}`, strings or null; the importance is lower-cased on the way in (`High` becomes `high`), the class kept as written |
+| `fetch` | optional, only with `bytes`: exactly `{"api": "action=parse", "params_sha256": "<hex>"}`, `sources.websource.fetch_block()`, the fixed fetch above |
+| `layer_sha256` | optional, only with `bytes`: the producer's sha256 of the UTF-8 of its own text layer of those bytes' HTML (the response's `parse.text`), which the render below holds `layer.txt` to |
+
+A field outside these is refused, not ignored (a misspelt `layer_sha256` would
+otherwise switch the render's check off), and so is a `fetch` or `layer_sha256`
+in a row with no `bytes`: each speaks of the producer's bytes, and what `cf
+sourceset fetch` would get for that revision instead is a new parse of it (an old
+revision's templates expanded as they are now), possibly other bytes, which a
+recorded `fetch` or producer sha would misdescribe. A row that carries `fetch` says its
+bytes are that fetch's response, so they must be its exact JSON: `parse.text` a
+string (`formatversion=2`), integer `parse.revid` and `parse.pageid` equal to the
+pin's — never a bare body. JSON bytes of any row must be an `action=parse`
+response with a `parse.text` (an API error is refused) whose `revid` and
+`pageid`, when it carries them, are the pin's; a row without `fetch` may still
+hand over the HTML body itself.
+
+**One bad row refuses the whole file**, naming its line (the file's own,
+blank lines counted): nothing is adopted and the command exits 2. The rows are
+read from the bytes `pins_sha256` is taken of. Once every title pin's page is
+resolved, **a source is pinned by one row**: rows naming one source id refuse
+the file unless every field says the same (a repeated line, taken once; an
+absent field and a `null` one say the same), since rows that disagree — on the
+bytes, the `layer_sha256`, anything — leave no way to tell which one the
+producer meant.
+
+An adopted entry records `adopted_from: {consumer, pins_sha256, layer_sha256?}`
+— the `--consumer` name, the sha256 of the pins file's bytes, and the row's
+`layer_sha256` when it carried one (`sources.websource.adopted_from_problems`
+is the shape) — and a row's `fetch` as the entry's `fetch`. Under a source id the
+sourceset already holds, other bytes are refused; the same bytes are already
+held, refused when the row's `layer_sha256` contradicts the producer's sha
+recorded for them or the layer already rendered from them (a layer another
+renderer recorded is no measure of this one's parity, so that refusal names
+the `create --from` migration below, after which the delivery is adopted into
+the seeded sourceset); and bytes the
+sourceset fetched itself become the consumer's pin (`adopted_from` added, so
+`Manifest.preferred()` plans them). A recorded `adopted_from`, the producer's
+`layer_sha256` in it included, is never replaced (append-only): a source first
+adopted without one (a pin with no bytes) keeps none, which adopt names and
+counts (`commands.adopt.layer_sha256_not_recorded`), and a producer sha that
+was wrong stays this sourceset's, its source refused by every render until
+its layer is that sha. A producer's corrected delivery therefore goes into a
+new sourceset (`cf sourceset create`, then `adopt`), as adopt's refusal says;
+`create --from` carries `adopted_from` over, so a seeded sourceset is held to
+the same producer sha under the next renderer.
+
+**The render is held to the producer's layer.** `cf sourceset render` refuses,
+by name, a source whose `layer.txt` sha would not be its
+`adopted_from.layer_sha256`: none of its views is written, its entry keeps
+`layer_sha256: null`, the summary line counts and names it ("… N refused, M of
+them because the layer is not the producer's: …"), `state.json`'s
+`commands.render.not_the_producers_layer` lists this run's, and the command
+exits 1. The refusal **stands** until a render writes that source's layer,
+whichever later runs visit it (a `--source` run visits only some):
+`state.json`'s `parity_refusals` section holds `{<source id>: {layer_sha256,
+producer_layer_sha256, renderer, at}}` — this renderer's layer sha, the
+producer's, and the renderer that measured them — merged by every render
+(`Sourceset.record_parity_refusals`; a sourceset that never had one has no
+such section) and read through `Sourceset.parity_refusals`, which keeps only
+sources the manifest still holds unrendered under that producer sha. `cf
+sourceset status` reports `producer_layer: {pinned, rendered, refused,
+waiting}` — sources whose pin carried a `layer_sha256`, those rendered to it, the
+standing refusals by id, and those not rendered yet — and `status --verify`
+counts each standing refusal as a problem and exits 1. No manifest version can
+record such a layer either (`entry_problems`). So every delivery is a
+text-layer parity test on real pages that fails closed; a source whose pin
+carried no `layer_sha256` is rendered unchecked.
+
 **The canonical body** is the response's `parse.text` (an adopted file that is
 not such a JSON response is taken as the body itself; adopt refuses JSON that is
 no parse response with a `parse.text`, an API error included) decoded as UTF-8
@@ -700,6 +784,27 @@ The label rule is part of the frozen renderer: `tests/test_locate_sources.py`
 pins its fingerprint (the two label sets, its patterns and its answers on a
 fixed list of bolds) to the renderer id beside the golden views.
 
+**Parity with the consumer's text layer** is pinned by a conformance fixture,
+`tests/data/locate/text-layer.json`: synthetic MediaWiki-shaped bodies, each with
+the layer `$WIKILEAN`'s own `text_layer` gave for it (stamped with that commit
+and the module's sha256) and the renderer id it holds for, which
+`tests/test_locate_text_layer.py` replays through this renderer.
+`tests/gen_text_layer.py` regenerates it from a read-only checkout, running the
+function from the module's bytes in a separate isolated process, and refuses an
+unmarked difference or a stale mark. Where the two layers differ the case is a
+`known_divergence` that names the side that is not the HTML5 parser there
+(`departs`) and records this renderer's layer beside the consumer's. Most are the
+consumer's regular-expression scanner: the newline after `pre`, a reference with
+no `;`, a `>` inside a quoted attribute, a self-closing `<style/>` or `<script/>`
+in SVG or MathML (which it reads as the start of a skipped element that runs to
+the end of the page). Four are this renderer's: in `web-html/3`'s tree builder a
+`template` is no scope boundary, so an `li`, `dd`, `td` or `tr` start tag or an
+end tag inside one closes an element outside it, and the text after it leaks into
+the layer; MediaWiki's parser output carries no `<template>` element, and
+following HTML5 there moves layers, so it is a new renderer id. On real pages
+the same parity is checked source by source: a producer's `layer_sha256`, held
+against the render (above, "Adopting a producer's pins").
+
 A `/1` or `/2` rendering cannot be re-rendered in
 place (a recorded `layer_sha256` never changes): `cf sourceset create <new>
 --from <old>` seeds a new sourceset with the old one's identities and bytes and
@@ -709,6 +814,21 @@ seeded sourceset appears whole or not at all — it is built in
 — so an interrupted seeding is re-run as the same command. Any
 change to any view, the layout of a view's file included, is a new renderer
 id: `tests/test_locate_sources.py` pins every view of a synthetic page to it.
+
+**Another renderer's source is refused wherever locate would read it.** A
+manifest entry whose layer sha is recorded under any renderer id but
+`web-html/3` — `/1`, `/2`, an id this checkout does not know, or none — carries
+another rule's layer, offsets and passage ids, however consistent its own files
+are (`locate.inputs.check_renderer`, which `locate.inputs.check_source` runs
+first). `cf locate candidates` refuses it by name before it writes any source's
+file, and `cf plan-locate` before it writes anything, so no task document and no
+`gate.json` pins it; the
+export refuses it per source in its report. Each refusal names the source, its
+renderer and the `create --from` step above. `cf bench build` refuses a drawn
+article of another renderer (an undrawn frame article of one is only recorded),
+and `cf bench score` refuses a run that read another rendering than the one its
+bench pinned. The gate is not one of them: it holds a run's
+documents to that run's own pins, which only the planner writes.
 
 Offsets are code-point offsets. A passage's `span` is a layer span; its id is
 computed on the head text at `HeadMap.to_head(span[0])` (§2 of the proposal,

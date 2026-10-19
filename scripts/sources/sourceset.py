@@ -29,7 +29,8 @@ validates -- nor a single rewritten file, so a sourceset is:
   of sources, since an adopted revision beside an enumerated one is one page --
   the last run of each command (``commands``), every run in order
   (``history``, the newest :data:`MAX_HISTORY`), plus a section per command that
-  wrote one (:meth:`Sourceset.record_state`).
+  wrote one (:meth:`Sourceset.record_state`), and the standing text-layer
+  parity refusals the render keeps across runs (:meth:`Sourceset.parity_refusals`).
 
 Nothing here touches the network (``sources.wikinet`` does) or renders
 (``sources.render_html`` does).
@@ -68,6 +69,9 @@ MAX_HISTORY = 1000
 #: a source directory's files whose shas an entry records
 SHA_FILES = {"raw_sha256": "source.raw.html", "html_sha256": "body.html",
              "layer_sha256": "layer.txt"}
+#: the state section holding the sources ``cf sourceset render`` refused because
+#: their layer is not the producer's (references/locate-documents.md section 7)
+PARITY_SECTION = "parity_refusals"
 
 
 class SourcesetError(CfError):
@@ -591,6 +595,62 @@ class Sourceset:
         state["updated_at"] = now
         write_json(self.paths.sourceset_state_json(self.id), state, sort_keys=True)
         return state
+
+    def parity_refusals(self, manifest: Manifest | None = None) -> dict[str, dict]:
+        """The standing parity refusals, ``{source_id: record}``.
+
+        Each record is ``{layer_sha256, producer_layer_sha256, renderer, at}``:
+        this renderer's layer sha, the producer's, the renderer that measured
+        them and when.  A source the render refused because its layer is not the
+        producer's stays refused until a render writes its layer, whichever later
+        runs visit it (a ``--source`` run visits only some), so the record is
+        the state section :data:`PARITY_SECTION`, merged by
+        :meth:`record_parity_refusals`, not one run's list.  Only sources
+        ``manifest`` (default: the latest version) still holds unrendered, under
+        the producer sha the refusal was measured against, are returned.
+        """
+        manifest = manifest if manifest is not None else self.latest()
+        block = self.read_state().get(PARITY_SECTION)
+        out: dict[str, dict] = {}
+        for sid, record in (block.items() if isinstance(block, dict) else ()):
+            entry = manifest.get(sid)
+            if isinstance(record, dict) and entry is not None \
+                    and entry.get("layer_sha256") is None \
+                    and websource.producer_layer_sha256(entry) is not None \
+                    and websource.producer_layer_sha256(entry) == \
+                    record.get("producer_layer_sha256"):
+                out[sid] = record
+        return dict(sorted(out.items()))
+
+    def record_parity_refusals(self, refused: dict[str, dict]) -> dict[str, dict]:
+        """Add one render's parity refusals to the standing ones; return what now stands.
+
+        ``refused`` is ``{source_id: {layer_sha256, producer_layer_sha256,
+        renderer}}``.  A source rendered since its refusal drops out (its entry
+        now records a layer), every other standing refusal is kept.
+        """
+        if not refused and PARITY_SECTION not in self.read_state():
+            return {}                      # nothing ever refused: no section to write
+        standing = self.parity_refusals()
+        now = state_mod.now()
+        for sid, record in refused.items():
+            standing[sid] = {**record, "at": now}
+        standing = dict(sorted(standing.items()))
+        self.record_state(PARITY_SECTION, standing)
+        return standing
+
+    def producer_layer_counts(self, manifest: Manifest) -> dict:
+        """How the sources whose pin carried the producer's layer sha stand against it.
+
+        ``pinned`` carry one, ``rendered`` have a layer (which is the producer's:
+        no version records another), ``refused`` lists the standing parity
+        refusals, and ``waiting`` have not been rendered yet.
+        """
+        pinned = [e for e in manifest if websource.producer_layer_sha256(e) is not None]
+        rendered = sum(1 for e in pinned if e.get("layer_sha256"))
+        refused = sorted(self.parity_refusals(manifest))
+        return {"pinned": len(pinned), "rendered": rendered, "refused": refused,
+                "waiting": len(pinned) - rendered - len(refused)}
 
     def refresh_state(self, *, command: str, details: dict | None = None) -> dict:
         """Write the latest version's pin and counts, and what ``command`` did.
