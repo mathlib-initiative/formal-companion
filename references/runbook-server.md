@@ -263,9 +263,10 @@ root, bridge and harvest, with these differences:
   run is blind or planted) and the candidates directory, and checks the database's sha once at the
   verify stage. The run's own sources (their rendered directories, and nothing of any other run's)
   travel only with `--include-source-text`: the gate fails closed without their layers, so the
-  verify stage checks each of the run's sources on the host (its `layer.txt` against `gate.json`'s
-  `layer_sha256`) and fails while one is missing, and `--execute` without the flag names the
-  sources it expects to find there already. Every `cf run` below therefore carries `--host` and
+  verify stage checks each of the run's sources on the host as the gate reads it (its `layer.txt`
+  against `gate.json`'s `layer_sha256`, and the `formulas.json` and `paragraphs.json` beside it)
+  and fails while one is missing, and `--execute` without the flag names the sources it expects
+  to find there already. Every `cf run` below therefore carries `--host` and
   `--include-source-text`. **A locate run needs a spend cap**: `cf run --execute` refuses one
   without a `budget.max_cost`, and has no `--no-budget-cap` escape for it.
 - **The host-side directories**, all in the tend root and outside every worktree: `usage/` (each
@@ -340,14 +341,18 @@ root, bridge and harvest, with these differences:
      shard is **not relaunched** while one of its canary reports holds a hit (a report with a hit
      is never replaced: a later scan is kept beside it in `canary-<run-id>.attempts/`), or while
      the watchdog, run once before the launch, already finds a reason to drain it: relaunching it
-     would only spend past the cap and stop again. Either raise its cap (re-plan the shard with
-     `cf plan-locate … --max-cost <usd>`, run `cf campaign plan` and `cf campaign render` again,
-     and transfer) or accept the shard as it stands: `CF_ACCEPT=<run-id>` (several, separated by
-     commas) marks it done, writing into `shard-<run-id>.done` why it had stopped, and the
-     campaign moves on to the next shard; its canary report stays as it is for the harvest. Only a
-     shard that has started (stopped or interrupted) is accepted: an id naming a shard that never
-     started, or no shard of the campaign, is ignored with a line in `sequencer.log`, and that
-     shard runs.
+     would only spend past the cap and stop again. A shard stopped **at its cap** goes on with a
+     higher one (re-plan the shard with `cf plan-locate … --max-cost <usd>`, run `cf campaign
+     plan` and `cf campaign render` again, and transfer). A higher cap passes nothing else: a
+     gate-failure rate or a cost per merged task past its threshold is the same at any cap, and
+     a **canary hit** is passed only by accepting the shard as it stands. `CF_ACCEPT=<run-id>`
+     (several, separated by commas) settles what the shard left, marks it done, writing into
+     `shard-<run-id>.done` why it had stopped, and the campaign moves on to the next shard; its
+     canary report stays as it is for the harvest. While the canary scan of what the shard left
+     cannot run, the accept is refused and the campaign stops again (its transcripts stay
+     unexported); accept it once the scan works. Only a shard that has started (stopped or
+     interrupted) is accepted: an id naming a shard that never started, or no shard of the
+     campaign, is ignored with a line in `sequencer.log`, and that shard runs.
   6. Harvest each shard as it finishes (`cf harvest <shard> --execute`); `cf campaign status <id>`
      reads the shards' receipts.
 

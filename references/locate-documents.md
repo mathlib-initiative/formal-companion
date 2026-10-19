@@ -1385,8 +1385,11 @@ removed, a shard whose canary reports hold a hit, or which the watchdog's dry
 run already finds a reason to drain, stops again before its `tend run` starts.
 `CF_ACCEPT=<run-id>[,…]` accepts such a shard as it stands: the sequencer
 settles what it left, writes why it had stopped into `shard-<run-id>.done`, and
-moves on to the next shard. Only a shard that has started (stopped, or
-interrupted) is accepted; an id naming a shard that never started, or no shard
+moves on to the next shard; while the canary scan of what it left cannot run,
+the accept is refused and the campaign stops. `CF_ACCEPT` is the only way past
+a canary hit: a higher cap (the shard re-planned, then planned into the
+campaign and rendered again) passes only a stop at the cap. Only a shard that
+has started (stopped, or interrupted) is accepted; an id naming a shard that never started, or no shard
 of the campaign, is ignored with a log line, and that shard runs. The watchdog (model-free, stdlib) drains the root with
 `tend-control drain` when the spend from `usage/` reaches the shard's cap — the
 priced envelopes' `total_cost_usd` plus, for each call that left no priced
