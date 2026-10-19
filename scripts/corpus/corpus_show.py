@@ -10,7 +10,9 @@ Standard library only, importing no ``cflib``; its database helpers are
 ``corpus_search.py``'s, which the planner copies into the same gate directory.
 It prints one JSON line -- ``library``, ``declaration``, ``module``, ``path``,
 ``line``, ``end_line``, ``kind``, ``signature``, ``docstring``, ``tags`` -- and
-reads nothing but the database.  The declaration's proof status is not shown:
+reads nothing but the database -- in a gate directory only the tools database
+its ``gate.json`` pins, given once (``corpus_search.check_db``, ``Once``).  The
+declaration's proof status is not shown:
 it is joined from the index at export and never written by a worker.
 
 Exit status: 0 shown, 1 no such declaration in that library (an answer, not a
@@ -26,20 +28,21 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from corpus_search import (EXIT_BROKEN, EXIT_OK, CorpusError, _Parser, check_text,  # noqa: E402
-                           connect, emit, show)
+from corpus_search import (EXIT_BROKEN, EXIT_OK, CorpusError, Once, _Parser,  # noqa: E402
+                           check_db, check_text, connect, emit, show)
 
 EXIT_NOT_FOUND = 1
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = _Parser(prog="corpus_show.py", description="show one declaration of a corpus.sqlite")
-    ap.add_argument("--db", required=True, help="the universe's corpus.sqlite")
+    ap.add_argument("--db", required=True, action=Once, help="the universe's corpus.sqlite")
     ap.add_argument("library", help="the library's universe id")
     ap.add_argument("declaration", help="the declaration's full Lean name")
     args = ap.parse_args(argv)
     check_text(ap, [args.db, args.library, args.declaration])
     try:
+        check_db(ap, args.db)
         conn = connect(args.db)
         try:
             record = show(conn, args.library, args.declaration)

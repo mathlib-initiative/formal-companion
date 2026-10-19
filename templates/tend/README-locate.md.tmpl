@@ -23,9 +23,12 @@ helper it calls (`agent_call.py`, `attempt_cap.py`, `watchdog.py` among them). E
 `findings/<task-id>/<source-id>.json` for the sources its manifest names, and nothing else.
 
 The worker reads `CF_EXTRA_TOOLS` (the corpus tools' allowlist entries, each pinned to the run's
-tools database with `--db`), `CF_TASK_MANIFESTS`, `CF_ATTEMPT_CAP` and `CF_FINDINGS_GLOB` from
-its wrapper in `bin/`; the reviewer's wrapper adds the gate to its allowlist
-(`CF_REVIEWER_TOOLS`). Start with a **1/1 smoke
+tools database with `--db`, which the tools also enforce against `gate/gate.json`),
+`CF_TASK_MANIFESTS`, `CF_ATTEMPT_CAP`, `CF_MERGE_TARGET` and `CF_FINDINGS_GLOB` from its wrapper
+in `bin/`; the reviewer's wrapper adds the gate to its allowlist (`CF_REVIEWER_TOOLS`). tend's
+validation command runs the gate with `--changed-files`, its pre-merge command adds `--pre-merge`
+(a batch of several tasks). Every gate call writes a line to `gate-log/gate.jsonl`; the watchdog and
+the bench count only the `changed_files: true` lines, tend's own calls. Start with a **1/1 smoke
 test** and watch one task through worker → gate → reviewer → merge before raising the limits:
 
 ```bash

@@ -1159,6 +1159,78 @@ class TestTheHostTools(unittest.TestCase):
                                    "x").returncode, 3)
 
 
+class TestTheToolsReadOnlyThePinnedDatabase(unittest.TestCase):
+    """A second or abbreviated --db never overrides the allowlisted one, and in a gate
+    directory the tools read only the database its gate.json pins."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp())
+        universe = make_universe(cls.root)
+        udir = cls.root / "corpora" / "u1"
+        ingest.ingest(universe, "alpha", write_probe(cls.root / "pa", alpha_records()),
+                      udir / "index" / "alpha")
+        cls.full = udir / "corpus.sqlite"
+        cls.blind = udir / "corpus.blind.sqlite"
+        build_db.build(universe, udir, cls.full)
+        build_db.build(universe, udir, cls.blind, blind=True)
+        cls.loose = cls.root / "loose"
+        cls.gate = cls.root / "gate"
+        for directory in (cls.loose, cls.gate):
+            directory.mkdir()
+            for name in ("corpus_search.py", "corpus_show.py"):
+                shutil.copy2(SCRIPTS / "corpus" / name, directory / name)
+        (cls.gate / "gate.json").write_text(json.dumps(
+            {"schema": "cf-gate-locate/1",
+             "tools_corpus_db": {"path": str(cls.blind), "sha256": "0" * 64, "kind": "blind"}}),
+            encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def tool(self, where, name, *args):
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        return subprocess.run([sys.executable, "-I", str(where / name), *args],
+                              capture_output=True, text=True, cwd=str(self.root), env=env)
+
+    SHOW = ("alpha", "Widget.exists_spanning_gadget")
+
+    def test_a_repeated_or_abbreviated_db_is_refused(self):
+        for where in (self.loose, self.gate):
+            for argv in (("--db", str(self.blind), "--db", str(self.full)),
+                         (f"--db={self.blind}", f"--db={self.full}"),
+                         ("--db", str(self.blind), "--d", str(self.full)),
+                         ("--d", str(self.full))):
+                with self.subTest(where=where.name, argv=argv):
+                    proc = self.tool(where, "corpus_show.py", *argv, *self.SHOW)
+                    self.assertEqual((proc.returncode, proc.stdout), (2, ""), proc.stderr)
+                    proc = self.tool(where, "corpus_search.py", *argv, "widget")
+                    self.assertEqual((proc.returncode, proc.stdout), (2, ""), proc.stderr)
+
+    def test_in_a_gate_directory_only_the_pinned_database(self):
+        proc = self.tool(self.gate, "corpus_show.py", "--db", str(self.full), *self.SHOW)
+        self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+        self.assertIn("not this run's tools database", proc.stderr)
+        proc = self.tool(self.gate, "corpus_search.py", "--db", str(self.full), "widget")
+        self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+        proc = self.tool(self.gate, "corpus_show.py", "--db", str(self.blind), *self.SHOW)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["tags"], [])
+        proc = self.tool(self.loose, "corpus_show.py", "--db", str(self.full), *self.SHOW)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["tags"])
+
+    def test_a_gate_json_that_pins_nothing_is_the_hosts_problem(self):
+        gate = self.root / "gate-unpinned"
+        shutil.copytree(self.loose, gate)
+        (gate / "gate.json").write_text(json.dumps({"schema": "cf-gate-locate/1"}),
+                                        encoding="utf-8")
+        proc = self.tool(gate, "corpus_show.py", "--db", str(self.blind), *self.SHOW)
+        self.assertEqual((proc.returncode, proc.stdout), (3, ""))
+        self.assertIn("pins no tools database", proc.stderr)
+
+
 class TestTheCommand(unittest.TestCase):
 
     def setUp(self):
