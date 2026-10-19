@@ -1121,7 +1121,9 @@ like a faithfulness run:
 - `findings/<task-id>/<source-id>.json` — the documents (§1–§4); a contribution
   may change only its own task's directory and `tasks/<task-id>.yaml`, and that
   file only in its `status:` line (rule 7: every other line reads as at the
-  merge base, the file is already on the merge target — an added task file is
+  merge base, there is one status line and it holds one status word,
+  `status: [a-z][a-z_-]*` — no flow mapping, list or YAML tag rides on it —
+  the file is already on the merge target — an added task file is
   refused — and a `tasks/<task-id>.yml` is another path, refused too).
 - `gate.json` — read by the out-of-tree locate gate,
   `scripts/gate/verify_locate.py`:

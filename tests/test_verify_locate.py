@@ -1660,6 +1660,37 @@ class TestTheChangeSetsTaskAndLogLine(OwnershipCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn(f"tasks/{TASK}.yml: is outside", proc.stderr)
 
+    def test_the_status_line_holds_one_status_word(self):
+        """The comparison leaves the status line out, so what it holds is checked: a flow
+        mapping that rewrites the plan's keys, an unparseable value and a YAML tag are
+        refused, and so is a second status line; one status word passes."""
+        self.contribute()
+        task_file = self.wt / "tasks" / f"{TASK}.yaml"
+        hostile = {
+            "status: {id: t-inv-0002, depends_on: [t-inv-0001], priority: 99}":
+                "sets its status line to something other than one status word",
+            "status: [": "sets its status line to something other than one status word",
+            "status: !!python/object/apply:os.system ['true']":
+                "sets its status line to something other than one status word",
+            "status: complete\nstatus: open": "has 2 status lines",
+        }
+        for line, needle in hostile.items():
+            task_file.write_text(f"id: {TASK}\n{line}\n")
+            git(self.wt, "commit", "-qam", "status")
+            proc = self.cli("--task-id", TASK)
+            with self.subTest(line=line):
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                rule7 = [s for s in proc.stderr.splitlines() if "[rule 7]" in s]
+                self.assertEqual(len(rule7), 1, proc.stderr)
+                self.assertIn(f"tasks/{TASK}.yaml: {needle}", rule7[0])
+        # (the merge base says `status: open`: a contribution changes it)
+        for line in ("status: complete", "status: in_progress  ", "status: needs-review"):
+            task_file.write_text(f"id: {TASK}\n{line}\n")
+            git(self.wt, "commit", "-qam", "status")
+            proc = self.cli("--task-id", TASK)
+            with self.subTest(line=line):
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_an_added_task_file_is_refused(self):
         self.fx.manifest("t-inv-0003", inventory_manifest_doc(self.fx))
         self.contribute("t-inv-0003")

@@ -1852,14 +1852,21 @@ def _classify(path: str) -> tuple[str, str, str] | None:
 
 #: a task file's ``status:`` line, the one line a contribution changes
 _STATUS_LINE = re.compile(r"status:")
+#: what that line may hold: one plain status word (``status: complete``), never a
+#: flow mapping, a list, a tag or anything else YAML would read as more than a word
+_STATUS_WORD = re.compile(r"status: [a-z][a-z_-]*")
 
 
 def _task_file_change(before: str | None, path: pathlib.Path) -> str:
     """Why a task file's change is more than its status, or '' when it is only that.
 
-    Every line but the ``status:`` ones must read as at the merge base: the id,
+    Every line but the ``status:`` one must read as at the merge base: the id,
     the dependencies and the priority are the plan's, and a contribution that
     rewrote them would land them on the merge target, where tend reads tasks.
+    The status line itself holds one status word (:data:`_STATUS_WORD`), and
+    there is one: a ``status: {id: ..., priority: 99}`` flow mapping, an
+    unparseable ``status: [`` or a ``!!python/object`` tag would otherwise land
+    in the same file, by a line the comparison below leaves out.
     """
     if before is None:
         return "cannot be read at the merge base"
@@ -1870,6 +1877,14 @@ def _task_file_change(before: str | None, path: pathlib.Path) -> str:
     if len(raw) > MAX_TASK_FILE_BYTES:
         return f"is over {MAX_TASK_FILE_BYTES} bytes"
     after = raw.decode("utf-8", errors="replace")
+    statuses = [line.rstrip() for line in after.splitlines() if _STATUS_LINE.match(line)]
+    if len(statuses) > 1:
+        return (f"has {len(statuses)} status lines; a contribution sets the one `status:` "
+                f"line and leaves the plan's lines as they are")
+    bad = next((line for line in statuses if not _STATUS_WORD.fullmatch(line)), None)
+    if bad is not None:
+        return (f"sets its status line to something other than one status word "
+                f"({bad[:80]!r}); a contribution writes `status: complete`")
 
     def rest(text: str) -> list[str]:
         return [line.rstrip() for line in text.splitlines() if not _STATUS_LINE.match(line)]
