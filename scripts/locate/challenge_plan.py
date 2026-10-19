@@ -14,11 +14,12 @@ passage outcomes of harvested locate runs (``locate.outcomes``):
   (``cflib.vocab.admits_missing_clause``) is refuted by default too, whatever
   its passage's prominence (the smoke-2 audit's FM1: three notes said so and
   the relation still counted);
-* on a ``supporting`` passage, the location that sets its derived status --
-  its **basis** (:func:`basis`) -- is required whenever its relation is
-  strong (``exactMatch``, ``closeMatch``, ``broadMatch``:
-  ``cflib.vocab.STRONG_RELATIONS``): the passage's status rests on that one
-  record, and the smoke-2 audit found unchallenged strong records on
+* on a ``supporting`` passage, every location that sets its derived status
+  on its own -- its **bases** (:func:`bases`) -- is required whenever its
+  relation is strong (``exactMatch``, ``closeMatch``, ``broadMatch``:
+  ``cflib.vocab.STRONG_RELATIONS``): the passage keeps its status while any
+  one of them stands, so a correct downgrade of the best-ranked one alone
+  changes nothing, and the smoke-2 audit found unchallenged strong records on
   supporting passages right only about 45% of the time (references/
   vocabulary.md section 1.11);
 * a **stratified sample** -- seeded, one stratum per scope a passage was
@@ -35,9 +36,12 @@ passage outcomes of harvested locate runs (``locate.outcomes``):
 The draw is a function of the seed and the record keys alone (each record's
 rank is ``sha256(seed, key)``), so re-planning gives the same plan.  The
 required records are batched about ``cflib.vocab.CHALLENGE_BATCH_RECORDS`` to a
-task, one source's records kept together and in order, and a passage with a
-coverage claim never split over two tasks: one challenger judges the claim and
-the parts it names.  The whole plan --
+task, one source's records kept together and in order, and a passage's records
+never split over two tasks: one challenger judges a coverage claim and the
+parts it names, and every location of one passage, so definitionally linked
+declarations on it get one challenger's relations (the FM7 rule).  Each
+location record also shows the passage's other locations, read-only, with
+what the plan made of each (``passage_locations``).  The whole plan --
 including every record's planned challenge value -- is written to
 ``runs/<id>/challenge-plan.json``, which the outcomes read back: a record a
 plan required and no verdict judged is owed, never silently ``not_required``.
@@ -103,20 +107,21 @@ def _by_rank(location: dict) -> tuple:
             str(location.get("declaration")))
 
 
-def basis(row: dict) -> dict | None:
-    """The location that sets a passage's derived status, or None.
+def bases(row: dict) -> list[dict]:
+    """Every location that sets a passage's derived status on its own, best first.
 
-    The best-ranked location whose own status -- ``cflib.vocab.derive_status``
-    over it alone -- is the passage's (pre-challenge) status: the record the
-    status rests on.  A passage with no status, or whose locations were not
-    joined to the index (no ``proof_status``), has none.  No coverage claim is
-    ever the basis: an unchallenged claim upgrades nothing, and every claim is
-    refuted by default anyway.
+    Each location whose own status -- ``cflib.vocab.derive_status`` over it
+    alone -- is the passage's (pre-challenge) status: the passage keeps that
+    status while any one of them stands.  A passage with no status, or whose
+    locations were not joined to the index (no ``proof_status``), has none.  No
+    coverage claim is ever a basis: an unchallenged claim upgrades nothing, and
+    every claim is refuted by default anyway.
     """
     status = row.get("status")
     if status is None:
-        return None
+        return []
     kind = row.get("passage_kind") or vocab.PASSAGE_OTHER
+    out = []
     for loc in sorted(row.get("locations") or [], key=_by_rank):
         if loc.get("relation") == vocab.RELATED_MATCH or not loc.get("proof_status"):
             continue
@@ -127,11 +132,17 @@ def basis(row: dict) -> dict | None:
         except CfError:
             continue
         if own == status:
-            return loc
-    return None
+            out.append(loc)
+    return out
 
 
-def _location_rule(loc: dict, *, hot: bool, base: dict | None) -> tuple[str, str | None]:
+def basis(row: dict) -> dict | None:
+    """The best-ranked of :func:`bases`, or None."""
+    found = bases(row)
+    return found[0] if found else None
+
+
+def _location_rule(loc: dict, *, hot: bool, based: list[dict]) -> tuple[str, str | None]:
     """``(rule, stratum)`` of one location record."""
     relation = loc["relation"]
     if hot:
@@ -140,7 +151,7 @@ def _location_rule(loc: dict, *, hot: bool, base: dict | None) -> tuple[str, str
         # its own note says it leaves a clause unstated: a strong relation that says the
         # opposite of itself is refuted by default, whatever the passage's prominence
         return REFUTE, None
-    if base is not None and loc is base and relation in vocab.STRONG_RELATIONS:
+    if relation in vocab.STRONG_RELATIONS and any(loc is b for b in based):
         return BASIS, None
     if relation in vocab.WEAK_RELATIONS or relation in vocab.STRONG_RELATIONS:
         return SAMPLE, f"relation:{relation}"
@@ -154,10 +165,10 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
         if row.get("missing"):
             continue
         hot = row.get("prominence") in vocab.REFUTE_BY_DEFAULT_PROMINENCE
-        base = None if hot else basis(row)
+        based = [] if hot else bases(row)
         for loc in row.get("locations") or []:
             rec = _record(row, "location", run_id=run_id, location=loc)
-            rule, stratum = _location_rule(loc, hot=hot, base=base)
+            rule, stratum = _location_rule(loc, hot=hot, based=based)
             rec.update(rule=rule, stratum=stratum)
             out.append(rec)
         claim = row.get("coverage")
@@ -189,6 +200,31 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
             rec.update(rule=SAMPLE, stratum="prominence:supporting")
             out.append(rec)
     return out
+
+
+#: what a location record shows of each other location on its passage (read-only)
+_SIBLING_KEYS = ("location_key", "library", "declaration", "relation", "rank", "planned")
+
+
+def show_siblings(records: list[dict]) -> None:
+    """Give each location record the passage's other locations, read-only (the FM7 rule).
+
+    ``passage_locations``: each other location of the same passage of the same
+    run, with the plan's value for it (``required``, ``sampled_out``,
+    ``not_required``), best rank first.  A challenger keeps definitionally linked
+    declarations at one relation; the ones its task does not judge are context,
+    never records it gives a verdict for.
+    """
+    by_passage: dict[tuple, list[dict]] = defaultdict(list)
+    for rec in records:
+        if rec["target"] == "location":
+            by_passage[(rec["run_id"], rec["source_id"], rec["item"])].append(rec)
+    for members in by_passage.values():
+        members.sort(key=lambda r: (r.get("rank") or 99, str(r.get("library")),
+                                    str(r.get("declaration"))))
+        for rec in members:
+            rec["passage_locations"] = [{k: other.get(k) for k in _SIBLING_KEYS}
+                                        for other in members if other is not rec]
 
 
 def rates_of(sample_rate: float = DEFAULT_SAMPLE_RATE,
@@ -240,20 +276,19 @@ def draw(records: list[dict], *, seed: int, sample_rate: float,
 def batches(records: list[dict], *, size: int = vocab.CHALLENGE_BATCH_RECORDS) -> list[list[dict]]:
     """The required records in tasks of at most ``size``, sources kept in order.
 
-    A passage with a coverage claim is one unit: its records go to one task
-    (alone in a task when they are more than ``size``), so the challenger who
-    judges the claim judges the parts it names too.
+    A passage is one unit: its records go to one task (alone in a task when they
+    are more than ``size``), so the challenger who judges a coverage claim judges
+    the parts it names too, and one challenger judges every required location of
+    a passage -- two encodings of one object, or a definition and the declaration
+    defined from it, get one challenger's relations (the FM7 rule).
     """
     required = sorted((r for r in records if r["planned"] == vocab.CHALLENGE_REQUIRED),
                       key=lambda r: (r["source_id"], (r.get("span") or [0])[0], r["item"],
                                      r["target"], r["key"]))
-    together = {(r["source_id"], r["item"]) for r in required
-                if r["target"] == vocab.COVERAGE_TARGET}
     units: list[list[dict]] = []
     for rec in required:
         passage = (rec["source_id"], rec["item"])
-        if passage in together and units and (units[-1][0]["source_id"],
-                                              units[-1][0]["item"]) == passage:
+        if units and (units[-1][0]["source_id"], units[-1][0]["item"]) == passage:
             units[-1].append(rec)
         else:
             units.append([rec])
@@ -301,6 +336,7 @@ def plan(paths: WorkspacePaths, locate_runs: list[str], *, seed: int, sample_rat
                                "rank and say so")
         seen[rec["key"]] = rec["run_id"]
     draw(records, seed=seed, **rates)
+    show_siblings(records)
     groups = batches(records, size=batch_size)
     first = next(iter(inputs_seen.values()))
     return {"records": records, "batches": groups, "sourceset": first["sourceset"],
