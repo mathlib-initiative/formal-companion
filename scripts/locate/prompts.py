@@ -130,17 +130,24 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
     }
 
 
+def template_files(preset: Preset) -> dict[str, str]:
+    """``{prompt name: the templates/prompts/ file it is rendered from}`` for one preset.
+
+    ``run.yaml``'s ``locate.config_shas.prompts`` hashes these files, so a run's
+    prompt configuration is pinned apart from the paths rendered into it.
+    """
+    return {"worker-system.md": "locate-worker-system.md.tmpl",
+            "worker.md": locate_presets.shape(preset.name).worker_template,
+            "reviewer-system.md": "locate-reviewer-system.md.tmpl",
+            "reviewer.md": "locate-reviewer.md.tmpl"}
+
+
 def render_prompts(preset: Preset, ctx: Mapping[str, Any], out_dir: pathlib.Path | None = None,
                    *, tdir: pathlib.Path | None = None) -> dict[str, str]:
     """The four prompts of one locate run; written to ``out_dir`` when given."""
     tdir = pathlib.Path(tdir or (templates_dir() / "prompts"))
-    shape = locate_presets.shape(preset.name)
-    out = {
-        "worker-system.md": render_file(tdir / "locate-worker-system.md.tmpl", ctx),
-        "worker.md": render_file(tdir / shape.worker_template, ctx),
-        "reviewer-system.md": render_file(tdir / "locate-reviewer-system.md.tmpl", ctx),
-        "reviewer.md": render_file(tdir / "locate-reviewer.md.tmpl", ctx),
-    }
+    out = {name: render_file(tdir / template, ctx)
+           for name, template in template_files(preset).items()}
     if out_dir is not None:
         out_dir.mkdir(parents=True, exist_ok=True)
         for name, text in out.items():

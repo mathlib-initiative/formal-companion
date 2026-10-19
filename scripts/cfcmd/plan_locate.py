@@ -10,8 +10,9 @@ planner: "sourceset-scoped, not companion-scoped") with the three presets
 
 Writes ``runs/<run-id>/`` in the layout of references/locate-documents.md
 section 9: ``run.yaml`` (with its ``locate`` block: the sourceset pin, the
-universe and its two databases, the arm, the skill commit and the sha of
-every file staged for the gate and the bridge), ``tasks/*.yaml``,
+universe and its two databases, the arm, the skill commit, the sha of every
+file staged for the gate and the bridge, and ``config_shas``, the same
+configuration free of the run's own id and paths), ``tasks/*.yaml``,
 ``prompts/``, ``gate.json`` (the run host's paths) and ``gate.local.json``
 (this machine's), a challenge run's ``challenge-plan.json``, and a tend root
 whose ``gate/`` holds the task manifests, the gate and its helpers and the
@@ -22,7 +23,9 @@ The workers search the TOOLS database: the full ``corpus.sqlite`` by default,
 the G1-blind ``corpus.blind.sqlite`` with ``--blind``, a planted one for the P
 tier with ``--tools-corpus-db``; the gate always checks against the full one.
 An inventory or locate plan refuses a source with no candidates file, or with
-one retrieved from another kind of database than its workers search.
+one retrieved from another kind of database than its workers search; a
+challenge plan refuses a tools database other than the one its challenged
+runs' workers searched (the same kind, and the same file for a planted one).
 
 Nothing here contacts a host or calls a model; planning is local and
 deterministic, and re-planning the same inputs rewrites the same tasks,
@@ -31,12 +34,14 @@ manifests and gate configuration.
 from __future__ import annotations
 
 import datetime as _dt
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from cflib import log, vocab
 from cflib.errors import CfError
 from cflib.hashing import sha256_file, sha256_text
 from cflib.jsonio import read_json, write_json
+from cflib.paths import templates_dir
 from cflib.workspace import from_args
 from cflib.yamlio import read_yaml, write_yaml
 
@@ -46,6 +51,9 @@ from plan import models as models_mod
 from run import manifest as manifest_mod
 
 NAME = "plan-locate"
+#: staged files that are the run's own rather than its configuration's (review M-01):
+#: left out of ``locate.config_shas.gate_files``, with any file naming a run path
+RUN_SPECIFIC_STAGED = ("gate/gate.json", "gate/tasks/*", "bin/*-agent.sh")
 
 
 def register(subparsers) -> None:
@@ -227,6 +235,7 @@ def run(args) -> int:
     else:
         for run in args.challenge_of:
             outcomes_pin_check(paths, run, manifest, universe, arm)
+            tools_pin_check(paths, run, tools_db)
         built = lplan.challenge_build(paths, list(args.challenge_of), seed=args.seed,
                                       sample_rate=args.sample_rate)
         tasks = lplan.challenge_tasks(manifest, built, paths)
@@ -341,6 +350,10 @@ def run(args) -> int:
             "arm": arm,
             "skill_commit": lexport.skill_commit(),
             "gate_files": built_root["gate_files"],
+            "config_shas": config_shas(
+                preset, built_root["gate_files"], Path(layouts["local"]["tend_root"]),
+                run_paths=[layouts["host"]["tend_root"], layouts["host"]["gate_dir"],
+                           layouts["host"]["entrypoint"], str(rd)]),
             "per_task": args.per_task if preset.mode == vocab.LOCATE else None,
             "subject_only": bool(args.subject_only),
             "seed": args.seed if preset.mode == vocab.LOCATE_CHALLENGE else None,
@@ -352,6 +365,14 @@ def run(args) -> int:
         },
         "warnings": warnings,
     }
+    # `cf campaign plan` stamped this shard; a re-plan (of the same preset:
+    # _check_run_id) keeps the stamp (review OPS-05), so the export still seals it
+    # under its campaign rather than as `run:<id>` (export.campaign_token), the
+    # harvest still fetches the campaign's host artifacts, and `cf campaign
+    # render` can compare the shard with campaign.yaml again
+    stamp = ((previous or {}).get("locate") or {}).get("campaign")
+    if stamp:
+        run_doc["locate"]["campaign"] = stamp
     write_yaml(paths.run_yaml(run_id), run_doc, header=f"# run.yaml -- {run_id} (locate)\n")
     ss_state.record(paths, args.sourceset, "runs", run_id, {
         "preset": preset.name, "manifest": manifest.pin(), "universe": universe.pin(),
@@ -375,6 +396,34 @@ def run(args) -> int:
     for w in warnings:
         log.warn(w)
     return 0
+
+
+def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
+                run_paths: list[str]) -> dict[str, dict[str, str]]:
+    """``locate.config_shas``: the configuration a run was planned with, free of its id.
+
+    ``prompts`` is the sha256 of each ``templates/prompts/`` file the plan
+    rendered (the rendered prompts embed the run's own paths, and
+    ``run.yaml``'s ``prompts`` keeps their shas); ``gate_files`` is
+    ``locate.gate_files`` less what is the run's own -- ``gate/gate.json``, the
+    task manifests, the ``bin/*-agent.sh`` wrappers, and any staged file whose
+    bytes name one of ``run_paths``.  Two plans of one configuration that
+    differ only in run id record equal maps, which is what the bench's A/A
+    check compares (review M-01; references/locate-documents.md section 9).
+    """
+    tdir = templates_dir() / "prompts"
+    prompts = {name: sha256_file(tdir / name)
+               for name in sorted(set(lprompts.template_files(preset).values()))}
+    needles = [p.encode("utf-8") for p in run_paths if p]
+    kept: dict[str, str] = {}
+    for rel, sha in sorted(gate_files.items()):
+        if any(fnmatchcase(rel, pattern) for pattern in RUN_SPECIFIC_STAGED):
+            continue
+        data = (Path(tend_root) / rel).read_bytes()
+        if any(needle in data for needle in needles):
+            continue
+        kept[rel] = sha
+    return {"prompts": prompts, "gate_files": kept}
 
 
 def _now() -> str:
@@ -408,6 +457,46 @@ def outcomes_pin_check(paths, run_id: str, manifest, universe: inputs.Universe,
                       hint="plan every run of one arm with the same --blind (an inventory, its "
                            "locate runs and their challenges)")
     return run_id
+
+
+def tools_pin_check(paths, run_id: str, tools_db: dict) -> None:
+    """A challenge hunts in the tools database its challenged run's workers searched, or is refused.
+
+    Review C-03: a challenge of a P run planned with the default (full)
+    database would hunt with the very declarations the ablation removed, and
+    its overturns would reach the outcomes the P tier scores as memory.  The
+    kind must be the run's ``locate.universe.tools_corpus_db`` kind and, for a
+    planted database, the very file (its sha, as the candidates are matched); a
+    full or blind database is the universe's, which a rebuild leaves the same.
+    """
+    from locate import outcomes as outcomes_mod
+
+    block = outcomes_mod.run_yaml(paths, run_id)["locate"]
+    recorded = (block.get("universe") or {}).get("tools_corpus_db")
+    recorded = recorded if isinstance(recorded, dict) else {}
+    kind, sha = recorded.get("kind"), str(recorded.get("sha256") or "")
+    if kind == tools_db["kind"] and (kind != inputs.TOOLS_PLANTED or sha == tools_db["sha256"]):
+        return
+    if kind not in inputs.TOOLS_KINDS:
+        raise CfError(f"run {run_id} records no tools database (run.yaml "
+                      f"locate.universe.tools_corpus_db), so a challenge cannot search the one "
+                      f"its workers searched", hint=f"re-plan {run_id} with `cf plan-locate`")
+    if kind == inputs.TOOLS_PLANTED:
+        local = paths.run_dir(run_id) / "gate.local.json"
+        where = ((read_json(local).get("tools_corpus_db") or {}).get("path")
+                 if local.is_file() else None) or f"<the planted database {sha[:12]}>"
+        fix = f"pass the same `--tools-corpus-db {where}`"
+    elif kind == inputs.TOOLS_BLIND:
+        fix = "pass `--blind`"
+    else:
+        fix = "leave out `--tools-corpus-db` and `--blind`"
+    theirs = f"the {kind} database" + (f" {sha[:12]}" if kind == inputs.TOOLS_PLANTED else "")
+    ours = f"the {tools_db['kind']} one" + (
+        f" {tools_db['sha256'][:12]}" if tools_db["kind"] == inputs.TOOLS_PLANTED else "")
+    raise CfError(f"run {run_id}'s workers searched {theirs}, and this challenge's hunters "
+                  f"would search {ours}",
+                  hint=f"{fix}: a challenge hunts with the tools its challenged runs had "
+                       "(challenge runs of different databases in separate plans)")
 
 
 def candidates(paths, sourceset_id: str, universe: inputs.Universe, tools_db: dict,
