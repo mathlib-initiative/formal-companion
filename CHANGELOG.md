@@ -46,6 +46,13 @@ release has something to say.
   layer, is refused by name (`records.passage_span`). `records.py` is staged
   in the gate directory, so `locate.config_shas.gate_files` changes: a run
   planned before this is no A/A replicate of one planned after.
+- `cf corpus add` holds a new library's `brain_lib` to the consumer's library
+  token grammar, a letter, then letters, digits and `_`, at most 64
+  (`corpus.universe.BRAIN_LIB`): u1's `FF.<Root>` passed (any name of at most
+  300 characters did) and the consumer's Brain refuses it. A token outside it
+  is refused naming `--brain-lib` and a spelling it admits (`FF_<Root>`), and
+  an id that is no token (`lean-core`) needs `--brain-lib`. A universe written
+  before still loads, re-adds and exports as it stands.
 - Locate after a four-lens review of the integrated tree (contract, gate
   adversary, measurement, ops), its fixes ported onto this line, each verified
   by reproducing the original failure first.

@@ -425,9 +425,10 @@ no licence, naming it and the `cf corpus add … --licence <SPDX id>` that recor
 it)`, "display_name"}`, where `display_name` is the library's
 `brain_lib`, the one name the universe gives it, when that is a display name the
 consumer shows (printable ASCII letters, digits, spaces and `,.()/+:'&_-` or `·`,
-at most 100: `export.DISPLAY_NAME_RE`), and null otherwise (`brain_lib` has no
-grammar, and a consumer refuses a set whose display name could read as another
-library's) — and `excluded`, `[{"id",
+at most 100: `export.DISPLAY_NAME_RE`), and null otherwise (a universe written
+before the token grammar of §8 may carry a `brain_lib` outside it, and a consumer
+refuses a set whose display name could read as another library's) — and
+`excluded`, `[{"id",
 "reason"}]`. `brain_lib`, `toolchain` and each root are at most 300 characters,
 a reason at most 1000 (§8, where they are refused). Nothing the universe does
 not define (no index paths, no host instructions).
@@ -898,7 +899,15 @@ probed inside a workspace last) and the steps of that library's kind;
 `brain_lib`, `toolchain` and each root are at most 300 characters and an
 exclusion's reason at most 1000 (`corpus.universe.MAX_NAME_CHARS`,
 `MAX_REASON_CHARS`: the record set's consumer refuses a whole set over a longer
-one, so `cf corpus add` refuses it where it is written, as does a load);
+one, so `cf corpus add` refuses it where it is written, as does a load); a
+library `cf corpus add` adds carries a `brain_lib` that is a **library token** —
+a letter, then letters, digits and `_`, at most 64 (`corpus.universe.BRAIN_LIB`,
+the grammar the consumer's Brain admits as a library's name: `Mathlib`,
+`FF_AdicModules`, never `FF.AdicModules`) — the `--brain-lib` given, else the id
+when it is one; any other is refused, naming `--brain-lib` and a spelling it
+admits. Only a new row is held to it: a universe written before (u1's
+`FF.<Root>` tokens) loads, re-adds and exports as it stands, since a frozen
+universe is never rewritten, and the next universe carries tokens;
 `excluded` lists `{id, reason}` (what a universe leaves out WITHIN a library is a
 choice of its `roots`, stated in the proposal's §2.3 for the default universe: Mathlib
 with its `Wanted` library of `proof_wanted` statements, Lean core without the `Lean`
