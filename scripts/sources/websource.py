@@ -358,7 +358,11 @@ def pin_problems(row: Any) -> list[str]:
     is of, are the caller's checks, which have the files and the network.  A
     field outside :data:`PIN_FIELDS` is refused rather than ignored, so a
     misspelt ``layer_sha256`` cannot silently switch the render's parity check
-    off.
+    off.  ``fetch`` and ``layer_sha256`` without ``bytes`` are refused too, not
+    dropped: each says something of the producer's bytes, and the bytes this
+    sourceset would fetch for the revision instead are a new parse of it (an
+    old revision's templates expanded as they are now), which neither says
+    anything of.
     """
     if not isinstance(row, dict):
         return ["a pin is a JSON object"]
@@ -401,7 +405,9 @@ def pin_problems(row: Any) -> list[str]:
         speaking = [name for name in PIN_NEEDS_BYTES if row.get(name) is not None]
         if speaking:
             out.append(f"{' and '.join(speaking)} {'speaks' if len(speaking) == 1 else 'speak'} "
-                       f"of the pin's bytes, and the pin names none")
+                       f"of the pin's bytes, and the pin names none (deliver those bytes, or "
+                       f"drop {'it' if len(speaking) == 1 else 'them'}: this sourceset's own "
+                       f"fetch of the revision is a new parse of it, and may be other bytes)")
     return out
 
 

@@ -157,6 +157,52 @@ class TestASourcesetRenderedBefore(unittest.TestCase):
         self.assertIn(f"{F.W2} was rendered by {OLD}", ctx.exception.message)
 
 
+class TestASourcesetOfTwoRenderers(unittest.TestCase):
+    """``wpm`` with W1 rendered under this checkout's renderer and W2 under web-html/2.
+
+    W1 sorts first, so a check made only as the loop reaches each source would
+    have written W1's candidates before it refused W2.
+    """
+
+    def setUp(self):
+        self.root = scratch(self) / "ws"
+        self.paths = F.make_workspace(self.root)
+        current, real = rh.RENDERER, rh.render_directory
+
+        def render_directory(directory):
+            rh.RENDERER = OLD if Path(directory).name == F.W2 else current
+            return real(directory)
+
+        with mock.patch.object(rh, "RENDERER", current), \
+                mock.patch.object(rh, "render_directory", render_directory):
+            F.write_sourceset(self.paths)
+        F.write_universe(self.paths)
+        self.assertEqual(rh.RENDERER, current)
+        entries = F.manifest_entries(self.paths)
+        self.assertEqual((entries[F.W1]["renderer"], entries[F.W2]["renderer"]), (current, OLD))
+        self.assertLess(F.W1, F.W2)
+        code, text = ws(self.root, "sourceset", "status", F.SS, "--verify")
+        self.assertEqual(code, 0, text)
+
+    def candidates(self, *extra: str) -> tuple[int, str]:
+        return ws(self.root, "locate", "candidates", "--sourceset", F.SS, "--universe", F.U,
+                  *extra)
+
+    def test_candidates_refuse_it_before_writing_any_sources_file(self):
+        code, text = self.candidates()
+        self.assertNotEqual(code, 0, text)
+        self.assertIn(f"{F.W2} was rendered by {OLD}", text)
+        directory = self.paths.candidates_json(F.SS, F.U, F.W1).parent
+        self.assertFalse(directory.exists() and any(directory.iterdir()),
+                         "a refused candidates run wrote a file")
+
+    def test_this_renderers_source_alone_is_retrieved(self):
+        code, text = self.candidates("--source", F.W1)
+        self.assertEqual(code, 0, text)
+        self.assertTrue(self.paths.candidates_json(F.SS, F.U, F.W1).is_file())
+        self.assertFalse(self.paths.candidates_json(F.SS, F.U, F.W2).exists())
+
+
 class TestRunsPlannedBefore(unittest.TestCase):
     """An inventory, a locate run and its challenge, planned while web-html/2 was the renderer."""
 

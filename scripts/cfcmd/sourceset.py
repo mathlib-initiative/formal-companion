@@ -756,12 +756,17 @@ def _pin_bytes(pin: dict) -> tuple[bytes, str, dict]:
     return raw, body, parse
 
 
-def _check_held_layer(where: str, sid: str, current: dict, producer: str | None) -> None:
+def _check_held_layer(where: str, sid: str, current: dict, producer: str | None,
+                      sourceset_id: str) -> None:
     """Refuse a pin whose producer layer sha contradicts what the held source records.
 
     A recorded ``adopted_from`` is never replaced (a version is append-only), so
     a producer sha that was wrong stays this sourceset's: the hint says the
-    corrected delivery goes into a new sourceset.
+    corrected delivery goes into a new sourceset.  A layer another renderer
+    recorded is no measure of this renderer's parity with the producer, so a
+    pin that differs from it is refused with the migration step instead: a
+    recorded layer never changes, and ``create --from`` seeds the bytes with
+    none.
     """
     if producer is None:
         return
@@ -776,6 +781,20 @@ def _check_held_layer(where: str, sid: str, current: dict, producer: str | None)
                            "sha was the producer's mistake, adopt its corrected delivery "
                            "into a new sourceset (`cf sourceset create`)")
     layer = current.get("layer_sha256")
+    renderer = current.get("renderer")
+    if layer and layer != producer and renderer != render_html.RENDERER:
+        raise CfError(f"{where}: {sid} is held rendered under "
+                      f"{renderer or 'no recorded renderer'}, not this checkout's "
+                      f"{render_html.RENDERER}, so its layer "
+                      f"{layer[:12]}... cannot be held to the producer's {producer[:12]}...; "
+                      f"nothing was adopted",
+                      hint=f"{sid}'s layer is another rule's, which says nothing of "
+                           f"{render_html.RENDERER}'s parity with the producer, and a recorded "
+                           f"layer never changes: migrate first -- `cf sourceset create <new id> "
+                           f"--from {sourceset_id}` seeds this sourceset's bytes with no layers "
+                           f"-- then adopt this delivery into the new sourceset and render it "
+                           f"there, where the render holds each layer to the producer's sha its "
+                           f"entry records (adopt names any it cannot record)")
     if layer and layer != producer:
         raise CfError(f"{where}: the layer rendered from {sid}'s bytes is {layer[:12]}... "
                       f"under {current.get('renderer')}, the producer's is "
@@ -888,7 +907,7 @@ def _adopt(workspace, args) -> int:
                           hint="a source's bytes never change; a different rendering of the "
                                "same revision cannot be adopted into this sourceset")
         if current is not None:
-            _check_held_layer(where, sid, current, producer)
+            _check_held_layer(where, sid, current, producer, ss.id)
         if raw is not None and current is not None and current.get("raw_sha256"):
             if is_adopted(current):
                 already += 1

@@ -315,6 +315,21 @@ class TestAdoptingAProducersPins(_SourcesetCase):
                                name="bare.jsonl")
         self.assertEqual(code, 0, out)
 
+    def test_a_layer_sha_with_no_bytes_refuses_the_delivery_not_only_its_row(self):
+        """The sha is of the producer's bytes; this sourceset's own fetch is a new parse."""
+        rows = [{"pageid": 1001, "revision": 2002, "title": "Widget lemma"},
+                {"pageid": 1002, "revision": 2003, "title": "Gadget theorem",
+                 "layer_sha256": layer_sha(recorded(2003))}]
+        code, out = self.adopt(rows, {})
+        self.refused_whole(code, out)
+        self.assertIn("pins.jsonl:2: layer_sha256 speaks of the pin's bytes, and the pin "
+                      "names none (deliver those bytes, or drop it", out)
+        self.assertIn("nothing was adopted", out)
+        del rows[1]["layer_sha256"]
+        code, out = self.adopt(rows, {}, name="bare.jsonl")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 without bytes", out)
+
     def test_a_fetch_that_is_not_the_fixed_one_refuses_the_delivery(self):
         rows, files = self.full_delivery()
         rows[1]["fetch"] = {"api": "action=parse", "params_sha256": "0" * 64}
@@ -412,6 +427,51 @@ class TestAdoptingAProducersPins(_SourcesetCase):
         self.assertEqual(self.ss.read_state()["commands"]["adopt"]["layer_sha256_not_recorded"],
                          ["enwiki-1002-2003"])
         self.assertIn("render does not check it", out)
+
+    def test_held_bytes_another_renderer_rendered_are_migrated_not_called_a_parity_failure(self):
+        """A layer web-html/2 recorded says nothing of this renderer's parity with the producer."""
+        raw = recorded(2003)
+        code, out = self.adopt([pin(1002, 2003, "g.json", raw, layer=False)], {"g.json": raw})
+        self.assertEqual(code, 0, out)
+        real = rh.render
+
+        def older_rule(body):              # web-html/2: another rule, another layer
+            r = real(body)
+            r.layer = "the layer an older rule gives"
+            return r
+
+        with mock.patch.object(rh, "RENDERER", "web-html/2"), \
+                mock.patch.object(rh, "render", older_rule):
+            self.assertEqual(cf(self.root, "sourceset", "render", "wpm")[0], 0)
+        held = self.ss.latest().get("enwiki-1002-2003")
+        self.assertEqual(held["renderer"], "web-html/2")
+        self.assertNotEqual(held["layer_sha256"], layer_sha(raw))
+        version = self.ss.latest().version
+        # the producer's sha is this renderer's own layer of those bytes: a conforming
+        # delivery, which only the held web-html/2 layer contradicts
+        code, out = self.adopt([pin(1002, 2003, "g.json", raw)], {}, name="right.jsonl")
+        self.refused_whole(code, out, version)
+        self.assertIn("enwiki-1002-2003 is held rendered under web-html/2, not this "
+                      f"checkout's {rh.RENDERER}", out)
+        self.assertIn("cf sourceset create <new id> --from wpm", out)
+        self.assertNotIn("parity failure", out)
+        # the step it names: seeded with the bytes and no layers, the delivery is adopted
+        # (its sha named as not recorded: adopted_from never changes) and rendered under
+        # this renderer
+        code, out = cf(self.root, "sourceset", "create", "wpm3", "--from", "wpm")
+        self.assertEqual(code, 0, out)
+        code, out = cf(self.root, "sourceset", "adopt", "wpm3", "--from",
+                       str(self.pins / "right.jsonl"), "--consumer", "wikilean")
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 already held", out)
+        seeded = Sourceset.open(self.paths, "wpm3")
+        self.assertEqual(seeded.read_state()["commands"]["adopt"]["layer_sha256_not_recorded"],
+                         ["enwiki-1002-2003"])
+        code, out = cf(self.root, "sourceset", "render", "wpm3")
+        self.assertEqual(code, 0, out)
+        entry = seeded.latest().get("enwiki-1002-2003")
+        self.assertEqual((entry["renderer"], entry["layer_sha256"]),
+                         (rh.RENDERER, layer_sha(raw)))
 
     def test_a_drifted_page_in_a_redelivery_is_refused_by_name(self):
         """An old revision re-parsed later can expand other templates: other bytes."""

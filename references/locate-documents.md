@@ -609,7 +609,11 @@ of the pins file is one JSON object (`sources.websource.PIN_FIELDS`, checked by
 | `layer_sha256` | optional, only with `bytes`: the producer's sha256 of the UTF-8 of its own text layer of those bytes' HTML (the response's `parse.text`), which the render below holds `layer.txt` to |
 
 A field outside these is refused, not ignored (a misspelt `layer_sha256` would
-otherwise switch the render's check off). A row that carries `fetch` says its
+otherwise switch the render's check off), and so is a `fetch` or `layer_sha256`
+in a row with no `bytes`: each speaks of the producer's bytes, and what `cf
+sourceset fetch` would get for that revision instead is a new parse of it (an old
+revision's templates expanded as they are now), possibly other bytes, which a
+recorded `fetch` or producer sha would misdescribe. A row that carries `fetch` says its
 bytes are that fetch's response, so they must be its exact JSON: `parse.text` a
 string (`formatversion=2`), integer `parse.revid` and `parse.pageid` equal to the
 pin's — never a bare body. JSON bytes of any row must be an `action=parse`
@@ -632,7 +636,10 @@ An adopted entry records `adopted_from: {consumer, pins_sha256, layer_sha256?}`
 is the shape) — and a row's `fetch` as the entry's `fetch`. Under a source id the
 sourceset already holds, other bytes are refused; the same bytes are already
 held, refused when the row's `layer_sha256` contradicts the producer's sha
-recorded for them or the layer already rendered from them; and bytes the
+recorded for them or the layer already rendered from them (a layer another
+renderer recorded is no measure of this one's parity, so that refusal names
+the `create --from` migration below, after which the delivery is adopted into
+the seeded sourceset); and bytes the
 sourceset fetched itself become the consumer's pin (`adopted_from` added, so
 `Manifest.preferred()` plans them). A recorded `adopted_from`, the producer's
 `layer_sha256` in it included, is never replaced (append-only): a source first
@@ -776,8 +783,9 @@ manifest entry whose layer sha is recorded under any renderer id but
 `web-html/3` — `/1`, `/2`, an id this checkout does not know, or none — carries
 another rule's layer, offsets and passage ids, however consistent its own files
 are (`locate.inputs.check_renderer`, which `locate.inputs.check_source` runs
-first). `cf locate candidates` stops at it by name; `cf plan-locate` refuses it
-before it writes anything, so no task document and no `gate.json` pins it; the
+first). `cf locate candidates` refuses it by name before it writes any source's
+file, and `cf plan-locate` before it writes anything, so no task document and no
+`gate.json` pins it; the
 export refuses it per source in its report. Each refusal names the source, its
 renderer and the `create --from` step above. `cf bench build` refuses a drawn
 article of another renderer (an undrawn frame article of one is only recorded),
