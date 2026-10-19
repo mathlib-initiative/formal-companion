@@ -868,14 +868,15 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("no part assumes more than the passage does", worker)
         self.assertIn("at least 2 of this passage's `hasPart` locations", worker)
         self.assertIn("Never put `coverage` on an `absent` or `unresolved` passage", worker)
-        self.assertIn("the Chinese remainder theorem as a ring isomorphism", worker)
+        self.assertIn("a theorem that two quotient rings are isomorphic, stated as a ring "
+                      "isomorphism", worker)
         system = self.rendered[vocab.LOCATE]["worker-system.md"]
         self.assertIn("a coverage claim on a passage that is not located", system)
 
     def test_the_challenger_refutes_unless_every_clause_is_matched(self):
         worker = self.rendered[vocab.LOCATE_CHALLENGE]["worker.md"]
         self.assertIn("`prominence` or `coverage`", worker)
-        self.assertIn("**refute** it unless every clause of the passage is matched by a part "
+        self.assertIn("**refute** it unless every clause of your claim list is stated by a part "
                       "AND no part adds a hypothesis the passage does not have", worker)
         self.assertIn("The worker's `note` is a claim to check, not evidence", worker)
         # review 4, F2: a confirm stands in only for the part records no rule required

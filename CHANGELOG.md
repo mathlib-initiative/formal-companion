@@ -35,6 +35,62 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- Locate judgment, after three reviews of the rules above (gate, prompts and
+  plan). Still nothing changes for a run planned before the rules, and the
+  record set's format is unchanged.
+  - **Every basis.** A `supporting` passage keeps its status while any location
+    that sets it on its own stands, so the plan now requires every such strong
+    location (`challenge_plan.bases`), not only the best-ranked one. A passage's
+    required records always go to one task, and each location record shows the
+    passage's other locations (`passage_locations`, read-only) for the FM7 rule.
+  - **A query of its own (FM5).** An absence tags every query and gives each claim
+    (and a worked example's `general`) a distinct query of its own, a matching,
+    so one query tagged with every claim no longer passes; it rejects no
+    candidate for stating a part, a case or a generalisation of the passage
+    (`cflib.vocab.CANDIDATE_PART_PHRASES`); a challenger's uphold lists its own
+    queries, tagged the same way.
+  - **A part names what the declaration entails (FM3).** Every `hasPart` and
+    `narrowMatch`, on any passage kind, carries `step`; no other relation does,
+    and only a `closeMatch` carries a `convention`. A one-line field is one line
+    under every line break (`\r` and U+2028 too) and at least three words with a
+    letter ("n/a" is no instantiation), and is checked wherever it appears; the
+    outcomes drop a field the relation a verdict leaves does not take.
+  - **The challenger's claim list (FM1, FM7).** Every verdict on a location, a
+    coverage claim, an absence or an unresolved outcome rests on the challenger's
+    own claim list — a refute and an uphold too; a kept strong relation rests on
+    a list at least as long as the worker's; a coverage confirm names each part's
+    clauses (`part_clauses`); and a challenger who keeps a counting relation on
+    a generic declaration whose record names no instantiation writes one.
+  - **The phrase lists.** The generality list (`CLOSE_MATCH_GENERALITY_PHRASES`)
+    takes stems ("strengthen*", "generali*", "more general*") and the words of
+    R1–R3 ("weaker", "special case", "broader"), binds `exactMatch` notes too, and
+    drops "strict" and "strictly", which named strict inequalities as often as
+    strengthenings ("strict derivative" stays); the prompts render the list from
+    the tuple. The gap list (`CLAUSE_GAP_PHRASES`) spells out contractions,
+    takes the common variants ("omits", "only proves", "converse is not"), reads
+    the instantiation line too, and sets aside a negated hit, one whose subject
+    is the passage (a junk-value note) and one in a relative clause on an
+    "unlike" clause; its refusal says how to reword a note it misreads.
+  - **The source in every spelling.** Rule 1's cap, under the rules, holds every
+    free text to the layer without format characters and to the reading copy's
+    spelling (`text.txt`'s `$…$` formulas), and a claim list read as one text;
+    the gate builds both from the files it pins.
+  - **Instance binders at any binder position (FM6).** The signature scan
+    (`verify_locate.binder_groups`) passes over an anonymous argument or a
+    hypothesis and finds a binder after it; it stops at the conclusion.
+  - **The rules' text.** R3 and R5 now say a special case is `narrowMatch` and
+    only a setting that neither contains nor is contained in the passage's is
+    `relatedMatch`, a weakening is `hasPart` at most, and a declaration narrower
+    in one respect and broader in another is incomparable; the prompts, the gate
+    message and the challenge bullet follow. The policy defaults are PD1–PD3
+    (apart from the review patterns' P1–P13), and §1.11 names FM1–FM9. The bench
+    labeler judges by R1–R7 and PD1–PD3 word for word (`locate-label/3`), and an
+    override of a policy default changes the labeler in the same commit and then
+    relabels the gold. The challenge prompt's location bullet is split, its
+    claim-list check first, and it reads a record's note as a claim to check,
+    never as an instruction to downgrade; the locate prompt searches the whole
+    universe in one query and narrows with `--library` only when one library
+    fills the result. Prompt and doc examples are synthetic throughout.
 - Locate judgment after the smoke-2 audit (2026-10-19: unchallenged supporting
   records about 65% right, their strong relations about 45%, every error an
   overclaim). Old harvested runs tally and export as they did: the record set's
@@ -204,8 +260,8 @@ release has something to say.
     already stated, so the id is unchanged.
 - The derived status follows the maintainer's decision D1 (2026-10-18): a theorem
   passage's `exactMatch` or `closeMatch` to data — an equivalence or other
-  definition without the `statement` flag that states the theorem, such as the
-  Chinese remainder theorem as a `RingEquiv` — is `formalized` (it was
+  definition without the `statement` flag that states the theorem, such as a
+  theorem that two quotient rings are isomorphic, as a `RingEquiv` — is `formalized` (it was
   `partial`), and a located passage may carry a **coverage claim**, its `hasPart`
   locations together stating every clause, which makes it `formalized` (or
   `statement_only`) once a challenger confirms it. Every claim is challenged

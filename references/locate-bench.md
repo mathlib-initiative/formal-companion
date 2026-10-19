@@ -276,7 +276,7 @@ service, and every hit counts only once found in the pinned checkout.
 
 **Frozen.** The args stamp `labeler: {version, workflow_sha256, skill_commit}` (the checkout
 they were emitted from) and a `digest` over themselves;
-the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/2`). The
+the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/3`: the rules R1–R7 and PD1–PD3 of `references/vocabulary.md` §1.11 joined the prompts). The
 transcriber refuses a result for other args, from another labeler version, or when the workflow
 file's sha changed since emission, and refuses a label for a task the args never named or
 labelled twice (the workflow also forces each answer's `task_id` to its task's). An unlabelled
@@ -308,7 +308,7 @@ a run's.
            "P": {"ablation_sha256": "<hex>", "corpus_sha256": "<hex>",
                  "removed_declarations": 812, "modules": 14}},
  "seen": ["g3-…"], "h": {"found": 15, "total": 17, "h": 0.88, "tag_blind": true},
- "labeler": {"version": "locate-label/2", "skill_commit": {"label": "<40 hex>"},
+ "labeler": {"version": "locate-label/3", "skill_commit": {"label": "<40 hex>"},
              "workflow_sha256": {"label": "<hex>"}, "prompt_sha256": {"label": "<hex>"}},
  "canary_sha256": "<hex>", "created": "…", "manifest_sha256": "<hex>"}
 ```

@@ -255,29 +255,33 @@ direction, subject the passage, object the declaration.
 | value | meaning |
 |---|---|
 | `exactMatch` | the declaration states the passage |
-| `closeMatch` | the same up to a convention difference (0 ∈ ℕ, junk values, normalization), named in `note` |
-| `broadMatch` | the declaration is more general; the passage is an instance |
-| `narrowMatch` | the declaration is a special case of the passage |
-| `hasPart` | the declaration states part of a passage that says several things |
-| `relatedMatch` | relevant, but it states something else. Never counts towards a status |
+| `closeMatch` | the same up to a convention (R1 below): named in the location's `convention`, from a closed list, and described in its `note` |
+| `broadMatch` | the passage follows from the declaration by instantiation or weakening (R2) |
+| `narrowMatch` | the declaration is the passage at special objects (R3) |
+| `hasPart` | the declaration states one clause of a passage that says several things (R4) |
+| `relatedMatch` | relevant, but it states something else (R5). Never counts towards a status |
+
+Rules R1–R7 below decide between them; the table only names them.
 
 `noMatch` (`NO_MATCH`) is the relation of an **absence** record only — one `lean` end per universe
 library, no `location` — never of a location. At most `MAX_LOCATIONS_PER_PASSAGE` (5) locations per
 passage, ranked. `STRONG_RELATIONS` (`exactMatch`, `closeMatch`, `broadMatch`) are the three that
 formalize a theorem passage against a proved declaration; `WEAK_RELATIONS` (`relatedMatch`,
 `narrowMatch`, `hasPart`) the rest. On a `supporting` passage the challenge plan re-judges both:
-the location that sets the passage's derived status (its **basis**: the best-ranked location
-whose status alone is the passage's) is required whenever its relation is strong, the passage's
-other strong locations are sampled per relation at the plan's `strong_sample_rate`, and its weak
-ones at its `sample_rate` (the smoke-2 audit of 2026-10-19 found the strong relations of
-supporting passages, then never challenged, right about 45% of the time, and every
-formalized supporting passage resting on one). `RELATION_STRENGTH` orders the relations for a challenge's
+every location that sets the passage's derived status on its own (its **bases**: each location
+whose status alone is the passage's — the passage keeps the status while any one of them
+stands) is required whenever its relation is strong, the passage's other strong locations are
+sampled per relation at the plan's `strong_sample_rate`, and its weak ones at its `sample_rate`
+(the smoke-2 audit of 2026-10-19 found the strong relations of supporting passages, then never
+challenged, right about 45% of the time, and every formalized supporting passage resting on
+one). `RELATION_STRENGTH` orders the relations for a challenge's
 `downgrade`, which must name a strictly weaker one: `exactMatch` > `closeMatch` > `broadMatch` >
 `narrowMatch` = `hasPart` > `relatedMatch`.
 
 **How a relation is judged: rules R1–R7** (the smoke-2 audit of 2026-10-19, its resolver's
-rules, adopted for every run planned since). A worker and a challenger judge each record by them,
-pairwise, the passage against the one declaration:
+rules, adopted for every run planned since; R3 and R5 are worded so the special case, the
+weakening and the mixed case each have one answer). A worker, a challenger and the bench's
+labeler judge each record by them, pairwise, the passage against the one declaration:
 
 - **R1** — `closeMatch` only for a convention: notation, encoding, junk values, normalisation,
   renaming, unfolding, bundling (the location's `convention`). A strengthening, a generalisation
@@ -285,33 +289,43 @@ pairwise, the passage against the one declaration:
 - **R2** — `broadMatch` when the passage follows from the declaration by instantiation or
   weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all
   primes for a finite table), with no hypothesis stronger than the passage's.
-- **R3** — `narrowMatch` when the declaration follows from the passage by instantiation (a
-  natural-number statement for an integer one).
+- **R3** — `narrowMatch` when the declaration is the passage at special objects: the passage,
+  instantiated at the declaration's objects, says what the declaration says (a natural-number
+  statement for an integer one, a field for a commutative ring, the n = 1 case).
 - **R4** — `hasPart` when the declaration states one clause of a passage that says several
   things; `exactMatch`, `closeMatch` and `broadMatch` only when it states every clause.
 - **R5** — `relatedMatch` when the connection needs another theorem, or the two statements are
-  incomparable; `hasPart` and `narrowMatch` need the declaration alone, instantiated at the
-  passage's objects, to entail a clause the passage asserts.
+  incomparable: a setting that neither contains nor is contained in the passage's (a
+  finite-dimensional lemma where the passage's spaces are infinite-dimensional), or a
+  declaration narrower in one respect and stronger or broader in another. A declaration that
+  follows from the passage by weakening states part of it at most: `hasPart` when what it
+  states is one of the passage's clauses, else `relatedMatch`. So `hasPart` needs the
+  declaration alone, instantiated at the passage's objects, to entail a clause the passage
+  asserts, and `narrowMatch` needs the passage, instantiated at the declaration's objects, to
+  say what the declaration says.
 - **R6** — relations are pairwise: what else the universe holds never changes a record's
   relation.
 - **R7** — a definition passage is judged on the data it defines; bundled proof fields are
   packaging (R1's bundling).
 
-The **policy defaults**, the maintainer's (2026-10-19). Each is a default, not a law of the
+The **policy defaults**, the maintainer's (2026-10-19), numbered PD1–PD3 apart from the review
+patterns' P1–P13 (`references/review-patterns.md`). Each is a default, not a law of the
 format: it can be overridden, and an override is a change to this paragraph, to both prompts
-(`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`, which carry these lines word
-for word; `tests/test_locate_judgment.py` holds them together) and to the bench's gold, in one
-commit:
+(`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`) and to the bench's labeler
+(`workflows/locate-label.workflow.js`, whose `LABELER_VERSION` it bumps), in one commit — all
+three carry these lines word for word, and `tests/test_locate_judgment.py` holds them together
+— followed by a relabel of the bench's gold, which lives on the operator's machine
+(`references/locate-bench.md` §1) and so is never in that commit:
 
-- **P1** — a definition stated over a general type parameter where the passage has a specific
+- **PD1** — a definition stated over a general type parameter where the passage has a specific
   one (any ring where the passage has ℂ) is `broadMatch` (R2).
-- **P2** — a statement over ℕ where the passage has ℤ is `narrowMatch` (R3).
-- **P3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is
+- **PD2** — a statement over ℕ where the passage has ℤ is `narrowMatch` (R3).
+- **PD3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is
   `narrowMatch`, never vacuous: it is not refuted for being trivial.
 
-P1 makes a definition passage stated over a specific object `partial` against a definition over
-a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); P2 and P3
-make a theorem passage `partial` against such a declaration, never `formalized` or unresolved.
+PD1 makes a definition passage stated over a specific object `partial` against a definition over
+a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); PD2 and
+PD3 make a theorem passage `partial` against such a declaration, never `formalized` or unresolved.
 
 **The challenger's rule** (the audit's FM7: 8 of 25 challenge results were wrong, each a reasoning
 slip, not a search miss), in the challenge prompt word for word:
@@ -319,16 +333,37 @@ slip, not a search miss), in the challenge prompt word for word:
 - **FM7** — before you downgrade or refute, check the record against your claim list of the
   passage. Apply D1: an exact or close match to an equivalence or other data that states the
   theorem formalizes it, so a bijection is the data form of a cardinality equation and stays
-  `closeMatch`. Keep definitionally linked declarations consistent within your task: two
-  declarations on one passage defined one from the other, or one object in two encodings, get
-  the same relation unless their statements differ. A trivial special case is `narrowMatch`
-  (P3), never a refute.
+  `closeMatch`. Keep definitionally linked declarations consistent: two declarations on one
+  passage defined one from the other, or one object in two encodings, get the same relation
+  unless their statements differ — your task holds every required location of a passage, and
+  each location record shows the passage's other locations (`passage_locations`), read-only. A
+  trivial special case is `narrowMatch` (PD3), never a refute.
+
+**The failure modes** the rules answer, as the audit numbered them (the labels code, tests and
+the changelog cite):
+
+| label | failure mode | what answers it |
+|---|---|---|
+| FM1 | a whole-passage relation for a declaration that states only some clauses | the claim list, `clauses`, R4, the gap phrases |
+| FM2 | the challenge plan never re-checked strong relations or absences on supporting passages | the plan's `basis` rule and its strong and absence samples |
+| FM3 | a proof ingredient, a bridge lemma or a neighbouring fact credited as a part | R5, a `hasPart`'s or `narrowMatch`'s `step` |
+| FM4 | generality in the wrong direction, or `closeMatch` for what is no convention | R1–R3, `convention`, the generality phrases |
+| FM5 | an incomplete hunt: a stating declaration missed, or a false absence | a query of its own per claim (`query_clauses`), the rejected-candidate check, the absence sample |
+| FM6 | a setting mismatch: the declaration's hypotheses exclude the passage's objects | `instantiation`, R3 and R5 |
+| FM7 | a challenger's reasoning slip (D1 ignored, a special case refuted, two encodings split) | the challenger's rule above, its own claim list on every verdict |
+| FM8 | policy the rules did not settle | R1–R7 and PD1–PD3 |
+| FM9 | data and inventory defects (a statement flag, a cut span, a set-up passage scoped formal) | not the judgment rules: ingest and inventory work |
 
 What the gate holds mechanically, under the judgment rules (gate rule 9,
-`references/locate-documents.md` §3–§4): R1's closed list and the words a `closeMatch` note may
-not say; R4 through the claim list and each record's `clauses`, and a strong record whose note
-admits a gap; R5 through a declaration's `instantiation` and a proof part's `step`; and the
-absence's queries per clause. The rest is judgment, which the challenge re-checks.
+`references/locate-documents.md` §3–§4): R1's closed list, a `convention` on a `closeMatch` only,
+and the words an `exactMatch` or `closeMatch` note may not say; R4 through the claim list and each
+record's `clauses`, and a strong record whose note or instantiation admits a gap; R5 through a
+declaration's `instantiation` and a `hasPart`'s or `narrowMatch`'s `step`; an absence's queries,
+a query of its own per claim, and its rejected candidates; and, in a challenge, the
+challenger's own claim list under every verdict on a passage's records. It rests on the claim
+list a worker writes: a list that leaves a clause out, with an `exactMatch` naming every claim
+on it, passes, and only the challenge re-checks it — the phrase lists are tripwires that catch an
+honest note, not a parser. The rest is judgment, which the challenge re-checks.
 
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
@@ -340,7 +375,7 @@ value) or `None`, and the three-argument call is the one it always was:
 
 | status | when |
 |---|---|
-| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration; `exactMatch` or `closeMatch` to **data** — a `definition` without the `statement` flag (an equivalence, isomorphism, bijection, structure-valued construction: the Chinese remainder theorem as a `RingEquiv`). Definition passage: `exactMatch` or `closeMatch` to a `definition`. Any passage: a **survived coverage claim** whose every part is finished — `proved`, or data |
+| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration; `exactMatch` or `closeMatch` to **data** — a `definition` without the `statement` flag (an equivalence, isomorphism, bijection, structure-valued construction: a theorem that two quotient rings are isomorphic, as a `RingEquiv`). Definition passage: `exactMatch` or `closeMatch` to a `definition`. Any passage: a **survived coverage claim** whose every part is finished — `proved`, or data |
 | `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or any passage's survived coverage claim with an unfinished part — `statement_only`, `wanted`, `axiom_dependent`, or a `Prop`-valued definition |
 | `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition, with no coverage claim that upgrades them |
 | `not_formalized` | a checked absence, possibly beside `relatedMatch` locations |
@@ -512,21 +547,24 @@ record no verdict judged.
 | `CHALLENGE_ACTIONS` | `confirm` and `uphold` (`CHALLENGE_KEEP`: the record survives) · `downgrade`, `refute` and `overturn` (`CHALLENGE_CHANGE`: the affected records are `downgraded`) |
 | `UNRESOLVED_ATTEMPT_CAP` | `attempt_cap`: the reason on an `UNRESOLVED` document the bridge writes after a task's third genuine reviewer rejection; never a worker's |
 | `UNRESOLVED_BY` | `worker` (`UNRESOLVED_BY_WORKER`: the worker could not decide) · `attempt_cap` (the bridge, at the cap) — an `UNRESOLVED` document's `unresolved.by` |
-| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, every coverage claim, and a strong location whose own note admits a clause it does not state, `admits_missing_clause`) · `hunt` (an absence or unresolved outcome on one) · `basis` (`CHALLENGE_RULE_BASIS`: the location that sets a `supporting` passage's derived status, when its relation is one of `STRONG_RELATIONS`; required) · `sample` (the stratified sample's frame: scope demotions and `supporting` demotions and weak relations, at `sample_rate`; a `supporting` passage's other strong locations, one stratum per relation, at `strong_sample_rate`; a `supporting` passage's absence, stratum `outcome:absent`, at `absence_sample_rate`, hunted when drawn) · `none` (a `supporting` passage's unresolved outcome) — why the challenge plan put a record where it did |
+| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, every coverage claim, and a strong location whose own note admits a clause it does not state, `admits_missing_clause`) · `hunt` (an absence or unresolved outcome on one) · `basis` (`CHALLENGE_RULE_BASIS`: a location that sets a `supporting` passage's derived status on its own — every such one, not only the best-ranked — when its relation is one of `STRONG_RELATIONS`; required) · `sample` (the stratified sample's frame: scope demotions and `supporting` demotions and weak relations, at `sample_rate`; a `supporting` passage's other strong locations, one stratum per relation, at `strong_sample_rate`; a `supporting` passage's absence, stratum `outcome:absent`, at `absence_sample_rate`, hunted when drawn) · `none` (a `supporting` passage's unresolved outcome) — why the challenge plan put a record where it did |
 | `CHALLENGE_PLANNED` | `required` (`CHALLENGE_REQUIRED`: the record is in a challenge task and its verdict is owed) · `sampled_out` · `not_required` — what the challenge plan says a record is owed, before any verdict |
 | `JUDGMENT_RULES` | `1`: the version of the judgment rules (gate rule 9, R1–R7 below) a run's `gate.json` names as `judgment_rules`; `cf plan-locate` writes it into every run it plans, and a `gate.json` without it (a run planned before the rules) is gated without rule 9 |
 | `CLAIM_ID` | `c1`, `c2`, … (`c[1-9][0-9]?`): the id of a passage's claim, one formal clause of its claim list (`claims` of a locate or challenge document, references/locate-documents.md §3–§4), which a location's `clauses` name |
-| `CLAUSE_GAP_PHRASES` | `does not state` · `doesn't state` · `not stated` · `is not part of` · `rather than asserting` · `rather than stating` · `only the existence` · `only one direction` · `not the converse` · `without uniqueness` · `does not cover` · `not covered` — the closed list by which a strong record's note admits a clause its declaration does not state (`admits_missing_clause`: whole words, case-folded, the apostrophe folded); the gate refuses such a record under the judgment rules, and the challenge plan refutes it by default |
-| `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one under the judgment rules |
+| `CLAUSE_GAP_PHRASES` | `does not state` · `do not state` · `not stated` · `not part of` · `not a part of` · `rather than asserting` · `rather than stating` · `rather than proving` · `only the existence` · `only existence` · `only proves` · `only states` · `proves only` · `states only` · `only one direction` · `one direction only` · `not the converse` · `converse is not` · `without the converse` · `without uniqueness` · `uniqueness is not` · `does not cover` · `do not cover` · `not covered` · `not asserted` · `not included` · `omits` · `omitted` · `leaves out` · `left out` · `does not prove` · `does not assert` · `does not establish` — the closed list by which a strong record's note or instantiation admits a clause its declaration does not state (`admits_missing_clause`: whole words, case-folded, the apostrophe folded and a contraction spelled out, so "doesn't state" is "does not state"; a hit is set aside when negated — "not only the existence" —, when the passage is its subject — "the passage does not cover n = 0", "not part of the passage" — or in a relative clause on what an "unlike …" clause names); the gate refuses such a record under the judgment rules, and the challenge plan refutes it by default. A tripwire, not a parser: a note it misreads is reworded to say what the declaration does |
+| `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one of its own under the judgment rules (each claim, and `general`, matched to a distinct query) |
 | `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `junk_value` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules |
-| `CLOSE_MATCH_GENERALITY_PHRASES` | `stronger` · `strict` · `strictly` · `more general` — words a `closeMatch` note may not say (`says_generality`: whole words, case-folded); each describes a `broadMatch` or `narrowMatch` |
-| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported |
+| `CLOSE_MATCH_GENERALITY_PHRASES` | `stronger` · `strengthen*` · `weaker` · `weaken*` · `more general*` · `generali*` · `special case` · `particular case` · `broader` · `narrower` · `strict derivative*` · `strict differentiab*` · `strictly differentiab*` — words an `exactMatch` or `closeMatch` note may not say (`says_generality`: whole words, case-folded, a trailing `*` any ending of the word, so "more generally" and "generalisation" are hits); each describes a `broadMatch`, a `narrowMatch` or a weakening. "strict" and "strictly" alone are not on it: a strict inequality or a strictly increasing list is no strengthening. The prompts render the list from this tuple |
+| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only |
+| `STEP_RELATIONS` | `hasPart` · `narrowMatch` — the relations whose location says, in its `step`, what the declaration alone entails of the passage (on a proof the displayed step, on any other passage the clause) |
+| `CANDIDATE_PART_PHRASES` | `only part` · `part of the passage` · `one clause` · `one of the clauses` · `not the whole` · `not the full` · `special case` · `not the worked example` · `not the example` · `partially` · `more general*` · `generali*` — what an absence's rejected candidate may not be rejected as (`rejects_a_part`, matched as `CLOSE_MATCH_GENERALITY_PHRASES` are): a declaration that states a clause, a case or a generalisation of the passage is a location, and the absence is refused under the judgment rules |
 | `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
 
 Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
 `MAX_PASSAGE_CLAIMS` (12 claims in a passage's claim list), `MAX_CLAIM_CHARS` (300 characters,
 one line, of a claim's text) and `MAX_JUDGMENT_LINE_CHARS` (300 characters, one line, of a
-location's `instantiation` or `step`),
+location's `instantiation` or `step`, with at least `MIN_JUDGMENT_LINE_WORDS`, 3, words that
+carry a letter),
 `MIN_COVERAGE_PARTS` (2 distinct `hasPart` parts in a coverage claim), `COVERAGE_RECORD_KEYS`
 (`complete` · `parts` · `challenge`, the keys of a record's claim and of `derive_status`'s),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge

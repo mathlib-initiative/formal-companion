@@ -85,6 +85,11 @@ def finish_block(preset: Preset) -> str:
             f"committing:\n\n{shape}\n\n{status}\n")
 
 
+def phrase_list(phrases) -> str:
+    """A judgment-rule phrase list as a prompt says it: quoted, ``*`` written as ``…``."""
+    return ", ".join(f'"{p[:-1]}…"' if p.endswith("*") else f'"{p}"' for p in phrases)
+
+
 def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
                   universe, per_task: int, merge_target_branch: str = "main") -> dict[str, Any]:
     """Every slot the locate templates read, from the run's host paths and its universe."""
@@ -117,6 +122,9 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         "max_locations": vocab.MAX_LOCATIONS_PER_PASSAGE,
         "min_queries": vocab.MIN_ABSENCE_QUERIES,
         "min_coverage_parts": vocab.MIN_COVERAGE_PARTS,
+        # the judgment rules' phrase list (cflib.vocab), rendered so a prompt never
+        # lists fewer words than the gate refuses
+        "generality_phrases": phrase_list(vocab.CLOSE_MATCH_GENERALITY_PHRASES),
         "per_task": per_task,
         "batch": vocab.CHALLENGE_BATCH_RECORDS,
         "is_inventory": preset.mode == vocab.LOCATE_INVENTORY,
