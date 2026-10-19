@@ -10,10 +10,12 @@ references/locate-documents.md section 11; the logic is ``run/campaign.py``.
 
 ``plan`` orders shards that are already planned locate runs (each at most 500
 tasks with a spend cap in its own run.yaml), stamps ``locate.campaign`` into
-each, and records the watchdog's thresholds and the smoke-tested pilot;
-``render`` writes the host-side sequencer, which starts shard k+1 when shard k
-ends, runs the model-free watchdog beside each shard, scans, exports and prunes
-the transcripts each shard wrote, and stops the campaign when a shard's last
+each, and records the watchdog's thresholds and the smoke-tested pilot (a
+re-plan reads the shards again and keeps what it is not given); ``render``
+refuses a shard whose run.yaml no longer matches that record, then writes the
+host-side sequencer, which starts shard k+1 when shard k ends, runs the
+model-free watchdog beside each shard, scans, exports and prunes the
+transcripts each shard wrote, and stops the campaign when a shard's last
 watchdog record gives a reason to drain; ``status`` reads the shards'
 receipts.  Nothing here contacts the host: ``render`` prints the transfer and
 start commands for the operator, after each shard went through ``cf run``'s
@@ -43,19 +45,22 @@ def register(subparsers) -> None:
                     help="the pilot's p90 cost per merged task, in USD")
     pl.add_argument("--p90-gate-failure-rate", type=float, default=None,
                     help="the pilot's p90 fraction of gate calls that failed")
-    pl.add_argument("--multiple", type=float, default=2.0,
-                    help="drain at this multiple of either p90 (default 2)")
-    pl.add_argument("--min-tasks", type=int, default=5,
-                    help="merged tasks before the cost-per-task rule fires (default 5)")
+    pl.add_argument("--multiple", type=float, default=None,
+                    help="drain at this multiple of either p90 (default 2; a re-plan keeps "
+                         "the campaign's)")
+    pl.add_argument("--min-tasks", type=int, default=None,
+                    help="merged tasks before the cost-per-task rule fires (default 5; a "
+                         "re-plan keeps the campaign's)")
     pl.add_argument("--pilot", default=None, metavar="RUN_ID",
                     help="the run whose smoke test (run.smoke_verified) stands for every "
                          "shard's; render refuses without one")
     pl.add_argument("--transcript-dirs", default=None, metavar="DIRS",
-                    help="colon-separated host directories the agents' transcripts land in "
-                         "(default: workspace.yaml hosts.<host>.transcript_dirs)")
+                    help="colon-separated host directories the agents' transcripts land in, "
+                         "each absolute or ~/... (default: workspace.yaml "
+                         "hosts.<host>.transcript_dirs)")
     pl.add_argument("--canaries", default=None, metavar="HOST_PATH",
-                    help="the bench's canaries.txt on the host: each shard's transcripts are "
-                         "scanned for it before they are pruned")
+                    help="the bench's canaries.txt on the host, absolute or ~/...: each "
+                         "shard's transcripts are scanned for it before they are pruned")
     rd = sub.add_parser("render", help="write the host-side sequencer and the tools it runs")
     rd.add_argument("campaign_id")
     st = sub.add_parser("status", help="per shard: tasks, receipt, UNRESOLVED documents, cost")

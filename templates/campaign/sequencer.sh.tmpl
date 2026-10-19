@@ -9,7 +9,8 @@
 # STOPS the campaign the moment a shard's last watchdog record shows a drain or
 # any reason to drain (spend past the shard's recorded cap, or a gate-failure
 # rate or cost per merged task past {{multiple}} x the pilot's p90), when that
-# record cannot be read, or when a transcript holds a bench label canary.
+# record cannot be read, when the watchdog died during the shard, when a
+# transcript holds a bench label canary, or when the canary scan could not run.
 # Nothing here needs cflib; the operator's machine only harvests the receipts.
 #
 # Every shard must already be transferred and verified with
@@ -19,16 +20,39 @@
 # that already has a live tend run is refused, and one sequencer at a time
 # holds the campaign. Its state is keyed by run id, never by position.
 #
+# A stopped shard is never relaunched as it stands: a resumed shard first
+# settles what its earlier attempt left (scan, export, prune), and is refused
+# while one of its canary reports holds a hit or the watchdog already finds a
+# reason to drain it. Only CF_ACCEPT, which accepts it as it stands, passes a
+# canary hit. A higher cap (re-plan the shard, then `cf campaign plan` and
+# `render` again) passes only a stop at the cap: a gate-failure rate or a cost
+# per merged task past its threshold is the same at any cap. Before a shard is
+# launched, a watchdog still on its root (a killed sequencer's) is stopped, so
+# the relaunch is watched at this sequencer's figures alone.
+#
 # Environment:
 #   CF_TEND_CMD          the shell prefix tend runs under (default: the host's tend_cmd)
 #   CF_TRANSCRIPT_DIRS   colon-separated transcript directories to scan, export and
 #                        prune per shard (default: the ones campaign.yaml records;
-#                        none: nothing is exported or pruned). Name directories only
-#                        the campaign's agents write to: a transcript created while a
-#                        shard runs is counted as that shard's.
+#                        none: nothing is exported or pruned). A leading ~/ is this
+#                        host's $HOME; a directory that is not there stops the
+#                        sequencer before any shard. A shard's transcripts are the
+#                        files that appeared there since it first started AND name
+#                        its tend root, entrypoint or gate directory (an agent works
+#                        in a worktree of the run, from the run's prompts): another
+#                        session's transcripts are left alone.
 #   CF_CANARIES          a file of bench label canaries, one per line, that each
-#                        shard's transcripts are scanned for (default: campaign.yaml's)
+#                        shard's transcripts are scanned for (default: campaign.yaml's;
+#                        a leading ~/ is this host's $HOME)
 #   CF_WATCH_INTERVAL    seconds between watchdog checks (default 300)
+#   CF_ACCEPT            run ids (separated by commas, colons or spaces) the operator
+#                        accepts as they stand: such a shard, if it has started (it
+#                        stopped, or was interrupted), has what it left settled, is
+#                        marked done, with the reason it stopped, and the campaign
+#                        moves on to the next. While the canary scan of what it left
+#                        cannot run, it is not accepted and the campaign stops. An id
+#                        that names a shard that never started, or no shard of this
+#                        campaign, is ignored with a log line: that shard runs.
 set -uo pipefail
 
 STATE={{state_dir_quoted}}
@@ -40,45 +64,175 @@ TRANSCRIPTS="${CF_TRANSCRIPT_DIRS:-$TRANSCRIPTS_DEFAULT}"
 CANARIES_DEFAULT={{canaries_quoted}}
 CANARIES="${CF_CANARIES:-$CANARIES_DEFAULT}"
 INTERVAL="${CF_WATCH_INTERVAL:-300}"
+WATCHDOG_FLAGS=({{watchdog_flags}})
+SHARD_IDS=({{shard_ids}})
 mkdir -p "$STATE"
 # tend's prefix is shell (it may export PATH and cd), so it runs through bash -c
 run_tend() { local cmd="$TEND" a; for a in "$@"; do cmd+=" $(printf '%q' "$a")"; done; bash -c "$cmd"; }
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$STATE/sequencer.log" >&2; }
 
-# one sequencer per campaign: a second start would run every shard twice
+# render quotes every path, so no shell expanded a leading ~: this host's home is meant
+host_path() {
+  case $1 in
+    '~') printf '%s' "$HOME" ;;
+    '~/'*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+TDIRS=()
+IFS=: read -r -a _dirs <<<"$TRANSCRIPTS"
+for _d in "${_dirs[@]}"; do
+  if [ -n "$_d" ]; then TDIRS+=("$(host_path "$_d")"); fi
+done
+CANARIES="$(host_path "$CANARIES")"
+
+# one sequencer per campaign: a second start would run every shard twice. Nothing
+# it launches keeps fd 9, so the lock goes with the sequencer, never with a child
 exec 9>"$STATE/sequencer.lock"
 flock -n 9 || { log "another sequencer holds $STATE; not starting a second"; exit 3; }
 
-transcripts() {   # every transcript under TRANSCRIPTS, NUL-separated and sorted
-  local d tdirs=()
-  IFS=: read -r -a tdirs <<<"$TRANSCRIPTS"
-  for d in "${tdirs[@]}"; do
-    if [ -n "$d" ] && [ -d "$d" ]; then
-      find "$d" -type f \( -name '*.jsonl' -o -name '*.jsonl.gz' \) -print0
-    fi
-  done | sort -z
+transcripts() {   # every transcript under the directories, NUL-separated, in byte order
+  local d
+  for d in "${TDIRS[@]}"; do
+    if [ -d "$d" ]; then find "$d" -type f \( -name '*.jsonl' -o -name '*.jsonl.gz' \) -print0; fi
+  done | LC_ALL=C sort -z
 }
 
-finish_transcripts() {   # <run id> <index>: scan, export, then prune exactly this shard's files
-  local run="$1" index="$2" files=() leaked=0 keep=0
-  if [ -z "$TRANSCRIPTS" ]; then
+own_transcripts() {   # <tend root> <entrypoint> <gate dir> <file>...: those naming one of the run's paths
+  local p real f needles=()
+  for p in "$1" "$2" "$3"; do
+    if [ -n "$p" ]; then
+      needles+=(-e "$p/")
+      real="$(cd -P -- "$p" 2>/dev/null && pwd -P)" || real=""
+      if [ -n "$real" ] && [ "$real" != "$p" ]; then needles+=(-e "$real/"); fi
+    fi
+  done
+  shift 3
+  for f in "$@"; do
+    case $f in
+      *.gz) if { gzip -cd -- "$f" 2>/dev/null || true; } | grep -qF "${needles[@]}"; then
+              printf '%s\0' "$f"; fi ;;
+      *) if grep -qF "${needles[@]}" -- "$f" 2>/dev/null; then printf '%s\0' "$f"; fi ;;
+    esac
+  done
+}
+
+remember() {   # <run id> <file>...: the handled files still on disk join the baseline
+  local run="$1" f; shift
+  { cat -- "$STATE/shard-$run.before"
+    for f in "$@"; do if [ -e "$f" ]; then printf '%s\0' "$f"; fi; done
+  } | LC_ALL=C sort -z -u >"$STATE/.shard-$run.before" \
+    && mv -f -- "$STATE/.shard-$run.before" "$STATE/shard-$run.before"
+}
+
+record_canaries() {   # <run id>: fold this scan into canary-<run>.json; never replace a hit
+  python3 - "$STATE/canary-$1.json" "$STATE/.canary-$1.part" "$STATE/canary-$1.attempts" \
+    >>"$STATE/sequencer.log" 2>&1 <<'PY'
+import json, os, sys, time
+report, part, aside = sys.argv[1:4]
+with open(part, encoding="utf-8") as fh:
+    new = json.load(fh)
+try:
+    with open(report, encoding="utf-8") as fh:
+        old = json.load(fh)
+except FileNotFoundError:
+    old = None
+except (OSError, ValueError):
+    old = "unreadable"
+if old is not None and not (isinstance(old, dict) and old.get("hits") == []):
+    # a report with a hit (or one nobody can read) is the evidence the harvest
+    # brings home: it stays as it is, and this scan is kept beside it
+    os.makedirs(aside, exist_ok=True)
+    stem, n = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), 0
+    dest = os.path.join(aside, stem + ".json")
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(aside, "%s-%d.json" % (stem, n))
+    os.replace(part, dest)
+    print("canary report %s holds a hit and is kept; this scan is %s" % (report, dest))
+    raise SystemExit
+if isinstance(old, dict):
+    # an earlier attempt's clean scan: one report covers every attempt
+    merged = dict(new)
+    merged["scanned"] = int(old.get("scanned") or 0) + int(new.get("scanned") or 0)
+    merged["hits"] = sorted(set(old.get("hits") or []) | set(new.get("hits") or []))
+    if "canary_sha256" in old or "canary_sha256" in new:
+        # the canaries every file in the report was scanned for
+        both = sorted(set(old.get("canary_sha256") or []) & set(new.get("canary_sha256") or []))
+        merged["canary_sha256"], merged["canaries"] = both, len(both)
+    elif old.get("canaries") != new.get("canaries"):
+        merged["canaries"] = min(int(old.get("canaries") or 0), int(new.get("canaries") or 0))
+    new = merged
+tmp = report + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(new, indent=1, sort_keys=True) + "\n")
+os.replace(tmp, report)
+os.remove(part)
+PY
+}
+
+canary_hit() {   # <run id>: which of the run's canary reports holds a hit, or nothing
+  python3 - "$STATE/canary-$1.json" "$STATE/canary-$1.attempts" <<'PY'
+import json, os, sys
+paths = [sys.argv[1]]
+if os.path.isdir(sys.argv[2]):
+    paths += [os.path.join(sys.argv[2], n) for n in sorted(os.listdir(sys.argv[2]))
+              if n.endswith(".json")]
+for path in paths:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        continue
+    except (OSError, ValueError):
+        print("%s cannot be read" % path)
+        break
+    if not isinstance(doc, dict) or doc.get("hits") != []:
+        hits = doc.get("hits") if isinstance(doc, dict) else None
+        print("%s lists %s" % (path, ", ".join(map(str, hits)) if isinstance(hits, list)
+                               else "no readable hits"))
+        break
+PY
+}
+
+finish_transcripts() {   # <index> <run id> <tend root> <entrypoint> <gate dir>
+  # scan, export, then prune exactly this shard's files: 0 clean, 1 a canary, 2 no scan
+  local index="$1" run="$2" new=() files=() keep=0
+  if [ "${#TDIRS[@]}" -eq 0 ]; then
     log "shard $index ($run): no transcript directories (CF_TRANSCRIPT_DIRS); usage not exported"
     return 0
   fi
-  mapfile -d '' -t files < <(comm -z -13 "$STATE/shard-$run.before" <(transcripts))
+  # the baseline is re-sorted for comm: an older sequencer wrote it in the locale's order
+  mapfile -d '' -t new < <(LC_ALL=C comm -z -13 <(LC_ALL=C sort -z -- "$STATE/shard-$run.before") \
+    <(transcripts))
+  if [ "${#new[@]}" -gt 0 ]; then
+    mapfile -d '' -t files < <(own_transcripts "$3" "$4" "$5" "${new[@]}")
+  fi
+  if [ "${#new[@]}" -gt "${#files[@]}" ]; then
+    log "shard $index ($run): $(( ${#new[@]} - ${#files[@]} )) new transcript(s) name none of" \
+        "its paths (another session's); left alone"
+  fi
   if [ "${#files[@]}" -eq 0 ]; then
-    log "shard $index ($run): no transcript was written; nothing to export"
+    log "shard $index ($run): no transcript of its own was written; nothing to export"
     return 0
   fi
   if [ -n "$CANARIES" ]; then
-    python3 "$HERE/canary_scan.py" --canaries "$CANARIES" --out "$STATE/canary-$run.json" \
+    python3 "$HERE/canary_scan.py" --canaries "$CANARIES" --out "$STATE/.canary-$run.part" \
       -- "${files[@]}" >>"$STATE/sequencer.log" 2>&1
     case $? in
       0) ;;
-      1) leaked=1; keep=1
+      1) keep=1
          log "shard $index ($run): a transcript holds a bench label CANARY; transcripts kept" ;;
-      *) keep=1; log "shard $index ($run): the canary scan FAILED; transcripts kept" ;;
+      *) rm -f -- "$STATE/.canary-$run.part"
+         log "shard $index ($run): the canary scan FAILED; ${#files[@]} transcript(s) kept," \
+             "not exported, for the next attempt"
+         return 2 ;;
     esac
+    if ! record_canaries "$run"; then
+      log "shard $index ($run): the canary report could not be written; ${#files[@]}" \
+          "transcript(s) kept, not exported, for the next attempt"
+      return 2
+    fi
   fi
   # export to a part file, then APPEND: a resumed shard keeps its earlier attempt's rows
   if python3 "$HERE/usage.py" "${files[@]}" --export "$STATE/.usage-$run.part" \
@@ -91,10 +245,12 @@ finish_transcripts() {   # <run id> <index>: scan, export, then prune exactly th
     else
       log "shard $index ($run): ${#files[@]} transcript(s) exported to $STATE/usage-$run.jsonl; kept"
     fi
+    # exported once: no later attempt of this shard takes them again
+    remember "$run" "${files[@]}"
   else
     log "shard $index ($run): usage export FAILED; transcripts kept (they age out after about thirty days)"
   fi
-  return "$leaked"
+  return "$keep"
 }
 
 stop_reason() {   # <tend root>: why the campaign stops after this shard, or nothing
@@ -128,36 +284,144 @@ elif r.get("reasons"):
 PY
 }
 
-run_shard() {   # <index> <run id> <tend root> <entrypoint> <max cost> <workers> <reviewers>
-  local index="$1" run="$2" root="$3" entrypoint="$4" cap="$5" workers="$6" reviewers="$7"
+drain_reasons() {   # <tend root>: the reasons the watchdog's last (dry) check found to drain it
+  python3 - "$1/watchdog.json" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        r = json.load(fh)
+except (OSError, ValueError):
+    print("its watchdog record is missing or unreadable")
+    raise SystemExit
+if not isinstance(r, dict):
+    print("its watchdog record is not a record")
+elif r.get("reasons"):
+    print("; ".join(r["reasons"]))
+PY
+}
+
+stop_shard() {   # <index> <run id> <why>: STOP the campaign at this shard
+  printf '%s\n' "$3" >"$STATE/shard-$2.stopped"
+  log "shard $1 ($2): $3; the campaign stops here for the operator (CF_ACCEPT=$2 accepts the" \
+      "shard as it stands)"
+  touch "$STATE/STOPPED"
+}
+
+accept_names() {   # the run ids CF_ACCEPT names, one per line
+  local a names=()
+  IFS=', :' read -r -a names <<<"${CF_ACCEPT:-}"
+  for a in "${names[@]}"; do
+    if [ -n "$a" ]; then printf '%s\n' "$a"; fi
+  done
+}
+
+accepted() {   # <run id>: did the operator name it in CF_ACCEPT?
+  local a
+  while IFS= read -r a; do
+    if [ "$a" = "$1" ]; then return 0; fi
+  done < <(accept_names)
+  return 1
+}
+
+run_shard() {   # <index> <run id> <tend root> <entrypoint> <gate dir> <max cost> <workers> <reviewers>
+  local index="$1" run="$2" root="$3" entrypoint="$4" gate="$5" cap="$6" workers="$7" reviewers="$8"
+  local why hit died="" rc wrc scanned stale
   if [ -e "$STATE/shard-$run.done" ]; then log "shard $index ($run): done already"; return 0; fi
-  [ -d "$root" ] || { log "shard $index ($run): no tend root at $root; transfer it with cf run first"; return 1; }
   if pgrep -f -- "tend run --root $root( |\$)" >/dev/null 2>&1; then
-    log "shard $index ($run): a tend run is already live on $root (a smoke test?); stop it first"
+    log "shard $index ($run): a tend run is already live on $root (a smoke test, or the tend" \
+        "run of a sequencer that was stopped); let it end, or drain it, first"
     return 3
   fi
-  transcripts >"$STATE/shard-$run.before"
-  touch "$STATE/shard-$run.started"
+  # a killed sequencer's watchdog may still be on the root, with that sequencer's
+  # cap and thresholds: it goes before anything here reads or relaunches the root
+  if ! stale="$(python3 "$HERE/watchdog.py" --root "$root" --stop-others 2>>"$STATE/sequencer.log")"; then
+    log "shard $index ($run): a watchdog left on $root would not stop; stop it, then start again"
+    return 3
+  fi
+  if [ -n "$stale" ]; then
+    log "shard $index ($run): stopped the watchdog an earlier sequencer left on $root (pid $stale)"
+  fi
+  if accepted "$run" && ! [ -e "$STATE/shard-$run.started" ] && ! [ -e "$STATE/shard-$run.stopped" ]; then
+    log "shard $index ($run): CF_ACCEPT names it, but it has never started, so there is nothing" \
+        "to accept; it runs"
+  elif accepted "$run"; then
+    if [ -e "$STATE/shard-$run.started" ] && [ -e "$STATE/shard-$run.before" ]; then
+      finish_transcripts "$index" "$run" "$root" "$entrypoint" "$gate"
+      if [ "$?" = 2 ]; then
+        # marked done, its unscanned transcripts would never be exported or scanned
+        log "shard $index ($run): CF_ACCEPT names it, but the canary scan of what it left could" \
+            "not run, so it is not accepted: its transcripts stay unexported; make the scan" \
+            "work, then accept it again"
+        touch "$STATE/STOPPED"
+        return 2
+      fi
+    fi
+    hit="$(canary_hit "$run")"
+    printf 'accepted as it stands by the operator (CF_ACCEPT) at %s; it had stopped: %s%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "$(cat -- "$STATE/shard-$run.stopped" 2>/dev/null || echo 'never (it was interrupted)')" \
+      "${hit:+; its canary report: $hit}" >"$STATE/shard-$run.done"
+    log "shard $index ($run): accepted as it stands (CF_ACCEPT); the campaign moves on"
+    return 0
+  fi
+  [ -d "$root" ] || { log "shard $index ($run): no tend root at $root; transfer it with cf run first"; return 1; }
+  if [ -e "$STATE/shard-$run.started" ] && [ -e "$STATE/shard-$run.before" ]; then
+    # a resumed shard: settle what its earlier attempt left before anything is relaunched
+    log "shard $index ($run): resumed; settling what its earlier attempt left"
+    finish_transcripts "$index" "$run" "$root" "$entrypoint" "$gate"
+    if [ "$?" = 2 ]; then
+      stop_shard "$index" "$run" "the canary scan of what its earlier attempt left could not run"
+      return 2
+    fi
+  else
+    # the baseline is taken once, when the shard first starts: a restart keeps it
+    if [ ! -e "$STATE/shard-$run.before" ]; then
+      transcripts >"$STATE/.shard-$run.before" \
+        && mv -f -- "$STATE/.shard-$run.before" "$STATE/shard-$run.before"
+    fi
+    touch "$STATE/shard-$run.started"
+  fi
+  hit="$(canary_hit "$run")"
+  if [ -n "$hit" ]; then
+    stop_shard "$index" "$run" "a bench label canary reached an agent ($hit); not relaunched"
+    return 2
+  fi
   rm -f "$root/watchdog.stop" "$root/watchdog.json"
-  python3 "$HERE/watchdog.py" --root "$root" --entrypoint "$entrypoint" --max-cost "$cap" \
-    {{watchdog_flags}} --tend "$TEND" --interval "$INTERVAL" >>"$root/watchdog.out" 2>&1 &
+  python3 "$HERE/watchdog.py" "${WATCHDOG_FLAGS[@]}" --tend "$TEND" --root "$root" \
+    --entrypoint "$entrypoint" --max-cost "$cap" --once --dry-run >>"$root/watchdog.out" 2>&1
+  why="$(drain_reasons "$root")"
+  if [ -n "$why" ]; then
+    stop_shard "$index" "$run" "before it is launched, the watchdog finds a reason to drain it: $why; not relaunched"
+    return 2
+  fi
+  # --parent: should this sequencer die, its watchdog watches the tend run to its end
+  python3 "$HERE/watchdog.py" "${WATCHDOG_FLAGS[@]}" --tend "$TEND" --root "$root" \
+    --entrypoint "$entrypoint" --max-cost "$cap" --interval "$INTERVAL" --parent "$$" \
+    >>"$root/watchdog.out" 2>&1 9>&- &
   local watchdog=$!
   log "shard $index ($run): tend run at $workers workers / $reviewers reviewers, cap \$$cap"
   run_tend tend run --root "$root" --log-level INFO \
     --max-concurrent-worker-agents "$workers" --max-concurrent-reviewer-agents "$reviewers" \
-    >>"$root/run.log" 2>&1 </dev/null
-  local rc=$?
+    >>"$root/run.log" 2>&1 </dev/null 9>&-
+  rc=$?
   touch "$root/watchdog.stop"
-  kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
-  python3 "$HERE/watchdog.py" --root "$root" --entrypoint "$entrypoint" --max-cost "$cap" \
-    {{watchdog_flags}} --tend "$TEND" --once --dry-run >>"$root/watchdog.out" 2>&1
-  finish_transcripts "$run" "$index"
-  local leaked=$? why
+  kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null; wrc=$?
+  # 143 is that kill, 0 the stop file, 2 a drain: anything else, it died during the shard
+  case $wrc in
+    0|2|143) ;;
+    *) died="the watchdog exited $wrc during the shard, so nothing watched its spend (see $root/watchdog.out)" ;;
+  esac
+  python3 "$HERE/watchdog.py" "${WATCHDOG_FLAGS[@]}" --tend "$TEND" --root "$root" \
+    --entrypoint "$entrypoint" --max-cost "$cap" --once --dry-run >>"$root/watchdog.out" 2>&1
+  finish_transcripts "$index" "$run" "$root" "$entrypoint" "$gate"
+  scanned=$?
   why="$(stop_reason "$root")"
-  if [ "$leaked" != 0 ]; then why="${why:+$why; }a bench label canary reached an agent"; fi
+  if [ -n "$died" ]; then why="${why:+$why; }$died"; fi
+  if [ "$scanned" = 2 ]; then why="${why:+$why; }the canary scan could not run"; fi
+  hit="$(canary_hit "$run")"
+  if [ -n "$hit" ]; then why="${why:+$why; }a bench label canary reached an agent ($hit)"; fi
   if [ -n "$why" ]; then
-    log "shard $index ($run): $why; the campaign stops here for the operator"
-    touch "$STATE/STOPPED"
+    stop_shard "$index" "$run" "$why"
     return 2
   fi
   [ "$rc" = 0 ] || { log "shard $index ($run): tend run exited $rc; the campaign stops"; return "$rc"; }
@@ -165,6 +429,18 @@ run_shard() {   # <index> <run id> <tend root> <entrypoint> <max cost> <workers>
   log "shard $index ($run): done"
 }
 
-[ -e "$STATE/STOPPED" ] && { log "campaign {{campaign_id}} is STOPPED; remove $STATE/STOPPED to resume"; exit 2; }
+[ -e "$STATE/STOPPED" ] && { log "campaign {{campaign_id}} is STOPPED (sequencer.log says why); remove $STATE/STOPPED to resume, with CF_ACCEPT=<run id> to accept a stopped shard as it stands"; exit 2; }
+for _d in "${TDIRS[@]}"; do
+  [ -d "$_d" ] || { log "transcript directory $_d is not there (CF_TRANSCRIPT_DIRS, or campaign.yaml's transcript_dirs): not starting, since no shard's transcripts could be scanned or exported"; exit 2; }
+done
+if [ -n "$CANARIES" ] && ! [ -r "$CANARIES" ]; then
+  log "the canaries file $CANARIES cannot be read (CF_CANARIES, or campaign.yaml's canaries): not starting"
+  exit 2
+fi
+while IFS= read -r _a; do
+  _known=""
+  for _s in "${SHARD_IDS[@]}"; do if [ "$_s" = "$_a" ]; then _known=1; fi; done
+  [ -n "$_known" ] || log "CF_ACCEPT names $_a, which is no shard of campaign {{campaign_id}}; ignored"
+done < <(accept_names)
 {{shard_lines}}
 log "campaign {{campaign_id}}: every shard done"

@@ -18,6 +18,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,12 @@ from run import campaign as campaign_mod  # noqa: E402
 from run import manifest, remote, watchdog  # noqa: E402
 
 WATCHDOG = SCRIPTS / "run" / "watchdog.py"
+
+#: the process table the watchdog reads (``--parent``, ``--stop-others``): the
+#: Linux run host's /proc, which macOS does not have
+HAS_PROC = Path("/proc/self/stat").exists()
+NEEDS_PROC = unittest.skipUnless(HAS_PROC, "no /proc here; the watchdog reads the Linux run "
+                                           "host's process table")
 
 
 def scratch(case: unittest.TestCase) -> Path:
@@ -117,6 +124,82 @@ class TestTheWatchdog(_WatchdogRoot):
                 self.assertEqual(proc.returncode, 64, proc.stderr)
                 self.assertNotIn("Traceback", proc.stderr)
 
+    @unittest.skipUnless(os.path.exists("/dev/full"), "no /dev/full here (a Linux device)")
+    def test_a_full_disk_does_not_kill_it(self):
+        """OPS-11: the progress print raised ENOSPC and the watchdog died."""
+        with open("/dev/full", "w") as full:
+            proc = subprocess.Popen([sys.executable, str(WATCHDOG), "--root", str(self.root),
+                                     "--max-cost", "10", "--interval", "0.1", "--dry-run"],
+                                    stdout=full, stderr=subprocess.PIPE, env=clean_env())
+        self.addCleanup(proc.kill)
+        time.sleep(2.5)
+        self.assertIsNone(proc.poll(), proc.stderr.read() if proc.poll() is not None else "")
+        (self.root / "watchdog.stop").write_text("")
+        self.assertEqual(proc.wait(timeout=10), 0)
+        proc.stderr.close()
+
+    @NEEDS_PROC
+    def test_an_orphan_watches_the_tend_run_to_its_end_then_goes(self):
+        """OPS-06: a watchdog whose sequencer died looped forever.
+
+        And it leaves within seconds of the tend run's end, not a watch interval
+        (300 s by default) later, when a restart would already be running beside it.
+        """
+        root = str(self.root)
+        tend = subprocess.Popen(["bash", "-c", f'exec -a "tend run --root {root}" sleep 3'])
+        self.addCleanup(tend.kill)
+        # a parent that leaves at once: the watchdog is re-parented
+        parent = subprocess.run(
+            ["bash", "-c", f'{shlex.quote(sys.executable)} {shlex.quote(str(WATCHDOG))} --root '
+                           f'{shlex.quote(root)} --max-cost 10 --interval 300 --dry-run --parent $$ '
+                           f'>/dev/null 2>&1 & echo $!'],
+            capture_output=True, text=True, env=clean_env())
+        pid = int(parent.stdout.strip())
+        def alive() -> bool:
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            except OSError:
+                return False
+            return state != "Z"
+        time.sleep(1.5)
+        self.assertTrue(alive(), "the watchdog left while its tend run was live")
+        tend.wait()
+        deadline = time.monotonic() + 3 * watchdog.POLL + 2
+        while alive() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertFalse(alive(), "the orphaned watchdog outlived its tend run")
+
+    @NEEDS_PROC
+    def test_stop_others_stops_every_other_watchdog_on_the_root_alone(self):
+        other = self.tmp / "r-1-tend-b"
+        other.mkdir()
+        def start(root: Path) -> subprocess.Popen:
+            proc = subprocess.Popen([sys.executable, str(WATCHDOG), "--root", str(root),
+                                     "--max-cost", "10", "--interval", "300", "--dry-run"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    env=clean_env())
+            self.addCleanup(lambda: (proc.kill(), proc.wait()))
+            return proc
+        mine, theirs = start(self.root), start(other)
+        deadline = time.monotonic() + 10
+        while not (self.root / "watchdog.json").exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        proc = subprocess.run([sys.executable, str(WATCHDOG), "--root", str(self.root),
+                               "--stop-others"], capture_output=True, text=True, env=clean_env())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.split(), [str(mine.pid)])
+        self.assertEqual(mine.wait(timeout=10), -signal.SIGTERM)
+        self.assertIsNone(theirs.poll(), "a watchdog on another root was stopped")
+        # nothing left: an empty line, and still no cap needed
+        proc = subprocess.run([sys.executable, str(WATCHDOG), "--root", str(self.root),
+                               "--stop-others"], capture_output=True, text=True, env=clean_env())
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, ""), proc.stderr)
+        # a check still needs its cap
+        proc = subprocess.run([sys.executable, str(WATCHDOG), "--root", str(self.root), "--once"],
+                              capture_output=True, text=True, env=clean_env())
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("--max-cost", proc.stderr)
+
     def test_it_drains_once_at_the_cap_and_records_why(self):
         envelope(self.root / "usage", "t-1.worker.a.1.json", 4.0)
         envelope(self.root / "usage", "t-2.worker.b.2.json", 3.0)
@@ -137,8 +220,11 @@ class TestTheWatchdog(_WatchdogRoot):
     def test_the_gate_log_and_merged_tasks_feed_the_rules(self):
         log = self.root / "gate-log"
         log.mkdir()
-        (log / "gate.jsonl").write_text("".join(json.dumps({"ok": i % 2 == 0}) + "\n"
-                                                for i in range(30)))
+        # thirty of tend's calls (changed_files), and ten of an agent's own --findings
+        # checks, which the rate leaves out
+        lines = ([{"ok": i % 2 == 0, "changed_files": True} for i in range(30)]
+                 + [{"ok": False, "changed_files": False}] * 10)
+        (log / "gate.jsonl").write_text("".join(json.dumps(l) + "\n" for l in lines))
         entry = self.tmp / "entry"
         entry.mkdir()
         git(entry, "init", "-q", "-b", "main")
@@ -316,6 +402,74 @@ class TestCampaignPlan(WorkspaceCase):
         _path, doc = campaign_mod.plan(self.ws, "c1", ["r-1", "r-2", "r-3"], host="examplebox")
         self.assertEqual(doc["pilot"], "p-1")
 
+    def test_a_host_path_is_absolute_or_under_the_hosts_home(self):
+        """OPS-04: a relative path, or one only a shell would expand, is refused at plan time."""
+        self.shard("r-1")
+        for kwargs in ({"transcript_dirs": "tx"}, {"transcript_dirs": "/t/a:rel"},
+                       {"transcript_dirs": "$HOME/tx"}, {"canaries": "canaries.txt"},
+                       {"canaries": "~other/canaries.txt"}):
+            with self.subTest(**kwargs), self.assertRaises(CfError) as caught:
+                campaign_mod.plan(self.ws, "c1", ["r-1"], host="examplebox", **kwargs)
+            self.assertIn("~/", caught.exception.hint)
+        _path, doc = campaign_mod.plan(self.ws, "c1", ["r-1"], host="examplebox",
+                                       transcript_dirs="~/tx:/srv/tx", canaries="~/c.txt")
+        self.assertEqual((doc["transcript_dirs"], doc["canaries"]), ("~/tx:/srv/tx", "~/c.txt"))
+        # the host's own default is held to the same rule at render
+        self.ws.data["hosts"]["examplebox"]["transcript_dirs"] = "projects"
+        self.ws.save()
+        self.ws = Workspace.load(self.ws_dir, validate=False)
+        campaign_mod.plan(self.ws, "c2", [self.shard_named("r-2")], host="examplebox",
+                          pilot=self.pilot())
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.render(self.ws, "c2")
+        self.assertIn("transcript_dirs", str(caught.exception))
+
+    def shard_named(self, run_id: str) -> str:
+        self.shard(run_id)
+        return run_id
+
+    def test_render_refuses_a_shard_re_planned_since_the_campaign(self):
+        """OPS-05: render kept campaign.yaml's stale cap and never read the shard again."""
+        from cflib.yamlio import read_yaml, write_yaml
+
+        self.shard("r-1")
+        self.shard("r-2")
+        campaign_mod.plan(self.ws, "c1", ["r-1", "r-2"], host="examplebox", pilot=self.pilot(),
+                          p90_cost_per_task=4.0, p90_gate_failure_rate=0.1, multiple=3,
+                          min_tasks=7)
+        path = self.ws_dir / "runs" / "r-1" / "run.yaml"
+        planned = read_yaml(path)
+        cases = {"max_cost": lambda d: d["budget"].update(max_cost=7.0),
+                 "workers": lambda d: d["concurrency"].update(workers=5),
+                 "campaign": lambda d: d["locate"].pop("campaign")}
+        for needle, change in cases.items():
+            doc = read_yaml(path)
+            change(doc)
+            write_yaml(path, doc)
+            with self.subTest(change=needle), self.assertRaises(CfError) as caught:
+                campaign_mod.render(self.ws, "c1")
+            self.assertIn(needle, str(caught.exception))
+            self.assertIn("cf campaign plan c1", caught.exception.hint)
+            write_yaml(path, planned)
+        (self.ws_dir / "runs" / "r-2" / "tasks" / "t-9.yaml").write_text("id: t-9\n")
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.render(self.ws, "c1")
+        self.assertIn("tasks", str(caught.exception))
+        # re-running the plan reads the shards again and keeps what it is not given
+        doc = read_yaml(path)
+        doc["budget"]["max_cost"] = 7.0
+        doc["locate"].pop("campaign")
+        write_yaml(path, doc)
+        _path, again = campaign_mod.plan(self.ws, "c1", ["r-1", "r-2"], host="examplebox")
+        self.assertEqual(again["watchdog"], {"p90_cost_per_task": 4.0, "p90_gate_failure_rate": 0.1,
+                                             "multiple": 3, "min_tasks": 7})
+        self.assertEqual(read_yaml(path)["locate"]["campaign"], "c1")
+        campaign_mod.render(self.ws, "c1")
+        text = (self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh").read_text()
+        line = next(l for l in text.splitlines() if l.startswith("run_shard 1 "))
+        self.assertIn("7", shlex.split(line))
+        self.assertIn("--multiple 3", text)
+
     def test_render_needs_a_smoke_tested_pilot(self):
         self.shard("r-1")
         campaign_mod.plan(self.ws, "c1", ["r-1"], host="examplebox")
@@ -378,17 +532,25 @@ class TestTheSequencer(WorkspaceCase):
         self.transcripts = self.tmp / "transcripts"
         self.transcripts.mkdir()
         # `tend run --root R ...`: spend what R/spend says, write one transcript
-        # (R/words is any text it should hold), slowly enough for the watchdog
-        # to look, then finish
+        # naming a worktree under R, as an agent's does (R/words is any text it
+        # should hold, R/tname its name), and, when R/foreign exists, a foreign
+        # session's transcript holding that text; then sleep R/sleep seconds
+        # (default 2: long enough for the watchdog to look) and finish.
+        # FAKE_TX overrides the transcript directory.
         (self.bin / "tend").write_text(
             '#!/bin/sh\nroot=""; while [ $# -gt 0 ]; do [ "$1" = --root ] && root="$2"; shift; done\n'
             f'echo "run $root" >> "{self.log}"\n'
             'mkdir -p "$root/usage"\n'
             'printf \'{"subtype":"success","total_cost_usd":%s}\' "$(cat "$root/spend")" '
             '> "$root/usage/t.worker.x.1.json"\n'
-            f'printf \'{{"model":"claude-opus-5","usage":{{"input":1,"output":2,"cache_write":0,'
-            f'"cache_read":0}},"x":"%s"}}\\n\' "$(cat "$root/words" 2>/dev/null)" '
-            f'> "{self.transcripts}/$(basename "$root").jsonl"\nsleep 2\n')
+            f'tx="${{FAKE_TX:-{self.transcripts}}}"\n'
+            'name="$(cat "$root/tname" 2>/dev/null || basename "$root")"\n'
+            'printf \'{"model":"claude-opus-5","cwd":"%s/worktrees/w-1","usage":{"input":1,'
+            '"output":2,"cache_write":0,"cache_read":0},"x":"%s"}\\n\' "$root" '
+            '"$(cat "$root/words" 2>/dev/null)" > "$tx/$name.jsonl"\n'
+            'if [ -e "$root/foreign" ]; then mkdir -p "$tx/other"; '
+            'cat "$root/foreign" > "$tx/other/session.jsonl"; fi\n'
+            'sleep "$(cat "$root/sleep" 2>/dev/null || echo 2)"\n')
         (self.bin / "tend-control").write_text(
             f'#!/bin/sh\necho "control $*" >> "{self.log}"\nexit "${{FAKE_DRAIN_EXIT:-0}}"\n')
         for f in self.bin.iterdir():
@@ -404,17 +566,64 @@ class TestTheSequencer(WorkspaceCase):
                           pilot=self.pilot(), **plan_extra)
         return campaign_mod.render(self.ws, "c1")
 
-    def sequence(self, **env) -> subprocess.CompletedProcess:
+    def sequencer_env(self, **env) -> dict:
+        env.setdefault("CF_TRANSCRIPT_DIRS", str(self.transcripts))
+        if env["CF_TRANSCRIPT_DIRS"] is None:          # the rendered default
+            del env["CF_TRANSCRIPT_DIRS"]
+        return clean_env(PATH=f"{self.bin}:{os.environ['PATH']}", CF_WATCH_INTERVAL="0.3", **env)
+
+    def sequencer(self) -> Path:
+        """The rendered sequencer, or a skip where it cannot run."""
         if shutil.which("flock") is None:
             # the sequencer is the Linux run host's: it holds its campaign with
             # util-linux flock, which macOS does not ship
             self.skipTest("flock is not installed here; the sequencer runs on the Linux run host")
-        sequencer = self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh"
-        return subprocess.run(["bash", str(sequencer)], capture_output=True, text=True,
-                              timeout=180,
-                              env=clean_env(PATH=f"{self.bin}:{os.environ['PATH']}",
-                                            CF_WATCH_INTERVAL="0.3",
-                                            CF_TRANSCRIPT_DIRS=str(self.transcripts), **env))
+        return self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh"
+
+    def sequence(self, **env) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", str(self.sequencer())], capture_output=True, text=True,
+                              timeout=180, env=self.sequencer_env(**env))
+
+    def start(self, **env) -> subprocess.Popen:
+        """The sequencer in the background, in its own session (so a test can kill it all)."""
+        proc = subprocess.Popen(["bash", str(self.sequencer())], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True,
+                                env=self.sequencer_env(**env))
+
+        def reap():
+            try:
+                os.killpg(proc.pid, 9)
+            except OSError:
+                pass
+            proc.wait()
+        self.addCleanup(reap)
+        return proc
+
+    def wait_for(self, predicate, timeout: float = 20.0, what: str = "") -> None:
+        deadline = time.monotonic() + timeout
+        while not predicate():
+            if time.monotonic() > deadline:
+                self.fail(f"timed out waiting for {what or predicate}")
+            time.sleep(0.1)
+
+    def watchdogs(self, root: Path) -> list[int]:
+        """The pids of live watchdog.py processes watching *root*."""
+        out = []
+        for proc in Path("/proc").iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                argv = (proc / "cmdline").read_bytes().split(b"\0")
+                state = (proc / "stat").read_text().rsplit(")", 1)[1].split()[0]
+            except OSError:
+                continue
+            if state != "Z" and any(a.endswith(b"watchdog.py") for a in argv) \
+                    and str(root).encode() in argv:
+                out.append(int(proc.name))
+        return out
+
+    def state(self) -> Path:
+        return self.remote / "campaigns" / "c1"
 
     def runs(self) -> list[str]:
         return [line.split()[1] for line in self.log.read_text().splitlines()
@@ -435,12 +644,20 @@ class TestTheSequencer(WorkspaceCase):
         doc = campaign_mod.load(self.ws, "c1")
         self.assertEqual(doc["sequencer"]["sha256"], out["sequencer"]["sha256"])
         self.assertIn("rsync -a", out["transfer"])
+        # OPS-12: rsync makes only the last directory of its destination, and
+        # nothing else makes <remote root>/campaigns on a fresh host
+        words = shlex.split(out["transfer"])
+        self.assertEqual(words[:2], ["ssh", "examplebox"])
+        self.assertEqual(shlex.split(words[2]), ["mkdir", "-p", f"{self.remote}/campaigns/c1"])
+        self.assertEqual(words[3:5], ["&&", "rsync"])
 
     def test_it_runs_in_order_and_stops_when_a_watchdog_drains(self):
         self.render()
-        # a transcript older than the campaign is neither exported nor pruned
+        # a transcript older than the campaign is neither exported nor pruned, though
+        # it names r-1's root (an earlier run there): the baseline alone leaves it out
         old = self.transcripts / "operator.jsonl"
-        old.write_text(json.dumps({"model": "claude-opus-5", "usage": {"input": 7}}) + "\n")
+        old.write_text(json.dumps({"model": "claude-opus-5", "usage": {"input": 7},
+                                   "cwd": f"{self.remote}/r-1-tend/worktrees/w-0"}) + "\n")
         proc = self.sequence()
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertEqual(self.runs(), [str(self.remote / "r-1-tend"), str(self.remote / "r-2-tend")])
@@ -464,8 +681,10 @@ class TestTheSequencer(WorkspaceCase):
     def test_a_resumed_shard_keeps_its_first_attempts_usage(self):
         self.render()
         (self.remote / "r-2-tend" / "spend").write_text("1")
-        (self.bin / "tend").write_text((self.bin / "tend").read_text().replace(
-            "sleep 2\n", 'sleep 2\ncase "$root" in *r-2-tend) exit 3;; esac\n'))
+        fake = (self.bin / "tend").read_text()
+        self.assertIn('|| echo 2)"\n', fake)
+        (self.bin / "tend").write_text(fake.replace(
+            '|| echo 2)"\n', '|| echo 2)"\ncase "$root" in *r-2-tend) exit 3;; esac\n'))
         first = self.sequence()
         self.assertEqual(first.returncode, 3, first.stderr)
         second = self.sequence()
@@ -495,6 +714,322 @@ class TestTheSequencer(WorkspaceCase):
         self.assertEqual((report["scanned"], report["hits"]), (1, ["r-1-tend.jsonl"]))
         self.assertTrue((self.transcripts / "r-1-tend.jsonl").exists())
         self.assertIn("CANARY", (state / "sequencer.log").read_text())
+
+    CANARY = "cf-bench-canary-" + "0" * 32
+
+    def canaries(self) -> Path:
+        path = self.tmp / "canaries.txt"
+        path.write_text(self.CANARY + "\n")
+        return path
+
+    def transcript(self, name: str, root: Path, **extra) -> Path:
+        """A transcript an agent of *root* wrote (its cwd is a worktree under the root)."""
+        path = self.transcripts / name
+        path.write_text(json.dumps({"model": "claude-opus-5", "cwd": f"{root}/worktrees/w-9",
+                                    "usage": {"input": 1, "output": 1}, **extra}) + "\n")
+        return path
+
+    def test_an_interrupted_shard_keeps_its_baseline_and_scans_what_it_left(self):
+        """OPS-01: a restart re-took the baseline, so the first attempt went unscanned."""
+        self.render(canaries=str(self.canaries()))
+        r1 = self.remote / "r-1-tend"
+        (r1 / "words").write_text(self.CANARY)
+        (r1 / "sleep").write_text("30")
+        first = self.start()
+        leaked = self.transcripts / "r-1-tend.jsonl"
+        self.wait_for(leaked.exists, what="the first attempt's transcript")
+        os.killpg(first.pid, signal.SIGKILL)          # the host reboots mid-shard
+        first.wait()
+        (r1 / "words").unlink()
+        (r1 / "sleep").write_text("0")
+        (r1 / "tname").write_text("r-1-tend-2")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads((self.state() / "canary-r-1.json").read_text())
+        self.assertEqual(report["hits"], ["r-1-tend.jsonl"])
+        rows = (self.state() / "usage-r-1.jsonl").read_text().splitlines()
+        self.assertEqual(len(rows), 1, "the interrupted attempt's usage was not exported")
+        self.assertTrue(leaked.exists())
+        # what the interrupted attempt left is settled before anything is relaunched,
+        # and a shard with a canary on record is not relaunched at all
+        self.assertEqual(self.runs(), [str(r1)])
+        self.assertFalse((self.state() / "shard-r-1.done").exists())
+        self.assertTrue((self.state() / "STOPPED").exists())
+
+    def test_a_clean_interrupted_attempt_is_exported_once_and_its_scan_kept(self):
+        self.render(canaries=str(self.canaries()))
+        r1 = self.remote / "r-1-tend"
+        (r1 / "sleep").write_text("30")
+        (self.remote / "r-2-tend" / "spend").write_text("1")
+        first = self.start()
+        self.wait_for((self.transcripts / "r-1-tend.jsonl").exists, what="a transcript")
+        os.killpg(first.pid, signal.SIGKILL)
+        first.wait()
+        (r1 / "sleep").write_text("0")
+        (r1 / "tname").write_text("r-1-tend-2")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.runs(), [str(r1), str(r1), str(self.remote / "r-2-tend"),
+                                       str(self.remote / "r-3-tend")])
+        report = json.loads((self.state() / "canary-r-1.json").read_text())
+        self.assertEqual((report["scanned"], report["hits"]), (2, []))
+        rows = (self.state() / "usage-r-1.jsonl").read_text().splitlines()
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual(sorted(p.name for p in self.transcripts.glob("r-1-*")), [])
+
+    def test_a_canary_report_with_a_hit_is_never_replaced(self):
+        """OPS-02: a resume after a canary stop overwrote the hit with a clean report."""
+        self.render(canaries=str(self.canaries()))
+        r1 = self.remote / "r-1-tend"
+        (r1 / "words").write_text(self.CANARY)
+        self.assertEqual(self.sequence().returncode, 2)
+        report = self.state() / "canary-r-1.json"
+        held = report.read_text()
+        self.assertIn("r-1-tend.jsonl", held)
+        # the operator removes STOPPED, the one resume the log names, and a late
+        # transcript of the root's appears
+        (self.state() / "STOPPED").unlink()
+        (r1 / "words").unlink()
+        (r1 / "tname").write_text("r-1-tend-2")
+        self.transcript("late.jsonl", r1)
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertEqual(report.read_text(), held)
+        aside = sorted((self.state() / "canary-r-1.attempts").glob("*.json"))
+        self.assertEqual(len(aside), 1, aside)
+        self.assertEqual(json.loads(aside[0].read_text())["hits"], [])
+        self.assertEqual(self.runs(), [str(r1)], "a shard with a canary hit was relaunched")
+        self.assertIn("CF_ACCEPT=r-1", proc.stderr)
+        self.assertFalse((self.state() / "shard-r-1.done").exists())
+        # accepting it moves the campaign on, and the hit stays for the harvest
+        (self.state() / "STOPPED").unlink()
+        proc = self.sequence(CF_ACCEPT="r-1")
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains
+        self.assertEqual(self.runs(), [str(r1), str(self.remote / "r-2-tend")])
+        self.assertIn("accepted", (self.state() / "shard-r-1.done").read_text())
+        self.assertIn("canary", (self.state() / "shard-r-1.done").read_text())
+        self.assertEqual(report.read_text(), held)
+
+    def test_a_transcript_that_names_none_of_the_shards_paths_is_left_alone(self):
+        """OPS-03: every new file in the directory was taken, exported and deleted."""
+        self.render()
+        r1 = self.remote / "r-1-tend"
+        # another session of the same user, in a run whose root's name extends this one's
+        (r1 / "foreign").write_text(json.dumps({
+            "model": "claude-opus-5", "cwd": f"{self.remote}/r-1-tend-b/worktrees/w-1",
+            "usage": {"input": 5, "output": 5}}) + "\n")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        foreign = self.transcripts / "other" / "session.jsonl"
+        self.assertTrue(foreign.exists(), "another run's transcript was pruned")
+        rows = (self.state() / "usage-r-1.jsonl").read_text().splitlines()
+        self.assertEqual(len(rows), 1, rows)
+        self.assertFalse((self.transcripts / "r-1-tend.jsonl").exists())
+        self.assertIn("left alone", (self.state() / "sequencer.log").read_text())
+
+    def test_a_tilde_in_a_host_path_is_the_hosts_home(self):
+        """OPS-04: '~/…' arrived quoted, so nothing was scanned or exported."""
+        home = self.tmp / "home"
+        (home / "tx").mkdir(parents=True)
+        (home / "canaries.txt").write_text(self.CANARY + "\n")
+        self.render(transcript_dirs="~/tx", canaries="~/canaries.txt")
+        (self.remote / "r-1-tend" / "words").write_text(self.CANARY)
+        proc = self.sequence(CF_TRANSCRIPT_DIRS=None, HOME=str(home), FAKE_TX=str(home / "tx"))
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads((self.state() / "canary-r-1.json").read_text())
+        self.assertEqual(report["hits"], ["r-1-tend.jsonl"])
+        self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 1)
+
+    def test_a_host_path_that_is_not_there_stops_the_sequencer_before_any_shard(self):
+        self.render(canaries=str(self.canaries()))
+        for env, needle in (({"CF_TRANSCRIPT_DIRS": str(self.tmp / "nowhere")}, "nowhere"),
+                            ({"CF_CANARIES": str(self.tmp / "none.txt")}, "none.txt")):
+            with self.subTest(env=env):
+                proc = self.sequence(**env)
+                self.assertEqual(proc.returncode, 2, proc.stderr)
+                self.assertIn(needle, proc.stderr)
+                self.assertFalse(self.log.exists(), "a shard was launched")
+
+    @NEEDS_PROC
+    def test_a_killed_sequencer_leaves_no_watchdog_holding_the_lock(self):
+        """OPS-06: the orphaned watchdog held sequencer.lock, so every restart exited 3."""
+        self.render()
+        r1 = self.remote / "r-1-tend"
+        (r1 / "sleep").write_text("4")
+        first = self.start()
+        self.wait_for(lambda: self.log.exists() and self.runs(), what="r-1's tend run")
+        self.wait_for(lambda: self.watchdogs(r1), what="r-1's watchdog")
+        os.kill(first.pid, signal.SIGTERM)                  # the sequencer alone
+        first.wait(timeout=10)
+        # its tend run lives on: a restart takes the lock and refuses the live root
+        again = self.sequence()
+        self.assertEqual(again.returncode, 3, again.stderr)
+        self.assertNotIn("another sequencer holds", again.stderr)
+        self.assertIn("already live", again.stderr)
+        # the watchdog watches that tend run to its end, then goes
+        self.wait_for(lambda: not self.watchdogs(r1), timeout=30,
+                      what="the orphaned watchdog to exit")
+        (r1 / "sleep").write_text("0")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains
+        self.assertTrue((self.state() / "shard-r-1.done").exists())
+        # what the first tend run wrote is settled first, then the relaunch's
+        self.assertIn("settling what its earlier attempt left", proc.stderr)
+        self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 2)
+
+    @NEEDS_PROC
+    def test_a_watchdog_left_on_the_root_is_stopped_before_the_relaunch(self):
+        """A killed sequencer's watchdog, sleeping out its interval, watched the relaunch too.
+
+        This one's parent (the test) stays alive and its interval is 1 s, so it
+        would never leave on its own, and with its lower cap it would drain the
+        relaunch of r-1 at $1 of its $0.5: the sequencer stops it first.
+        """
+        self.render()
+        r1 = self.remote / "r-1-tend"
+        stray = subprocess.Popen([sys.executable, str(WATCHDOG), "--root", str(r1),
+                                  "--max-cost", "0.5", "--interval", "1", "--parent",
+                                  str(os.getpid())],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 env=self.sequencer_env())
+        self.addCleanup(lambda: (stray.kill(), stray.wait()))
+        self.wait_for((r1 / "watchdog.json").exists, what="the stray watchdog's first check")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains at $50 of $10
+        self.assertEqual(stray.wait(timeout=10), -signal.SIGTERM)
+        self.assertIn(f"stopped the watchdog an earlier sequencer left on {r1} (pid {stray.pid})",
+                      proc.stderr)
+        self.assertNotIn(f"control drain --root {r1}", self.log.read_text())
+        self.assertTrue((self.state() / "shard-r-1.done").exists())
+        self.assertEqual(self.watchdogs(r1), [])
+
+    def test_cf_accept_names_only_a_shard_that_has_started(self):
+        """A CF_ACCEPT for a shard that never ran (a typo, a stale variable) skipped it unrun."""
+        self.render()
+        (self.remote / "r-2-tend" / "spend").write_text("1")
+        proc = self.sequence(CF_ACCEPT="r-2, r-9")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.runs(), [str(self.remote / f"r-{k}-tend") for k in (1, 2, 3)])
+        self.assertIn("shard 2 (r-2): CF_ACCEPT names it, but it has never started", proc.stderr)
+        self.assertIn("CF_ACCEPT names r-9, which is no shard of campaign c1; ignored", proc.stderr)
+        self.assertNotIn("accepted", (self.state() / "shard-r-2.done").read_text())
+        self.assertNotIn("accepted as it stands", proc.stderr)
+
+    def test_an_interrupted_shard_can_be_accepted_as_it_stands(self):
+        self.render()
+        r1 = self.remote / "r-1-tend"
+        (r1 / "sleep").write_text("30")
+        first = self.start()
+        self.wait_for((self.transcripts / "r-1-tend.jsonl").exists, what="r-1's transcript")
+        os.killpg(first.pid, signal.SIGKILL)
+        first.wait()
+        proc = self.sequence(CF_ACCEPT="r-1")
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains
+        self.assertEqual(self.runs(), [str(r1), str(self.remote / "r-2-tend")])
+        done = (self.state() / "shard-r-1.done").read_text()
+        self.assertIn("accepted as it stands", done)
+        self.assertIn("never (it was interrupted)", done)
+        # what the interrupted attempt left is still settled: exported and pruned
+        self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 1)
+        self.assertFalse((self.transcripts / "r-1-tend.jsonl").exists())
+
+    def test_an_accept_is_refused_while_what_the_shard_left_cannot_be_scanned(self):
+        """CF_ACCEPT marked a shard done though the scan of what it left could not run.
+
+        Its transcripts were then neither scanned nor exported, and every later
+        shard's baseline took them in, so no harvest would have priced them.
+        """
+        self.render(canaries=str(self.canaries()))
+        r1 = self.remote / "r-1-tend"
+        (r1 / "sleep").write_text("30")
+        first = self.start()
+        leaked = self.transcripts / "r-1-tend.jsonl"
+        self.wait_for(leaked.exists, what="r-1's transcript")
+        os.killpg(first.pid, signal.SIGKILL)
+        first.wait()
+        host = self.ws_dir / "campaigns" / "c1" / "host"
+        scan = host / "canary_scan.py"
+        real = scan.read_text()
+        scan.write_text("import sys\nsys.exit(3)\n")
+        proc = self.sequence(CF_ACCEPT="r-1")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("shard 1 (r-1): CF_ACCEPT names it, but the canary scan of what it left "
+                      "could not run, so it is not accepted", proc.stderr)
+        self.assertFalse((self.state() / "shard-r-1.done").exists())
+        self.assertTrue((self.state() / "STOPPED").exists())
+        self.assertTrue(leaked.exists())
+        self.assertFalse((self.state() / "usage-r-1.jsonl").exists())
+        self.assertEqual(self.runs(), [str(r1)])
+        # once the scan works, the same accept settles it and the campaign moves on
+        scan.write_text(real)
+        (self.state() / "STOPPED").unlink()
+        proc = self.sequence(CF_ACCEPT="r-1")
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains
+        self.assertIn("accepted as it stands", (self.state() / "shard-r-1.done").read_text())
+        self.assertEqual(json.loads((self.state() / "canary-r-1.json").read_text())["hits"], [])
+        self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 1)
+        self.assertFalse(leaked.exists())
+        self.assertEqual(self.runs(), [str(r1), str(self.remote / "r-2-tend")])
+
+    def test_a_baseline_an_older_sequencer_wrote_in_the_locales_order_still_holds(self):
+        """The trunk's sequencer sorted the baseline in the host's locale; comm now runs in C.
+
+        An interrupted shard resumed under the new template compared that file as
+        it stood, and judged a file that was already there new: exported and deleted.
+        """
+        self.render()
+        r1 = self.remote / "r-1-tend"
+        # two transcripts of an earlier run in r-1's root, there before the shard started
+        old = [self.transcript("alpha.jsonl", r1), self.transcript("Zeta.jsonl", r1)]
+        self.assertLess(b"Zeta", b"alpha")                 # C order, which en_US reverses
+        self.state().mkdir(parents=True, exist_ok=True)
+        (self.state() / "shard-r-1.before").write_bytes(
+            b"".join(os.fsencode(p) + b"\0" for p in old))
+        (self.state() / "shard-r-1.started").write_text("")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)        # r-2 drains
+        self.assertIn("settling what its earlier attempt left", proc.stderr)
+        for path in old:
+            self.assertTrue(path.exists(), f"{path.name}, there before the shard, was pruned")
+        # the relaunch's own transcript, and nothing else, is r-1's
+        self.assertEqual(len((self.state() / "usage-r-1.jsonl").read_text().splitlines()), 1)
+        self.assertFalse((self.transcripts / "r-1-tend.jsonl").exists())
+
+    def test_a_shard_at_a_reason_to_drain_is_not_relaunched_and_can_be_accepted(self):
+        """OPS-07: each resume relaunched tend over the cap, drained and stopped again."""
+        self.render()
+        r2 = str(self.remote / "r-2-tend")
+        self.assertEqual(self.sequence().returncode, 2)          # r-2 drains at $50 of $10
+        (self.state() / "STOPPED").unlink()
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertEqual(self.runs(), [str(self.remote / "r-1-tend"), r2])
+        self.assertIn("CF_ACCEPT=r-2", proc.stderr)
+        self.assertIn("reached the shard's cap", proc.stderr)
+        self.assertTrue((self.state() / "STOPPED").exists())
+        (self.state() / "STOPPED").unlink()
+        proc = self.sequence(CF_ACCEPT="r-2")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.runs(), [str(self.remote / "r-1-tend"), r2,
+                                       str(self.remote / "r-3-tend")])
+        self.assertIn("reached the shard's cap", (self.state() / "shard-r-2.done").read_text())
+        self.assertIn("every shard done", proc.stderr)
+
+    def test_a_watchdog_that_dies_during_a_shard_stops_the_campaign(self):
+        """OPS-11: the shard ran on with no spend control and was marked done."""
+        self.render()
+        host = self.ws_dir / "campaigns" / "c1" / "host"
+        (host / "watchdog.py").rename(host / "watchdog_real.py")
+        (host / "watchdog.py").write_text(
+            "import os, sys\nif '--once' not in sys.argv and '--stop-others' not in sys.argv:\n"
+            "    sys.exit(1)\n"
+            "real = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'watchdog_real.py')\n"
+            "os.execv(sys.executable, [sys.executable, real] + sys.argv[1:])\n")
+        proc = self.sequence()
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("the watchdog exited 1", proc.stderr)
+        self.assertEqual(self.runs(), [str(self.remote / "r-1-tend")])
+        self.assertFalse((self.state() / "shard-r-1.done").exists())
 
     def test_a_live_tend_run_or_a_second_sequencer_is_refused(self):
         self.render()
@@ -535,6 +1070,9 @@ class TestTheSequencer(WorkspaceCase):
         self.assertIn("TRANSCRIPTS_DEFAULT='/t/a b:/t/c'", text)
         remote_cmd = shlex.split(out["start"])[2]
         self.assertEqual(shlex.split(remote_cmd)[:2], ["nohup", f"{odd}/campaigns/c1/sequencer.sh"])
+        mkdir = shlex.split(out["transfer"])[2]
+        self.assertEqual(shlex.split(mkdir), ["mkdir", "-p", f"{odd}/campaigns/c1"])
+        self.assertEqual(shlex.split(out["transfer"])[-1], f"examplebox:{odd}/campaigns/c1/")
 
 
 class TestCfRunForLocate(WorkspaceCase):
@@ -785,6 +1323,25 @@ class TestCfRunForLocate(WorkspaceCase):
                                           f"{self.remote}/r-1-gate/verify_findings.py, --changed-files]\n")
         warnings = manifest.gate_config_warnings(self.ws_dir, "r-1", host, self.run_doc)
         self.assertTrue(any("verify_locate.py" in w for w in warnings))
+
+
+class TestTheRunbook(unittest.TestCase):
+    """references/runbook-server.md section 9, read as the operator follows it."""
+
+    def test_the_pilot_and_shard_commands_send_the_layers_to_a_named_host(self):
+        """OPS-08: without --include-source-text no layer travels, and every gate call exits 3."""
+        import re
+
+        text = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        section = text[text.index("## 9. A locate root"):text.index("## 10.")]
+        # the commands an operator runs name the run (`cf run <pilot> ...`)
+        commands = [" ".join(c.split()) for c in re.findall(r"`(cf run <[^`]*--execute[^`]*)`",
+                                                            section)]
+        self.assertGreaterEqual(len(commands), 2, commands)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn("--host ", command)
+                self.assertIn("--include-source-text", command)
 
 
 class TestTheCanaryScan(unittest.TestCase):

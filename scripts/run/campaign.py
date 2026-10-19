@@ -49,6 +49,27 @@ def check_campaign_id(campaign_id: str) -> str:
     return campaign_id
 
 
+def check_host_paths(value: str | None, what: str, *, several: bool = False) -> str | None:
+    """*value* when each of its paths is one the sequencer can use on the host, else a refusal.
+
+    Render writes these paths shell-quoted into the sequencer, so nothing
+    expands them there: a path is absolute, or ``~`` / ``~/...``, which the
+    sequencer itself reads against the host's ``$HOME``.  A relative path would
+    be relative to wherever the sequencer was started, and a ``$HOME/...``
+    would stay those characters.  *several* reads *value* as a colon-separated
+    list.
+    """
+    if not value:
+        return value
+    for part in (str(value).split(":") if several else [str(value)]):
+        if part and not (part.startswith("/") or part == "~" or part.startswith("~/")):
+            raise CfError(f"{what}: {part!r} is not an absolute host path",
+                          hint="write it as /absolute/path or ~/path: the sequencer reads a "
+                               "leading ~/ against the host's $HOME and expands nothing else, "
+                               "since every rendered path is quoted")
+    return value
+
+
 def _run_doc(workspace, run_id: str) -> dict:
     path = workspace.paths.run_yaml(run_id)
     if not path.exists():
@@ -120,19 +141,37 @@ def _pilot(workspace, pilot: str) -> str:
 
 def plan(workspace, campaign_id: str, shards: list[str], *, host: str,
          p90_cost_per_task: float | None = None, p90_gate_failure_rate: float | None = None,
-         multiple: float = 2.0, min_tasks: int = 5, pilot: str | None = None,
+         multiple: float | None = None, min_tasks: int | None = None, pilot: str | None = None,
          transcript_dirs: str | None = None, canaries: str | None = None) -> tuple[Path, dict]:
     """Write ``campaigns/<id>/campaign.yaml`` and stamp each shard's run.yaml.
 
-    Idempotent for the same arguments.  A shard already stamped with another
-    campaign is refused, and so is a re-plan of a rendered campaign that does
-    not keep its shards, in order, as a prefix of the new list.
+    Idempotent for the same arguments, and a re-plan reads every shard's
+    run.yaml again (its cap, task count and limits) while keeping what it is
+    not given: the watchdog's thresholds (``multiple`` 2 and ``min_tasks`` 5
+    the first time), the pilot, the transcript directories and the canaries.
+    A shard already stamped with another campaign is refused, and so is a
+    re-plan of a rendered campaign that does not keep its shards, in order, as
+    a prefix of the new list.
     """
     check_campaign_id(campaign_id)
     if not shards:
         raise CfError("a campaign needs at least one shard", hint="pass --shard <run-id>, in order")
     if len(set(shards)) != len(shards):
         raise CfError("a shard is named twice", hint="each run is one shard, once")
+    check_host_paths(transcript_dirs, "--transcript-dirs", several=True)
+    check_host_paths(canaries, "--canaries")
+    path = workspace.paths.campaign_yaml(campaign_id)
+    previous = read_yaml(path) if path.exists() else {}
+    previous = previous if isinstance(previous, dict) else {}
+    watch = previous.get("watchdog") if isinstance(previous.get("watchdog"), dict) else {}
+
+    def kept(value, key: str, default):
+        return value if value is not None else (watch[key] if watch.get(key) is not None
+                                                else default)
+
+    p90_cost_per_task = kept(p90_cost_per_task, "p90_cost_per_task", None)
+    p90_gate_failure_rate = kept(p90_gate_failure_rate, "p90_gate_failure_rate", None)
+    multiple, min_tasks = kept(multiple, "multiple", 2.0), kept(min_tasks, "min_tasks", 5)
     if multiple <= 1:
         raise CfError(f"--multiple {multiple} would drain at or below the pilot's p90",
                       hint="the watchdog drains at a MULTIPLE of the p90, e.g. 2")
@@ -143,9 +182,6 @@ def plan(workspace, campaign_id: str, shards: list[str], *, host: str,
         if stamped and stamped != campaign_id:
             raise CfError(f"shard {run_id!r} belongs to campaign {stamped!r}",
                           hint="a shard runs in one campaign; plan another run for this one")
-    path = workspace.paths.campaign_yaml(campaign_id)
-    previous = read_yaml(path) if path.exists() else {}
-    previous = previous if isinstance(previous, dict) else {}
     before = [str(s.get("run_id")) for s in previous.get("shards") or [] if isinstance(s, dict)]
     if previous.get("sequencer") and before != list(shards)[:len(before)]:
         raise CfError(f"campaign {campaign_id!r} was rendered with shards {before}; a re-plan "
@@ -198,8 +234,33 @@ def _watchdog_flags(watch: dict) -> str:
     return " ".join(shlex.quote(f) for f in flags)
 
 
+def _unchanged(workspace, campaign_id: str, host: str, shard: dict) -> dict:
+    """The shard as its run.yaml has it now, refused when that is not what was planned.
+
+    The sequencer runs each shard with campaign.yaml's cap and limits, and the
+    harvest finds a shard's usage export and canary report by its stamp, so a
+    shard re-planned since ``cf campaign plan`` (another cap, more tasks, a
+    stamp it lost) is refused here rather than run on stale figures.
+    """
+    run_id = str(shard["run_id"])
+    fresh = shard_record(workspace, run_id, int(shard["index"]), host)
+    changed = [f"{key} {shard.get(key)!r} -> {fresh[key]!r}"
+               for key in ("tasks", "max_cost", "workers", "reviewers")
+               if fresh[key] != shard.get(key)]
+    stamp = (_run_doc(workspace, run_id).get("locate") or {}).get("campaign")
+    if stamp != campaign_id:
+        changed.append(f"locate.campaign {stamp!r}, not {campaign_id!r}")
+    if changed:
+        raise CfError(f"shard {run_id!r} differs from campaign {campaign_id!r}'s record of it: "
+                      + "; ".join(changed),
+                      hint=f"a re-planned shard is planned into the campaign again: re-run "
+                           f"`cf campaign plan {campaign_id}` with the same --shard list (it "
+                           "keeps the thresholds it is not given), then render")
+    return fresh
+
+
 def render(workspace, campaign_id: str) -> dict:
-    """Write ``campaigns/<id>/host/``: the sequencer and the two stdlib tools it runs."""
+    """Write ``campaigns/<id>/host/``: the sequencer and the stdlib tools it runs."""
     from plan.render import render_file
 
     doc = load(workspace, campaign_id)
@@ -213,13 +274,20 @@ def render(workspace, campaign_id: str) -> dict:
     root = host["remote_root"]
     lines = []
     for shard in doc["shards"]:
-        data = _run_doc(workspace, shard["run_id"])
-        names = manifest.remote_names(data, shard["run_id"])
-        args = [str(shard["index"]), shard["run_id"], f"{root}/{names['tend_root']}",
-                f"{root}/{names['entrypoint']}", f"{float(shard['max_cost']):g}",
-                str(shard["workers"]), str(shard["reviewers"])]
+        fresh = _unchanged(workspace, campaign_id, str(doc["host"]), shard)
+        names = manifest.remote_names(_run_doc(workspace, fresh["run_id"]), fresh["run_id"])
+        args = [str(fresh["index"]), fresh["run_id"], f"{root}/{names['tend_root']}",
+                f"{root}/{names['entrypoint']}", f"{root}/{names['gate']}",
+                f"{float(fresh['max_cost']):g}", str(fresh["workers"]), str(fresh["reviewers"])]
         lines.append("run_shard " + " ".join(shlex.quote(a) for a in args) + " || exit $?")
-    transcript_dirs = str(doc.get("transcript_dirs") or host.get("transcript_dirs") or "")
+    if doc.get("transcript_dirs"):
+        transcript_dirs = str(check_host_paths(doc["transcript_dirs"], "campaign.yaml "
+                                               "transcript_dirs", several=True))
+    else:
+        transcript_dirs = str(check_host_paths(host.get("transcript_dirs") or "",
+                                               f"workspace.yaml hosts.{doc['host']}."
+                                               "transcript_dirs", several=True))
+    check_host_paths(doc.get("canaries"), "campaign.yaml canaries")
     ctx = {"campaign_id": campaign_id, "host": doc["host"],
            "tend_cmd_quoted": shlex.quote(host.get("tend_cmd") or ""),
            "state_dir_quoted": shlex.quote(f"{root}/campaigns/{campaign_id}"),
@@ -227,6 +295,7 @@ def render(workspace, campaign_id: str) -> dict:
            "canaries_quoted": shlex.quote(str(doc.get("canaries") or "")),
            "multiple": doc["watchdog"].get("multiple"),
            "watchdog_flags": _watchdog_flags(doc.get("watchdog") or {}),
+           "shard_ids": " ".join(shlex.quote(str(s["run_id"])) for s in doc["shards"]),
            "shard_lines": "\n".join(lines)}
     text = render_file(templates_dir() / "campaign" / "sequencer.sh.tmpl", ctx)
     out = workspace.paths.campaign_dir(campaign_id) / "host"
@@ -242,9 +311,13 @@ def render(workspace, campaign_id: str) -> dict:
     write_yaml(workspace.paths.campaign_yaml(campaign_id), doc,
                header=f"# campaign.yaml -- {campaign_id}\n")
     script = shlex.quote(f"{record['host_dir']}/sequencer.sh")
+    # rsync makes only the last directory of its destination, and nothing else
+    # makes <remote root>/campaigns on a host's first campaign
+    mkdir = "mkdir -p " + shlex.quote(record["host_dir"])
     return {"dir": str(out), "sequencer": record, "transcript_dirs": transcript_dirs,
             "canaries": str(doc.get("canaries") or ""),
-            "transfer": " ".join(["rsync", "-a", shlex.quote(str(out) + "/"),
+            "transfer": " ".join(["ssh", shlex.quote(host["ssh"]), shlex.quote(mkdir), "&&",
+                                  "rsync", "-a", shlex.quote(str(out) + "/"),
                                   shlex.quote(f"{host['ssh']}:{record['host_dir']}/")]),
             "start": " ".join(["ssh", shlex.quote(host["ssh"]),
                                shlex.quote(f"nohup {script} </dev/null >/dev/null 2>&1 &")])}
