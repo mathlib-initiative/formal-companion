@@ -445,6 +445,12 @@ class Pipeline:
         dropped = json.loads(json.dumps(good))
         dropped["passages"] = [p for p in dropped["passages"] if p["finder"] != "theorem_box"]
         cases["rule 8"] = dropped
+        # the subject passage alone, and one skip over it and everything else
+        skipped = json.loads(json.dumps(good))
+        skipped["passages"] = [p for p in skipped["passages"] if p["prominence"] == "subject"]
+        skipped["skips"] = [{"span": [0, max(p["span"][1] for p in good["passages"])],
+                             "reason": "x"}]
+        cases["rule 8 "] = skipped
         for rule, doc in cases.items():
             # under the task's own directory and the source's own name: a document
             # anywhere else is refused under rule 7 before the rule it breaks is read
@@ -541,10 +547,23 @@ class Pipeline:
                 p["receipt"]["candidates"] = []
         def close_without_note(doc):
             doc["passages"][located]["locations"][0]["relation"] = "closeMatch"
+        layer = (cf_main_paths(self.ws).sourceset_source_dir(SS, WIDGET) / "layer.txt"
+                 ).read_text(encoding="utf-8")
+        verbatim = " ".join(layer.split()[:14])     # past the export's twelve-word cap
+        def note_verbatim(doc):
+            doc["passages"][located]["locations"][0]["note"] = verbatim
+        def query_verbatim(doc):
+            p = doc["passages"][located]
+            p.update(outcome="absent", locations=[])
+            p["receipt"]["queries"][0] = verbatim
+            for cand in p["receipt"]["candidates"]:
+                cand.update(verdict="rejected", reason="states the subject, not this")
         cases = {"rule 3 phantom": phantom, "rule 3 proof_status": status,
                  "rule 3 commit": commit, "rule 5": few_queries, "rule 6 count": too_many,
                  "rule 6 rank": duplicate_rank, "rule 4": curated_ignored,
-                 "closeMatch note": close_without_note}
+                 "closeMatch note": close_without_note,
+                 # the export's verbatim-source cap, applied by the gate (rule 1)
+                 "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
         for name, fn in cases.items():
             path = self.write_json(self.made / "loc-bad" / name.replace(" ", "-")
                                    / task_id / f"{WIDGET}.json", mutate(fn))

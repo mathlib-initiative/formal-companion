@@ -10,14 +10,17 @@ bridge reads:
 
 * ``CF_EXTRA_TOOLS`` (the worker's wrapper only) -- the allowlist entries of the
   two read-only corpus tools, each with ``--db <the run's tools database>``
-  INSIDE the allowed prefix so a worker cannot point them at another database,
-  and of the passage-id tool in an inventory run;
+  INSIDE the allowed prefix, and of the passage-id tool in an inventory run.  The
+  prefix alone does not hold a database (argparse keeps the LAST ``--db``): the
+  tools refuse a repeated or abbreviated ``--db`` and, in the gate directory,
+  any database but the one ``gate.json`` pins (``corpus_search.check_db``);
 * ``CF_REVIEWER_TOOLS`` (the reviewer's wrapper only) -- the bridge's read-only
   default plus the gate itself, which the reviewer prompt has it run;
 * ``CF_TASK_MANIFESTS`` -- ``<gate>/tasks``, where the bridge finds the task
   manifest it writes the ``UNRESOLVED`` document from at the attempt cap;
 * ``CF_ATTEMPT_CAP`` -- ``cflib.vocab.LOCATE_ATTEMPT_CAP``, the genuine reviewer
-  rejections a task may take;
+  rejections a task may take, and ``CF_MERGE_TARGET`` -- the branch the bridge
+  reads a capped task's change set against, as the gate does;
 * ``CF_FINDINGS_GLOB`` -- the task's own nested documents, for the bridge's
   observable-state fallback.
 
@@ -75,8 +78,8 @@ LOCATE_BIN_HELPERS = BRIDGE_HELPERS
 VENDORED = ("literature_links", "formal_companion_annotations")
 
 
-def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str
-                ) -> dict[str, dict[str, str]]:
+def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str,
+                merge_target: str = "main") -> dict[str, dict[str, str]]:
     """``{role: {VAR: value}}`` the locate wrappers export (see the module docstring)."""
     tools = [f"Bash(python3 {host_gate_dir}/corpus_search.py --db {host_tools_db}:*)",
              f"Bash(python3 {host_gate_dir}/corpus_show.py --db {host_tools_db}:*)"]
@@ -84,6 +87,7 @@ def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str
         tools.append(f"Bash(python3 {host_gate_dir}/passage_ids.py:*)")
     common = {"CF_TASK_MANIFESTS": f"{host_gate_dir}/tasks",
               "CF_ATTEMPT_CAP": str(vocab.LOCATE_ATTEMPT_CAP),
+              "CF_MERGE_TARGET": merge_target,
               "CF_FINDINGS_GLOB": "findings/${TEND_TASK_ID:-*}/*.json"}
     # the reviewer's job is the form and the gate's output: it runs the gate, and nothing else
     reviewer_tools = ("Read,Glob,Grep,Bash(git:*),"
@@ -122,7 +126,8 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
         task_count=len(tasks), model=model, allow_sandbox_bypass=allow_sandbox_bypass,
         config_template="config-locate.yaml.tmpl", readme_template="README-locate.md.tmpl",
         gate_files=(), bin_helpers=LOCATE_BIN_HELPERS,
-        extra_env=wrapper_env(preset, layout_host["gate_dir"], layout_host["tools_corpus_db"]),
+        extra_env=wrapper_env(preset, layout_host["gate_dir"], layout_host["tools_corpus_db"],
+                              plan.merge_target_branch),
         context=context, generator="cf plan-locate")
     gate = plan.local / "gate"
     for rel, name in GATE_FILES:

@@ -58,7 +58,11 @@
 #                          an infrastructure failure is never a verdict
 #   CF_ATTEMPT_CAP         genuine reviewer rejections after which the task ends
 #                          UNRESOLVED (attempt_cap.py; unset or 0 = off, a locate run sets
-#                          3), with CF_TASK_MANIFESTS the gate's tasks/ directory
+#                          3; 1 or 2 is refused, exit 78, since the locate gate accepts the
+#                          capped documents at no lower count), with CF_TASK_MANIFESTS the
+#                          gate's tasks/ directory and
+#                          CF_MERGE_TARGET the branch the capped change set is read
+#                          against (default main)
 # Claude's JSON envelope is KEPT, outside the worktree, under $ROOT/usage/ (one file
 # per call), for the spend watchdog and the cost cross-check; the counter is
 # $ROOT/attempts/<task-id>.json.
@@ -181,6 +185,10 @@ if [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
               --cap "$CAP" --worktree "$PWD" 2>>"$ERR")"
   CAPRC=$?
   if [ "$CAPRC" = 0 ]; then printf '%s\n' "$CAPPED"; exit 0; fi
+  if [ "$CAPRC" = 78 ]; then
+    echo "bridge-agentbox: CF_ATTEMPT_CAP=$CAP is refused: under the locate gate's own cap (see $ERR)" >&2
+    exit 78
+  fi
   if [ "$CAPRC" != 10 ]; then
     echo "bridge-agentbox: the attempt cap could not end task $TEND_TASK_ID (exit $CAPRC)" >&2
     exit 1
@@ -242,8 +250,10 @@ OUT="$(python3 "$BINDIR/normalize_result.py" "$ROLE" "$RESULT" "$RAW")"
 NORMRC=$?
 printf '%s\n' "$OUT"
 if [ "$ROLE" = reviewer ] && [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
-  # Only a request_changes from a call that completed counts; attempt_cap.py checks both.
+  # Only a request_changes the reviewer stated (in $RESULT, or with no result file an
+  # explicit `verdict:` in its prose) from a call that completed counts; attempt_cap.py
+  # checks all three, so a verdict the normaliser coerced from missing output does not.
   printf '%s' "$OUT" | python3 "$BINDIR/attempt_cap.py" record --root "$ROOT" \
-    --task "$TEND_TASK_ID" --raw "$RAW" >/dev/null 2>>"$ERR" || true
+    --task "$TEND_TASK_ID" --raw "$RAW" --result "$RESULT" >/dev/null 2>>"$ERR" || true
 fi
 exit "$NORMRC"

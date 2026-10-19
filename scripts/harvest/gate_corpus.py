@@ -129,11 +129,38 @@ def gate_locate_corpus(dest: str | Path, gate_config: str | Path) -> dict:
               if name not in read and not any(name in line for line in problems)]
     problems += [f"{name}: not a <task-id>/<source-id>.json document; the gate did not "
                  f"validate it" for name in unread]
-    return {"ok": result["exit"] == vl.EXIT_OK and not unread, "config": str(cfg_path),
-            "preset": cfg.preset,
-            "mode": cfg.mode, "sources": sorted(cfg.sources), "files": result["documents"],
-            "problems": problems, "by_rule": result["by_rule"], "broken": result["broken"],
-            "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0}
+    out = {"ok": result["exit"] == vl.EXIT_OK and not unread, "config": str(cfg_path),
+           "preset": cfg.preset,
+           "mode": cfg.mode, "sources": sorted(cfg.sources), "files": result["documents"],
+           "problems": problems, "by_rule": result["by_rule"], "broken": result["broken"],
+           "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0}
+    if cfg.mode == vl.LOCATE_INVENTORY:
+        out["skipped"] = skipped_summary(result["stats"])
+    return out
+
+
+def skipped_summary(stats: list[dict]) -> dict:
+    """What an inventory corpus's skips removed: the coverage floor's use, made visible.
+
+    Gate rule 8 accepts a skip with any reason in place of a finder's passage or
+    a math paragraph, and nothing downstream reads ``skips``; so the receipt's
+    gate block counts, in total and by source, the skips, the layer characters
+    they cover, the math paragraphs covered by a skip and by no passage, and the
+    deterministic finders' passages dropped under a skip.
+    """
+    keys = ("skips", "chars", "math_paragraphs", "finder_passages")
+    total = {k: 0 for k in keys}
+    by_source: dict[str, dict] = {}
+    for row in stats:
+        got = row.get("skipped") if isinstance(row, dict) else None
+        if not isinstance(got, dict) or not any(got.get(k) for k in keys):
+            continue
+        mine = by_source.setdefault(str(row.get("source_id") or ""), {k: 0 for k in keys})
+        for k in keys:
+            value = int(got.get(k) or 0)
+            mine[k] += value
+            total[k] += value
+    return {**total, "by_source": dict(sorted(by_source.items()))}
 
 
 def render(result: dict, max_named: int = 12) -> str:
@@ -142,6 +169,11 @@ def render(result: dict, max_named: int = 12) -> str:
     head = (f"gate {result['preset']} [{sources}]: {result['files']} file(s), "
             + ("PASSED" if result["ok"] else f"FAILED ({len(result['problems'])} problem(s))"))
     lines = [head]
+    skipped = result.get("skipped") or {}
+    if skipped.get("skips"):
+        lines.append(f"  skips: {skipped['skips']} cover {skipped['chars']} character(s), "
+                     f"{skipped['math_paragraphs']} math paragraph(s) and "
+                     f"{skipped['finder_passages']} finder passage(s) that no passage keeps")
     for problem in result["problems"][:max_named]:
         lines.append("  - " + problem)
     if len(result["problems"]) > max_named:

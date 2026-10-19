@@ -247,6 +247,11 @@ def locate_manifest_doc(fx) -> dict:
                           "prominence": "central", "passage_kind": "theorem"}]}
 
 
+#: the reason the bridge writes at the attempt cap (attempt_cap.cap_reason(3))
+CAP_REASON = ("attempt_cap: 3 genuine reviewer rejections; the bridge ended the task without "
+              "another agent call")
+
+
 def location(lib="alpha", decl="Widget.exists_spanning_gadget", relation="exactMatch", rank=1,
              note=""):
     return {"library": lib, "declaration": decl, "relation": relation, "rank": rank,
@@ -433,7 +438,7 @@ class TestInventory(GateTestCase):
         self.assertRule(self.fx.run(path), 1, "duplicate key")
 
     def test_an_unresolved_inventory_is_valid_and_carries_nothing(self):
-        body = {"passages": [], "skips": [], "unresolved": {"reason": "attempt cap: 3 rejections",
+        body = {"passages": [], "skips": [], "unresolved": {"reason": CAP_REASON,
                                                             "by": "attempt_cap"}}
         result = self.fx.run(self.doc(body))
         self.assertOk(result)
@@ -557,7 +562,7 @@ class TestLocate(GateTestCase):
         body = {"passages": [{"item": i, "outcome": "unresolved", "locations": [],
                               "receipt": {"queries": [], "candidates": []}}
                              for i in (LEAD_ITEM, THM_ITEM)],
-                "unresolved": {"reason": "attempt cap", "by": "attempt_cap"}}
+                "unresolved": {"reason": CAP_REASON, "by": "attempt_cap"}}
         self.assertOk(self.fx.run(self.doc(body)))
         body["passages"][0]["outcome"] = "absent"
         self.assertRule(self.fx.run(self.doc(body)), 1, "every passage unresolved")
@@ -660,7 +665,8 @@ class TestChallenge(GateTestCase):
 # rule 7, the CLI's last line, the log
 # --------------------------------------------------------------------------- #
 
-class TestOwnership(GateTestCase):
+class OwnershipCase(GateTestCase):
+    """A tend-like worktree: main holds the task files, the task's branch its contribution."""
 
     def setUp(self):
         self.fx = Fixture(self, "locate-inventory")
@@ -690,6 +696,9 @@ class TestOwnership(GateTestCase):
                                str(self.fx.root / "gate" / "gate.json"), "--root", str(self.wt),
                                "--changed-files", "--base", "main", *extra],
                               capture_output=True, text=True, env=environ)
+
+
+class TestOwnership(OwnershipCase):
 
     def test_own_documents_pass_and_the_last_line_names_the_rule(self):
         self.contribute()
@@ -1365,3 +1374,415 @@ class TestRuleFourIsPerTask(GateTestCase):
 
     def test_without_the_key_the_task_owes_every_hit_of_the_file(self):
         self.assertRule(self.run_with(None), 4)
+
+
+#: fourteen consecutive words of the layer: past the export's twelve-word quote cap
+VERBATIM = " ".join(LEAD.split()[:14])
+
+
+class TestRuleOneAppliesTheExportsFreeTextCap(GateTestCase):
+    """A note, a query or a reason the export would refuse as verbatim source text
+    is refused at the gate, by the export's own code, while the worker can fix it."""
+
+    TASK = "t-loc-0001"
+
+    def setUp(self):
+        self.fx = Fixture(self, "locate")
+        self.fx.manifest(self.TASK, locate_manifest_doc(self.fx))
+
+    def run_body(self, body):
+        return self.fx.run(self.fx.document(self.TASK, body))
+
+    def test_a_location_note(self):
+        body = locate_body()
+        body["passages"][0]["locations"][0]["note"] = VERBATIM
+        self.assertRule(self.run_body(body), 1, "a location's note carries 13+ words of the "
+                                                "source verbatim")
+        body["passages"][0]["locations"][0]["note"] = " ".join(LEAD.split()[:12])
+        self.assertOk(self.run_body(body))
+
+    def test_an_absences_query_and_a_candidates_reason(self):
+        body = locate_body()
+        body["passages"][1]["receipt"]["queries"][0] = VERBATIM
+        self.assertRule(self.run_body(body), 1, "a receipt query carries")
+        body = locate_body()
+        body["passages"][1]["receipt"]["candidates"] = [
+            {"library": "alpha", "declaration": "Widget.Spanning", "verdict": "rejected",
+             "reason": f"it says {VERBATIM} and no more"}]
+        self.assertRule(self.run_body(body), 1, "a candidate's reason carries")
+
+    def test_only_what_the_export_writes(self):
+        """A located passage's receipt is not exported, so the cap is the export's, no wider."""
+        body = locate_body()
+        body["passages"][0]["receipt"]["queries"].append(VERBATIM)
+        self.assertOk(self.run_body(body))
+
+    def test_a_challenge_overturns_note(self):
+        fx = Fixture(self, "locate-challenge")
+        doc = locate_manifest_doc(fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": LEAD_ITEM, "target": "absence", "span": LEAD_SPAN,
+                           "passage_kind": "theorem"}]
+        fx.manifest("t-chl-0001", doc)
+        body = {"verdicts": [{"item": LEAD_ITEM, "target": "absence", "action": "overturn",
+                              "locations": [location(lib="beta",
+                                                     decl="Beta.Widget.gadget_of_finite",
+                                                     note=VERBATIM)],
+                              "witness": "found with a type search"}]}
+        self.assertRule(fx.run(fx.document("t-chl-0001", body)), 1, "verbatim")
+
+    def test_the_export_and_the_gate_refuse_the_same_passage(self):
+        """One definition: the gate calls the export's check_note and receipt_document."""
+        body = locate_body()
+        body["passages"][0]["locations"][0]["note"] = VERBATIM
+        calls = []
+        real = vl.lr.check_note
+
+        def spy(*args):
+            calls.append(args[1])
+            return real(*args)
+
+        with mock.patch.object(vl.lr, "check_note", side_effect=spy):
+            self.assertRule(self.run_body(body), 1, "verbatim")
+        self.assertIn(VERBATIM, calls)
+        layer = LAYER
+        passage = {"item": THM_ITEM, "span": THEOREM_SPAN, "outcome": "located",
+                   "challenge": "survived", "passage_kind": "theorem",
+                   "section": ["Theorems"], "prominence": "central",
+                   "locations": [{"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+                                  "relation": "exactMatch", "rank": 1, "proof_status": "proved",
+                                  "location_key": "0" * 64, "challenge": "survived",
+                                  "note": VERBATIM}]}
+        universe = vl._preview_universe(self.fx.gate_cfg())
+        with self.assertRaisesRegex(vl.lr.RecordError, "a location's note carries"):
+            vl.lr.passage_records(vl._preview_source(self.fx.gate_cfg(), SID), passage, layer,
+                                  universe)
+
+
+# --------------------------------------------------------------------------- #
+# bounded work, ownership, the log, the cap and the skips
+# --------------------------------------------------------------------------- #
+
+class TestAHugeDocumentIsRefusedFast(GateTestCase):
+    """Rule 6's checks were quadratic in a passage's locations, and every location added
+    lines; over the cap nothing more is read, and the problems are capped."""
+
+    TASK = "t-loc-0001"
+
+    def setUp(self):
+        self.fx = Fixture(self, "locate")
+        self.fx.manifest(self.TASK, locate_manifest_doc(self.fx))
+
+    def test_fifty_thousand_locations(self):
+        body = locate_body()
+        body["passages"][0]["locations"] = [{} for _ in range(50_000)]
+        self.fx.gate["max_document_bytes"] = 4 * 1024 * 1024
+        self.fx.write_gate()
+        import time
+
+        started = time.monotonic()
+        result = self.fx.run(self.fx.document(self.TASK, body))
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertRule(result, 6, "50000 locations; at most 5")
+        self.assertLess(len(result["problems"]), 10, result["problems"][:5])
+
+    def test_the_problems_kept_are_capped_and_the_rest_counted(self):
+        body = locate_body()
+        body["passages"] += [{"item": f"In-text #{i:08x}", "outcome": "absent", "locations": [],
+                              "receipt": {"queries": [], "candidates": []}}
+                             for i in range(3 * vl.MAX_PROBLEMS)]
+        result = self.fx.run(self.fx.document(self.TASK, body))
+        self.assertEqual(result["exit"], vl.EXIT_REJECTED)
+        self.assertEqual(len(result["problems"]), vl.MAX_PROBLEMS + 1)
+        self.assertIn("more problem(s) not listed", result["problems"][-1])
+        self.assertEqual(result["by_rule"]["2"], 3 * vl.MAX_PROBLEMS)
+
+
+class TestTheChangeSetsTaskAndLogLine(OwnershipCase):
+    """Ownership, the log line, the bridge's cap and the task file, through a real change set."""
+
+    def lines(self) -> list[dict]:
+        log = self.fx.root / "gate-log" / "gate.jsonl"
+        return [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []
+
+    # -- several tasks without a task id ------------------------------------
+    def test_a_worktree_of_two_tasks_needs_the_pre_merge_flag(self):
+        self.contribute()
+        self.contribute("t-inv-0002")
+        proc = self.cli()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("one worker's contribution is one task's", proc.stderr)
+        proc = self.cli("--pre-merge")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_the_template_puts_the_flag_on_the_pre_merge_command_only(self):
+        text = (SKILL / "templates" / "tend" / "config-locate.yaml.tmpl").read_text()
+        validation, pre_merge = [l for l in text.splitlines() if "argv:" in l
+                                 and "--changed-files" in l]
+        self.assertNotIn("--pre-merge", validation)
+        self.assertIn("--pre-merge", pre_merge)
+
+    # -- by: attempt_cap is the bridge's -------------------------------------
+    def capped(self, reason: str) -> None:
+        self.fx.document(TASK, {"passages": [], "skips": [],
+                                "unresolved": {"reason": reason, "by": "attempt_cap"}},
+                         directory=self.wt / "findings")
+        (self.wt / "tasks" / f"{TASK}.yaml").write_text(f"id: {TASK}\nstatus: complete\n")
+        git(self.wt, "add", "-A")
+        git(self.wt, "commit", "-qm", "capped")
+
+    def test_a_worker_written_attempt_cap_is_refused(self):
+        self.capped("attempt_cap: whatever")
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("written by the bridge", proc.stderr)
+
+    def test_the_bridges_form_needs_the_counter_at_the_cap(self):
+        self.capped(CAP_REASON)
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("0 counted rejection(s)", proc.stderr)
+        counter = vl.attempts_counter(self.fx.gate_cfg(), TASK)
+        self.assertEqual(counter, self.fx.root / "attempts" / f"{TASK}.json")
+        counter.parent.mkdir()
+        counter.write_text(json.dumps({"task_id": TASK, "rejections": 3, "history": []}))
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        # a harvested corpus has no counter: the bridge's form is enough there
+        self.assertOk(self.fx.run(self.wt / "findings" / TASK / f"{SID}.json"))
+
+    def test_the_counter_is_where_the_bridge_writes_it_on_either_layout(self):
+        """The bridge counts under its own root, the tend root above its ``bin/``.  On a
+        run host the gate directory is the tend root's sibling (``<root>/<run>-gate``),
+        so a counter looked for above the gate directory was never the bridge's, and
+        every capped task would have been refused there."""
+        from cflib.paths import WorkspacePaths
+        from locate import plan as lplan
+        from run import attempt_cap
+
+        paths = WorkspacePaths(self.fx.root / "ws")
+        tools = {"path": str(paths.corpus_db("u1")), "sha256": "1" * 64, "kind": "full"}
+        for host in (lplan.LOCAL, "examplebox"):
+            layout = lplan.host_layout(paths, host=host, run_id="r-1", sourceset_id="wpm",
+                                       universe_id="u1", tools_db=tools,
+                                       remote_root="/srv/cf")["host"]
+            cfg = vl.GateConfig({**self.fx.gate, "tasks_dir": layout["tasks_dir"],
+                                 "orchestrator_db": layout["orchestrator_db"]})
+            with self.subTest(host=host):
+                self.assertEqual(vl.attempts_counter(cfg, TASK),
+                                 attempt_cap.counter_path(Path(layout["tend_root"]), TASK))
+        cfg = vl.GateConfig({**self.fx.gate, "orchestrator_db": None})
+        with self.assertRaisesRegex(vl.GateBroken, "names no orchestrator_db"):
+            vl.attempts_counter(cfg, TASK)
+
+    # -- the task file is the task's own .yaml, changed in its status -------
+    def test_a_rewritten_task_id_or_a_second_task_file_is_refused(self):
+        self.contribute()
+        (self.wt / "tasks" / f"{TASK}.yaml").write_text(f"id: t-inv-0002\nstatus: complete\n")
+        git(self.wt, "commit", "-qam", "another id")
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("changes more than its status line", proc.stderr)
+        (self.wt / "tasks" / f"{TASK}.yaml").write_text(f"id: {TASK}\nstatus: complete\n")
+        (self.wt / "tasks" / f"{TASK}.yml").write_text("id: new-task\nstatus: open\n")
+        git(self.wt, "add", "-A")
+        git(self.wt, "commit", "-qm", "a second task file")
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn(f"tasks/{TASK}.yml: is outside", proc.stderr)
+
+    def test_an_added_task_file_is_refused(self):
+        self.fx.manifest("t-inv-0003", inventory_manifest_doc(self.fx))
+        self.contribute("t-inv-0003")
+        proc = self.cli("--task-id", "t-inv-0003")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("adds a task file", proc.stderr)
+        self.assertNotIn("has no tasks/", proc.stderr)
+
+    def test_a_refused_task_file_is_one_refusal_not_two(self):
+        """A task file refused for its own change is still in the change set: the gate
+        says why it is refused, and never also that the documents came with no task file."""
+        self.contribute()
+        task_file = self.wt / "tasks" / f"{TASK}.yaml"
+        task_file.write_text(task_file.read_text() + "priority: 99\n")
+        git(self.wt, "commit", "-qam", "a higher priority")
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        rule7 = [line for line in proc.stderr.splitlines() if "[rule 7]" in line]
+        self.assertEqual(len(rule7), 1, proc.stderr)
+        self.assertIn(f"tasks/{TASK}.yaml: changes more than its status line", rule7[0])
+        self.assertIn("priority: 99", rule7[0])
+        self.assertNotIn("has no tasks/", proc.stderr)
+
+
+class TestTheGateGroupCitesWhatResolves(unittest.TestCase):
+    """CLAUDE.md section 3: a docstring cites what is in the tree.  A review's finding id
+    names a document the tree does not hold, and a ``module.name`` or :func:`name` that
+    was renamed sends a reader to nothing; tests/test_rf_docs.py checks neither."""
+
+    #: the host-side helpers and their stage-side neighbours, by the name a docstring
+    #: calls them (the record builder is staged as locate_records.py)
+    MODULES = {"verify_locate": "gate/verify_locate.py", "verify_findings": "gate/verify_findings.py",
+               "locate_text": "gate/locate_text.py", "locate_records": "locate/records.py",
+               "passage_ids": "locate/passage_ids.py", "attempt_cap": "run/attempt_cap.py",
+               "normalize_result": "run/normalize_result.py",
+               "extract_final_json": "run/extract_final_json.py", "agent_call": "run/agent_call.py",
+               "corpus_search": "corpus/corpus_search.py", "corpus_show": "corpus/corpus_show.py",
+               "gate_corpus": "harvest/gate_corpus.py", "tend_root": "locate/tend_root.py"}
+    FILE_SUFFIXES = {"py", "json", "jsonl", "sqlite", "txt", "sh", "tmpl", "yaml", "md"}
+
+    @staticmethod
+    def top_level_names(path: Path) -> set[str]:
+        import ast
+
+        out: set[str] = set()
+
+        def collect(body):
+            for node in body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    out.add(node.name)
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    out.update(n.id for t in targets for n in ast.walk(t)
+                               if isinstance(n, ast.Name))
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    out.update((a.asname or a.name).split(".")[0] for a in node.names)
+                elif isinstance(node, ast.Try):
+                    collect(node.body)
+                    for handler in node.handlers:
+                        collect(handler.body)
+        collect(ast.parse(path.read_text(encoding="utf-8")).body)
+        return out
+
+    def owned(self) -> list[Path]:
+        return [SCRIPTS / rel for rel in self.MODULES.values() if rel != "gate/verify_findings.py"]
+
+    def test_no_review_finding_id_is_cited(self):
+        import re
+
+        finding = re.compile(r"\b[Rr]eview \d+\b|\b(?:G|C|M|OPS)-\d\d\b")
+        files = (self.owned() + sorted((SKILL / "templates" / "tend").glob("*.tmpl"))
+                 + sorted((SKILL / "templates" / "prompts").glob("locate*.tmpl"))
+                 + sorted((SCRIPTS / "run").glob("bridge-*.sh")))
+        for path in files:
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                with self.subTest(file=path.name, line=n):
+                    self.assertIsNone(finding.search(line), line)
+
+    def test_every_named_function_and_value_exists(self):
+        import re
+
+        qualified = re.compile(r"`{1,2}(" + "|".join(self.MODULES) + r")\.([A-Za-z_]\w*)")
+        local = re.compile(r":(?:func|data|class):`~?([A-Za-z_]\w*)`")
+        names = {mod: self.top_level_names(SCRIPTS / rel) for mod, rel in self.MODULES.items()}
+        for path in self.owned():
+            text = path.read_text(encoding="utf-8")
+            own = self.top_level_names(path)
+            for mod, name in qualified.findall(text):
+                if name not in self.FILE_SUFFIXES:
+                    with self.subTest(file=path.name, ref=f"{mod}.{name}"):
+                        self.assertIn(name, names[mod])
+            for name in local.findall(text):
+                with self.subTest(file=path.name, ref=name):
+                    self.assertIn(name, own)
+
+
+class TestRuleEightSkipsAreVisible(GateTestCase):
+    """A skip holding a kept passage is refused, one inside it is not, and what skips
+    removed is counted."""
+
+    def setUp(self):
+        self.fx = Fixture(self, "locate-inventory")
+        self.fx.manifest(TASK, inventory_manifest_doc(self.fx))
+
+    def test_a_whole_layer_skip_beside_the_subject_is_refused(self):
+        body = inventory_body()
+        body["passages"] = body["passages"][:1]
+        body["skips"] = [{"span": [0, len(LAYER)], "reason": "x"}]
+        self.assertRule(self.fx.run(self.fx.document(TASK, body)), 8,
+                        f"holds the whole kept passage at {LEAD_SPAN}")
+
+    def test_a_skip_of_exactly_a_kept_passage_is_refused_and_a_partial_one_is_not(self):
+        body = inventory_body()
+        body["skips"].append({"span": THEOREM_SPAN, "reason": "kept and skipped"})
+        self.assertRule(self.fx.run(self.fx.document(TASK, body)), 8,
+                        f"holds the whole kept passage at {THEOREM_SPAN}")
+        body = inventory_body()
+        body["skips"].append({"span": [LEAD_SPAN[1] - 5, THEOREM_SPAN[0] + 5],
+                              "reason": "the seam between two passages"})
+        self.assertOk(self.fx.run(self.fx.document(TASK, body)))
+
+    def test_a_finder_nested_in_a_kept_passage_is_dropped_by_a_skip_inside_it(self):
+        """The renderer's blocks nest: a bolded definition inside a kept theorem box is a
+        finder passage of its own start, and the skip that drops it lies inside the box."""
+        nested = [THEOREM_SPAN[0] + len("Theorem. "), THEOREM_SPAN[1]]
+        doc = inventory_manifest_doc(self.fx)
+        doc["finders"].append({"finder": "bold_definition", "start": nested[0], "span": nested,
+                               "section": ["Theorems"]})
+        self.fx.manifest(TASK, doc)
+        body = inventory_body()
+        self.assertRule(self.fx.run(self.fx.document(TASK, body)), 8,
+                        f"the bold_definition passage at {nested} was dropped")
+        body["skips"].append({"span": nested, "reason": "the box's own statement, kept whole"})
+        result = self.fx.run(self.fx.document(TASK, body))
+        self.assertOk(result)
+        self.assertEqual(result["stats"][0]["skipped"]["finder_passages"], 1)
+
+    def test_the_stats_and_the_receipt_count_what_skips_removed(self):
+        body = inventory_body()
+        del body["passages"][1]
+        body["skips"].append({"span": THEOREM_SPAN, "reason": "a lemma stated elsewhere"})
+        corpus = self.fx.root / "corpus"
+        self.fx.document(TASK, body, directory=corpus)
+        result = self.fx.run(corpus / TASK / f"{SID}.json")
+        self.assertOk(result)
+        want = {"skips": 2, "chars": len(THEOREM) + len(HISTORY), "math_paragraphs": 1,
+                "finder_passages": 1}
+        self.assertEqual(result["stats"][0]["skipped"], want)
+        from harvest import gate_corpus
+
+        gated = gate_corpus.gate_locate_corpus(corpus, self.fx.root / "gate" / "gate.json")
+        self.assertTrue(gated["ok"], gated["problems"])
+        self.assertEqual(gated["skipped"], {**want, "by_source": {SID: want}})
+        self.assertIn("1 math paragraph(s)", gate_corpus.render(gated))
+
+    def test_many_passages_and_skips_cost_n_log_n(self):
+        """Every skip asked every kept passage whether it overlapped: 20,000 of each took
+        twenty seconds.  The spans are sorted once, and each question is a bisection."""
+        n = 20_000
+        body = {"passages": [{"span": [0, 1]} for _ in range(n)],
+                "skips": [{"span": [2, 3], "reason": "x"} for _ in range(n)], "notes": ""}
+        self.fx.gate["max_document_bytes"] = 4 * 1024 * 1024
+        self.fx.write_gate()
+        import time
+
+        started = time.monotonic()
+        result = self.fx.run(self.fx.document(TASK, body))
+        self.assertLess(time.monotonic() - started, 6.0)
+        self.assertEqual(result["exit"], vl.EXIT_REJECTED)
+        self.assertEqual(len(result["problems"]), vl.MAX_PROBLEMS + 1)
+
+    def test_the_span_index_answers_as_a_scan_would(self):
+        import random
+
+        rng = random.Random(1001)
+        for _ in range(200):
+            spans = [(a, a + rng.randint(1, 12)) for a in
+                     (rng.randint(0, 60) for _ in range(rng.randint(0, 9)))]
+            index = vl._SpanIndex(spans)
+            for _ in range(20):
+                a = rng.randint(0, 70)
+                q = (a, a + rng.randint(1, 15))
+                with self.subTest(spans=spans, q=q):
+                    self.assertEqual(index.overlapping(q) is not None,
+                                     any(s[0] < q[1] and q[0] < s[1] for s in spans))
+                    self.assertEqual(index.covering(q) is not None,
+                                     any(s[0] <= q[0] and q[1] <= s[1] for s in spans))
+                    self.assertEqual(index.inside(q) is not None,
+                                     any(q[0] <= s[0] and s[1] <= q[1] for s in spans))
+                    for got, holds in ((index.overlapping(q), lambda s: s[0] < q[1] and q[0] < s[1]),
+                                       (index.covering(q), lambda s: s[0] <= q[0] and q[1] <= s[1]),
+                                       (index.inside(q), lambda s: q[0] <= s[0] and s[1] <= q[1])):
+                        if got is not None:
+                            self.assertIn(got, spans)
+                            self.assertTrue(holds(got))

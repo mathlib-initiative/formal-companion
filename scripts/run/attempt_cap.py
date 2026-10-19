@@ -10,15 +10,28 @@ A task a reviewer keeps rejecting used to loop until the run was stopped.  Now:
 * ``record`` -- after a REVIEWER call, a counter keyed on the task id under
   ``<tend-root>/attempts/<task-id>.json`` (outside every worktree, where no
   worker can reset it) counts the rejection, but only a GENUINE one: a
-  ``request_changes`` from an agent call that completed.  A timeout, a 409 or
-  a crash is not a verdict and never counts;
-* ``worker`` -- before a WORKER call, a task at the cap (``CF_ATTEMPT_CAP``)
+  ``request_changes`` from an agent call that completed, which the reviewer
+  itself stated -- in its result file (``--result``), or, with none, in an
+  explicit ``verdict:`` marker of its prose (``normalize_result.
+  explicit_verdict``).  A timeout, a 409, a crash, and a ``request_changes``
+  the normaliser fell back to for want of a stated verdict never count;
+* ``worker`` -- before a WORKER call, a task at the cap (``CF_ATTEMPT_CAP``,
+  0 for off, else at least the locate gate's own :data:`LOCATE_ATTEMPT_CAP`:
+  the gate accepts a ``by: attempt_cap`` document at no lower count, so a lower
+  cap is refused with exit 78 on every call, before any agent is called, rather
+  than writing documents every later gate call refuses)
   gets one schema-valid ``UNRESOLVED`` document per source of its task manifest
   (``unresolved.by: attempt_cap``), written and committed in the worktree with
   the git boundary pinned, and the bridge reports a finished contribution
-  without calling an agent; exit 10 means "not capped, call the agent";
-* ``reviewer`` -- a task at the cap whose worktree holds exactly those
-  documents is approved mechanically, without an agent; exit 10 otherwise.
+  without calling an agent; exit 10 means "not capped, call the agent".  Every
+  other path the attempts changed since the merge base with ``--base``
+  (``CF_MERGE_TARGET``, default ``main``) is put back as it is there -- a
+  neighbour's task file, a stray file, a deletion -- and the task file keeps the
+  merge base's lines with ``status: complete``, so the change set is exactly what
+  the locate gate's rule 7 accepts;
+* ``reviewer`` -- a task at the cap whose change set is exactly those
+  documents and its task file's status is approved mechanically, without an
+  agent; exit 10 otherwise.
 
 The harvest receipt counts these documents apart from the worker's own
 ``unresolved`` ones.  Standard library only: it runs on the run host.
@@ -35,8 +48,21 @@ import sys
 import time
 from pathlib import Path
 
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import normalize_result  # noqa: E402  (bin/'s sibling: the one reading of a verdict)
+
 EXIT_NOT_CAPPED = 10
+#: a cap the locate gate would not honour (sysexits EX_CONFIG, as the bridge's own
+#: configuration errors)
+EXIT_CONFIG = 78
 UNRESOLVED_ATTEMPT_CAP = "attempt_cap"
+#: COPIED from ``cflib.vocab.LOCATE_ATTEMPT_CAP`` (no cflib on the host): the
+#: count at or above which ``gate/verify_locate.py`` accepts a ``by: attempt_cap``
+#: document; tests/test_locate_contract.py pins the three together
+LOCATE_ATTEMPT_CAP = 3
 DOCUMENT_SCHEMA = "cf-locate/1"
 LOCATE_INVENTORY = "locate-inventory"
 
@@ -99,7 +125,28 @@ def genuine(raw_path: Path) -> bool:
     return data.get("subtype") == "success" and not data.get("is_error")
 
 
-def record(root: Path, task: str, raw_path: Path, result_text: str) -> int:
+def stated_rejection(result_path: Path | None, raw_path: Path) -> bool:
+    """Did the reviewer itself say ``request_changes``?
+
+    Its result file decides when it wrote one (only that file's own verdict
+    counts, never a value the normaliser coerced); with none, an explicit
+    ``verdict:`` marker in its prose does.  Approval prose with no marker, a
+    printed object the marker reads as ``approve``, and no output at all are
+    not rejections -- three of those used to overwrite a task's good documents.
+    """
+    if result_path is not None and result_path.is_file():
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            return data.get("verdict") == "request_changes"
+    raw = normalize_result.load_raw(str(raw_path))
+    return normalize_result.explicit_verdict(str(raw.get("result") or "")) == "request_changes"
+
+
+def record(root: Path, task: str, raw_path: Path, result_text: str,
+           result_path: Path | None = None) -> int:
     """Count one rejection when it is genuine; returns the count after this call."""
     try:
         verdict = json.loads(result_text).get("verdict")
@@ -111,7 +158,8 @@ def record(root: Path, task: str, raw_path: Path, result_text: str) -> int:
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         count = read_count(root, task)
-        if verdict == "request_changes" and genuine(raw_path):
+        if verdict == "request_changes" and genuine(raw_path) \
+                and stated_rejection(result_path, raw_path):
             try:
                 history = json.loads(path.read_text(encoding="utf-8")).get("history") or []
             except (OSError, ValueError, AttributeError):
@@ -213,6 +261,8 @@ def _filter_blanks(worktree: Path, env: dict) -> list[str]:
 
 def _git(worktree: Path, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, **_GIT_SAFE_ENV}
+    # every path this module names is a literal path, never a glob pathspec
+    env["GIT_LITERAL_PATHSPECS"] = "1"
     env.setdefault("GIT_AUTHOR_NAME", "attempt-cap bridge")
     env.setdefault("GIT_AUTHOR_EMAIL", "attempt-cap@invalid")
     env.setdefault("GIT_COMMITTER_NAME", env["GIT_AUTHOR_NAME"])
@@ -222,26 +272,111 @@ def _git(worktree: Path, *args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, env=env, check=False)
 
 
-def write_unresolved(worktree: Path, manifests: Path, task: str, count: int) -> list[str]:
-    """Write and commit the task's UNRESOLVED documents; returns the paths written."""
-    reason = (f"{UNRESOLVED_ATTEMPT_CAP}: {count} genuine reviewer rejections; the bridge "
-              f"ended the task without another agent call")
+def cap_reason(count: int) -> str:
+    """The ``unresolved.reason`` of a document the bridge writes at the cap.
+
+    The locate gate accepts ``by: attempt_cap`` only with this text
+    (``verify_locate.ATTEMPT_CAP_REASON``; tests/test_bridge_hardening.py pins
+    the two together).
+    """
+    return (f"{UNRESOLVED_ATTEMPT_CAP}: {count} genuine reviewer rejections; the bridge "
+            f"ended the task without another agent call")
+
+
+def merge_base(worktree: Path, base: str) -> str:
+    """The one merge base of ``base`` and HEAD (what the gate's change set is read from)."""
+    got = _git(worktree, "merge-base", "--all", base, "HEAD")
+    bases = got.stdout.split()
+    if got.returncode != 0 or len(bases) != 1:
+        raise RuntimeError(f"no single merge base between {base!r} and HEAD "
+                           f"({got.stderr.strip()[:200] or f'{len(bases)} found'})")
+    return bases[0]
+
+
+def change_set(worktree: Path, base_commit: str) -> dict[str, str]:
+    """``{path: status}`` as the locate gate reads it: the merge base against the
+    working tree, without renames, plus untracked files git does not ignore."""
+    got = _git(worktree, "diff", "--no-renames", "--ignore-submodules=none", "--name-status",
+               "-z", base_commit)
+    if got.returncode != 0:
+        raise RuntimeError(f"git diff failed: {got.stderr.strip()[:300]}")
+    fields = got.stdout.split("\0")
+    out: dict[str, str] = {}
+    for status, path in zip(fields[0::2], fields[1::2]):
+        if path:
+            out[path] = status.strip()
+    got = _git(worktree, "ls-files", "--others", "--exclude-standard", "-z")
+    for path in got.stdout.split("\0"):
+        if path:
+            out.setdefault(path, "A")
+    return out
+
+
+def _at(worktree: Path, base_commit: str, path: str) -> str | None:
+    got = _git(worktree, "cat-file", "blob", f"{base_commit}:{path}")
+    return got.stdout if got.returncode == 0 else None
+
+
+def restore_outside(worktree: Path, base_commit: str, keep: set[str]) -> list[str]:
+    """Put every changed path but ``keep`` back as it is at the merge base; returns them.
+
+    A path the merge base holds is checked out from it (index and working tree);
+    one it does not hold is removed from both.  Git does the writing, so no
+    path is followed through a symlink the worktree holds.
+    """
+    restored: list[str] = []
+    for path in sorted(change_set(worktree, base_commit)):
+        if path in keep or path.startswith(".tend/"):
+            continue                  # .tend/ is tend's own state, never the attempt's
+        if _at(worktree, base_commit, path) is not None:
+            done = _git(worktree, "checkout", base_commit, "--", path)
+        else:
+            done = _git(worktree, "rm", "-q", "-r", "-f", "--cached", "--ignore-unmatch", "--",
+                        path)
+            if done.returncode == 0:
+                done = _git(worktree, "clean", "-q", "-f", "-x", "--", path)
+        if done.returncode != 0:
+            raise RuntimeError(f"could not restore {path}: {done.stderr.strip()[:300]}")
+        restored.append(path)
+    return restored
+
+
+_STATUS = re.compile(r"(?m)^status:.*$")
+
+
+def complete_task_file(text: str) -> str:
+    """The task file's text with ``status: complete`` and every other line as given."""
+    done, n = _STATUS.subn("status: complete", text, count=1)
+    if n:
+        return done
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + "status: complete\n"
+
+
+def write_unresolved(worktree: Path, manifests: Path, task: str, count: int,
+                     base: str = "main") -> list[str]:
+    """Write and commit the task's UNRESOLVED documents; returns the paths written.
+
+    Everything else the rejected attempts changed is put back as it is at the
+    merge base first (:func:`restore_outside`): left in the branch, a
+    neighbour's task file or a stray path made the gate refuse the capped
+    contribution on every later call, which is the loop the cap exists to end.
+    """
+    reason = cap_reason(count)
     docs = unresolved_documents(manifests, task, reason)
-    directory = worktree / "findings" / task
-    if directory.is_dir():
-        for stale in directory.iterdir():
-            if stale.is_file() and f"findings/{task}/{stale.name}" not in docs:
-                stale.unlink()
+    base_commit = merge_base(worktree, base)
+    task_rel = f"tasks/{task}.yaml"
+    restore_outside(worktree, base_commit, set(docs))
     for rel, doc in docs.items():
         path = worktree / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_dumps(doc), encoding="utf-8")
-    task_file = worktree / "tasks" / f"{task}.yaml"
+    task_file = worktree / task_rel
     if task_file.is_file():
-        text = task_file.read_text(encoding="utf-8")
-        text, n = re.subn(r"(?m)^status:\s*\S+\s*$", "status: complete", text, count=1)
-        task_file.write_text(text if n else text + "status: complete\n", encoding="utf-8")
-    paths = sorted(docs) + ([f"tasks/{task}.yaml"] if task_file.is_file() else [])
+        task_file.write_text(complete_task_file(task_file.read_text(encoding="utf-8")),
+                             encoding="utf-8")
+    paths = sorted(docs) + ([task_rel] if task_file.is_file() else [])
     added = _git(worktree, "add", "-A", "--", f"findings/{task}", *paths[len(docs):])
     if added.returncode != 0:
         raise RuntimeError(f"git add failed: {added.stderr.strip()[:300]}")
@@ -254,12 +389,27 @@ def write_unresolved(worktree: Path, manifests: Path, task: str, count: int) -> 
     return paths
 
 
-def is_capped_contribution(worktree: Path, manifests: Path, task: str) -> bool:
-    """Does the worktree hold exactly the attempt-cap documents of this task?"""
+def is_capped_contribution(worktree: Path, manifests: Path, task: str,
+                           base: str = "main") -> bool:
+    """Does the worktree hold exactly the attempt-cap documents of this task, and change
+    nothing else since the merge base but its task file's status?"""
     try:
         docs = unresolved_documents(manifests, task, "")
-    except (OSError, ValueError):
+        base_commit = merge_base(worktree, base)
+        changed = change_set(worktree, base_commit)
+    except (OSError, ValueError, RuntimeError):
         return False
+    task_rel = f"tasks/{task}.yaml"
+    if not set(changed) <= set(docs) | {task_rel} or any(s == "D" for s in changed.values()):
+        return False
+    if task_rel in changed:
+        before = _at(worktree, base_commit, task_rel)
+        try:
+            after = (worktree / task_rel).read_text(encoding="utf-8")
+        except OSError:
+            return False
+        if before is None or complete_task_file(before) != after:
+            return False
     directory = worktree / "findings" / task
     if not directory.is_dir():
         return False
@@ -301,15 +451,27 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--manifests", default=os.environ.get("CF_TASK_MANIFESTS", ""))
             p.add_argument("--worktree", default=os.getcwd())
             p.add_argument("--cap", type=int, default=cap_from_env())
+            p.add_argument("--base", default=os.environ.get("CF_MERGE_TARGET") or "main",
+                           help="the merge target the change set is read against "
+                                "(default: $CF_MERGE_TARGET, else main)")
         else:
             p.add_argument("--raw", required=True, help="the reviewer's raw envelope")
+            p.add_argument("--result", required=True,
+                           help="the reviewer's result file (.tend/agent_result.json), which "
+                                "may be missing")
     args = ap.parse_args(argv)
     root = Path(args.root)
+    if args.cmd != "record" and 0 < args.cap < LOCATE_ATTEMPT_CAP:
+        print(f"attempt_cap: a cap of {args.cap} (CF_ATTEMPT_CAP) is under the locate gate's "
+              f"{LOCATE_ATTEMPT_CAP}: the gate refuses a by: attempt_cap document at a lower "
+              f"count, so the capped task would loop; set CF_ATTEMPT_CAP to 0 (off) or at "
+              f"least {LOCATE_ATTEMPT_CAP} in the wrapper", file=sys.stderr)
+        return EXIT_CONFIG
     if not _safe(args.task):
         print(f"attempt_cap: no usable task id ({args.task!r}); the cap is off", file=sys.stderr)
         return EXIT_NOT_CAPPED
     if args.cmd == "record":
-        count = record(root, args.task, Path(args.raw), sys.stdin.read())
+        count = record(root, args.task, Path(args.raw), sys.stdin.read(), Path(args.result))
         print(f"attempt_cap: task {args.task}: {count} genuine rejection(s)", file=sys.stderr)
         return 0
     count = read_count(root, args.task)
@@ -322,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
     manifests, worktree = Path(args.manifests), Path(args.worktree)
     if args.cmd == "worker":
         try:
-            paths = write_unresolved(worktree, manifests, args.task, count)
+            paths = write_unresolved(worktree, manifests, args.task, count, args.base)
         except (OSError, ValueError, RuntimeError) as exc:
             print(f"attempt_cap: could not end task {args.task} as UNRESOLVED: {exc}",
                   file=sys.stderr)
@@ -333,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
                           "files_changed": paths[:50],
                           "notes": "unresolved.by = attempt_cap; counted separately at harvest"}))
         return 0
-    if is_capped_contribution(worktree, manifests, args.task):
+    if is_capped_contribution(worktree, manifests, args.task, args.base):
         print(json.dumps({"schema_version": 1, "verdict": "approve",
                           "notes": f"approved mechanically: task {args.task} is at the attempt cap "
                                    f"({count} genuine rejections) and holds exactly its "

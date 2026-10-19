@@ -14,6 +14,8 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import contextlib
+import io
 import json
 import os
 import signal
@@ -232,17 +234,21 @@ class BridgeCase(unittest.TestCase):
 
     def setUp(self):
         self.tmp = scratch(self)
-        self.root = self.tmp / "tend-root"
-        prompts = self.root / "prompts"
-        prompts.mkdir(parents=True)
-        for role in ("worker", "reviewer"):
-            (prompts / f"{role}-system.md").write_text("system\n", encoding="utf-8")
-            (prompts / f"{role}.md").write_text("task $TEND_TASK_ID\n", encoding="utf-8")
+        self.tend_root(self.tmp / "tend-root")
         self.bin = self.tmp / "fakebin"
         self.bin.mkdir()
         self.calls = self.tmp / "agentbox-calls"
         self.worktree = self.tmp / "worktree"
         self.worktree.mkdir()
+
+    def tend_root(self, root: Path) -> None:
+        """The bridge's root (CF_BRIDGE_ROOT): its prompts; attempts/ and usage/ land here."""
+        self.root = root
+        prompts = self.root / "prompts"
+        prompts.mkdir(parents=True, exist_ok=True)
+        for role in ("worker", "reviewer"):
+            (prompts / f"{role}-system.md").write_text("system\n", encoding="utf-8")
+            (prompts / f"{role}.md").write_text("task $TEND_TASK_ID\n", encoding="utf-8")
 
     def agentbox(self, body: str) -> None:
         fake(self.bin / "agentbox", f'echo called >> "{self.calls}"\n'
@@ -328,6 +334,9 @@ class TestTheAttemptCap(BridgeCase):
     def setUp(self):
         super().setUp()
         self.fx = tvl.Fixture(self, "locate")
+        # the fixture's root is the tend root, as on the host: gate/ (with
+        # tasks/) beside attempts/, where the gate reads the bridge's counter
+        self.tend_root(self.fx.root)
         self.task = "t-loc-0001"
         self.fx.manifest(self.task, tvl.locate_manifest_doc(self.fx))
         tvl.git(self.worktree, "init", "-q", "-b", "main")
@@ -402,6 +411,74 @@ class TestTheAttemptCap(BridgeCase):
         self.reject()
         self.assertEqual(self.called(), before + 1)
 
+    def prose(self, text: str) -> subprocess.CompletedProcess:
+        """A reviewer that writes NO result file and says ``text`` in its envelope."""
+        envelope = dict(SUCCESS, result=text)
+        (self.tmp / "envelope.json").write_text(json.dumps(envelope), encoding="utf-8")
+        self.agentbox(f'cat "{self.tmp / "envelope.json"}"\n')
+        return self.bridge("reviewer", **self.capenv)
+
+    def test_a_verdict_coerced_from_prose_is_not_a_rejection(self):
+        """Three approvals in prose, and no result file, used to cap a task."""
+        for text in ("I checked the form and ran the gate: exit 0. I approve this "
+                     "contribution; it is well formed.",
+                     '{"schema_version": 1, "verdict": "approve", "notes": "fine"}', ""):
+            for _ in range(3):
+                self.prose(text)
+        self.assertEqual(attempt_cap.read_count(self.root, self.task), 0)
+        self.assertEqual(json.loads(self.prose('{"verdict": "approve"}').stdout)["verdict"],
+                         "approve")
+        # an explicit marker in prose is the reviewer's own verdict, and counts
+        out = json.loads(self.prose("The receipt is thin. verdict: request_changes").stdout)
+        self.assertEqual(out["verdict"], "request_changes")
+        self.assertEqual(attempt_cap.read_count(self.root, self.task), 1)
+
+    def test_at_the_cap_the_attempts_other_changes_are_undone(self):
+        """A neighbour's task file, a stray file and a deletion left by the
+        rejected attempts made the gate refuse the capped contribution forever."""
+        tvl.git(self.worktree, "checkout", "-q", "main")
+        (self.worktree / "tasks" / "t-loc-0002.yaml").write_text(
+            "id: t-loc-0002\nstatus: open\npriority: high\n", encoding="utf-8")
+        landed = self.worktree / "findings" / "t-loc-0002" / f"{tvl.SID}.json"
+        landed.parent.mkdir(parents=True)
+        landed.write_text("{}\n", encoding="utf-8")
+        tvl.git(self.worktree, "add", "-A")
+        tvl.git(self.worktree, "commit", "-qm", "a neighbour landed")
+        tvl.git(self.worktree, "checkout", "-q", "-B", self.task)
+        own = self.worktree / "tasks" / f"{self.task}.yaml"
+        own.write_text(f"id: {self.task}\nstatus: open\npriority: 9\n", encoding="utf-8")
+        (self.worktree / "tasks" / "t-loc-0002.yaml").write_text(
+            "id: t-loc-0002\nstatus: open\npriority: 9\n", encoding="utf-8")
+        landed.unlink()
+        (self.worktree / "scripts").mkdir()
+        (self.worktree / "scripts" / "stray.py").write_text("print(1)\n", encoding="utf-8")
+        tvl.git(self.worktree, "add", "-A")
+        tvl.git(self.worktree, "commit", "-qm", "a rejected attempt")
+        (self.worktree / "notes.txt").write_text("untracked\n", encoding="utf-8")
+        for _ in range(3):
+            self.reject()
+        before = self.called()
+        # left alone, the reviewer would not approve this mechanically
+        self.assertFalse(attempt_cap.is_capped_contribution(self.worktree, self.fx.tasks,
+                                                            self.task))
+        proc = self.bridge("worker", **self.capenv)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = vl.run_gate(self.fx.gate_cfg(), root=self.worktree, changed_files=True,
+                             base="main", task_id=self.task)
+        self.assertEqual(result["exit"], 0, result["problems"] + result["broken"])
+        self.assertEqual(landed.read_text(), "{}\n")
+        self.assertIn("priority: high", (self.worktree / "tasks" / "t-loc-0002.yaml").read_text())
+        self.assertEqual(own.read_text(), f"id: {self.task}\nstatus: complete\n")
+        self.assertFalse((self.worktree / "scripts" / "stray.py").exists())
+        self.assertFalse((self.worktree / "notes.txt").exists())
+        self.assertEqual(json.loads(self.bridge("reviewer", **self.capenv).stdout)["verdict"],
+                         "approve")
+        self.assertEqual(self.called(), before)
+        # a stray path after the cap is not approved mechanically
+        (self.worktree / "late.txt").write_text("x\n", encoding="utf-8")
+        self.assertFalse(attempt_cap.is_capped_contribution(self.worktree, self.fx.tasks,
+                                                            self.task))
+
     def test_the_inlined_git_pins_are_gitsafes(self):
         self.assertEqual(attempt_cap._GIT_SAFE_CONFIG, gitsafe.SAFE_CONFIG)
         self.assertEqual(attempt_cap._GIT_SAFE_ENV, gitsafe.SAFE_ENV)
@@ -412,6 +489,41 @@ class TestTheAttemptCap(BridgeCase):
                          attempt_cap.EXIT_NOT_CAPPED)
         self.assertEqual(attempt_cap.main(["worker", "--root", str(self.root), "--task", self.task,
                                            "--manifests", str(self.fx.tasks), "--cap", "0"]),
+                         attempt_cap.EXIT_NOT_CAPPED)
+
+    def test_a_cap_under_the_gates_is_refused_before_any_agent_call(self):
+        """The locate gate accepts a ``by: attempt_cap`` document only at a count of at
+        least its LOCATE_ATTEMPT_CAP, so a bridge capping lower wrote documents that the
+        gate refused on every later call, and the task looped.  A wrapper whose
+        CF_ATTEMPT_CAP is under the gate's is refused on every call, from the first."""
+        low = dict(self.capenv, CF_ATTEMPT_CAP=str(vl.LOCATE_ATTEMPT_CAP - 1))
+        self.agentbox(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
+        for rejected in (0, vl.LOCATE_ATTEMPT_CAP - 1):
+            while attempt_cap.read_count(self.root, self.task) < rejected:
+                self.reject()
+            before = self.called()
+            for role in ("worker", "reviewer"):
+                with self.subTest(rejected=rejected, role=role):
+                    proc = self.bridge(role, **low)
+                    self.assertEqual(proc.returncode, attempt_cap.EXIT_CONFIG, proc.stderr)
+                    self.assertIn(f"CF_ATTEMPT_CAP={vl.LOCATE_ATTEMPT_CAP - 1} is refused",
+                                  proc.stderr)
+                    self.assertEqual(proc.stdout, "")
+            self.assertEqual(self.called(), before, "a refused cap called an agent")
+            self.assertFalse((self.worktree / "findings").exists())
+        self.assertIn("under the locate gate's", (self.root / "agentbox-worker.err").read_text())
+        for cap in ("1", str(vl.LOCATE_ATTEMPT_CAP - 1)):
+            said = io.StringIO()
+            with contextlib.redirect_stderr(said):
+                code = attempt_cap.main(["worker", "--root", str(self.root), "--task", self.task,
+                                         "--manifests", str(self.fx.tasks), "--cap", cap])
+            self.assertEqual(code, attempt_cap.EXIT_CONFIG)
+            self.assertIn(f"set CF_ATTEMPT_CAP to 0 (off) or at least {vl.LOCATE_ATTEMPT_CAP}",
+                          said.getvalue())
+        # the gate's own cap, or one above it, is the bridge's to choose
+        self.assertEqual(attempt_cap.main(["worker", "--root", str(self.root), "--task",
+                                           self.task, "--manifests", str(self.fx.tasks),
+                                           "--cap", str(vl.LOCATE_ATTEMPT_CAP + 1)]),
                          attempt_cap.EXIT_NOT_CAPPED)
 
 
@@ -428,7 +540,7 @@ class TestTheInventoryAndChallengeShapes(unittest.TestCase):
                     doc = {k: v for k, v in doc.items() if k != "finders"}
                     doc["records"] = []
                 fx.manifest(task, doc)
-                docs = attempt_cap.unresolved_documents(fx.tasks, task, "attempt_cap: 3")
+                docs = attempt_cap.unresolved_documents(fx.tasks, task, attempt_cap.cap_reason(3))
                 ((rel, body),) = docs.items()
                 path = fx.root / rel
                 path.parent.mkdir(parents=True)

@@ -45,6 +45,7 @@ Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
 - `unresolved`: you could not decide (an ambiguous passage, a declaration you could not read). Say why in `reason`; its receipt still lists each curated candidate it concerns (step 2). It is counted as unresolved, never as not formalized — prefer it to a guess.
 - `coverage` (optional, a `located` passage only): `"coverage": {"complete": true, "parts": [1, 2], "note": "<one sentence>"}` — `parts` are the `rank`s of at least {{min_coverage_parts}} of this passage's `hasPart` locations, and `note` says in your own words, in one sentence, how they together state every clause (no long quote of the source). Without a claim, `hasPart` locations leave the passage partially formalized however many there are; with one a challenger confirms, the parts count together. Never put `coverage` on an `absent` or `unresolved` passage.
 - Copy `item`, the source's shas and `renderer` from the manifest exactly; write no commit and no `proof_status`.
+- Write each `note`, query and `reason` in your own words: one that copies more than twelve consecutive words of the article is refused, since the published records quote no more than that.
 
 ## Before you commit, run the gate
 

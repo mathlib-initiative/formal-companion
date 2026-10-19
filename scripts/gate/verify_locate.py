@@ -64,13 +64,16 @@ references/locate-documents.md sections 2-4 and 9):
 6. at most five locations per passage with distinct ranks 1..5, one per
    declaration;
 7. the changed files are the task's own: ``findings/<task-id>/<source-id>.json``
-   for the sources its manifest names and ``tasks/<task-id>.yaml``; the task
-   id comes from ``--task-id``/``TEND_TASK_ID``, else from tend's
-   ``orchestrator.sqlite`` (an ASSUMED schema, looked up defensively; verify it
-   on the host), else the single-stem rule -- and the last line says which;
+   for the sources its manifest names and ``tasks/<task-id>.yaml``, whose
+   change is its ``status:`` line; the task id comes from
+   ``--task-id``/``TEND_TASK_ID``, else from tend's ``orchestrator.sqlite`` (an
+   ASSUMED schema, looked up defensively; verify it on the host), else the
+   single-stem rule (one task per change set; ``--pre-merge``, the batched
+   pre-merge check, admits several tasks' new documents) -- and the last line
+   says which;
 8. an inventory drops no deterministic-finder passage of its task without a
-   skip covering its span, and every ``math`` paragraph is covered by a
-   passage or a skip.
+   skip covering its span, every ``math`` paragraph is covered by a passage or
+   a skip, and no skip holds the whole span of a passage the inventory keeps.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -79,6 +82,7 @@ never fails the gate.
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import json
 import math
@@ -90,7 +94,8 @@ import stat
 import sys
 import time
 import urllib.parse
-from typing import Any, Iterable
+from collections import Counter
+from typing import Any, Callable, Iterable
 
 HERE = pathlib.Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -215,6 +220,13 @@ HAS_PART = "hasPart"
 #: references/locate-documents.md section 3)
 COVERAGE_KEYS = frozenset({"complete", "parts", "note"})
 MIN_COVERAGE_PARTS = 2
+UNRESOLVED_ATTEMPT_CAP = "attempt_cap"
+#: cflib.vocab.LOCATE_ATTEMPT_CAP: the genuine reviewer rejections at which the
+#: bridge ends a task UNRESOLVED (scripts/run/attempt_cap.py)
+LOCATE_ATTEMPT_CAP = 3
+#: the reason ``attempt_cap.cap_reason`` writes; a test pins the two together
+ATTEMPT_CAP_REASON = re.compile(r"attempt_cap: ([0-9]+) genuine reviewer rejections; the bridge "
+                                r"ended the task without another agent call\Z")
 MAX_LOCATIONS_PER_PASSAGE = 5
 MIN_ABSENCE_QUERIES = 3
 LOCATE_EXTENSION = "org.mathlib-initiative.formal-companion.locate"
@@ -226,6 +238,10 @@ QID = re.compile(r"Q[1-9][0-9]*\Z")
 #: the index at export, and the commit is the universe's
 FORBIDDEN_KEYS = ("proof_status", "commit", "version")
 NOTES_MAX = 2000
+#: problems kept (and printed) per gate call; the rest are counted by rule
+MAX_PROBLEMS = 200
+#: the largest task file rule 7 reads to compare it with the merge base
+MAX_TASK_FILE_BYTES = 1024 * 1024
 #: defaults gate.json may override
 MAX_QUOTE_CHARS = 1500
 MAX_CONTEXT_CHARS = 200
@@ -531,8 +547,11 @@ class SourceView:
 class Context:
     """Everything one gate call loads lazily: sources, candidates, manifests, the corpus."""
 
-    def __init__(self, cfg: GateConfig):
+    def __init__(self, cfg: GateConfig, *, check_counter: bool = False):
         self.cfg = cfg
+        #: read the attempt counter for a ``by: attempt_cap`` document (tend's
+        #: validation runs beside it; a harvested corpus has none)
+        self.check_counter = check_counter
         self._sources: dict[str, SourceView] = {}
         self._candidates: dict[str, dict | None] = {}
         self._manifests: dict[str, dict | None] = {}
@@ -625,25 +644,48 @@ class Context:
 # --------------------------------------------------------------------------- #
 
 class Problems:
-    """``(rule, message)`` pairs, printed as ``[rule N] <where>: <message>``."""
+    """``(rule, message)`` pairs, printed as ``[rule N] <where>: <message>``.
+
+    At most :data:`MAX_PROBLEMS` are kept; the rest are only counted, by rule, so
+    a document that is wrong a million times over costs a million counts, not a
+    million lines on stderr.
+    """
 
     def __init__(self) -> None:
         self.items: list[tuple[str, str]] = []
+        self.more: dict[str, int] = {}
 
     def add(self, rule: int | str, where: str, message: str) -> None:
+        if len(self.items) >= MAX_PROBLEMS:
+            self.more[str(rule)] = self.more.get(str(rule), 0) + 1
+            return
         self.items.append((str(rule), f"{where}: {message}"))
+
+    def extend(self, other: "Problems") -> None:
+        for rule, message in other.items:
+            if len(self.items) >= MAX_PROBLEMS:
+                self.more[rule] = self.more.get(rule, 0) + 1
+            else:
+                self.items.append((rule, message))
+        for rule, count in other.more.items():
+            self.more[rule] = self.more.get(rule, 0) + count
 
     def __bool__(self) -> bool:
         return bool(self.items)
 
     def __len__(self) -> int:
-        return len(self.items)
+        return len(self.items) + sum(self.more.values())
 
     def lines(self) -> list[str]:
-        return [f"[rule {rule}] {message}" for rule, message in self.items]
+        out = [f"[rule {rule}] {message}" for rule, message in self.items]
+        if self.more:
+            out.append(f"... and {sum(self.more.values())} more problem(s) not listed ("
+                       + ", ".join(f"rule {r}: {n}" for r, n in sorted(self.more.items()))
+                       + f"); the first {MAX_PROBLEMS} are above")
+        return out
 
     def by_rule(self) -> dict[str, int]:
-        out: dict[str, int] = {}
+        out: dict[str, int] = dict(self.more)
         for rule, _ in self.items:
             out[rule] = out.get(rule, 0) + 1
         return dict(sorted(out.items()))
@@ -674,8 +716,68 @@ def _span(value: Any, length: int) -> tuple[int, int] | None:
     return None
 
 
-def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
-    return a[0] < b[1] and b[0] < a[1]
+def _union_length(spans: list[tuple[int, int]]) -> int:
+    """How many layer characters the spans cover together."""
+    total, reach = 0, -1
+    for a, b in sorted(spans):
+        if b <= reach:
+            continue
+        total += b - max(a, reach)
+        reach = b
+    return total
+
+
+class _SpanIndex:
+    """Non-empty half-open layer spans, sorted once, for rule 8's three questions.
+
+    Each skip, finder and math paragraph asks one question of the kept passages
+    or of the skips; asked by scanning, a document of n passages and n skips cost
+    O(n^2), so a 4 MB document could hold the gate for minutes.  Sorted by start,
+    with the furthest end of every prefix and the nearest end of every suffix,
+    each question is one bisection.
+    """
+
+    def __init__(self, spans: Iterable[tuple[int, int]]) -> None:
+        self.spans = sorted(set(spans))
+        self.starts = [a for a, _b in self.spans]
+        #: index of the span reaching furthest among spans[:i + 1]
+        self._furthest: list[int] = []
+        best = -1
+        for i, (_a, b) in enumerate(self.spans):
+            if best < 0 or b > self.spans[best][1]:
+                best = i
+            self._furthest.append(best)
+        #: index of the span ending first among spans[i:]
+        self._first_end = [0] * len(self.spans)
+        best = -1
+        for i in range(len(self.spans) - 1, -1, -1):
+            if best < 0 or self.spans[i][1] <= self.spans[best][1]:
+                best = i
+            self._first_end[i] = best
+
+    def overlapping(self, span: tuple[int, int]) -> tuple[int, int] | None:
+        """A span sharing a character with ``span``, else None."""
+        i = bisect.bisect_left(self.starts, span[1])           # spans[:i] start before its end
+        if i == 0:
+            return None
+        hit = self.spans[self._furthest[i - 1]]
+        return hit if hit[1] > span[0] else None
+
+    def covering(self, span: tuple[int, int]) -> tuple[int, int] | None:
+        """A span holding the whole of ``span``, else None."""
+        i = bisect.bisect_right(self.starts, span[0])          # spans[:i] start at or before it
+        if i == 0:
+            return None
+        hit = self.spans[self._furthest[i - 1]]
+        return hit if hit[1] >= span[1] else None
+
+    def inside(self, span: tuple[int, int]) -> tuple[int, int] | None:
+        """A span lying wholly inside ``span``, else None."""
+        i = bisect.bisect_left(self.starts, span[0])           # spans[i:] start at or after it
+        if i == len(self.spans):
+            return None
+        hit = self.spans[self._first_end[i]]
+        return hit if hit[1] <= span[1] else None
 
 
 # --------------------------------------------------------------------------- #
@@ -713,15 +815,21 @@ def _preview_universe(cfg: GateConfig) -> dict:
 
 def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id: str,
                   layer: str, span: tuple[int, int], quote: dict, item: str,
-                  passage_kind: Any, outcome: str | None, locations: list[dict]) -> None:
+                  passage_kind: Any, outcome: str | None, locations: list[dict],
+                  receipt: dict | None = None) -> None:
     """Rule 1: build the records this passage implies with the EXPORT'S builder, and check them.
 
     ``locate_records`` (``scripts/locate/records.py``, staged in the gate
     directory) is the code ``cf export literature-links`` runs, so a document
     this passes is one the export can turn into records the vendored checker
-    accepts.  What the worker does not control -- the challenge value, the
-    location key, the proof status joined from the index, the source's citation
-    fields when ``gate.json`` does not carry them -- is a placeholder.
+    accepts.  That includes the export's cap on free text: every location's note
+    goes through ``locate_records.check_note``, and an absence's receipt is built
+    by ``locate_records.receipt_document`` -- the export's own two calls -- so a
+    note, a query or a candidate's reason that carries more than the quote cap of
+    the source verbatim is refused here, while the worker can still rewrite it.
+    What the worker does not control -- the challenge value, the location key,
+    the proof status joined from the index, the source's citation fields when
+    ``gate.json`` does not carry them -- is a placeholder.
     """
     source = _preview_source(cfg, source_id)
     universe = _preview_universe(cfg)
@@ -729,6 +837,24 @@ def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id:
                "passage_kind": passage_kind if passage_kind in PASSAGE_KINDS else "other",
                "absence": {"challenge": "not_required"}}
     span_sha = lr.sha256_text(layer[span[0]:span[1]])
+    verbatim = False
+    for loc in locations:
+        try:
+            lr.check_note(item, loc.get("note") if isinstance(loc.get("note"), str) else "",
+                          layer)
+        except lr.RecordError as exc:
+            problems.add(1, where, f"{exc}; the export refuses it: say it in your own words")
+            verbatim = True
+    reference = {"sha256": _PLACEHOLDER_SHA, "queries": 0, "candidates": 0}
+    if outcome == "absent":
+        try:
+            _digest, _text, reference = lr.receipt_document(source_id, item, receipt or {},
+                                                            universe, layer)
+        except lr.RecordError as exc:
+            problems.add(1, where, f"{exc}; the export refuses it: say it in your own words")
+            verbatim = True
+    if verbatim:
+        return
     records: list[dict] = []
     try:
         for loc in locations:
@@ -748,9 +874,7 @@ def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id:
                                               span_sha256=span_sha))
         if outcome == "absent" and universe["libraries"]:
             records.append(lr.absence_record(source, passage, universe, quote,
-                                             span_sha256=span_sha,
-                                             receipt={"sha256": _PLACEHOLDER_SHA, "queries": 0,
-                                                      "candidates": 0}))
+                                             span_sha256=span_sha, receipt=reference))
         elif not locations:
             records.append(lr.unresolved_record(source, passage, universe, quote,
                                                 span_sha256=span_sha))
@@ -812,13 +936,66 @@ def _header(doc: dict, name: str, cfg: GateConfig, task_id: str, manifest: dict 
     return source_id
 
 
-def _unresolved_block(doc: dict, name: str, problems: Problems) -> bool:
+def attempts_counter(cfg: GateConfig, task_id: str) -> pathlib.Path:
+    """``<tend-root>/attempts/<task-id>.json``: the bridge's counter of genuine rejections.
+
+    The bridge keeps it under its own root, the tend root its wrappers export as
+    ``CF_BRIDGE_ROOT`` (the directory above ``bin/``).  ``gate.json`` names that
+    directory through ``orchestrator_db``, which ``plan.host_layout`` puts at
+    ``<tend root>/orchestrator.sqlite`` in both layouts: ``runs/<run>/tend-root/``
+    on this machine, where the gate directory lies inside it, and
+    ``<root>/<run>-tend/`` on a run host, where the gate directory is its sibling
+    ``<root>/<run>-gate/`` -- so the counter is never looked for from the gate
+    directory (references/locate-documents.md sections 1 and 9).  A ``gate.json``
+    with no ``orchestrator_db`` cannot say where the counter is: that is a gate
+    the planner did not write, and a broken one (exit 3).
+    """
+    if cfg.orchestrator_db is None:
+        raise GateBroken("gate.json names no orchestrator_db, so the tend root holding the "
+                         "bridge's attempts/ counter is unknown; a by: attempt_cap document "
+                         "cannot be checked")
+    return cfg.orchestrator_db.parent / "attempts" / f"{task_id}.json"
+
+
+def _counted_rejections(cfg: GateConfig, task_id: str) -> int:
+    counter = attempts_counter(cfg, task_id)
+    try:
+        data = json.loads(counter.read_text(encoding="utf-8"))
+        count = data.get("rejections") if isinstance(data, dict) else 0
+        return count if isinstance(count, int) and not isinstance(count, bool) else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def _unresolved_block(doc: dict, name: str, problems: Problems, cfg: GateConfig, task_id: str,
+                      *, check_counter: bool) -> bool:
+    """Is the document unresolved?  Its block's form, and whose it is, are checked here.
+
+    ``by: attempt_cap`` is the bridge's (``scripts/run/attempt_cap.py``), never a
+    worker's: its reason is the text the bridge writes, at a count of at least
+    :data:`LOCATE_ATTEMPT_CAP`, and with ``check_counter`` (tend's validation,
+    which runs beside the counter) the task's counter is at the cap too.
+    """
     block = doc.get("unresolved")
     if block is None:
         return False
     if not isinstance(block, dict) or not _nonempty_str(block.get("reason")) \
             or not _one_of(block.get("by"), UNRESOLVED_BY):
         problems.add(1, name, "unresolved must be {reason: <text>, by: worker|attempt_cap}")
+        return True
+    if block["by"] == UNRESOLVED_ATTEMPT_CAP:
+        said = ATTEMPT_CAP_REASON.match(block["reason"])
+        if said is None or int(said.group(1)) < LOCATE_ATTEMPT_CAP:
+            problems.add(1, name, "unresolved.by attempt_cap is written by the bridge at the "
+                                  "attempt cap, never by a worker: a worker that cannot finish "
+                                  "writes by: worker with its reason")
+        elif check_counter:
+            counted = _counted_rejections(cfg, task_id)
+            if counted < LOCATE_ATTEMPT_CAP:
+                problems.add(1, name, f"unresolved.by attempt_cap, but task {task_id} has "
+                                      f"{counted} counted rejection(s), under the cap of "
+                                      f"{LOCATE_ATTEMPT_CAP}: a worker that cannot finish "
+                                      f"writes by: worker with its reason")
     return True
 
 
@@ -855,20 +1032,28 @@ def _check_location(cfg: GateConfig, ctx: Context, problems: Problems, where: st
 
 
 def _check_locations(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
-                     locations: Any) -> list[dict]:
+                     locations: Any) -> list[dict] | None:
+    """The passage's locations, checked; None when there are more than the cap.
+
+    Over the cap the passage is refused (rule 6) and nothing else of it is read:
+    each location costs a check and a record, and a document within the byte cap
+    can hold a million of them.
+    """
     if not isinstance(locations, list):
         problems.add(1, where, "locations is a list")
         return []
     if len(locations) > cfg.max_locations:
-        problems.add(6, where, f"{len(locations)} locations; at most {cfg.max_locations} per passage")
+        problems.add(6, where, f"{len(locations)} locations; at most {cfg.max_locations} per "
+                               f"passage (none of them was checked)")
+        return None
     ranks = [loc.get("rank") for loc in locations if isinstance(loc, dict)]
     if len(ranks) != len(set(map(repr, ranks))):
         problems.add(6, where, f"ranks {ranks} are not distinct")
     # one location per declaration: two would share one location_key, and the
     # challenge plan refuses a key it sees twice
-    named = [f"{loc.get('library')}:{loc.get('declaration')}" for loc in locations
-             if isinstance(loc, dict)]
-    repeated = sorted({n for n in named if named.count(n) > 1})
+    named = Counter(f"{loc.get('library')}:{loc.get('declaration')}" for loc in locations
+                    if isinstance(loc, dict))
+    repeated = sorted(n for n, count in named.items() if count > 1)
     if repeated:
         problems.add(6, where, f"{', '.join(repeated)} is located more than once; one location "
                                f"per declaration")
@@ -1110,6 +1295,7 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                  f"the passage at {p['span'][0]} is In-text #{digest} with a "
                                  f"{words}-word head, not {p.get('item')!r} with "
                                  f"{p.get('head_words')!r}")
+    kept_by = _SpanIndex(spans)
     skip_spans: list[tuple[int, int]] = []
     for i, skip in enumerate(skips):
         at = f"{name}: skips[{i}]"
@@ -1119,7 +1305,18 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
             continue
         if not _nonempty_str(skip.get("reason")):
             problems.add(1, at, "a skip carries its reason")
+        # A skip says "no passage here": one that holds a whole kept passage
+        # contradicts it, and a skip of the whole layer beside the one passage
+        # rule 4 asks for would otherwise meet the coverage floor alone.  A skip
+        # INSIDE a kept passage stays allowed: it is how a finder nested in one
+        # (a bolded definition in a theorem box) is dropped.
+        held = kept_by.inside(span)
+        if held is not None:
+            problems.add(8, at, f"the skip {list(span)} holds the whole kept passage at "
+                                f"{list(held)}: a skip drops text no passage keeps")
         skip_spans.append(span)
+    skipped_by = _SpanIndex(skip_spans)
+    skipped_finders = 0
     # rule 8: the deterministic finders' passages and the coverage floor
     for j, finder in enumerate(manifest_doc.get("finders") or []):
         if not isinstance(finder, dict):
@@ -1129,10 +1326,12 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
             raise GateBroken(f"task manifest finder {j} of {source_id} has no span in the layer")
         start = finder.get("start", fspan[0])
         kept = start in span_starts
-        skipped = any(s[0] <= fspan[0] and fspan[1] <= s[1] for s in skip_spans)
+        skipped = skipped_by.covering(fspan) is not None
         if not (kept or skipped):
             problems.add(8, name, f"the {finder.get('finder')} passage at {list(fspan)} was "
                                   f"dropped with no skip covering its span")
+        elif skipped and not kept:
+            skipped_finders += 1
     finder_starts = {(f.get("finder"), f.get("start", (f.get("span") or [None])[0]))
                      for f in manifest_doc.get("finders") or [] if isinstance(f, dict)}
     for i, p, _h in rows:
@@ -1142,17 +1341,24 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                          f"finder {p.get('finder')} is claimed, but no {p.get('finder')} passage of "
                          f"the task starts at {p['span'][0]}; a passage the enumerator found is "
                          f"`model`")
-    covering = spans + skip_spans
+    skipped_math = 0
     for k, paragraph in enumerate(source.paragraphs()):
         if not paragraph.get("math"):
             continue
         pspan = _span(paragraph.get("span"), len(layer))
         if pspan is None:
             raise GateBroken(f"{source_id}: paragraphs.json entry {k} has no span in the layer")
-        if not any(_overlaps(pspan, c) for c in covering):
-            problems.add(8, name, f"the math paragraph at {list(pspan)} (section "
-                                  f"{paragraph.get('section') or []}) is covered by no passage and "
-                                  f"no skip (the coverage floor)")
+        if kept_by.overlapping(pspan) is not None:
+            continue
+        if skipped_by.overlapping(pspan) is not None:
+            skipped_math += 1
+            continue
+        problems.add(8, name, f"the math paragraph at {list(pspan)} (section "
+                              f"{paragraph.get('section') or []}) is covered by no passage and "
+                              f"no skip (the coverage floor)")
+    # what the floor's skips removed, for the harvest receipt (gate_corpus)
+    stats["skipped"] = {"skips": len(skip_spans), "chars": _union_length(skip_spans),
+                        "math_paragraphs": skipped_math, "finder_passages": skipped_finders}
     # rule 4, inventory side
     curated = _curated(ctx, source_id)
     if curated:
@@ -1242,6 +1448,8 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
             problems.add(1, where, "an unresolved document leaves every passage unresolved")
         locations = _check_locations(cfg, ctx, problems, where, p.get("locations"))
         receipt = _check_receipt(cfg, ctx, problems, where, p.get("receipt"))
+        if locations is None:
+            continue                          # over the cap: refused, nothing more to read
         counting = [loc for loc in locations if loc.get("relation") != RELATED_MATCH]
         if outcome == "located" and not counting:
             problems.add(1, where, "located needs a location whose relation counts; with only "
@@ -1283,7 +1491,7 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
         check_records(cfg, problems, where, source_id=source_id, layer=source.layer, span=span,
                       quote=frozen[item]["quote"], item=item,
                       passage_kind=frozen[item].get("passage_kind"), outcome=outcome,
-                      locations=locations)
+                      locations=locations, receipt=receipt)
     missing = sorted(set(frozen) - set(written))
     if missing:
         problems.add(2, name, f"the task's passages {', '.join(missing)} have no outcome")
@@ -1373,6 +1581,8 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
             problems.add(1, where, "a prominence overturn names the new prominence")
         if action == "overturn" and target in ("absence", "unresolved", "scope"):
             locations = _check_locations(cfg, ctx, problems, where, v.get("locations"))
+            if locations is None:
+                continue                      # over the cap: refused, nothing more to read
             if target != "scope" and not [loc for loc in locations
                                           if loc.get("relation") != RELATED_MATCH]:
                 problems.add(1, where, "overturning an absence or an unresolved outcome gives a "
@@ -1467,7 +1677,8 @@ def validate_document(path: pathlib.Path, name: str, task_id: str, cfg: GateConf
         raise GateBroken(f"task manifest {task_id} is for {manifest.get('mode')}/"
                          f"{manifest.get('run_id')}, not this gate's {cfg.mode}/{cfg.run_id}")
     source_id = _header(doc, name, cfg, task_id, manifest, problems)
-    unresolved = _unresolved_block(doc, name, problems)
+    unresolved = _unresolved_block(doc, name, problems, cfg, task_id,
+                                   check_counter=ctx.check_counter)
     stats.update({"source_id": source_id, "unresolved": unresolved,
                   "attempt_capped": bool(unresolved and isinstance(doc.get("unresolved"), dict)
                                          and doc["unresolved"].get("by") == "attempt_cap")})
@@ -1598,31 +1809,78 @@ def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path)
 
 
 def _classify(path: str) -> tuple[str, str, str] | None:
-    """``('findings', task, source)`` / ``('task', task, '')`` / None for anything else."""
+    """``('findings', task, source)`` / ``('task', task, '')`` / None for anything else.
+
+    A task file is ``tasks/<task-id>.yaml``, the name the planner writes; a
+    ``tasks/<task-id>.yml`` beside it would be a second task file, not this one.
+    """
     parts = path.split("/")
     if len(parts) == 3 and parts[0] == "findings" and parts[2].endswith(".json") \
             and _safe_name(parts[1]) and _safe_name(parts[2][:-len(".json")]):
         return "findings", parts[1], parts[2][:-len(".json")]
-    if len(parts) == 2 and parts[0] == "tasks" and parts[1].endswith((".yaml", ".yml")):
-        stem = parts[1].rsplit(".", 1)[0]
+    if len(parts) == 2 and parts[0] == "tasks" and parts[1].endswith(".yaml"):
+        stem = parts[1][:-len(".yaml")]
         if _safe_name(stem):
             return "task", stem, ""
     return None
 
 
+#: a task file's ``status:`` line, the one line a contribution changes
+_STATUS_LINE = re.compile(r"status:")
+
+
+def _task_file_change(before: str | None, path: pathlib.Path) -> str:
+    """Why a task file's change is more than its status, or '' when it is only that.
+
+    Every line but the ``status:`` ones must read as at the merge base: the id,
+    the dependencies and the priority are the plan's, and a contribution that
+    rewrote them would land them on the merge target, where tend reads tasks.
+    """
+    if before is None:
+        return "cannot be read at the merge base"
+    try:
+        raw = path.read_bytes()[:MAX_TASK_FILE_BYTES + 1]
+    except OSError as exc:
+        return f"cannot be read ({exc})"
+    if len(raw) > MAX_TASK_FILE_BYTES:
+        return f"is over {MAX_TASK_FILE_BYTES} bytes"
+    after = raw.decode("utf-8", errors="replace")
+
+    def rest(text: str) -> list[str]:
+        return [line.rstrip() for line in text.splitlines() if not _STATUS_LINE.match(line)]
+
+    old, new = rest(before), rest(after)
+    if old == new:
+        return ""
+    changed = next((n for o, n in zip(old, new) if o != n), None)
+    if changed is None:
+        changed = (new[len(old)] if len(new) > len(old) else f"(removed) {old[len(new)]}")
+    return (f"changes more than its status line (first other change: {changed[:80]!r}); a "
+            f"contribution sets `status:` and leaves the plan's lines as they are")
+
+
 def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
-                  allow_empty: bool = False, root: pathlib.Path | None = None) -> Problems:
+                  allow_empty: bool = False, root: pathlib.Path | None = None,
+                  pre_merge: bool = False,
+                  at_base: Callable[[str], str | None] | None = None) -> Problems:
     """Rule 7: only the task's own documents and task file, nothing removed.
 
     With no task id the single-stem rule of ``verify_findings.check_changed``
-    stands in, addition-aware per task for a batched pre-merge change set: a
-    several-task set passes only when every one of its documents is an addition.
-    With ``root`` (the worktree) every path the change set writes must be a
-    regular file there, and a task that wrote documents must hold one for every
-    source its manifest names (rule 1: one document per source of the task).
+    stands in: one worker's change set is one task's.  Only ``pre_merge`` (the
+    batched pre-merge command, ``--pre-merge``) admits several tasks, and then
+    only when every one of their documents is an addition.  With ``root`` (the
+    worktree) every path the change set writes must be a regular file there,
+    and a task that wrote documents must hold one for every source its manifest
+    names (rule 1: one document per source of the task).  The task file is the
+    task's own ``tasks/<task-id>.yaml``, already on the merge target, and with
+    ``at_base`` (its text at the merge base) a change to it is its status line
+    and nothing else.
     """
     problems = Problems()
     written: dict[str, list[tuple[str, str]]] = {}
+    #: the tasks whose task file the change set holds, accepted or not: a task
+    #: file refused below has its own line, and "has no tasks/<id>.yaml" would
+    #: be a second, false one
     tasks: set[str] = set()
     seen: set[str] = set()
     for path in sorted(entries):
@@ -1634,6 +1892,8 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
             continue
         what, stem, source = kind
         seen.add(stem)
+        if what == "task":
+            tasks.add(stem)
         if status in ("D", "R"):
             problems.add(7, path, "was deleted or renamed away; a contribution writes its own "
                                   "documents and removes nothing")
@@ -1651,7 +1911,14 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
                                       "refused: what merges must be the bytes the gate read)")
                 continue
         if what == "task":
-            tasks.add(stem)
+            if status == "A":
+                problems.add(7, path, "adds a task file: a task's file is on the merge target "
+                                      "already, and a contribution only sets its status")
+                continue
+            if root is not None and at_base is not None:
+                why = _task_file_change(at_base(path), root / path)
+                if why:
+                    problems.add(7, path, why)
             continue
         written.setdefault(stem, []).append((source, status))
         manifest = ctx.manifest(stem)
@@ -1670,7 +1937,12 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
             problems.add(1, f"findings/{stem}/", f"the task's documents for {', '.join(lacking)} "
                                                  f"are missing: one document per source of the "
                                                  f"task manifest")
-    if not task_id and len(seen) > 1:
+    if not task_id and len(seen) > 1 and not pre_merge:
+        problems.add(7, "change set", f"belongs to {len(seen)} tasks ({', '.join(sorted(seen))}) "
+                                      f"and no task id says which is this worker's: one "
+                                      f"worker's contribution is one task's (only the batched "
+                                      f"pre-merge check, --pre-merge, admits several)")
+    elif not task_id and len(seen) > 1:
         landed = sorted(stem for stem, docs in written.items() if any(s != "A" for _src, s in docs))
         landed += sorted(stem for stem in seen - set(written))
         if landed:
@@ -1801,10 +2073,30 @@ def incomplete_message() -> str:
               "locate_records.py and vendor/ beside it)")
 
 
+def _merge_base_reader(root: pathlib.Path, base: str) -> Callable[[str], str | None]:
+    """``path -> its text at the merge base of base and HEAD`` (None when it has none).
+
+    ``git cat-file blob`` runs no filter and no textconv; the git boundary is
+    ``verify_findings._git``'s.  ``changed_entries`` has refused a history with
+    no single merge base before this is asked.
+    """
+    code, out = vf._git(["merge-base", base, "HEAD"], root)
+    merge_base = out.strip() if code == 0 else ""
+
+    def read(path: str) -> str | None:
+        if not merge_base:
+            return None
+        code, text = vf._git(["cat-file", "blob", f"{merge_base}:{path}"], root)
+        return text if code == 0 else None
+
+    return read
+
+
 def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path] | None = None,
              findings_dir: str = DEFAULT_FINDINGS_DIR, changed_files: bool = False,
              base: str = "main", task_id: str = "", allow_empty: bool = False,
-             check_vendor: bool = True, task_id_from: str | None = None) -> dict:
+             check_vendor: bool = True, task_id_from: str | None = None,
+             pre_merge: bool = False) -> dict:
     """Run the gate in-process; ``{exit, problems, broken, documents, ownership, ...}``.
 
     ``cf harvest`` calls this over a landed corpus; ``main`` is the CLI around it.
@@ -1812,7 +2104,9 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     the default, or ``$TEND_TASK_ID``).  Raises nothing: an infrastructure
     failure is ``exit: 3`` with ``broken`` set.  Every call appends one line to
     the gate log with its verdict, the ``ownership`` line, ``task_id_from`` and
-    whether it judged a change set (``changed_files``).
+    whether it judged a change set (``changed_files``).  ``pre_merge`` is tend's
+    batched pre-merge check (``--pre-merge``), the one call in which a change set
+    of several tasks' new documents is admitted without a task id (rule 7).
     """
     result: dict[str, Any] = {"exit": EXIT_OK, "problems": [], "broken": [], "documents": 0,
                               "by_rule": {}, "stats": [], "ownership": "", "task_id": task_id,
@@ -1820,7 +2114,7 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     if IMPORT_ERRORS:
         result.update(exit=EXIT_GATE_BROKEN, broken=[incomplete_message()])
         return result
-    ctx = Context(cfg)
+    ctx = Context(cfg, check_counter=changed_files)
     problems = Problems()
     how = (task_id_from or TASK_ID_FROM_FLAG) if task_id else ""
     try:
@@ -1836,8 +2130,9 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
             if errs:
                 raise GateBroken("; ".join(errs))
             changed = check_changed(entries, ctx, task_id=task_id, allow_empty=allow_empty,
-                                    root=root)
-            problems.items.extend(changed.items)
+                                    root=root, pre_merge=pre_merge,
+                                    at_base=_merge_base_reader(root, base))
+            problems.extend(changed)
             if not findings:
                 for path, status in sorted(entries.items()):
                     kind = _classify(path)
@@ -1888,7 +2183,7 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     result["problems"] = problems.lines()
     result["by_rule"] = problems.by_rule()
     result["task_id"] = task_id
-    if result["exit"] == EXIT_OK and problems:
+    if result["exit"] == EXIT_OK and len(problems):
         result["exit"] = EXIT_REJECTED
     result["task_id_from"] = how if task_id else None
     write_log(cfg, {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1961,6 +2256,9 @@ def _main(argv: list[str] | None = None) -> int:
                          "orchestrator.sqlite, else the single-stem rule)")
     ap.add_argument("--allow-empty", action="store_true",
                     help="with --changed-files: tolerate a change set with no document")
+    ap.add_argument("--pre-merge", action="store_true",
+                    help="with --changed-files: the batched pre-merge check, where a change "
+                         "set of several tasks' new documents is admitted without a task id")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--self-check", action="store_true",
                     help="check that this gate can run (its modules, the vendored packages, the "
@@ -1996,7 +2294,7 @@ def _main(argv: list[str] | None = None) -> int:
                       findings=[pathlib.Path(f) for f in args.findings],
                       findings_dir=args.findings_dir, changed_files=args.changed_files,
                       base=args.base, task_id=task_id, allow_empty=args.allow_empty,
-                      task_id_from=task_id_from)
+                      task_id_from=task_id_from, pre_merge=args.pre_merge)
     for broken in result["broken"]:
         print(f"FAIL: {broken} — the gate could not run: this is not a finding of yours",
               file=sys.stderr)
