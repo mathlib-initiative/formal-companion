@@ -1729,7 +1729,7 @@ class TestTheGateGroupCitesWhatResolves(unittest.TestCase):
     def test_no_review_finding_id_is_cited(self):
         import re
 
-        finding = re.compile(r"\b[Rr]eview \d+\b|\b(?:G|C|M|OPS)-\d\d\b")
+        finding = re.compile(r"\b[Rr]eview #?\d+\b|\b(?:SEAM|OPS|[GCMRS])-\d+\b")
         files = (self.owned() + sorted((SKILL / "templates" / "tend").glob("*.tmpl"))
                  + sorted((SKILL / "templates" / "prompts").glob("locate*.tmpl"))
                  + sorted((SCRIPTS / "run").glob("bridge-*.sh")))

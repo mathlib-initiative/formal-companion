@@ -818,7 +818,7 @@ def _own_words(exc: Exception, where: str, item: str) -> str:
 
     The export's message starts with the item (``locate_records._free_text``);
     a ``where`` that already ends with it (a locate document's passage) names it
-    once, while a challenge verdict's ``verdicts[i]`` keeps it (review SEAM-3).
+    once, while a challenge verdict's ``verdicts[i]`` keeps it.
     """
     message, lead = str(exc), f"{item}: "
     if where.endswith(f": {item}") and message.startswith(lead):
