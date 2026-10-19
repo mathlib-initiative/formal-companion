@@ -9,8 +9,8 @@ build the same records a worker's document will become, and check them.
 Every input is a plain mapping:
 
 * ``source`` -- the sourceset entry (``source_id``, ``pageid``, ``revision``,
-  ``title``, ``html_sha256``, ``renderer``) plus ``uri`` (the revision's
-  permalink), ``container_title`` and ``licence`` (an SPDX id);
+  ``title``, ``html_sha256``, ``layer_sha256``, ``renderer``) plus ``uri`` (the
+  revision's permalink), ``container_title`` and ``licence`` (an SPDX id);
 * ``passage`` -- the outcome row (``item``, ``passage_kind``, ``span``,
   ``status``, ``challenge``, ``section``, ``prominence``) of
   references/locate-documents.md section 10;
@@ -21,12 +21,16 @@ Every input is a plain mapping:
 * ``library`` -- the universe's library (``id``, ``repo``, ``commit``);
 * ``universe`` -- ``{id, sha256, libraries: [library, ...]}``.
 
-Three record shapes, all with ``id = <source_id>::<item>`` and the passage's
-``section`` (its heading path) and ``prominence`` in the locate extension when
-the passage row carries them -- :func:`passage_records`, the export's entry,
-requires both -- and, for a passage with a coverage claim (the maintainer's
-decision D1), ``coverage: {complete, parts: [location_key, ...], challenge}``
-on every one of its records (:func:`coverage_problem`):
+Three record shapes, all with ``id = <source_id>::<item>``, the same subject
+end -- the capped quote, and in its locate extension the passage's whole
+``span`` (half-open code-point offsets on the layer, never its text) beside the
+``layer_sha256`` they index and the ``span_sha256`` of those characters, so a
+consumer holding that layer highlights the passage, not only its quote -- and
+the passage's ``section`` (its heading path) and ``prominence`` in the locate
+extension when the passage row carries them -- :func:`passage_records`, the
+export's entry, requires both -- and, for a passage with a coverage claim (the
+maintainer's decision D1), ``coverage: {complete, parts: [location_key, ...],
+challenge}`` on every one of its records (:func:`coverage_problem`):
 
 * :func:`location_record` -- one ``lean`` end at the declaration, ``role:
   key``, the relation and the passage's derived status; a ``closeMatch``
@@ -94,6 +98,7 @@ PROMINENCES = frozenset({"subject", "central", "supporting"})
 #: ones its sidecar carries
 RECEIPT_CANDIDATE_KEYS = ("library", "declaration", "verdict", "reason")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _SPACE = re.compile(r"\s")
 
 
@@ -179,9 +184,32 @@ def cap_quote(layer: str, start: int, end: int | None = None, *,
 # ends
 # --------------------------------------------------------------------------
 
+def passage_span(passage: Mapping[str, Any]) -> list[int]:
+    """The passage's half-open layer span, two ints ``0 <= start < end``, or :class:`RecordError`."""
+    span = passage.get("span")
+    if (not isinstance(span, (list, tuple)) or len(span) != 2
+            or not all(type(offset) is int for offset in span)):
+        raise RecordError(f"{passage.get('item')}: no [start, end] layer span ({span!r})")
+    start, end = span
+    if not 0 <= start < end:
+        raise RecordError(f"{passage.get('item')}: the span [{start}, {end}] is not "
+                          "0 <= start < end")
+    return [start, end]
+
+
 def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
-                span_sha256: str) -> dict:
-    """The ``html`` end: the revision's permalink, the quote, the CSL citation, the licence."""
+                span_sha256: str, span: Iterable[int]) -> dict:
+    """The ``html`` end: the revision's permalink, the quote, the CSL citation, the licence.
+
+    Its locate extension carries the passage's ``span`` on the layer whose sha is
+    the source's ``layer_sha256`` (offsets only: a consumer highlights its own
+    copy of that layer), beside ``span_sha256``, the sha of those characters.  A
+    span is offsets on one layer, so a source with no layer sha is refused.
+    """
+    layer_sha = str(source.get("layer_sha256") or "")
+    if not _HEX64.match(layer_sha):
+        raise RecordError(f"{source.get('source_id')}: no layer_sha256 for the subject end's span")
+    start, end = span
     uri = str(source["uri"])
     revision = str(source["revision"])
     citation = {"id": str(source["source_id"]), "type": "webpage",
@@ -194,7 +222,8 @@ def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
     if quote.get("suffix"):
         quote_out["suffix"] = quote["suffix"]
     ext = {"pageid": int(source["pageid"]), "html_sha256": str(source["html_sha256"]),
-           "renderer": str(source["renderer"]), "span_sha256": span_sha256,
+           "layer_sha256": layer_sha, "renderer": str(source["renderer"]),
+           "span": [int(start), int(end)], "span_sha256": span_sha256,
            "licence": str(source.get("licence") or "")}
     return {"type": "html", "uri": uri, "version": revision,
             "location": {"quote": quote_out}, "citation": citation,
@@ -358,7 +387,8 @@ def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                           "challenge value")
     record = {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
-        "subject": [subject_end(source, quote, span_sha256=span_sha256)],
+        "subject": [subject_end(source, quote, span_sha256=span_sha256,
+                                span=passage_span(passage))],
         "object": [lean_end(library, location)],
         "relation": str(location["relation"]),
         "kind": str(passage["passage_kind"]),
@@ -386,7 +416,8 @@ def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     challenge = absence.get("challenge") or passage.get("challenge")
     record = {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
-        "subject": [subject_end(source, quote, span_sha256=span_sha256)],
+        "subject": [subject_end(source, quote, span_sha256=span_sha256,
+                                span=passage_span(passage))],
         "object": [lean_end(lib) for lib in libraries],
         "relation": NO_MATCH,
         "status": NOT_FORMALIZED,
@@ -405,7 +436,8 @@ def unresolved_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     """An unresolved outcome: ``object: []`` and no status; counted, never not formalized."""
     return {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
-        "subject": [subject_end(source, quote, span_sha256=span_sha256)],
+        "subject": [subject_end(source, quote, span_sha256=span_sha256,
+                                span=passage_span(passage))],
         "object": [],
         "kind": str(passage["passage_kind"]),
         "extensions": {EXTENSION: _record_ext(passage, universe)},
@@ -545,10 +577,10 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
                     universe: Mapping[str, Any]) -> tuple[list[dict], list[tuple[str, str]]]:
     """Every record of one passage outcome, and the receipt sidecars they reference
     (``(sha256, text)``); a location note that carries the source past the cap is refused."""
-    span = passage.get("span")
-    if not span:
-        raise RecordError(f"{passage.get('item')}: no span to quote")
-    start, end = int(span[0]), int(span[1])
+    start, end = passage_span(passage)
+    if end > len(layer):
+        raise RecordError(f"{passage.get('item')}: the span [{start}, {end}] leaves the layer "
+                          f"(0..{len(layer)})")
     quote = cap_quote(layer, start, end)
     span_sha = sha256_text(layer[start:end])
     libs = {str(lib["id"]): lib for lib in universe["libraries"]}

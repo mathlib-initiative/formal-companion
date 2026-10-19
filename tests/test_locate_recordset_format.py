@@ -31,6 +31,14 @@ And from the re-export of smoke 2 in the agreed format (the proof run):
   quotes 19 words of the article ("The passage says only that '...' -- i.e. ..."),
   and the export refused the passage over the quote cap: the note is the first
   sentence the cap admits, and "i.e." ends no sentence.
+
+And from the consumer's agreement to the passage span (S5):
+
+* S5 -- a consumer could highlight only the capped twelve-word quote: the subject
+  end carries the passage's whole ``span`` on the layer and that layer's
+  ``layer_sha256``, the source's own, in the shape the consumer's builder admits
+  (two ints ``0 <= start < end``, 64 lowercase hex, the quote's ``exact`` the
+  span's head and ``span_sha256`` the sha of its characters).
 """
 from __future__ import annotations
 
@@ -63,6 +71,10 @@ from test_locate_planner import Campaign, ws  # noqa: E402
 EXT = records.EXTENSION
 UNIVERSE_LIBRARY_KEYS = {"id", "brain_lib", "repo", "commit", "toolchain", "roots", "licence",
                          "display_name"}
+#: the subject end's locate extension, every key the consumer's builder admits there
+#: (its required five and the optional span pair, which the export always writes)
+SUBJECT_EXT_KEYS = {"pageid", "html_sha256", "layer_sha256", "renderer", "span", "span_sha256",
+                    "licence"}
 
 
 def _records(out_dir: Path) -> list[dict]:
@@ -448,6 +460,33 @@ class TestTheRecords(_Exported):
              "version": F.LIBRARIES[lib]["commit"]} for lib in ("alpha", "beta")])
         self.assertEqual(records.check(absence), [])
 
+    def test_s5_every_subject_end_carries_its_passages_span_on_the_sources_layer(self):
+        self.challenge()
+        self.assertEqual(self.export()[0], 0)
+        out_dir = self.paths.export_dir("set-1")
+        sources = {row["source_id"]: row for row in
+                   map(json.loads, (out_dir / "sources.jsonl").read_text(encoding="utf-8")
+                       .splitlines())}
+        pin = read_yaml(self.paths.run_yaml("loc-1"))["locate"]["sourceset"]
+        recs = _records(out_dir)
+        self.assertTrue(recs)
+        for rec in recs:
+            sid = rec["id"].split("::")[0]
+            layer = export_mod.inputs.source_view(self.paths, pin["id"], sid).layer()
+            (end,) = rec["subject"]
+            ext = end["extensions"][EXT]
+            start, stop = ext["span"]
+            with self.subTest(record=rec["id"], relation=rec.get("relation")):
+                self.assertEqual(set(ext), SUBJECT_EXT_KEYS)
+                self.assertTrue(all(type(offset) is int for offset in ext["span"]))
+                self.assertTrue(0 <= start < stop <= len(layer))
+                self.assertEqual(ext["layer_sha256"], sources[sid]["layer_sha256"])
+                self.assertEqual(ext["layer_sha256"], records.sha256_text(layer))
+                self.assertEqual(ext["span_sha256"], records.sha256_text(layer[start:stop]))
+                exact = end["location"]["quote"]["exact"]
+                self.assertEqual(layer[start:start + len(exact)], exact)
+                self.assertLessEqual(len(exact), stop - start)
+
     def test_m6_a_downgrade_to_close_match_keeps_a_note(self):
         witness = ("The declaration indexes gadgets from 0 where the passage counts from 1. "
                    "Otherwise it states the passage.")
@@ -671,7 +710,8 @@ class TestRecordUnits(unittest.TestCase):
 
     def source(self):
         return {"source_id": F.W1, "pageid": 1001, "revision": 2002, "title": "Widget lemma",
-                "html_sha256": "1" * 64, "renderer": "web-html/3",
+                "html_sha256": "1" * 64, "layer_sha256": records.sha256_text(self.LAYER),
+                "renderer": "web-html/3",
                 "uri": "https://en.wikipedia.org/w/index.php?curid=1001&oldid=2002",
                 "container_title": "Wikipedia", "licence": "CC-BY-SA-4.0"}
 
@@ -761,6 +801,53 @@ class TestRecordUnits(unittest.TestCase):
         with self.assertRaises(records.RecordError) as caught:
             records.passage_records(self.source(), passage, self.LAYER, self.universe())
         self.assertIn("convention difference", str(caught.exception))
+
+    def located(self, **kw):
+        return self.passage(outcome="located", status="formalized", locations=[self.location()],
+                            **kw)
+
+    def test_s5_every_shape_carries_the_span_and_the_layer_sha(self):
+        absent = self.passage(outcome="absent", status="not_formalized", locations=[],
+                              absence={"receipt": {"queries": ["a", "b", "c"], "candidates": []},
+                                       "challenge": "survived"})
+        unresolved = self.passage(outcome="unresolved", locations=[])
+        for passage in (self.located(), absent, unresolved):
+            (rec,), _ = records.passage_records(self.source(), passage, self.LAYER,
+                                                self.universe())
+            ext = rec["subject"][0]["extensions"][EXT]
+            with self.subTest(outcome=passage["outcome"]):
+                self.assertEqual(set(ext), SUBJECT_EXT_KEYS)
+                self.assertEqual(ext["span"], [0, 40])
+                self.assertEqual(ext["layer_sha256"], records.sha256_text(self.LAYER))
+                self.assertEqual(ext["span_sha256"], records.sha256_text(self.LAYER[0:40]))
+                self.assertEqual(records.check(rec), [])
+
+    def test_s5_a_span_is_two_ints_with_start_before_end(self):
+        for bad in (None, [], [0], [0, 40, 41], [True, 40], [0, 40.0], ["0", "40"], [40, 40],
+                    [41, 40], [-1, 40], "0,40"):
+            with self.subTest(span=bad), self.assertRaises(records.RecordError):
+                records.passage_records(self.source(), self.located(span=bad), self.LAYER,
+                                        self.universe())
+        recs, _ = records.passage_records(self.source(), self.located(span=(0, 40)),
+                                          self.LAYER, self.universe())
+        self.assertEqual(recs[0]["subject"][0]["extensions"][EXT]["span"], [0, 40])
+
+    def test_s5_a_span_that_leaves_the_layer_is_refused(self):
+        with self.assertRaises(records.RecordError) as caught:
+            records.passage_records(self.source(), self.located(span=[0, len(self.LAYER) + 1]),
+                                    self.LAYER, self.universe())
+        self.assertIn("leaves the layer", str(caught.exception))
+        recs, _ = records.passage_records(self.source(), self.located(span=[0, len(self.LAYER)]),
+                                          self.LAYER, self.universe())
+        self.assertEqual(recs[0]["subject"][0]["extensions"][EXT]["span_sha256"],
+                         records.sha256_text(self.LAYER))
+
+    def test_s5_a_span_needs_the_layer_it_indexes(self):
+        for layer_sha in (None, "", "A" * 64, "1" * 63):
+            source = {**self.source(), "layer_sha256": layer_sha}
+            with self.subTest(layer_sha256=layer_sha), \
+                    self.assertRaisesRegex(records.RecordError, "no layer_sha256"):
+                records.passage_records(source, self.located(), self.LAYER, self.universe())
 
 
 if __name__ == "__main__":
