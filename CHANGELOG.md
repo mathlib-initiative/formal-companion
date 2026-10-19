@@ -79,7 +79,7 @@ release has something to say.
     subject_only, sample_rate}`, which the template shas cannot see (a replicate
     planned with `--per-task 8` of a baseline planned with `--per-task 1` was
     accepted); every plan records those keys, so this needs a re-score, not a
-    re-plan. The challenge `seed` is a recorded pin only: it picks one draw at
+    re-plan. The challenge seed is a recorded pin only (`challenge_seed`): it picks one draw at
     the sample rate, and another seed's draw is the sampling variance an A/A
     replicate measures; a score
     refuses outcome rows tallied before the last harvest (the tally records each

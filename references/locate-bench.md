@@ -533,7 +533,7 @@ records no `config_shas`
 (and `agents` for one that records none of it), and `planning` (its `run.yaml`
 `locate.{per_task, subject_only, sample_rate}`, null where the run's mode has none: the task
 size, the subject-only cut and a challenge's sample rate change what a run does, and no template
-or staged file carries them) -- then `seed` (its `locate.seed`, a challenge's draw; null for
+or staged file carries them) -- then `challenge_seed` (its `locate.seed`, a challenge's draw; null for
 another mode), recorded only -- then what it staged and rendered, run id and
 paths included:
 `rendered_gate_files` (the sha of its `locate.gate_files` map), `rendered_prompts` (its
@@ -615,7 +615,7 @@ accepts only when every condition holds:
    challenged at another `--sample-rate`), or
    `price_table_sha256` differ, and when either score
    holds a run whose `run.yaml` records no `locate.config_shas`, or no `config_shas.agents`
-   (re-plan it). The challenge's `seed` is recorded and compared by nothing: it picks one
+   (re-plan it). The challenge's seed is recorded (`challenge_seed`) and compared by nothing: it picks one
    draw at the sample rate, not a way of running. Record keys are run-free, so one seed draws
    the same records of the two runs wherever they agree, and a replicate under another seed
    re-draws them: that is sampling variance the A/A replicate exists to measure, and requiring
