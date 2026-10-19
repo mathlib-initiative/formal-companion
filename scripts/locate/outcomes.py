@@ -58,7 +58,6 @@ row whose location could not be joined.
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 from collections import Counter
 from typing import Iterable
@@ -940,71 +939,12 @@ def _reopen(row: dict) -> None:
         row["coverage"]["challenge"] = vocab.CHALLENGE_PENDING
 
 
-#: the longest note a downgrade's witness lends a closeMatch, in characters
-NOTE_FROM_WITNESS_CHARS = 300
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s")
-
-
-#: abbreviations whose full stop ends no sentence of a witness ("i.e. F(x) = ...")
-_ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
-
-
-def witness_sentences(witness: str) -> list[str]:
-    """A witness's sentences, whitespace collapsed, each cut at a word at
-    :data:`NOTE_FROM_WITNESS_CHARS`.
-
-    A sentence ends at ``.``, ``!`` or ``?`` before whitespace, except after an
-    abbreviation (:data:`_ABBREVIATIONS`): the field witness's "-- i.e. F(x) =
-    ..." is one sentence, not two.
-    """
-    text = " ".join(str(witness or "").split())
-    sentences: list[str] = []
-    start = 0
-    for brk in _SENTENCE_END.finditer(text):
-        last = text[start:brk.start()].rsplit(" ", 1)[-1].lstrip("([{'\"")
-        if last.lower() in _ABBREVIATIONS:
-            continue
-        sentences.append(text[start:brk.start()])
-        start = brk.end()
-    if text[start:]:
-        sentences.append(text[start:])
-    out = []
-    for sentence in sentences:
-        if len(sentence) > NOTE_FROM_WITNESS_CHARS:
-            cut = sentence.rfind(" ", 0, NOTE_FROM_WITNESS_CHARS)
-            sentence = (sentence[:cut if cut > 0 else NOTE_FROM_WITNESS_CHARS].rstrip(" ,;:")
-                        + "\u2026")
-        out.append(sentence)
-    return out
-
-
-def downgrade_note(verdict: dict, layer: str | None = None) -> str:
-    """The note of a location a challenge downgraded to ``closeMatch``.
-
-    A ``closeMatch`` names its convention difference in ``note`` (proposal
-    section 2.6), and a downgrade from ``exactMatch`` is exactly the challenger
-    saying there is one: the verdict's own ``note`` when it gives one, else a
-    sentence of its ``witness`` (:func:`witness_sentences`) -- the first one that
-    carries no more of the source verbatim than the export's quote cap
-    (``records.verbatim_run`` against the passage's ``layer``).  A witness opens
-    by quoting the passage as often as not (field case FTC #19a718e1: "The
-    passage says only that '<19 words of the article>'"), and a note is exported,
-    so that sentence is passed over for the next.  Without a layer, or when every
-    sentence quotes past the cap, the first sentence, which the export refuses by
-    name.  Empty only when the verdict says nothing, which the gate refuses and
-    the export would refuse by name.
-    """
-    note = " ".join(str(verdict.get("note") or "").split())
-    if note:
-        return note
-    sentences = witness_sentences(str(verdict.get("witness") or ""))
-    if not sentences:
-        return ""
-    if layer:
-        for sentence in sentences:
-            if records.verbatim_run(sentence, layer) is None:
-                return sentence
-    return sentences[0]
+#: a downgrade's note is computed in ``records`` (the export's free-text rule), so
+#: the gate, which stages that module as ``locate_records``, checks the very note
+#: these outcomes write; the names stay importable from here
+NOTE_FROM_WITNESS_CHARS = records.NOTE_FROM_WITNESS_CHARS
+witness_sentences = records.witness_sentences
+downgrade_note = records.downgrade_note
 
 
 def _renumbered(locations: list[dict]) -> list[dict]:

@@ -1431,6 +1431,46 @@ class TestRuleOneAppliesTheExportsFreeTextCap(GateTestCase):
                               "witness": "found with a type search"}]}
         self.assertRule(fx.run(fx.document("t-chl-0001", body)), 1, "verbatim")
 
+    def test_a_challenge_downgrades_note(self):
+        """A downgrade to closeMatch exports a note: the verdict's, else a witness sentence.
+
+        The outcomes write ``downgrade_note(verdict, layer)`` as the location's note
+        and the export refuses one past the cap, so the gate refuses the same note,
+        computed by the same function, while the challenger can still rewrite it."""
+        key = "9" * 64
+        fx = Fixture(self, "locate-challenge")
+        doc = locate_manifest_doc(fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": THM_ITEM, "target": "location", "location_key": key,
+                           "span": THEOREM_SPAN, "passage_kind": "theorem",
+                           "relation": "exactMatch"}]
+        fx.manifest("t-chl-0001", doc)
+
+        def run(relation="closeMatch", **fields):
+            verdict = {"item": THM_ITEM, "target": "location", "location_key": key,
+                       "action": "downgrade", "relation": relation, **fields}
+            return fx.run(fx.document("t-chl-0001", {"verdicts": [verdict]}))
+
+        own = "the signature adds a finiteness hypothesis."
+        quoted = " ".join(LEAD.split()[12:])      # one sentence, fourteen words of the layer
+        result = run(note=VERBATIM, witness=own)
+        self.assertRule(result, 1, "(a downgrade to closeMatch exports its note")
+        self.assertRule(result, 1, f"verdicts[0]: {THM_ITEM}: a location's note carries "
+                                   "13+ words of the source verbatim")
+        # no note, and every sentence of the witness quotes the article past the cap
+        self.assertRule(run(witness=f"It reads: {quoted}"), 1, "verbatim")
+        # the first sentence quotes, the second does not: the second is the note
+        self.assertOk(run(witness=f"It reads: {quoted} {own.capitalize()}"))
+        self.assertOk(run(note="0 is a natural number here", witness=f"It reads: {quoted}"))
+        # a downgrade to another relation exports no note: only what the export writes
+        self.assertOk(run(relation="narrowMatch", note=VERBATIM, witness=own))
+        # the gate's note is the outcomes' note: one definition, in the staged module
+        from locate import outcomes, records  # noqa: PLC0415
+        self.assertIs(outcomes.downgrade_note, records.downgrade_note)
+        with self.assertRaisesRegex(records.RecordError, "verbatim"):
+            records.check_note(THM_ITEM, outcomes.downgrade_note(
+                {"witness": f"It reads: {quoted}"}, LAYER), LAYER)
+
     def test_the_problem_names_the_passage_once_seam3(self):
         """Review SEAM-3: the export's message starts with the item, and a locate
         document's where ends with it; the line names it once.  A challenge verdict's

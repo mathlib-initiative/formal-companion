@@ -40,7 +40,9 @@ release has something to say.
   by reproducing the original failure first.
   - **Gate.** Rule 1 holds a worker's free text (location notes, absence
     queries, candidate reasons, challenge notes) to the export's verbatim-source
-    cap. Rule 7 reads the task file: `tasks/<id>.yaml` only, never added,
+    cap, the note a downgrade to `closeMatch` exports (its `note`, else a
+    witness sentence) included: the note helpers moved from `locate.outcomes`
+    into the staged `locate.records`, so the gate computes the outcomes' note. Rule 7 reads the task file: `tasks/<id>.yaml` only, never added,
     changed in its `status:` line alone; a worktree's change set is one task's,
     and tend's pre-merge command carries the gate's new `--pre-merge`, the only
     call that admits several tasks. Rule 6's duplicate check is linear and a

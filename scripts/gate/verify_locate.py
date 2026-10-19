@@ -1589,6 +1589,18 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
             elif RELATION_STRENGTH[new] <= RELATION_STRENGTH[old]:
                 problems.add(1, where, f"a downgrade names a relation weaker than the record's "
                                        f"{old}; {new} is not")
+            elif (new == CLOSE_MATCH and source is not None
+                  and not str(records[key].get("note") or "").strip()):
+                # the note the outcomes give the downgraded location (locate/outcomes.py
+                # takes the location's own note first; a location record of a challenge
+                # manifest carries none, so this is checked for every such downgrade)
+                try:
+                    lr.check_note(str(v.get("item")), lr.downgrade_note(v, source.layer),
+                                  source.layer)
+                except lr.RecordError as exc:
+                    problems.add(1, where, _own_words(exc, where, str(v.get("item")))
+                                 + " (a downgrade to closeMatch exports its note, else a "
+                                   "sentence of its witness, as the location's note)")
         if action == "overturn" and target == "prominence" \
                 and not _one_of(v.get("prominence"), PROMINENCE):
             problems.add(1, where, "a prominence overturn names the new prominence")

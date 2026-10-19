@@ -268,7 +268,11 @@ A locate task carries at most eight passages of one frozen inventory.
   — a witness that opens by quoting the passage lends its next sentence — where
   a sentence ends at `.`, `!` or `?` before a space but not after an
   abbreviation (`i.e.`, `e.g.`, `cf.` …). When every sentence quotes past the
-  cap the first is taken, and the export refuses the passage by name.
+  cap the first is taken, and the export would refuse the passage by name, so
+  the gate refuses the verdict (rule 1): it computes the same note with the
+  export's own `locate_records.downgrade_note` and checks it with
+  `check_note`. A downgrade to another relation exports no note, and its
+  `note` is not capped.
 - A challenge task's records are its task manifest's, and each gets exactly one
   verdict (rule 1); overturn locations are checked like a locate document's.
   A verdict names its record by string `item` (and string `location_key` for a

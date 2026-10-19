@@ -44,6 +44,9 @@ The quote is capped (:func:`cap_quote`): at most ``QUOTE_WORDS`` words of
 ``prefix`` and ``suffix``, cut from the layer itself and widened only within
 those caps until it occurs exactly once; a passage whose capped quote cannot
 be made unique is refused (:class:`RecordError`), never exported ambiguous.
+Free text is held to the same cap: :func:`check_note` for a location's note,
+:func:`receipt_document` for an absence's receipt, and :func:`downgrade_note`
+says which note a challenge downgrade to ``closeMatch`` gives its location.
 """
 from __future__ import annotations
 
@@ -439,6 +442,75 @@ def check_note(item: str, note: Any, layer: str) -> None:
     receipt half is :func:`receipt_document`, which both call too.
     """
     _free_text(item, "a location's note", str(note or ""), layer)
+
+
+#: the longest note a downgrade's witness lends a closeMatch, in characters
+NOTE_FROM_WITNESS_CHARS = 300
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+
+
+#: abbreviations whose full stop ends no sentence of a witness ("i.e. F(x) = ...")
+_ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
+
+
+def witness_sentences(witness: str) -> list[str]:
+    """A witness's sentences, whitespace collapsed, each cut at a word at
+    :data:`NOTE_FROM_WITNESS_CHARS`.
+
+    A sentence ends at ``.``, ``!`` or ``?`` before whitespace, except after an
+    abbreviation (:data:`_ABBREVIATIONS`): the field witness's "-- i.e. F(x) =
+    ..." is one sentence, not two.
+    """
+    text = " ".join(str(witness or "").split())
+    sentences: list[str] = []
+    start = 0
+    for brk in _SENTENCE_END.finditer(text):
+        last = text[start:brk.start()].rsplit(" ", 1)[-1].lstrip("([{'\"")
+        if last.lower() in _ABBREVIATIONS:
+            continue
+        sentences.append(text[start:brk.start()])
+        start = brk.end()
+    if text[start:]:
+        sentences.append(text[start:])
+    out = []
+    for sentence in sentences:
+        if len(sentence) > NOTE_FROM_WITNESS_CHARS:
+            cut = sentence.rfind(" ", 0, NOTE_FROM_WITNESS_CHARS)
+            sentence = (sentence[:cut if cut > 0 else NOTE_FROM_WITNESS_CHARS].rstrip(" ,;:")
+                        + "\u2026")
+        out.append(sentence)
+    return out
+
+
+def downgrade_note(verdict: dict, layer: str | None = None) -> str:
+    """The note of a location a challenge downgraded to ``closeMatch``.
+
+    A ``closeMatch`` names its convention difference in ``note`` (proposal
+    section 2.6), and a downgrade from ``exactMatch`` is exactly the challenger
+    saying there is one: the verdict's own ``note`` when it gives one, else a
+    sentence of its ``witness`` (:func:`witness_sentences`) -- the first one that
+    carries no more of the source verbatim than the export's quote cap
+    (:func:`verbatim_run` against the passage's ``layer``).  A witness opens
+    by quoting the passage as often as not (field case FTC #19a718e1: "The
+    passage says only that '<19 words of the article>'"), and a note is exported,
+    so that sentence is passed over for the next.  Without a layer, or when every
+    sentence quotes past the cap, the first sentence, which the export refuses by
+    name.  Empty only when the verdict says nothing, which the gate refuses and
+    the export would refuse by name.  It lives here, beside :func:`check_note`,
+    so the gate's rule 1 computes the same note from the staged copy and refuses
+    the one the export would.
+    """
+    note = " ".join(str(verdict.get("note") or "").split())
+    if note:
+        return note
+    sentences = witness_sentences(str(verdict.get("witness") or ""))
+    if not sentences:
+        return ""
+    if layer:
+        for sentence in sentences:
+            if verbatim_run(sentence, layer) is None:
+                return sentence
+    return sentences[0]
 
 
 def receipt_document(source_id: str, item: str, receipt: Mapping[str, Any],
