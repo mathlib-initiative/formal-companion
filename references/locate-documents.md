@@ -1467,7 +1467,10 @@ Every row also carries the `source_sha` and `layer_sha256` of its document.
 gate_ok, harvested_at, receipt_sha256}}` for the locate run, its inventory and
 each challenge run -- `receipt_sha256` the sha of the `RECEIPT.json` it read, so
 a reader can tell outcomes of this harvest from those of an earlier one
-(`cf bench score` refuses rows tallied before the last harvest); a challenge
+(`cf bench score` refuses rows tallied before the last harvest, and so refuses
+any tally that records no `receipt_sha256` -- every tally written before the
+field existed, even one written after the last harvest: re-run
+`cf tally --locate` on it); a challenge
 run's `required`, the records its plan required of the run; and an inventory's
 `skipped`, its receipt's `gate.skipped`, what its skips left unkept, which the
 tally also prints -- each one not a complete gated harvest named in a warning) and
