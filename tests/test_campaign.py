@@ -623,7 +623,7 @@ class TestCfRunForLocate(WorkspaceCase):
         titles = [s["title"] for s in steps if s["stage"] == "transfer"]
         rsync = titles.index(f"rsync candidates -> {entry['dest']}")
         self.assertTrue(titles[rsync - 1].startswith("open ") and titles[rsync + 1].startswith("close "))
-        # the blind arm reads no L2, so none is sent
+        # the blind arm's files are sent too: its prompts name them (review C-04)
         rd = self.ws_dir / "runs" / "r-1"
         for name in ("gate.json", "gate.local.json"):
             doc = json.loads((rd / name).read_text())
@@ -631,7 +631,7 @@ class TestCfRunForLocate(WorkspaceCase):
             (rd / name).write_text(json.dumps(doc))
         entries, _ = manifest.build_manifest(
             workspace_dir=self.ws_dir, skill_dir=SKILL, run_id="r-1", run=self.run_doc, host=host)
-        self.assertNotIn("candidates", {e["name"] for e in entries})
+        self.assertIn("candidates", {e["name"] for e in entries})
 
     def test_the_verify_stage_checks_the_corpus_once_and_the_locate_gate(self):
         host = manifest.resolve_host(self.ws, "examplebox")

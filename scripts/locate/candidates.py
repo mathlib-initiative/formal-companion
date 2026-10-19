@@ -15,10 +15,11 @@ apart because only one of them binds gate rule 4:
   library's own list of main results (``library_metadata``).  A title join keys
   on the article's TITLE only -- a bold term may be another article's subject --
   and never joins an entry that names another QID than the article's.  Every
-  curated declaration is checked in the database's exact table at the
-  universe's commit; one that is not there, and an entry refused for its QID,
-  is dropped and NAMED in ``dropped``, never kept as a phantom the gate would
-  later refuse a worker for not locating.
+  curated declaration is checked in the full ``corpus.sqlite``'s exact table
+  at the universe's commit; one that is not there, and an entry refused for
+  its QID, is dropped and NAMED in ``dropped`` (in a planted file only when its
+  own database holds it, below), never kept as a phantom the gate would later
+  refuse a worker for not locating.
 * **lexical** -- the host tool's own ranked search (``corpus.query.search``:
   every word first, any word only to fill up) over the article's terms: its
   title and the lead's bold terms (``finders.json``'s ``bold_definition`` hits
@@ -30,13 +31,19 @@ apart because only one of them binds gate rule 4:
   (``cflib.vocab.is_bold_label``: "Proof.", "Example:"), and not only stop
   words -- a bold "R" or "1'" matches half a library and finds nothing.
 
-Everything is read from ONE database, recorded in the file as ``corpus_db:
-{kind, sha256}``: the full ``corpus.sqlite``; in the G1-blind arm (``blind``)
-the blind ``corpus.blind.sqlite``, with no curated join computed at all (so
-``curated`` and ``dropped`` are empty, ``article_qid`` is null, the lexical
-hits are not filtered by any join) and ``"blind": true``, so the gate turns
-rule 4 off for that source (proposal section 8.1); for the P tier a planted
-database, so no hint names a declaration the ablation removed.  Each kind has
+The lexical hits are read from the run's TOOLS database, recorded in the file
+as ``corpus_db: {kind, sha256}``: the full ``corpus.sqlite``; in the G1-blind
+arm (``blind``) the blind ``corpus.blind.sqlite``, with no curated join
+computed at all (so ``curated`` and ``dropped`` are empty, ``article_qid`` is
+null, the lexical hits are not filtered by any join) and ``"blind": true``, so
+the gate turns rule 4 off for that source (proposal section 8.1); for the P
+tier a planted database.  The curated joins and their checks are always the
+full ``corpus.sqlite``'s -- the CHECK database, so a ``dropped`` reason is
+true of the universe -- and a planted file then WITHHOLDS every hit its own
+database lacks, from ``curated``, ``dropped`` and the QID refusals alike: the
+file travels to the P run's workers, and a removed declaration is exactly what
+the P tier measures citations of from memory (review C-02).  Only the count of
+withheld hits is reported, on this machine.  Each kind has
 its own directory (``candidates_dir`` below), so one arm never overwrites
 another's files, and the planner refuses a plan whose candidates came from
 another kind of database than the one its workers search.
@@ -56,6 +63,7 @@ import sqlite3
 import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import quote
 
 from cflib import vocab
 from cflib.errors import CfError
@@ -150,12 +158,52 @@ def read_curated_100(path: Path) -> list[dict]:
     return out
 
 
-def article_url(site: str, title: str) -> str | None:
-    """The article's canonical desktop page URL, in the form docstring tags are stored in."""
+#: the characters besides ASCII letters and digits MediaWiki leaves literal in the
+#: page URLs it writes (``wfUrlencode``); it percent-encodes every other one
+MEDIAWIKI_URL_LITERAL = frozenset("-_.;@$!*(),/~:")
+
+
+def _url_title(name: str, literal: frozenset[str] | str) -> str:
+    """``name`` as a page URL writes it: an ASCII letter, a digit or a ``literal`` as is,
+    every other character percent-encoded."""
+    return "".join(ch if ch.isascii() and (ch.isalnum() or ch in literal) else quote(ch, safe="")
+                   for ch in name)
+
+
+def article_urls(site: str, title: str) -> list[str]:
+    """Every form a docstring's link to the article is stored in, sorted; ``[]`` for none.
+
+    The docstring side is ``corpus.ingest.wikipedia_urls``, so the article's
+    side is the same reader over the ways its URL is written (review C-10):
+    MediaWiki's own page URL, which leaves ``!``, ``*``, ``,``, ``;`` and ``:``
+    literal -- so a trailing ``!`` is read as sentence punctuation and dropped,
+    as it is from a docstring's link copied from the page -- and the
+    exact title, every character but an ASCII letter, digit or underscore
+    percent-encoded, which the reader decodes back: a ``?``, ``#`` or quote mark
+    is part of the page's name, never the end of its URL, so the join meets a
+    docstring's ``What_Is_Mathematics%3F`` and its ``Widget_lemma%21``.  The
+    MediaWiki form of ``Widget lemma!`` is ``Widget lemma``'s own URL: the
+    docstring side stores the two links alike, so either joins both articles.
+
+    The same trade-off keeps a link typed by hand with a title's TRAILING ``?``
+    raw (``What_Is_Mathematics?``): the reader ends the URL at the ``?``, as a
+    browser does, and stores ``What_Is_Mathematics``, so the title less its
+    trailing question marks is read too.  A ``?`` inside a title is not: what a
+    raw one leaves (``Who`` of ``Who? (film)``) is another article's whole name,
+    not the same words less a mark.  Nor is a raw ``#``, which no title holds.
+    """
     if not site or not title:
-        return None
-    found = wikipedia_urls(f"{site.rstrip('/')}/wiki/{str(title).replace(' ', '_')}")
-    return found[0] if found else None
+        return []
+    name = str(title).replace(" ", "_")
+    names = [name]
+    stem = name.rstrip("?")
+    if stem != name and stem.strip("_") and "?" not in stem:
+        names.append(stem)
+    found: set[str] = set()
+    for each in names:
+        for literal in ("_", MEDIAWIKI_URL_LITERAL):
+            found.update(wikipedia_urls(f"{site.rstrip('/')}/wiki/{_url_title(each, literal)}"))
+    return sorted(found)
 
 
 def _read_structured(path: Path) -> Any:
@@ -247,7 +295,8 @@ def curated_hits(entry: dict, universe: inputs.Universe, conn: sqlite3.Connectio
                  curated_library: str | None = None) -> tuple[list[dict], list[dict]]:
     """``(curated, dropped)`` for one source: every join, each checked in the exact table.
 
-    The joins key on the article's QID and its title; a title join whose entry
+    ``conn`` is the CHECK database, the universe's full ``corpus.sqlite``.  The
+    joins key on the article's QID and its title; a title join whose entry
     names another QID is dropped by name, not joined.
     """
     qid = str(entry.get("wikidata") or "")
@@ -272,11 +321,11 @@ def curated_hits(entry: dict, universe: inputs.Universe, conn: sqlite3.Connectio
                 refused.append({**hit, "reason": f"the entry names another QID ({own})"})
             else:
                 raw.append(hit)
-    url = article_url(site, entry.get("title") or "")
     urls = url_index(conn) if urls is None else urls
-    for row in urls.get(url or "", []):
-        raw.append(_hit(row["library"], row["declaration"], "docstring_url",
-                        f"{row['value']} in the docstring at {row['path']}:{row['line']}"))
+    for url in article_urls(site, entry.get("title") or ""):
+        for row in urls.get(url, []):
+            raw.append(_hit(row["library"], row["declaration"], "docstring_url",
+                            f"{row['value']} in the docstring at {row['path']}:{row['line']}"))
     for lid, result in lists.metadata:
         own = str(result.get("wikidata") or "")
         by_qid = bool(qid) and own == qid
@@ -369,18 +418,44 @@ def lexical_hits(terms: list[tuple[str, str]], universe: inputs.Universe,
     return [best[k] for k in ranked[:limit]]
 
 
+def withhold(hits: list[dict], universe: inputs.Universe, tools: sqlite3.Connection
+             ) -> tuple[list[dict], int]:
+    """``(the hits the tools database holds, how many it lacks)``: a planted file's filter.
+
+    A hit whose library is not in the universe, or whose declaration the
+    planted database does not hold at the universe's commit, is left out
+    without its name -- the file reaches the P run's workers (review C-02).
+    """
+    kept = [h for h in hits if h["library"] in universe.libraries and query.exists(
+        tools, h["library"], universe.commit(h["library"]), h["declaration"])]
+    return kept, len(hits) - len(kept)
+
+
 def build(entry: dict, view: inputs.SourceView, universe: inputs.Universe,
           conn: sqlite3.Connection, lists: CuratedLists, *, site: str, db: dict,
           blind: bool = False, limit: int = DEFAULT_LIMIT,
           urls: dict[str, list[dict]] | None = None,
-          curated_library: str | None = None) -> dict:
-    """The candidates document of one source (references/locate-documents.md section 5)."""
+          curated_library: str | None = None,
+          check: sqlite3.Connection | None = None) -> tuple[dict, int]:
+    """``(the candidates document of one source, the hits it withheld)``.
+
+    The document is references/locate-documents.md section 5's.  ``conn`` is
+    the TOOLS database (``db``), which the lexical search reads; ``check`` is
+    the full ``corpus.sqlite`` the curated joins are computed and checked in
+    (``conn`` itself when that is the tools database).  A planted file keeps
+    only the hits its own database holds (:func:`withhold`).
+    """
     terms = source_terms(entry, view)
+    withheld = 0
     if blind:
         curated, dropped = [], []       # no join is computed: none may shape the lexical list
     else:
-        curated, dropped = curated_hits(entry, universe, conn, lists, site, urls,
-                                        curated_library)
+        curated, dropped = curated_hits(entry, universe, conn if check is None else check,
+                                        lists, site, urls, curated_library)
+        if db["kind"] == inputs.TOOLS_PLANTED:
+            curated, lost = withhold(curated, universe, conn)
+            dropped, also = withhold(dropped, universe, conn)
+            withheld = lost + also
     exclude = {(h["library"], h["declaration"]) for h in curated}
     lexical = lexical_hits(terms, universe, conn, limit=limit, exclude=exclude)
     return {
@@ -397,7 +472,7 @@ def build(entry: dict, view: inputs.SourceView, universe: inputs.Universe,
         "curated": curated,
         "dropped": dropped,
         "lexical": lexical,
-    }
+    }, withheld
 
 
 def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
@@ -419,10 +494,13 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
     out_dir = inputs.candidates_dir(paths, sourceset_id, universe_id, db)
     written: list[str] = []
     skipped: list[str] = []
-    counts = {"curated": 0, "lexical": 0, "dropped": 0}
+    counts = {"curated": 0, "lexical": 0, "dropped": 0, "withheld": 0}
     conn = inputs.open_tools(db, universe)
+    # the curated joins are the full database's; a planted one only filters them
+    check = (inputs.open_corpus(paths.corpus_db(universe.id), universe, blind=False)
+             if db["kind"] == inputs.TOOLS_PLANTED else conn)
     try:
-        urls = url_index(conn)
+        urls = url_index(check)
         for sid in wanted:
             entry = manifest.entries[sid]
             if not inputs.rendered(entry):
@@ -434,14 +512,18 @@ def run(paths: WorkspacePaths, sourceset_id: str, universe_id: str, *,
                 continue
             inputs.check_source(paths, sourceset_id, entry)
             view = inputs.source_view(paths, sourceset_id, sid)
-            doc = build(entry, view, universe, conn, lists, site=fam.site, db=db, blind=blind,
-                        limit=limit, urls=urls, curated_library=curated_library)
+            doc, withheld = build(entry, view, universe, conn, lists, site=fam.site, db=db,
+                                  blind=blind, limit=limit, urls=urls,
+                                  curated_library=curated_library, check=check)
             write_json(out_dir / f"{sid}.json", doc, sort_keys=True)
             written.append(sid)
             counts["curated"] += len(doc["curated"])
             counts["lexical"] += len(doc["lexical"])
             counts["dropped"] += len(doc["dropped"])
+            counts["withheld"] += withheld
     finally:
+        if check is not conn:
+            check.close()
         conn.close()
     return {"sourceset": manifest.pin(), "universe": universe.pin(), "blind": bool(blind),
             "corpus_db": {"kind": db["kind"], "sha256": db["sha256"]}, "dir": str(out_dir),
