@@ -29,7 +29,9 @@ import json
 import re
 import sys
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
@@ -158,6 +160,45 @@ class TestConformance(unittest.TestCase):
         # and the Unicode White_Space property the vendored id normaliser writes out
         self.assertEqual(rh.WHITE_SPACE, frozenset(fca_ids._UNICODE_WHITE_SPACE))
         self.assertEqual(len(rh.WHITE_SPACE), 25)
+
+    def test_the_raw_text_sets_are_the_renderers_own(self):
+        b = rh._TreeBuilder
+        self.assertEqual(set(b.CDATA_CONTENT_ELEMENTS) | set(b.RCDATA_CONTENT_ELEMENTS),
+                         rh._RAW_TEXT)
+        self.assertFalse(set(b.CDATA_CONTENT_ELEMENTS) & set(b.RCDATA_CONTENT_ELEMENTS))
+        self.assertEqual(set(b.RCDATA_CONTENT_ELEMENTS), {"textarea", "title"})
+
+    def test_the_layer_does_not_depend_on_the_interpreters_tuples(self):
+        # 3.14.0 ships ("script", "style"); 3.14.5 adds xmp, iframe, noembed and
+        # noframes: one renderer id must give one layer under either
+        html = ('<div class="mw-content-ltr mw-parser-output"><p>a<xmp><b>x</b>&amp;</xmp>b'
+                '<iframe><i>y</i></iframe>c<noembed><b>z</b></noembed>d<noframes><i>w</i>'
+                '</noframes>e<textarea><b>t</b>&amp;</textarea>f</p></div>')
+        layers = set()
+        for cdata in (("script", "style"),
+                      ("script", "style", "xmp", "iframe", "noembed", "noframes")):
+            with mock.patch.object(HTMLParser, "CDATA_CONTENT_ELEMENTS", cdata):
+                layers.add(layer(html))
+        self.assertEqual(layers, {"a<b>x</b>&amp;b<i>y</i>c<b>z</b>d<i>w</i>e<b>t</b>&f"})
+
+    def test_plaintext_and_noscript_are_ordinary_elements(self):
+        # a newer html.parser reads plaintext to the end of the body; web-html/3 does not
+        builder = rh._TreeBuilder()
+        builder.set_cdata_mode("plaintext")
+        builder.set_cdata_mode("noscript")
+        self.assertIsNone(builder.cdata_elem)
+        self.assertEqual(layer('<div class="mw-parser-output"><p>a<plaintext><b>x</b>&amp;'
+                               '</plaintext>b</p><p>c<noscript><i>y</i></noscript></p></div>'),
+                         "ax&bcy")
+
+    def test_a_parser_with_no_escapable_raw_text_is_refused(self):
+        def set_cdata_mode(self, elem):  # the signature before RCDATA support
+            self.cdata_elem = elem.lower()
+        with mock.patch.object(HTMLParser, "set_cdata_mode", set_cdata_mode):
+            with self.assertRaises(rh.RenderError) as ctx:
+                layer("<p>a<title>b</title></p>")
+        self.assertIn(sys.version.split()[0], str(ctx.exception))
+        self.assertIn("escapable", str(ctx.exception))
 
     def test_nothing_inside_a_template_is_a_view(self):
         r = rh.render('<p>Lead paragraph with words.</p><template><h2>Hidden</h2><p><b>gone</b> '
