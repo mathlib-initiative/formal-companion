@@ -42,8 +42,9 @@ in full:
   references decoded: no tag inside any of the eight is read.  ``plaintext`` and
   ``noscript`` are ordinary elements.  These sets are the renderer's own, never
   the interpreter's (CPython changed its tuples within 3.14), and an
-  ``html.parser`` with no escapable raw-text mode is refused.  The void elements (``area base br col embed hr img input link meta param
-  source track wbr``) never hold content.  A self-closing flag is honoured on a
+  ``html.parser`` with no escapable raw-text mode is refused.  The void elements
+  (``area base br col embed hr img input link meta param source track wbr``)
+  never hold content.  A self-closing flag is honoured on a
   MathML or SVG element (``<mspace/>`` holds nothing) and ignored on an HTML one,
   as the HTML5 tree builder does: an element is MathML or SVG when it is a
   ``math`` or ``svg``, or its parent is one and it is no HTML integration point's
@@ -479,7 +480,7 @@ class _TreeBuilder(HTMLParser):
     ``style`` as raw text, 3.14.5 adds ``xmp iframe noembed noframes`` and reads
     ``plaintext`` to the end of the body), and the layer must not depend on the
     patch release.  :data:`_RAW_TEXT` is the one list; the two tuples below are it,
-    split by whether references are decoded, and :meth:`set_cdata_mode` refuses
+    split by whether references are decoded, and :meth:`set_cdata_mode` ignores
     any other element an interpreter would put into raw text.
     """
 
