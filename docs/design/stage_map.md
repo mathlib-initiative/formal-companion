@@ -385,9 +385,9 @@ its stages share the run, gate, bridge, harvest and cost machinery above
 |---|---|---|
 | L0 universe | `cf corpus init / add / probe-command / ingest / build-db` | `corpora/<u>/{universe.yaml, index/<lib>/, corpus.sqlite}`; `probe-command` prints the host pipeline and runs nothing |
 | L1 sources | `cf sourceset create / enumerate-wikiproject / adopt / fetch / flag-biographies / render / status` | `sourcesets/<id>/manifest-<n>.jsonl` (append-only versions, page flags), `state.json`, and each source's rendered files (`web-html/3`; `create --from` seeds a new sourceset for a new renderer) |
-| L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json`; `--blind` or `--tools-corpus-db` write their own `<kind>/` directory under it |
+| L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json`; `--blind` or `--tools-corpus-db` write their own `<kind>/` directory under it (a planted one names no hit its database lacks) |
 | L3a/L3b/L5 | `cf plan-locate --preset locate-inventory / locate / locate-challenge` | `runs/<id>/{run.yaml (a locate block), tasks/, prompts/, gate.json, gate.local.json, challenge-plan.json, tend-root/}` |
-| L4 gate | `scripts/gate/verify_locate.py`, out of tree | nothing but its own log line; exit 0 / 1 / 3 |
+| L4 gate | `scripts/gate/verify_locate.py`, out of tree (tend's validation `--changed-files`, its pre-merge `--changed-files --pre-merge`) | nothing but its own log line; exit 0 / 1 / 3 |
 | — | `cf run`, `cf campaign plan / render / status` | `run.yaml`'s records; `campaigns/<id>/` |
 | L6 | `cf harvest`, `cf tally --locate`, `cf export literature-links` | `corpus/<run>/<task>/<source>.json` + `RECEIPT.json`, `reports/locate-{outcomes,tally}.<run>.*`, `exports/<set>/` |
 | bench | `cf bench build / anchor / freeze / score / compare` | `benches/<id>/` |
@@ -403,7 +403,8 @@ identical), the renderer by its id. A run names two databases: the full `corpus.
 that the gate, the outcomes, the export and the bench check, and the tools
 database its workers search (`gate.json` `tools_corpus_db`, recorded in
 `run.yaml` `locate.universe.tools_corpus_db`: the full one, the blind build or
-a planted file). **Its state lives in the sourceset**:
+a planted file; a challenge searches the tools database its challenged runs
+searched). **Its state lives in the sourceset**:
 `sourcesets/<id>/state.json`, written only through
 `sources.sourceset.Sourceset.record_state`, replaces
 `companions/<name>/state.json` for locate.
