@@ -1613,6 +1613,32 @@ class TestTheChangeSetsTaskAndLogLine(OwnershipCase):
         proc = self.cli("--pre-merge")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
+    def test_the_pre_merge_call_says_so_on_its_log_line(self):
+        """Port3 section 5 item 1: the pre-merge call's line was a validation's, so both of
+        the log's readers counted a merged contribution twice.  The gate writes
+        ``pre_merge`` on every line, and the readers count the validation alone."""
+        from bench import metrics
+        from run import watchdog
+
+        self.contribute()
+        self.assertEqual(self.cli("--task-id", TASK).returncode, 0)   # tend's validation
+        self.assertEqual(self.cli("--pre-merge").returncode, 0)      # tend's pre-merge
+        doc = self.wt / "findings" / TASK / f"{SID}.json"
+        environ = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")}
+        environ.pop("TEND_TASK_ID", None)
+        proc = subprocess.run([sys.executable, str(GATE), "--gate-config",
+                               str(self.fx.root / "gate" / "gate.json"), "--findings", str(doc)],
+                              capture_output=True, text=True, env=environ)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        lines = self.lines()
+        self.assertEqual([(l["changed_files"], l["pre_merge"]) for l in lines],
+                         [(True, False), (True, True), (False, False)])
+        found = metrics.gate_rejections(lines)
+        self.assertEqual((found["attempts"], found["pre_merge"]["calls"], found["dropped_lines"]),
+                         (1, 1, 1))
+        counts = watchdog.gate_counts(self.fx.root / "gate-log" / "gate.jsonl")
+        self.assertEqual((counts["calls"], counts["pre_merge_calls"]), (1, 1))
+
     def test_the_template_puts_the_flag_on_the_pre_merge_command_only(self):
         text = (SKILL / "templates" / "tend" / "config-locate.yaml.tmpl").read_text()
         validation, pre_merge = [l for l in text.splitlines() if "argv:" in l

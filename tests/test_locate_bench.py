@@ -922,17 +922,19 @@ class TestTheBootstrap(unittest.TestCase):
 
 
 def gate_line(run_id: str, task_id: str, problems=None, *, exit_code: int | None = None,
-              changed_files: bool = True, task_id_from: str | None = None) -> dict:
+              changed_files: bool = True, task_id_from: str | None = None,
+              pre_merge: bool = False) -> dict:
     """A gate log line as ``verify_locate.run_gate`` writes it, from the gate's own ``Problems``.
 
     ``changed_files`` is True for tend's call over a change set (validation, or
-    pre-merge), False for an agent's own ``--findings`` check; ``task_id_from`` is
-    the gate's own spelling, null when the line names no task.
+    pre-merge), False for an agent's own ``--findings`` check; ``pre_merge`` is
+    True for tend's pre-merge call alone; ``task_id_from`` is the gate's own
+    spelling, null when the line names no task.
     """
     reasons = problems.lines() if problems is not None else []
     return {"at": "2026-10-18T00:00:00Z", "run_id": run_id, "mode": "locate", "task_id": task_id,
             "task_id_from": (task_id_from or "$TEND_TASK_ID") if task_id else None,
-            "changed_files": changed_files,
+            "changed_files": changed_files, "pre_merge": pre_merge,
             "ok": not reasons and exit_code in (None, 0),
             "exit": exit_code if exit_code is not None else (1 if reasons else 0),
             "documents": 1, "by_rule": problems.by_rule() if problems is not None else {},
@@ -3181,10 +3183,39 @@ class TestRound3Compare(unittest.TestCase):
         self.assertEqual((found["attempts"], found["rejected"], found["dropped_lines"]), (3, 1, 4))
         self.assertEqual(found["by_rule"]["7"], {"attempts": 1, "rate": 1 / 3})
 
+    def test_a_pre_merge_line_is_counted_apart_never_as_an_attempt(self):
+        """Port3 section 5 item 1: tend's pre-merge command re-checks a batch of contributions
+        it already validated.  Its line said nothing of it, so each merged contribution was
+        two attempts and a batch conflict a worker's rejection.  The gate now writes
+        ``pre_merge``; a line without it (a gate older than the field) reads as false."""
+        conflict = real_problems((7, "findings/t2/enwiki-1001-2002.json",
+                                  "is not an addition: a batched pre-merge set adds each "
+                                  "task's documents"))
+        lines = [gate_line("loc1", "t1"),
+                 gate_line("loc1", "t2", task_id_from="orchestrator.sqlite"),
+                 {k: v for k, v in gate_line("loc1", "t3").items()   # a gate older than the field
+                  if k != "pre_merge"},
+                 gate_line("loc1", "", pre_merge=True),              # tend's pre-merge of t1, t2
+                 gate_line("loc1", "", conflict, pre_merge=True),    # a batch conflict
+                 gate_line("loc1", "", exit_code=3, pre_merge=True),
+                 gate_line("loc1", "t1", changed_files=False,        # --pre-merge on a --findings
+                           task_id_from="--task-id", pre_merge=True),  # check is still dropped
+                 gate_line("inv1", "", pre_merge=True)]              # another run's
+        found = m.gate_rejections(lines, ["loc1"])
+        self.assertEqual((found["attempts"], found["rejected"], found["broken"]), (3, 0, 0))
+        self.assertIsNone(found["by_rule"].get("7"))
+        self.assertEqual(found["rejection_rate"], 0.0)
+        self.assertEqual(found["pre_merge"], {"calls": 3, "rejected": 1, "broken": 1})
+        self.assertEqual(found["dropped_lines"], 2)
+        whole = m.gate_rejections(lines)
+        self.assertEqual((whole["attempts"], whole["pre_merge"]["calls"], whole["dropped_lines"]),
+                         (3, 4, 1))
+
     def test_the_change_set_flag_is_the_gates_own_log_field_c07(self):
         """``changed_files`` is the key ``verify_locate.run_gate`` writes on every line."""
         source = (SCRIPTS / "gate" / "verify_locate.py").read_text(encoding="utf-8")
         self.assertRegex(source, r'"changed_files":\s*bool\(changed_files\)')
+        self.assertRegex(source, r'"pre_merge":\s*bool\(pre_merge\)')
         text = " ".join((SKILL / "references" / "locate-bench.md").read_text(encoding="utf-8")
                         .split())
         self.assertNotIn("the harvest's own re-gate) or another `run_id` is dropped", text)

@@ -488,12 +488,15 @@ refused unless `--article-costs` prices every article, and the score then says
 
 `gate_rejections`: per run of the score, its harvested `runs/<run>/host/gate.jsonl` (or the
 `--gate-log` file or directory, filtered to the run), else `null`: `{attempts, rejected,
-rejection_rate, broken, dropped_lines, by_rule, by_reason}`. An attempt is a line of that run with
-`changed_files: true`, a gate call that judged a change set: tend's validation of a worker's
-contribution, whatever `task_id` it names (an empty one, `task_id_from` null, is the single-stem
-rule's call, and an attempt like any other). tend's pre-merge command makes the same call over
-its merge batch and its line does not say so, so it is counted too. The gate logs every call
-(references/locate-documents.md §9), so `dropped_lines` holds the rest: an agent's own check
+rejection_rate, broken, dropped_lines, pre_merge, by_rule, by_reason}`. An attempt is a line of
+that run with `changed_files: true` and no `pre_merge: true`, a validation call that judged a
+change set: tend's validation of a worker's contribution, whatever `task_id` it names (an empty
+one, `task_id_from` null, is the single-stem rule's call, and an attempt like any other). tend's
+pre-merge command makes the same call over its merge batch and its line says so (`pre_merge:
+true`), so a contribution re-checked before its merge is not a second attempt: those lines are
+counted apart, `pre_merge: {calls, rejected, broken}`, since a batch conflict is a real event. A
+line from a gate older than the `pre_merge` field has none and reads as false. The gate logs every
+call (references/locate-documents.md §9), so `dropped_lines` holds the rest: an agent's own check
 (a worker's or reviewer's `--findings` or findings-directory check, and the bridge's
 observable-state fallback, which passes `--findings`: `changed_files: false`, whatever task id
 it names), a line from a gate older than the field, and a line of another `run_id`. The
@@ -663,5 +666,5 @@ its reader (`scripts/bench/inputs.py` re-implements none):
 | `runs/<run>/tend-root/gate/tasks/*.json` (§9) | `locate.outcomes.task_manifests` | the inventory run's `documents[].source_id` (inventory coverage); any run's, for its cost share when `run.yaml` names no `source_ids` |
 | `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, per_task, sample_rate, strong_sample_rate, absence_sample_rate, seed, skill_commit, gate_files, config_shas.{prompts, gate_files, agents}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
 | `corpus/<run>/RECEIPT.json` | `locate.inputs.require_gated` | `complete`, `gate.ok`, `cost.{usd, tokens, messages_by_model, price_table_sha256}` |
-| `runs/<run>/host/gate.jsonl` (brought home by `cf harvest`) | the bench | one line per gate call: `run_id, task_id, task_id_from, changed_files, ownership, mode, ok, exit, documents, by_rule, reasons` (each reason `[rule N] <document>: <where>: <message>`) |
+| `runs/<run>/host/gate.jsonl` (brought home by `cf harvest`) | the bench | one line per gate call: `run_id, task_id, task_id_from, changed_files, pre_merge, ownership, mode, ok, exit, documents, by_rule, reasons` (each reason `[rule N] <document>: <where>: <message>`) |
 | `runs/<run>/host/canary.json` (brought home by `cf harvest`) | the bench | `{scanned, hits, canary_sha256}` (raw-byte shas, §8) |

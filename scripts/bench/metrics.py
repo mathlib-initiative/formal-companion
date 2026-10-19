@@ -535,13 +535,17 @@ EXIT_GATE_BROKEN = 3
 def gate_rejections(lines: list[dict], run_ids: Iterable[str] | None = None) -> dict:
     """Pre-gate rejection rates by rule and reason over every worker attempt of these runs.
 
-    An attempt is a gate call that judged a change set (``changed_files: true``):
-    tend's validation of a worker's contribution, whatever ``task_id`` the line
-    names -- a call that found no task id was judged by the single-stem rule
-    (``task_id`` empty, ``task_id_from`` null) and is an attempt all the same.
-    tend's pre-merge command runs the same call over its merge batch, and its
-    line does not say so, so a contribution judged again before its merge is
-    counted again.  The gate logs every call it is asked to make
+    An attempt is a validation call: a gate call that judged a change set
+    (``changed_files: true``) and was not tend's pre-merge check (``pre_merge``
+    not true), that is tend's validation of a worker's contribution, whatever
+    ``task_id`` the line names -- a call that found no task id was judged by the
+    single-stem rule (``task_id`` empty, ``task_id_from`` null) and is an
+    attempt all the same.  tend's pre-merge command runs the same call over its
+    merge batch and says so (``pre_merge: true``), so a contribution judged again
+    before its merge is not a second attempt: those calls are counted apart,
+    under ``pre_merge`` (``{calls, rejected, broken}``), because a batch conflict
+    is a real event.  A line written before the ``pre_merge`` field has none and
+    reads as false.  The gate logs every call it is asked to make
     (references/locate-documents.md section 9), so the rest are dropped: an
     agent's own check of its documents (a worker's or a reviewer's ``--findings``
     or findings-directory check, and the bridge's observable-state fallback in
@@ -555,8 +559,13 @@ def gate_rejections(lines: list[dict], run_ids: Iterable[str] | None = None) -> 
     one, else from its reasons' ``[rule N]`` prefixes.
     """
     wanted = set(run_ids) if run_ids is not None else None
-    calls = [l for l in lines if l.get("changed_files") is True
+    tends = [l for l in lines if l.get("changed_files") is True
              and (wanted is None or str(l.get("run_id") or "") in wanted)]
+    calls = [l for l in tends if l.get("pre_merge") is not True]
+    pre_merge = [l for l in tends if l.get("pre_merge") is True]
+    pre_merge_broken = sum(1 for l in pre_merge if l.get("exit") == EXIT_GATE_BROKEN)
+    pre_merge_rejected = sum(1 for l in pre_merge
+                             if not l.get("ok") and l.get("exit") != EXIT_GATE_BROKEN)
     broken = [l for l in calls if l.get("exit") == EXIT_GATE_BROKEN]
     attempts = [l for l in calls if l.get("exit") != EXIT_GATE_BROKEN]
     rejected = [l for l in attempts if not l.get("ok")]
@@ -579,7 +588,9 @@ def gate_rejections(lines: list[dict], run_ids: Iterable[str] | None = None) -> 
 
     return {"attempts": total, "rejected": len(rejected),
             "rejection_rate": (len(rejected) / total) if total else None,
-            "broken": len(broken), "dropped_lines": len(lines) - len(calls),
+            "broken": len(broken), "dropped_lines": len(lines) - len(tends),
+            "pre_merge": {"calls": len(pre_merge), "rejected": pre_merge_rejected,
+                          "broken": pre_merge_broken},
             "by_rule": rated(by_rule), "by_reason": rated(by_reason)}
 
 

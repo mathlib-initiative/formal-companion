@@ -3173,10 +3173,13 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     ``task_id_from`` says where a given ``task_id`` came from (``--task-id``,
     the default, or ``$TEND_TASK_ID``).  Raises nothing: an infrastructure
     failure is ``exit: 3`` with ``broken`` set.  Every call appends one line to
-    the gate log with its verdict, the ``ownership`` line, ``task_id_from`` and
-    whether it judged a change set (``changed_files``).  ``pre_merge`` is tend's
-    batched pre-merge check (``--pre-merge``), the one call in which a change set
-    of several tasks' new documents is admitted without a task id (rule 7).
+    the gate log with its verdict, the ``ownership`` line, ``task_id_from``,
+    whether it judged a change set (``changed_files``) and whether it was tend's
+    batched pre-merge check (``pre_merge``, ``--pre-merge``): the one call in
+    which a change set of several tasks' new documents is admitted without a
+    task id (rule 7), and a re-check of contributions already validated, which
+    the log's readers count apart from the validation calls.  A line written
+    before the field has no ``pre_merge`` and reads as false.
     """
     result: dict[str, Any] = {"exit": EXIT_OK, "problems": [], "broken": [], "documents": 0,
                               "by_rule": {}, "stats": [], "ownership": "", "task_id": task_id,
@@ -3260,6 +3263,7 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
                     "run_id": cfg.run_id, "mode": cfg.mode, "task_id": task_id,
                     "task_id_from": result["task_id_from"],
                     "changed_files": bool(changed_files),
+                    "pre_merge": bool(pre_merge),
                     "ownership": result["ownership"] or None,
                     "ownership_note": result.get("ownership_note"),
                     "ok": result["exit"] == EXIT_OK, "exit": result["exit"],

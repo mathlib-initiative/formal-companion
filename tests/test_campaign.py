@@ -242,6 +242,34 @@ class TestTheWatchdog(_WatchdogRoot):
         self.assertFalse(record["drained"])
         self.assertFalse(self.drains.exists(), "--dry-run drained")
 
+    def test_pre_merge_calls_are_counted_apart_never_as_attempts(self):
+        """Port3 section 5 item 1: tend's pre-merge command re-runs the gate over a batch of
+        contributions it already validated, and its line said nothing of it, so every merged
+        contribution counted twice and a batch conflict raised the failure rate.  The line
+        now says ``pre_merge: true``; the rate is over the validation calls alone, a line
+        from a gate older than the field reads as one, and the pre-merge calls are counted
+        apart in the record."""
+        log = self.root / "gate-log"
+        log.mkdir()
+        lines = ([{"ok": i % 10 != 0, "changed_files": True, "pre_merge": False}
+                  for i in range(17)]
+                 + [{"ok": True, "changed_files": True}] * 3       # a gate older than the field
+                 + [{"ok": i % 2 == 0, "changed_files": True, "pre_merge": True}
+                    for i in range(20)]
+                 + [{"ok": False, "changed_files": False, "pre_merge": False}] * 5)
+        path = log / "gate.jsonl"
+        path.write_text("".join(json.dumps(l) + "\n" for l in lines))
+        self.assertEqual(watchdog.gate_calls(path), (20, 2))
+        self.assertEqual(watchdog.gate_counts(path), {"calls": 20, "failed": 2,
+                                                      "pre_merge_calls": 20,
+                                                      "pre_merge_failed": 10})
+        # 2 of 20 validations is 0.1, under 2 x 0.1; counted with the pre-merge calls
+        # it was 12 of 40, which drained the root
+        code, record = self.run_wd("--p90-gate-failure-rate", "0.1", "--dry-run")
+        self.assertEqual((record["gate_calls"], record["gate_failed"]), (20, 2))
+        self.assertEqual((record["pre_merge_calls"], record["pre_merge_failed"]), (20, 10))
+        self.assertEqual(record["reasons"], [])
+
     def test_a_shell_prefix_runs_through_bash(self):
         envelope(self.root / "usage", "t.json", 11)
         code, record = self.run_wd("--tend", "export X=1; env")
