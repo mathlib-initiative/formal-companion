@@ -98,11 +98,18 @@ class TestTheDocumentValues(unittest.TestCase):
         self.assertEqual((vocab.MAX_TASKS_PER_ROOT, vocab.LOCATE_ATTEMPT_CAP, vocab.SESSION_SLOTS,
                           vocab.AGENT_TIMEOUT), (500, 3, 15, "45m"))
         self.assertEqual(vocab.UNRESOLVED_BY, {"worker", "attempt_cap"})
-        self.assertEqual(vocab.CHALLENGE_RULES, {"refute_by_default", "hunt", "sample", "none"})
+        self.assertEqual(vocab.CHALLENGE_RULES, {"refute_by_default", "hunt", "basis", "sample",
+                                                 "none"})
+        self.assertEqual(vocab.STRONG_RELATIONS, {"exactMatch", "closeMatch", "broadMatch"})
+        self.assertEqual(vocab.STRONG_RELATIONS | vocab.WEAK_RELATIONS, vocab.LOCATE_RELATIONS)
+        self.assertEqual((vocab.CHALLENGE_SAMPLE_RATE, vocab.CHALLENGE_STRONG_SAMPLE_RATE,
+                          vocab.CHALLENGE_ABSENCE_SAMPLE_RATE), (0.2, 0.5, 0.25))
         self.assertEqual(vocab.CHALLENGE_PLANNED, {"required", "sampled_out", "not_required"})
         self.assertEqual(vocab.INDEX_FLAGS, {"is_prop_unknown", "published_status"})
         for name in ("MAX_TASKS_PER_ROOT", "LOCATE_ATTEMPT_CAP", "SESSION_SLOTS", "AGENT_TIMEOUT",
-                     "UNRESOLVED_BY", "CHALLENGE_RULES", "CHALLENGE_PLANNED", "INDEX_FLAGS"):
+                     "UNRESOLVED_BY", "CHALLENGE_RULES", "CHALLENGE_PLANNED", "INDEX_FLAGS",
+                     "STRONG_RELATIONS", "CHALLENGE_STRONG_SAMPLE_RATE",
+                     "CHALLENGE_ABSENCE_SAMPLE_RATE", "CHALLENGE_RULE_BASIS"):
             with self.subTest(name=name):
                 self.assertIn(f"`{name}`", VOCABULARY_MD)
         from corpus import ingest

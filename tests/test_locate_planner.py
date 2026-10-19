@@ -1851,6 +1851,137 @@ class TestChallenge(Campaign):
         self.assertIsNone(absent["challenge"])
 
 
+class TestTheChallengePlanReachesStrongRecords(Campaign):
+    """The smoke-2 audit's FM2: the strong relations on a supporting passage were never
+    challenged, and they decided every supporting passage's formalized status.
+
+    The record that sets a supporting passage's status (its basis) is required when its
+    relation is strong; the other strong records of a supporting passage are sampled per
+    relation at ``--strong-sample-rate``; a supporting passage's absence is sampled at
+    ``--absence-sample-rate`` and hunted.  The fixture's supporting definition passage of
+    Widget lemma is an ``exactMatch`` to a definition (formalized); this test adds a
+    ``closeMatch`` to a proved theorem beside it (``partial`` on a definition passage, so
+    not its basis) and makes Gadget theorem's supporting passage an absence."""
+
+    def setUp(self):
+        super().setUp()
+        F.plan_locate(self, self.root, run_id="loc-1")
+        docs = F.locate_documents(self.paths, "loc-1")
+        for rel, doc in docs.items():
+            for p in doc["passages"]:
+                names = [l["declaration"] for l in p["locations"]]
+                if "Widget.Spanning" in names:
+                    p["locations"].append(F._loc("alpha", "Widget.card_dvd", "closeMatch", 3,
+                                                 note="the order is written as a cardinal"))
+                if p["outcome"] == "unresolved":
+                    p.update(outcome="absent", reason="",
+                             receipt=F._receipt("gadget induction", "lattice induction",
+                                                "induction on the order"))
+        F.write_harvest(self.paths, "loc-1", docs)
+
+    def plan(self, *extra: str, run_id: str = "chl-1") -> dict:
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                            "--sourceset", F.SS, "--universe", F.U, "--challenge-of", "loc-1",
+                            "--run-id", run_id, *extra)
+        self.assertEqual(code, 0, out + err)
+        return read_json(self.paths.run_dir(run_id) / "challenge-plan.json")
+
+    @staticmethod
+    def by_declaration(plan: dict) -> dict[tuple[str, str], dict]:
+        """The location records by (declaration, relation): Widget.card_dvd is located on
+        two passages, a hasPart of the central theorem and the added closeMatch."""
+        return {(r["declaration"], r["relation"]): r for r in plan["records"]
+                if r["target"] == "location"}
+
+    def test_the_basis_of_a_supporting_passage_is_required(self):
+        plan = self.plan("--strong-sample-rate", "0", "--sample-rate", "0")
+        spanning = self.by_declaration(plan)[("Widget.Spanning", "exactMatch")]
+        self.assertEqual((spanning["prominence"], spanning["rule"], spanning["planned"]),
+                         ("supporting", "basis", "required"))
+        self.assertIsNotNone(spanning["task_id"])
+        # the closeMatch beside it does not set the definition passage's status
+        close = self.by_declaration(plan)[("Widget.card_dvd", "closeMatch")]
+        self.assertEqual((close["rule"], close["stratum"], close["planned"]),
+                         ("sample", "relation:closeMatch", "sampled_out"))
+        # a central passage's locations are refuted by default, as before
+        part = self.by_declaration(plan)[("Widget.card_dvd", "hasPart")]
+        self.assertEqual((part["prominence"], part["rule"]), ("central", "refute_by_default"))
+
+    def test_the_basis_is_the_location_whose_own_status_is_the_passages(self):
+        built = outcomes.build(self.paths, "loc-1", require_gate=True)
+        row = next(r for r in built["outcomes"] if any(
+            l["declaration"] == "Widget.Spanning" for l in r["locations"]))
+        self.assertEqual(row["status"], "formalized")
+        self.assertEqual(challenge_plan.basis(row)["declaration"], "Widget.Spanning")
+        # a passage whose best location is a hasPart rests on it, and it is weak: sampled
+        theorem = next(r for r in built["outcomes"] if r["passage_kind"] == "theorem"
+                       and r["source_id"] == F.W1)
+        self.assertEqual(challenge_plan.basis(theorem)["relation"], "hasPart")
+        self.assertIsNone(challenge_plan.basis({**row, "status": None}))
+
+    def test_the_other_strong_records_are_sampled_at_the_strong_rate(self):
+        drawn = self.by_declaration(self.plan("--strong-sample-rate", "1", "--sample-rate", "0"))
+        self.assertEqual(drawn[("Widget.card_dvd", "closeMatch")]["planned"], "required")
+        default = self.plan(run_id="chl-2")
+        self.assertEqual((default["strong_sample_rate"], default["sample_rate"],
+                          default["absence_sample_rate"]), (0.5, 0.2, 0.25))
+        # 0.5 of a one-record stratum is one record: at least one per non-empty stratum
+        self.assertEqual(self.by_declaration(default)[("Widget.card_dvd", "closeMatch")]
+                         ["planned"], "required")
+        # the draw is stratified by relation: one stratum per strong relation
+        records = [{"rule": "sample", "stratum": f"relation:{rel}", "key": f"{rel}{i}"}
+                   for rel in ("exactMatch", "broadMatch") for i in range(4)]
+        challenge_plan.draw(records, seed=0, sample_rate=0, strong_sample_rate=0.5)
+        for rel in ("exactMatch", "broadMatch"):
+            self.assertEqual(sum(r["planned"] == "required" for r in records
+                                 if r["stratum"] == f"relation:{rel}"), 2, rel)
+
+    def test_a_supporting_absence_is_sampled_at_the_absence_rate_and_hunted(self):
+        none = self.plan("--absence-sample-rate", "0")
+        (absence,) = [r for r in none["records"] if r["target"] == "absence"
+                      and r["prominence"] == "supporting"]
+        self.assertEqual((absence["rule"], absence["stratum"], absence["planned"]),
+                         ("sample", "outcome:absent", "sampled_out"))
+        every = self.plan("--absence-sample-rate", "1", run_id="chl-2")
+        (absence,) = [r for r in every["records"] if r["target"] == "absence"
+                      and r["prominence"] == "supporting"]
+        self.assertEqual(absence["planned"], "required")
+        manifest = read_json(self.paths.tend_root("chl-2") / "gate" / "tasks"
+                             / f"{absence['task_id']}.json")
+        self.assertIn(absence["key"], [r["key"] for d in manifest["documents"]
+                                       for r in d["records"]])
+        # the subject's absence is hunted, as before, whatever the rate
+        subject = [r for r in none["records"] if r["target"] == "absence"
+                   and r["prominence"] == "subject"]
+        self.assertEqual([(r["rule"], r["planned"]) for r in subject], [("hunt", "required")])
+
+    def test_the_rates_are_recorded_in_run_yaml_and_the_bench_planning_pin(self):
+        from bench import score as score_mod
+        self.plan("--strong-sample-rate", "0.75", "--absence-sample-rate", "0.5")
+        block = read_yaml(self.paths.run_yaml("chl-1"))["locate"]
+        self.assertEqual((block["sample_rate"], block["strong_sample_rate"],
+                          block["absence_sample_rate"]), (0.2, 0.75, 0.5))
+        self.assertEqual(score_mod.planning({"locate": block}),
+                         {"per_task": None, "subject_only": False, "sample_rate": 0.2,
+                          "strong_sample_rate": 0.75, "absence_sample_rate": 0.5})
+        located = read_yaml(self.paths.run_yaml("loc-1"))["locate"]
+        self.assertEqual((located["strong_sample_rate"], located["absence_sample_rate"]),
+                         (None, None))
+        # a run.yaml from before the two rates keeps the pin it had
+        older = {k: v for k, v in block.items() if k not in score_mod.LATER_PLANNING_KEYS}
+        self.assertEqual(score_mod.planning({"locate": older}),
+                         {"per_task": None, "subject_only": False, "sample_rate": 0.2})
+
+    def test_a_rate_outside_zero_to_one_is_refused(self):
+        for flag in ("--strong-sample-rate", "--absence-sample-rate", "--sample-rate"):
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                                "--sourceset", F.SS, "--universe", F.U, "--challenge-of",
+                                "loc-1", "--run-id", "chl-x", flag, "1.5")
+            self.assertNotEqual(code, 0, flag)
+            self.assertIn("fraction in [0, 1]", out + err)
+            self.assertFalse(self.paths.run_dir("chl-x").exists())
+
+
 # --------------------------------------------------------------------------
 # the passage-id tool
 # --------------------------------------------------------------------------

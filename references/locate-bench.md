@@ -531,9 +531,11 @@ configuration -- `gate_files` (the sha of its `locate.config_shas.gate_files` ma
 the attempt cap and the merge target its wrappers ran with), each `unrecorded` for a plan that
 records no `config_shas`
 (and `agents` for one that records none of it), and `planning` (its `run.yaml`
-`locate.{per_task, subject_only, sample_rate}`, null where the run's mode has none: the task
-size, the subject-only cut and a challenge's sample rate change what a run does, and no template
-or staged file carries them) -- then `challenge_seed` (its `locate.seed`, a challenge's draw; null for
+`locate.{per_task, subject_only, sample_rate}`, null where the run's mode has none, and
+`locate.{strong_sample_rate, absence_sample_rate}` where its `run.yaml` records them, left out
+where it does not, so a run planned before them keeps its measurement id: the task size, the
+subject-only cut and a challenge's sample rates change what a run does, and no template or
+staged file carries them) -- then `challenge_seed` (its `locate.seed`, a challenge's draw; null for
 another mode), recorded only -- then what it staged and rendered, run id and
 paths included:
 `rendered_gate_files` (the sha of its `locate.gate_files` map), `rendered_prompts` (its
@@ -659,7 +661,7 @@ its reader (`scripts/bench/inputs.py` re-implements none):
 | `runs/<run>/challenge-plan.json` (§9) | `locate.outcomes.challenge_values` | each challenge run's `required` records of the locate run |
 | `corpus/<run>/<task-id>/<source-id>.json` (§1–§3, §10) | `locate.outcomes.inventory` (inventory runs), `locate.inputs.harvested_documents` (any run) | inventory documents' `layer_sha256`, `unresolved`, `passages[].{item, span, scope, passage_kind}`; locate documents' `passages[].receipt.candidates[].{library, declaration, verdict}` |
 | `runs/<run>/tend-root/gate/tasks/*.json` (§9) | `locate.outcomes.task_manifests` | the inventory run's `documents[].source_id` (inventory coverage); any run's, for its cost share when `run.yaml` names no `source_ids` |
-| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, per_task, sample_rate, seed, skill_commit, gate_files, config_shas.{prompts, gate_files, agents}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
+| `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, per_task, sample_rate, strong_sample_rate, absence_sample_rate, seed, skill_commit, gate_files, config_shas.{prompts, gate_files, agents}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
 | `corpus/<run>/RECEIPT.json` | `locate.inputs.require_gated` | `complete`, `gate.ok`, `cost.{usd, tokens, messages_by_model, price_table_sha256}` |
 | `runs/<run>/host/gate.jsonl` (brought home by `cf harvest`) | the bench | one line per gate call: `run_id, task_id, task_id_from, changed_files, ownership, mode, ok, exit, documents, by_rule, reasons` (each reason `[rule N] <document>: <where>: <message>`) |
 | `runs/<run>/host/canary.json` (brought home by `cf harvest`) | the bench | `{scanned, hits, canary_sha256}` (raw-byte shas, §8) |
