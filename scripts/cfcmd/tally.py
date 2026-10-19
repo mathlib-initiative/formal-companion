@@ -204,6 +204,39 @@ def _record_state(workspace, result: dict, runs: dict[str, Path]) -> None:
             log.detail(f"state.json for {name}: {exc}")
 
 
+#: how many sources a skipped-count line names before it counts the rest
+SKIPPED_SOURCES_NAMED = 8
+
+
+def skipped_lines(gates: dict) -> list[str]:
+    """What each read inventory's skips removed, as its receipt's gate block counted it.
+
+    Gate rule 8 lets a skip stand in for a math paragraph or a finder's passage,
+    and no later stage reads ``skips``; harvest counts what they left unkept
+    (``gate.skipped``: ``skips``, ``chars``, ``math_paragraphs``,
+    ``finder_passages``, ``by_source``) and the tally says it, per run read.
+    """
+    lines = []
+    for rid, gate in sorted(gates.items()):
+        got = gate.get("skipped") if isinstance(gate, dict) else None
+        if not isinstance(got, dict) or not got.get("skips"):
+            continue
+        lines.append(f"{gate.get('role')} run {rid}: {got.get('skips')} skip(s) cover "
+                     f"{got.get('chars', 0)} character(s), {got.get('math_paragraphs', 0)} math "
+                     f"paragraph(s) and {got.get('finder_passages', 0)} finder passage(s) that "
+                     "no passage keeps")
+        by_source = got.get("by_source") if isinstance(got.get("by_source"), dict) else {}
+        for sid, counts in sorted(by_source.items())[:SKIPPED_SOURCES_NAMED]:
+            counts = counts if isinstance(counts, dict) else {}
+            lines.append(f"  {sid}: {counts.get('skips', 0)} skip(s), {counts.get('chars', 0)} "
+                         f"character(s), {counts.get('math_paragraphs', 0)} math paragraph(s), "
+                         f"{counts.get('finder_passages', 0)} finder passage(s)")
+        if len(by_source) > SKIPPED_SOURCES_NAMED:
+            lines.append(f"  ... and {len(by_source) - SKIPPED_SOURCES_NAMED} more source(s) "
+                         f"(the tally's gates.{rid}.skipped.by_source)")
+    return lines
+
+
 def _locate(workspace, args) -> int:
     """``--locate``: one locate run's rows, outcomes and counts (references/locate-documents.md
     section 10), written to the reports and the sourceset's state file."""
@@ -237,6 +270,8 @@ def _locate(workspace, args) -> int:
         log.info(f"locate tally {run_id} [{built['mode']}]: {len(built['rows'])} finding row(s)")
         for key in sorted(counts):
             log.info(f"  {key}: {counts[key]}")
+        for line in skipped_lines(built["gates"]):
+            log.info(line)
     # every run read -- the locate run, its frozen inventory, each challenge run -- is named
     # when it is not a complete, gated harvest (a challenge whose plan required nothing
     # was never harvested and needs no receipt)

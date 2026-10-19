@@ -14,33 +14,41 @@ them home, each run's ``runs/<run>/host/gate.jsonl`` and ``canary.json``.
 **The refusals**, each a ``CfError`` naming what to fix: a receipt that is not
 complete, not gated, or carries no ``cost`` block, or one whose ``usd`` is only a
 lower bound (a call that left no priced envelope, a model priced nowhere) unless
-``--article-costs`` prices every article; gold whose files changed after
-freeze; a run of another universe (or another state of it) than gold was
+``--article-costs`` prices every article (a challenge whose plan required nothing
+needs no receipt: it is pinned by its plan); outcome rows the locate tally built
+from other receipts than the ones on disk (a run harvested again since); gold
+whose files changed after freeze; a run of another universe (or another state of it) than gold was
 labelled at; runs of mixed arms; a subject-only (article-tier) run; an inventory
 that did not plan, or read another rendering of, an article of the split; a
 ``formal_math`` passage of the split the locate run has no outcome row for (it
 was never planned: a ``--source`` or shard run is scored on the articles it
 covers, never as gate failures of the rest); a planted run whose tools database
-is not this bench's ablation, or scored off eval; the test split without
-``--checkpoint``; and a transcript that holds the bench's canary, which fails the
-run outright (section 8.4).
+is not this bench's ablation, whose challenge searched another (one that
+required nothing ran no hunter), or scored off eval; the test split without
+``--checkpoint``; a host canary scan that did not look for this bench's canary;
+and a transcript that holds the bench's canary, which fails the run outright
+(section 8.4).
 
 **A pre-registered subset** (``subset``): a run that covers only some articles
 of the split -- a smoke run, a pilot -- is scored on exactly the articles named,
 each of which must be an article of the split; every coverage rule above then
 applies to those articles alone.  The document says ``subset: true`` with the
 sorted ``subset_articles`` and their ``subset_sha256``, the list is a pin (so it
-is in ``measurement_id``) and the file is ``<split>-subset-<id16>.json``.  The
+is in ``measurement_id``) and the file is ``<split>-subset-<id16>-<s8>.json``.  The
 acceptance rule (``bench.compare``) refuses a subset score: a subset is a
 measurement, never a claim.  Gold must still be frozen; a subset changes which
 articles are read, not what they are scored against.
 
 **``measurement_id``** is the sha of every pin section 8.3 lists -- each run's
-own recorded commit and gate files, prompts, models, tool versions, universe,
-sourceset, renderer, gold, receipts and prices -- so two score documents with one
-id were measured the same way.  The scorer's own code is a separate ``scorer``
-field, not a pin: re-scoring an unchanged run with unchanged scoring code
-rewrites the same file, whatever else the checkout committed in between.
+own recorded commit, configuration (``run.yaml`` ``locate.config_shas``) and
+rendered gate files and prompts, models, tool versions, universe, sourceset,
+renderer, gold, receipts and prices -- so two score documents with one id
+measured the same runs.  How they were scored -- the split, the bootstrap, the
+cost, gate-log and audit inputs, the canary check -- is the ``scoring`` digest,
+which names the file beside the id, so one run scored two ways is two
+documents.  The scorer's own code is a separate ``scorer`` field, not a pin:
+re-scoring an unchanged run the same way with unchanged scoring code rewrites
+the same file, whatever else the checkout committed in between.
 """
 from __future__ import annotations
 
@@ -56,16 +64,17 @@ from cflib import vocab
 from cflib.errors import CfError
 from cflib.jsonio import read_json, write_json
 from cflib.paths import skill_root
+from run import canary_scan
 
 from cost import fleet as cost_fleet
 
 from . import gold as gold_mod
 from . import inputs, metrics
-from .layout import SCORE_SCHEMA, BenchLayout, now, read_jsonl_rows, sha_of, write_canonical_jsonl
+from .layout import (SCORE_SCHEMA, UNRECORDED, BenchLayout, now, read_jsonl_rows, sha_of,
+                     write_canonical_jsonl)
 
 #: the version pins ``cf run`` records in run.yaml ``versions`` (or ``--pin`` gives)
 VERSION_PINS = ("agent_cli", "tend", "agentbox")
-UNRECORDED = "unrecorded"
 #: the fixed audit of exact/broad claims outside gold, per arm (section 8.2)
 AUDIT_SIZE = 30
 AUDIT_RELATIONS = frozenset({vocab.EXACT_MATCH, vocab.BROAD_MATCH})
@@ -92,7 +101,8 @@ def _locate_block(run: dict) -> dict:
     return block if isinstance(block, dict) else {}
 
 
-def runs_of(paths, run_id: str, rows: list[dict], locate: dict) -> dict[str, list[str]]:
+def runs_of(paths, run_id: str, rows: list[dict], locate: dict,
+            tally: dict | None = None) -> dict[str, list[str]]:
     """The inventory, locate and challenge runs of one scored locate run.
 
     The inventory run is ``run.yaml`` ``locate.inventory_run`` (with any the rows
@@ -107,23 +117,67 @@ def runs_of(paths, run_id: str, rows: list[dict], locate: dict) -> dict[str, lis
         for stage, rid in (row.get("runs") or {}).items():
             if rid and stage in out:
                 out[stage].add(str(rid))
-    out["challenge"] |= {str(r) for r in inputs.tally(paths, run_id).get("challenge_runs") or []}
+    tally = inputs.tally(paths, run_id) if tally is None else tally
+    out["challenge"] |= {str(r) for r in tally.get("challenge_runs") or []}
     if not out["inventory"]:
         raise CfError(f"run {run_id} names no inventory run",
                       hint="its run.yaml locate.inventory_run says which frozen inventory it located")
     return {k: sorted(v) for k, v in out.items()}
 
 
-def load_runs(paths, run_ids: list[str], *, lower_bound_ok: bool = False
+def unharvested_challenges(paths, run_id: str, challenge_runs: list[str]) -> dict[str, str]:
+    """``{challenge run: its challenge-plan.json sha}`` of the ones that need no harvest.
+
+    A challenge whose plan required no record of ``run_id`` was planned with no
+    task and is never harvested (references/locate-documents.md section 9); the
+    tally and the export accept it without a receipt, and so does the score,
+    which pins its plan instead and charges it nothing.
+    """
+    return {rid: inputs.challenge_plan_sha(paths, rid) for rid in challenge_runs
+            if inputs.challenge_required(paths, run_id, rid) == 0
+            and not paths.receipt_json(rid).is_file()}
+
+
+def check_tally(tally: dict, run_id: str, receipt_shas: dict[str, str]) -> None:
+    """Refuse outcome rows the locate tally built from other harvests than the pinned receipts.
+
+    ``cf tally --locate`` records the sha of every receipt it read (``gates[run]
+    .receipt_sha256``); a run harvested again since -- a late task, a corrected
+    document -- leaves the outcome rows describing the old documents, and a score
+    would stamp those numbers with the new receipt.
+    """
+    gates = tally.get("gates") if isinstance(tally.get("gates"), dict) else {}
+    stale = []
+    for rid, sha in sorted(receipt_shas.items()):
+        entry = gates.get(rid)
+        recorded = entry.get("receipt_sha256") if isinstance(entry, dict) else None
+        if recorded != sha:
+            why = "harvested again since" if recorded else "no receipt sha recorded"
+            stale.append(f"{rid} ({why})")
+    if stale:
+        again = " ".join(f"--challenge-run {r}" for r in tally.get("challenge_runs") or [])
+        raise CfError(f"the locate tally of {run_id} was not built from the receipts on disk: "
+                      + ", ".join(stale),
+                      hint=f"re-run `cf tally --locate --run {run_id}{' ' + again if again else ''}` "
+                           "after the last harvest, then score again")
+
+
+def load_runs(paths, run_ids: list[str], unharvested: dict[str, str] | None = None,
+              *, lower_bound_ok: bool = False
               ) -> tuple[dict[str, dict], dict[str, dict], dict[str, str]]:
     """``(run.yaml, receipt, receipt sha)`` per run; refused unless complete, gated and priced.
 
     Priced in full: a cost block whose ``usd`` is only a lower bound
     (:func:`receipt_usd`) is refused unless ``lower_bound_ok`` -- the score's
     per-article costs then come from ``--article-costs``, not from the receipts.
+    A challenge run of ``unharvested`` (one whose plan required nothing) has its
+    ``run.yaml`` read and no receipt.
     """
     yamls, receipts, shas = {}, {}, {}
     for rid in run_ids:
+        if rid in (unharvested or {}):
+            yamls[rid] = inputs.run_yaml(paths, rid)
+            continue
         receipt, sha = inputs.receipt(paths, rid)
         receipt_usd(rid, receipt.get("cost"), lower_bound_ok=lower_bound_ok)
         yamls[rid] = inputs.run_yaml(paths, rid)
@@ -150,8 +204,9 @@ def receipt_usd(rid: str, cost, *, lower_bound_ok: bool = False) -> float:
     if why and not lower_bound_ok:
         raise CfError(f"run {rid}'s receipt cost.usd (${usd:.2f}) is a lower bound: {why}",
                       hint="a score never reads a lower bound as a run's cost: re-run what "
-                           "left no priced envelope and harvest again, or pass --article-costs "
-                           "<file> with every article's dollars over all its sessions")
+                           "left no priced envelope, harvest again and re-run cf tally --locate, "
+                           "or pass --article-costs <file> with every article's dollars over all "
+                           "its sessions")
     return usd
 
 
@@ -201,9 +256,24 @@ def tools_db(run_universe: dict) -> dict:
             "sha256": str(tools.get("sha256") or UNRECORDED)}
 
 
+def config_shas(run: dict) -> dict:
+    """``run.yaml`` ``locate.config_shas`` (``{prompts, gate_files}``), each map or absent.
+
+    ``cf plan-locate`` records the sha of every prompt template it rendered and
+    of every gate and bin file it staged except the run-specific ones, so two
+    plans of one configuration record equal maps (references/locate-documents.md
+    section 9); a plan from before that records none, and its pins read
+    ``unrecorded``.
+    """
+    shas = _locate_block(run).get("config_shas")
+    if not isinstance(shas, dict):
+        return {}
+    return {key: shas[key] for key in ("prompts", "gate_files") if isinstance(shas.get(key), dict)}
+
+
 def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: str,
          renderers: list[str], manifest: dict, tools: dict, challenge_runs: list[str],
-         overrides: dict[str, str]) -> dict:
+         overrides: dict[str, str], challenge_plans: dict[str, str] | None = None) -> dict:
     """Every pin of section 8.3, from the runs' own records."""
     locate = _locate_block(yamls[locate_run])
     observed: dict[str, int] = {}
@@ -233,14 +303,24 @@ def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: 
         path = paths.gate_json(rid)
         gate[rid] = inputs.sha256_file(path) if path.is_file() else UNRECORDED
     universe = locate.get("universe") or {}
+    configs = {rid: config_shas(y) for rid, y in yamls.items()}
     return {
         # each run's own commit and staged gate code, as its plan recorded them
         "skill_commit": {rid: str(_locate_block(y).get("skill_commit") or UNRECORDED)
                          for rid, y in sorted(yamls.items())},
-        "gate_files": {rid: (sha_of(_locate_block(y)["gate_files"])
-                             if isinstance(_locate_block(y).get("gate_files"), dict) else UNRECORDED)
-                       for rid, y in sorted(yamls.items())},
-        "prompts": {rid: dict(sorted((y.get("prompts") or {}).items())) for rid, y in sorted(yamls.items())},
+        # the configuration: the gate code and prompt templates, without the bytes a plan
+        # renders per run (run.yaml locate.config_shas), what an A/A replicate must share
+        "gate_files": {rid: (sha_of(c["gate_files"]) if "gate_files" in c else UNRECORDED)
+                       for rid, c in sorted(configs.items())},
+        "prompts": {rid: (dict(sorted(c["prompts"].items())) if "prompts" in c else UNRECORDED)
+                    for rid, c in sorted(configs.items())},
+        # what each run staged and rendered, its run id and paths included: recorded only
+        "rendered_gate_files": {rid: (sha_of(_locate_block(y)["gate_files"])
+                                      if isinstance(_locate_block(y).get("gate_files"), dict)
+                                      else UNRECORDED)
+                                for rid, y in sorted(yamls.items())},
+        "rendered_prompts": {rid: dict(sorted((y.get("prompts") or {}).items()))
+                             for rid, y in sorted(yamls.items())},
         "gate": gate,
         "observed_models": dict(sorted(observed.items())),
         **versions,
@@ -252,6 +332,8 @@ def pins(paths, *, yamls: dict, receipts: dict, receipt_shas: dict, locate_run: 
         "renderer": sorted(set(renderers)),
         "gold_manifest_sha256": manifest["manifest_sha256"],
         "receipts": dict(sorted(receipt_shas.items())),
+        # a challenge that required nothing has no receipt: its plan is what it decided
+        "challenge_plans": dict(sorted((challenge_plans or {}).items())),
         "price_table_sha256": sorted(tables),
         "challenge_runs": list(challenge_runs),
     }
@@ -261,13 +343,45 @@ def measurement_id(pin_doc: dict) -> str:
     return sha_of(pin_doc)
 
 
-def score_name(split: str, mid: str, *, subset: bool = False) -> str:
-    """``<split>-<first 16 hex of measurement_id>``: one run scores once per split.
+def path_sha(path: Path | None) -> str | None:
+    """The sha of a scoring input: a file's bytes, or a directory's ``*.jsonl`` files by name."""
+    if path is None:
+        return None
+    path = Path(path)
+    if path.is_dir():
+        return sha_of([[p.relative_to(path).as_posix(), inputs.sha256_file(p)]
+                       for p in sorted(path.rglob("*.jsonl")) if p.is_file()])
+    return inputs.sha256_file(path) if path.is_file() else None
 
-    A subset score is ``<split>-subset-<16 hex>``, so no reader takes it for the
-    split's.
+
+def scoring(*, split: str, checkpoint: bool, replicates: int, seed: int,
+            article_costs: Path | None, gate_log: Path | None, gate_logs: dict[str, str | None],
+            audit_labels: Path | None, canary: dict) -> dict:
+    """How one measurement was scored: everything but the pins that changes the document.
+
+    The split, the bootstrap and its seed, the sha of each scoring input
+    (``--article-costs``, the gate log read -- ``--gate-log`` or each run's
+    harvested one -- and ``--audit-labels``) and the canary check.  Its
+    ``digest`` names the file beside the ``measurement_id``, so re-scoring one
+    run another way writes another document instead of overwriting the one a
+    ledger entry cites.
     """
-    return f"{split}-subset-{mid[:16]}" if subset else f"{split}-{mid[:16]}"
+    used = {"split": split, "checkpoint": bool(checkpoint), "bootstrap": int(replicates),
+            "seed": int(seed), "article_costs_sha256": path_sha(article_costs),
+            "gate_log_sha256": (path_sha(gate_log) if gate_log is not None
+                                else dict(sorted(gate_logs.items()))),
+            "audit_labels_sha256": path_sha(audit_labels), "canary_check": canary}
+    return {"digest": sha_of(used), "inputs": used}
+
+
+def score_name(split: str, mid: str, scoring_digest: str, *, subset: bool = False) -> str:
+    """``<split>-<16 hex of measurement_id>-<8 hex of the scoring digest>``.
+
+    One run scored once per split and way of scoring: re-scoring it the same way
+    rewrites the same file.  A subset score is ``<split>-subset-<16 hex>-<8 hex>``,
+    so no reader takes it for the split's.
+    """
+    return f"{split}{'-subset' if subset else ''}-{mid[:16]}-{scoring_digest[:8]}"
 
 
 def subset_articles(split_articles: list[str], subset, split: str) -> list[str]:
@@ -289,8 +403,13 @@ def subset_articles(split_articles: list[str], subset, split: str) -> list[str]:
 # the canary
 # --------------------------------------------------------------------------
 
-def _scan_report(doc: dict, where: str) -> dict:
-    """A host scan that read something: ``scanned`` a positive count, ``hits`` a list."""
+def _scan_report(doc: dict, where: str, canary: str) -> dict:
+    """A host scan that read something, for this bench's canary.
+
+    ``scanned`` a positive count, ``hits`` a list, and ``canary_sha256`` listing
+    the sha of ``canary`` (``run.canary_scan.canary_sha256``): a scan with another
+    bench's canaries file, or a stale one, looked for something else.
+    """
     scanned = doc.get("scanned")
     if isinstance(scanned, bool) or not isinstance(scanned, int) or scanned <= 0 \
             or not isinstance(doc.get("hits"), list):
@@ -298,6 +417,14 @@ def _scan_report(doc: dict, where: str) -> dict:
                       f"got scanned {scanned!r})",
                       hint="a scan of nothing is no check: re-run the host's scan, or pass "
                            "--transcripts <dir> or --no-canary-check")
+    listed = doc.get("canary_sha256")
+    if not isinstance(listed, list) or canary_scan.canary_sha256(canary) not in listed:
+        why = ("it names none of the canaries it looked for" if not isinstance(listed, list)
+               else f"it looked for {len(listed)} other canar{'y' if len(listed) == 1 else 'ies'}")
+        raise CfError(f"{where} is not a scan for this bench's canary ({why})",
+                      hint="re-scan the transcripts with this bench's host/canaries.txt (cf "
+                           "campaign plan --canaries), or pass --transcripts <dir> or "
+                           "--no-canary-check")
     return doc
 
 
@@ -342,12 +469,12 @@ def canary_check(paths, canary: str, run_ids: list[str], *, transcripts: Path | 
         return {"ran": True, "basis": "transcripts", "scanned": len(files), "hits": 0}
     reports = {}
     if report is not None:
-        reports["--canary-report"] = _scan_report(inputs.canary_report(report), str(report))
+        reports["--canary-report"] = _scan_report(inputs.canary_report(report), str(report), canary)
     else:
         for rid in run_ids:
             path = inputs.run_host_dir(paths, rid) / inputs.HOST_CANARY
             if path.is_file():
-                reports[rid] = _scan_report(inputs.canary_report(path), str(path))
+                reports[rid] = _scan_report(inputs.canary_report(path), str(path), canary)
     if reports and (report is not None or len(reports) == len(run_ids)):
         hits = sorted(str(h) for doc in reports.values() for h in doc.get("hits") or [])
         if hits:
@@ -580,10 +707,14 @@ def _audit(run: list[metrics.RunPassage], joined_items: set[tuple[str, str]], se
 
 
 def _strata(result: metrics.TierResult, clusters: list[str], replicates: int, seed: str) -> dict:
-    """``{stratum: {metric: bootstrap + by_cluster}}`` for every metric the tier stratified."""
+    """``{stratum: {metric: bootstrap + n + by_cluster}}`` for every metric the tier stratified.
+
+    ``n`` counts the stratum's units (``metrics.Ratio.n``), which the acceptance
+    rule's n >= 30 reads: ``den`` is weighted for G3 and counts nothing.
+    """
     return {key: {name: {**metrics.bootstrap(r.by_cluster, clusters, replicates=replicates,
                                              seed=f"{seed}:{key}:{name}"),
-                         "by_cluster": r.by_cluster}
+                         "n": r.n, "by_cluster": r.by_cluster}
                   for name, r in sorted(group.items())}
             for key, group in sorted(result.strata.items())}
 
@@ -631,10 +762,13 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
                       hint="it located one subject passage per article; score a passage-level run")
     run_universe = check_universe(locate, manifest)
     rows = inputs.outcomes(paths, run_id)
-    runs = runs_of(paths, run_id, rows, locate)
+    tally = inputs.tally(paths, run_id)
+    runs = runs_of(paths, run_id, rows, locate, tally)
     all_runs = sorted({r for v in runs.values() for r in v})
-    yamls, receipts, receipt_shas = load_runs(paths, all_runs,
+    unharvested = unharvested_challenges(paths, run_id, runs["challenge"])
+    yamls, receipts, receipt_shas = load_runs(paths, all_runs, unharvested,
                                               lower_bound_ok=article_costs_path is not None)
+    check_tally(tally, run_id, receipt_shas)
     run_arm = check_arms(yamls, run_id)
     if arm is not None and arm != run_arm:
         raise CfError(f"run {run_id} is the {run_arm} arm, not {arm}",
@@ -655,13 +789,26 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
                           hint="plan the P run with this bench's gold/planted/corpus.sqlite")
         if split != "eval":
             raise CfError("a planted run is scored on eval, the split its ablation removed")
+        # the challenge's hunters overturn absences into the rows P counts: a hunter that
+        # searched the full database finds the removed declarations legitimately. A
+        # challenge whose plan required nothing ran no hunter, whatever it would have searched
+        other = sorted(rid for rid in runs["challenge"] if rid not in unharvested
+                       and tools_db(_locate_block(yamls[rid]).get("universe") or {})
+                       != {"kind": TOOLS_PLANTED, "sha256": str(p_tier.get("corpus_sha256"))})
+        if other:
+            raise CfError(f"run {run_id} searched this bench's planted database, but its "
+                          f"challenge run(s) {', '.join(other)} searched another",
+                          hint="plan the challenge of a P run with the same --tools-corpus-db "
+                               "(this bench's gold/planted/corpus.sqlite), harvest, tally and "
+                               "score again")
     elif p_tier and tools["sha256"] == p_tier.get("corpus_sha256"):
         raise CfError(f"run {run_id} searched this bench's planted database but records its "
                       f"tools database as {tools['kind']!r}",
                       hint="its run.yaml locate.universe.tools_corpus_db.kind must say planted")
     ablation = read_json(layout.ablation_json) if planted else None
-    canary = canary_check(paths, bench["canary"], all_runs, transcripts=transcripts,
-                          report=canary_report, skip=no_canary_check)
+    # a challenge that was never harvested ran no agent, so it left no transcript to scan
+    canary = canary_check(paths, bench["canary"], [r for r in all_runs if r not in unharvested],
+                          transcripts=transcripts, report=canary_report, skip=no_canary_check)
     frame = {a["source_id"]: a for a in read_json(layout.frame_json)["articles"]}
     layers_sha = {sid: frame[sid].get("layer_sha256") for sid in articles_in}
     run, state, coverage, renderers = run_passages(
@@ -670,7 +817,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
     pin_doc = pins(paths, yamls=yamls, receipts=receipts, receipt_shas=receipt_shas,
                    locate_run=run_id, renderers=renderers or [UNRECORDED],
                    manifest=manifest, tools=tools, challenge_runs=runs["challenge"],
-                   overrides=pin_overrides or {})
+                   overrides=pin_overrides or {}, challenge_plans=unharvested)
     if subset is not None:
         pin_doc["subset"] = {"articles": articles_in, "sha256": sha_of(articles_in),
                              "of_split": split_size}
@@ -694,6 +841,9 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
         g1_rows = ([r for r in read_jsonl_rows(layout.root / info["file"]) if r.get("source_id") in layers]
                    if info else [])
         p_gold = [g for g in metrics.gold_passages("G1", g1_rows) if g.accept & ablated]
+        for g in p_gold:
+            # eval only, so the seen-declaration stratum applies as it does to every tier
+            g.seen = g.gold_id in seen_ids
         p_result = metrics.evaluate_tier("P", p_gold, run, layers=layers, cluster_of=cluster_of,
                                          article_state=state, assessment=assessment, ablated=ablated)
         citations = sum(1 for p in run for loc in p.locations
@@ -744,8 +894,13 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
     per_cluster["cost"] = {"usd_per_article": cost_total.by_cluster,
                            "usd_per_article_locate": cost_locate.by_cluster}
     gate_rej = _gate_rejections(paths, all_runs, gate_log)
+    how = scoring(split=split, checkpoint=checkpoint, replicates=replicates, seed=seed,
+                  article_costs=article_costs_path, gate_log=gate_log,
+                  gate_logs={rid: path_sha(inputs.run_host_dir(paths, rid) / inputs.HOST_GATE_LOG)
+                             for rid in all_runs},
+                  audit_labels=audit_labels, canary=canary)
     audit = _audit(run, joined_items, seed, arm)
-    score_id = score_name(split, mid, subset=subset is not None)
+    score_id = score_name(split, mid, how["digest"], subset=subset is not None)
     write_canonical_jsonl(layout.audit_jsonl(score_id), audit)
     audit_summary: dict[str, Any] = {"sampled": len(audit), "file": f"audits/{score_id}.jsonl",
                                      "labeled": 0, "overclaims": 0}
@@ -762,6 +917,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
         "subset_articles": articles_in if subset is not None else None,
         "subset_sha256": pin_doc["subset"]["sha256"] if subset is not None else None,
         "measurement_id": mid, "pins": pin_doc, "scorer": scorer(),
+        "score_id": score_id, "scoring": how,
         "gold_manifest": {"version": version, "sha256": manifest["manifest_sha256"]},
         "coverage": {"articles": len(articles_in), "clusters": len(clusters),
                      "gold_positives": positives, "total_positives": sum(positives.values()),
