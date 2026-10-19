@@ -1616,13 +1616,19 @@ signal, stdout_bytes, cost: unknown}}`, and prose stdout is kept beside it as
 the count of genuine reviewer rejections), `gate-log/gate.jsonl` (one JSON line
 per gate call: `at`, `run_id`, `mode`, `task_id`, `task_id_from` (`--task-id`,
 `$TEND_TASK_ID`, `orchestrator.sqlite…`, or null with no id), `changed_files`
-(whether the call judged a change set), `ownership` (the call's ownership line,
-null without `--changed-files`), `ownership_note` (why no task id was found),
-`ok`, `exit`, `documents`, `by_rule`, `reasons`; the watchdog's gate-failure rate
-and the bench's `gate_rejections` count only the `changed_files: true` lines,
-tend's validation and pre-merge calls, whatever their `task_id`, and never a
-worker's or a reviewer's `--findings` check; a line with no `changed_files`, from a
-gate older than the field, counts for neither), and the per-user slot directory the bridge's 15-slot
+(whether the call judged a change set), `pre_merge` (whether it was tend's
+pre-merge call, `--pre-merge`; a line with no `pre_merge`, from a gate older than
+the field, reads as false), `ownership` (the call's ownership line, null without
+`--changed-files`), `ownership_note` (why no task id was found), `ok`, `exit`,
+`documents`, `by_rule`, `reasons`; the watchdog's gate-failure rate and the
+bench's `gate_rejections` count only the validation lines (`changed_files: true`,
+`pre_merge` not true), tend's validation calls, whatever their `task_id`, and
+never a worker's or a reviewer's `--findings` check; tend's pre-merge re-check of
+a batch it already validated is no second attempt, and both count it apart (the
+watchdog's `pre_merge_calls` and `pre_merge_failed`, the bench's
+`gate_rejections.pre_merge`), since a batch conflict is a real event; a line with
+no `changed_files`, from a gate older than the field, counts for neither), and
+the per-user slot directory the bridge's 15-slot
 `flock` semaphore uses. The bridges (`scripts/run/agent_call.py` and
 `scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
 `~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
@@ -1935,8 +1941,9 @@ priced envelopes' `total_cost_usd` plus, for each call that left no priced
 envelope, its elapsed seconds times the root's highest dollars-per-second
 (`--unpriced-usd-per-hour` before any priced envelope has a duration; the
 record says `estimated_unpriced_usd: null` when neither exists) —
-or the gate-failure rate of tend's calls in `gate-log/gate.jsonl` (its `changed_files: true`
-lines, over at least 20 of them) or
+or the gate-failure rate of tend's validation calls in `gate-log/gate.jsonl` (its
+`changed_files: true` lines without `pre_merge: true`, over at least 20 of them; the
+pre-merge calls are recorded apart, as `pre_merge_calls` and `pre_merge_failed`) or
 the cost per merged task (over at least `min_tasks`) passes `multiple` times the
 pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is
 `<root>/watchdog.json` (a progress line it cannot print, on a full disk, is

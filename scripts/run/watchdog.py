@@ -25,17 +25,20 @@ What it reads, all of it outside every worktree:
   call that timed out used to add nothing at all (field defect T1).  It is
   still not the bill: the transcripts priced by ``scripts/cost`` at harvest
   stay the primary figure;
-* **the gate-failure rate** -- the fraction of tend's calls in
-  ``<root>/gate-log/gate.jsonl`` (the lines with ``changed_files: true``) that
-  did not pass; an agent's own ``--findings`` check is logged too, and counts
-  for nothing here;
+* **the gate-failure rate** -- the fraction of tend's validation calls in
+  ``<root>/gate-log/gate.jsonl`` (the lines with ``changed_files: true`` and no
+  ``pre_merge: true``) that did not pass; an agent's own ``--findings`` check
+  is logged too, and counts for nothing here, and tend's pre-merge re-check of
+  a batch (``pre_merge: true``) is counted apart, as ``pre_merge_calls`` and
+  ``pre_merge_failed``, never as a second attempt;
 * **merged tasks** -- the task directories under ``findings/`` on the
   entrypoint's merge target (``git ls-tree``, with the boundary pinned).
 
 Every record carries ``spend_usd`` (the priced floor plus the estimate, what
 the rules judge), ``spend_floor_usd``, ``unpriced_calls``, ``unpriced_seconds``,
-``estimated_unpriced_usd`` (null when there was nothing to estimate with) and
-``estimate_usd_per_second``.
+``estimated_unpriced_usd`` (null when there was nothing to estimate with),
+``estimate_usd_per_second``, ``gate_calls`` and ``gate_failed`` (the validation
+calls the rate is over) and ``pre_merge_calls`` and ``pre_merge_failed``.
 
 Model-free and standard library only: it decides from numbers, runs on the
 host where cflib is not installed, and its one action is ``tend-control
@@ -157,29 +160,42 @@ def spend(usage_dir: Path) -> tuple[float, int]:
     return got["dollars"], got["envelopes"]
 
 
-def gate_calls(log_path: Path) -> tuple[int, int]:
-    """``(calls, failed)`` over tend's calls in the gate log.
+def gate_counts(log_path: Path) -> dict[str, int]:
+    """``{calls, failed, pre_merge_calls, pre_merge_failed}`` over tend's calls in the gate log.
 
     The gate logs every call and says whether it judged a change set
-    (``changed_files``): tend's validation and pre-merge commands do, a worker's
-    or a reviewer's ``--findings`` self-check does not.  Only the former count,
-    so an agent that re-runs the gate on its document neither drains the root
-    nor dilutes its failure rate.
+    (``changed_files``) and whether it was tend's batched pre-merge check
+    (``pre_merge``): tend's validation and pre-merge commands judge a change
+    set, a worker's or a reviewer's ``--findings`` self-check does not.  Only a
+    validation call (``changed_files: true``, ``pre_merge`` not true) is one of
+    ``calls``, so an agent that re-runs the gate on its document neither drains
+    the root nor dilutes its failure rate, and a contribution tend re-checks in
+    its merge batch is not counted twice.  The pre-merge calls are counted
+    apart: a batch conflict is a real event, but not a worker's attempt.  A line
+    written before the ``pre_merge`` field has none and reads as false.
     """
-    calls = failed = 0
+    out = {"calls": 0, "failed": 0, "pre_merge_calls": 0, "pre_merge_failed": 0}
     try:
         lines = log_path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return 0, 0
+        return out
     for line in lines:
         try:
             record = json.loads(line)
         except ValueError:
             continue
-        if isinstance(record, dict) and record.get("changed_files") is True:
-            calls += 1
-            failed += 0 if record.get("ok") else 1
-    return calls, failed
+        if not isinstance(record, dict) or record.get("changed_files") is not True:
+            continue
+        prefix = "pre_merge_" if record.get("pre_merge") is True else ""
+        out[f"{prefix}calls"] += 1
+        out[f"{prefix}failed"] += 0 if record.get("ok") else 1
+    return out
+
+
+def gate_calls(log_path: Path) -> tuple[int, int]:
+    """``(calls, failed)`` over tend's validation calls in the gate log (:func:`gate_counts`)."""
+    counts = gate_counts(log_path)
+    return counts["calls"], counts["failed"]
 
 
 def merged_tasks(entrypoint: Path | None, branch: str) -> int | None:
@@ -332,7 +348,8 @@ def check(args) -> dict:
     spent = ledger(root / "usage", fallback_usd_per_hour=args.unpriced_usd_per_hour)
     dollars, envelopes = spent["dollars"], spent["envelopes"]
     estimate = spent["estimated_unpriced_usd"]
-    calls, failed = gate_calls(root / "gate-log" / "gate.jsonl")
+    gate = gate_counts(root / "gate-log" / "gate.jsonl")
+    calls, failed = gate["calls"], gate["failed"]
     merged = merged_tasks(Path(args.entrypoint) if args.entrypoint else None, args.branch)
     # the rules judge the floor plus the estimate of what the unpriced calls cost
     total = round(dollars + (estimate or 0.0), 6)
@@ -352,7 +369,9 @@ def check(args) -> dict:
               "estimated_unpriced_usd": estimate,
               "estimate_usd_per_second": spent["usd_per_second"],
               "envelopes": envelopes, "max_cost": args.max_cost,
-              "gate_calls": calls, "gate_failed": failed, "merged_tasks": merged,
+              "gate_calls": calls, "gate_failed": failed,
+              "pre_merge_calls": gate["pre_merge_calls"],
+              "pre_merge_failed": gate["pre_merge_failed"], "merged_tasks": merged,
               "reasons": reasons, "drained": bool(previous.get("drained")), "action": None}
     if reasons and not record["drained"]:
         # tend's prefix is shell (the host's tend_cmd exports PATH and cd's), so a

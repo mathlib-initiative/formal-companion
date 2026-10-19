@@ -135,11 +135,12 @@ What it does, in order — and each step is one you can also do by hand:
 5. **Read that task's gate output once per tend version** — the validation command's, not the
    worker's or the reviewer's own. Its last line is `changed files: …`, and the same line is the
    `ownership` field of that call's `gate-log/gate.jsonl` record, beside `task_id_from` (where the
-   id came from: `--task-id`, `$TEND_TASK_ID` or `orchestrator.sqlite`) and `changed_files` (true
-   for a validation or pre-merge call). An agent runs with `TEND_TASK_ID` in its environment, so
-   the worker's and the reviewer's own gate calls log the task id from `$TEND_TASK_ID`: a non-empty
-   `task_id` in the log is **not** by itself evidence that the validation command found it, and
-   only a `--changed-files` record says how the validation found it. `ownership checked against
+   id came from: `--task-id`, `$TEND_TASK_ID` or `orchestrator.sqlite`), `changed_files` (true
+   for a validation or pre-merge call) and `pre_merge` (true for the pre-merge call alone). An
+   agent runs with `TEND_TASK_ID` in its environment, so the worker's and the reviewer's own gate
+   calls log the task id from `$TEND_TASK_ID`: a non-empty `task_id` in the log is **not** by
+   itself evidence that the validation command found it, and only a `--changed-files` record says
+   how the validation found it. `ownership checked against
    task <id> (task id from $TEND_TASK_ID)` on a validation call means the orchestrator exported
    `TEND_TASK_ID` into the validation command's environment; `(task id recovered from
    orchestrator.sqlite: …)` means it did not and the gate found the id in tend's database; either

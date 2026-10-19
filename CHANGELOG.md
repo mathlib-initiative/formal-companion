@@ -42,6 +42,14 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The locate gate-log line gains `pre_merge`, true for tend's `--pre-merge` call. Both of the
+  log's readers, the watchdog's gate-failure rate and the bench's `gate_rejections`, count the
+  validation lines alone (`changed_files: true`, `pre_merge` not true): a contribution that tend
+  re-checks in its merge batch was counted as a second attempt, and a batch conflict as a
+  worker's rejection. The pre-merge calls are counted apart (the watchdog's `pre_merge_calls`
+  and `pre_merge_failed`, the bench's `gate_rejections.pre_merge: {calls, rejected, broken}`),
+  and a line from an older gate, which has no `pre_merge`, reads as false. The field changes
+  the gate's file sha, so `config_shas.gate_files` differs for a run planned after it.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.
