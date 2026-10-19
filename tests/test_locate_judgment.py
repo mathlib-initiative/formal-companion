@@ -2,11 +2,12 @@
 
 New code, for references/vocabulary.md section 1.11 (rules R1-R7 and the policy
 defaults) and references/locate-documents.md sections 3, 4 and 10, from the
-smoke-2 audit's failure modes: a whole-passage relation for a declaration that
-states some clauses (FM1), an absence whose queries missed a clause (FM5), a
-declaration whose hypotheses exclude the passage's objects (FM6), a proof
-ingredient credited as a part (FM3) and a closeMatch for what is no convention
-(FM4).  The gate's artifacts are test_verify_locate's synthetic ones (the
+smoke-2 audit's failure modes (references/vocabulary.md section 1.11 names
+them): a whole-passage relation for a declaration that states some clauses
+(FM1), an absence whose queries missed a clause (FM5), a declaration whose
+hypotheses exclude the passage's objects (FM6), a proof ingredient credited as a
+part (FM3), a closeMatch for what is no convention (FM4) and a challenger's
+reasoning slip (FM7).  The gate's artifacts are test_verify_locate's synthetic ones (the
 "Widget lemma" layer, libraries ``alpha`` and ``beta``); every claim, note and
 query below is made up.  Rule 9 binds a run whose ``gate.json`` names
 ``judgment_rules`` and no other, so every document a run planned before the
@@ -44,6 +45,8 @@ from test_locate_planner import scratch, ws  # noqa: E402
 THM_CLAIMS = [{"id": "c1", "text": "a finite widget has a spanning gadget"},
               {"id": "c2", "text": "that gadget's size divides the order"}]
 LEAD_CLAIMS = [{"id": "c1", "text": "finite widgets carry spanning gadgets"}]
+#: a part's step: what the declaration alone entails of the passage (FM3)
+STEP = "the existence of a spanning gadget for the widget"
 
 
 def judged(loc: dict, clauses=("c1", "c2"), **extra) -> dict:
@@ -134,6 +137,49 @@ class TestTheClaimList(JudgedLocate):
         body["passages"][0]["claims"][0]["text"] = " ".join(G.THEOREM.split()[:15])
         self.assertRule(self.run_body(body), 1, "own words")
 
+    def test_claims_split_over_two_are_the_source_still(self):
+        words = G.LEAD.split()
+        body = judged_body()
+        body["passages"][1]["claims"] = [{"id": "c1", "text": " ".join(words[:12])},
+                                         {"id": "c2", "text": " ".join(words[12:24])}]
+        body["passages"][1]["receipt"]["query_clauses"] = {
+            "widget lemma": ["c1"], "finite widget spanning": ["c2"], "Widget.spanning": ["c1"]}
+        self.assertRule(self.run_body(body), 1, "the claims, read one after the other,")
+
+    def test_a_format_character_hides_no_word(self):
+        body = judged_body()
+        body["passages"][0]["claims"][0]["text"] = "\u200b ".join(G.THEOREM.split()[:15])
+        self.assertRule(self.run_body(body), 1, "as the reading copy or the layer spells it")
+
+    def test_the_reading_copys_spelling_is_the_source_too(self):
+        """text.txt writes a formula as $G$, the layer as G{\\displaystyle G}."""
+        copied = "Let $G$ be a finite widget of order $n$; then $G$ has a spanning gadget"
+        self.assertIsNone(vl.lr.verbatim_run(copied, G.LAYER))
+        body = judged_body()
+        body["passages"][0]["claims"][0]["text"] = copied
+        self.assertRule(self.run_body(body), 1, "as the reading copy or the layer spells it")
+        # an exported note is held to it under the rules only: a run planned before them
+        # exports what it did
+        body = judged_body()
+        body["passages"][0]["locations"][0]["note"] = copied
+        self.assertRefusedOnlyUnderTheRules(body, "as the reading copy or the layer spells it",
+                                            rule=1)
+
+    def test_a_note_copied_from_the_layer_is_refused_once(self):
+        """Rule 1's own check names a note that copies the layer; the reading-copy check
+        adds no second refusal of it."""
+        body = judged_body()
+        body["passages"][0]["locations"][0]["note"] = " ".join(G.LEAD.split()[:14])
+        result = self.run_body(body)
+        self.assertEqual(sum("verbatim" in p for p in result["problems"]), 1,
+                         result["problems"])
+
+    def test_a_blank_instantiation_is_none(self):
+        sign(self.fx, "Widget.exists_spanning_gadget", GENERIC)
+        body = judged_body()
+        body["passages"][0]["locations"][0]["instantiation"] = "   "
+        self.assertRule(self.run_body(body), 9, "takes instance argument(s)")
+
     def test_a_counting_location_names_the_claims_it_states(self):
         body = judged_body()
         del body["passages"][0]["locations"][0]["clauses"]
@@ -150,6 +196,8 @@ class TestTheClaimList(JudgedLocate):
             body = judged_body()
             loc = body["passages"][0]["locations"][0]
             loc.update(relation=relation, clauses=["c1"])
+            if ok:
+                loc["step"] = STEP
             if relation == "closeMatch":
                 loc.update(note="the order is written as a cardinal",
                            convention="encoding")
@@ -176,15 +224,32 @@ class TestTheClaimList(JudgedLocate):
             body["passages"][0]["locations"][0].update(relation="broadMatch", note=note)
             with self.subTest(note=note):
                 self.assertRefusedOnlyUnderTheRules(body, "admits a clause")
-            body["passages"][0]["locations"][0].update(relation="hasPart", clauses=["c1"])
+            body["passages"][0]["locations"][0].update(relation="hasPart", clauses=["c1"],
+                                                       step=STEP)
             self.assertOk(self.run_body(body))
+
+    def test_a_gap_admitted_in_the_instantiation_is_a_gap_too(self):
+        body = judged_body()
+        body["passages"][0]["locations"][0]["instantiation"] = (
+            "W is the passage's widget; the divisibility clause is not stated")
+        self.assertRefusedOnlyUnderTheRules(body, "the instantiation says 'not stated'")
+        body["passages"][0]["locations"][0]["instantiation"] = "W is the passage's widget G"
+        self.assertOk(self.run_body(body))
+
+    def test_a_gap_note_is_refused_with_the_way_out(self):
+        body = judged_body()
+        body["passages"][0]["locations"][0]["note"] = "It does not state the divisibility."
+        result = self.run_body(body)
+        self.assertRule(result, 9, "then the relation is hasPart (R4), not exactMatch")
+        self.assertRule(result, 9, "say what the declaration does")
 
     def test_a_coverage_claims_parts_state_every_clause(self):
         body = judged_body()
         thm = body["passages"][0]
-        thm["locations"] = [judged(G.location(relation="hasPart"), ["c1"]),
+        thm["locations"] = [judged(G.location(relation="hasPart"), ["c1"], step=STEP),
                             judged(G.location(decl="Widget.Spanning", relation="hasPart",
-                                              rank=2), ["c1"])]
+                                              rank=2), ["c1"], step="the spanning property of "
+                                                                   "the gadget")]
         thm["coverage"] = {"complete": True, "parts": [1, 2],
                            "note": "the two lemmas together give the theorem"}
         self.assertRefusedOnlyUnderTheRules(body, "no part states c2")
@@ -257,6 +322,63 @@ class TestAnAbsenceSearchedEveryClause(JudgedLocate):
         body["passages"][0]["receipt"]["query_clauses"] = {"widget spanning gadget": ["c3"]}
         self.assertRule(self.run_body(body), 9, "c3 are neither claim ids")
 
+    def test_every_query_is_tagged_and_each_claim_has_one_of_its_own(self):
+        """One query tagged with every claim, beside untagged others, searched for one."""
+        two = LEAD_CLAIMS + [{"id": "c2", "text": "the gadget is unique up to conjugacy"}]
+        body = self.absent_body(two, {"widget lemma": ["c1", "c2"]})
+        self.assertRefusedOnlyUnderTheRules(body, "carries no tag")
+        # every query tagged, but one query stands for two claims
+        three = two + [{"id": "c3", "text": "its size divides the order"}]
+        body = self.absent_body(three, {"widget lemma": ["c1", "c2", "c3"],
+                                        "finite widget spanning": ["c1"],
+                                        "Widget.spanning": ["c1"]})
+        self.assertRefusedOnlyUnderTheRules(body, "a query of its own")
+        body["passages"][1]["receipt"]["query_clauses"].update(
+            {"finite widget spanning": ["c2"], "Widget.spanning": ["c3"]})
+        self.assertOk(self.run_body(body))
+        # two spellings of one query are one query
+        body = self.absent_body(three, {"widget lemma": ["c1"], "finite widget spanning": ["c3"],
+                                        "Widget.spanning": ["c3"]})
+        body["passages"][1]["receipt"]["queries"].append("WIDGET  lemma")
+        body["passages"][1]["receipt"]["query_clauses"]["WIDGET  lemma"] = ["c2"]
+        self.assertRule(self.run_body(body), 9, "a query of its own")
+
+    def test_a_worked_examples_general_query_is_a_query_of_its_own(self):
+        doc = G.locate_manifest_doc(self.fx)
+        doc["passages"][0]["passage_kind"] = "example"
+        self.fx.manifest(self.TASK, doc)
+        body = self.absent_body(LEAD_CLAIMS, {"widget lemma": ["c1", "general"],
+                                              "finite widget spanning": ["c1"],
+                                              "Widget.spanning": ["c1"]})
+        self.assertOk(self.run_body(body))
+        # the only query that targets the general theorem is the one that targets c1
+        body = self.absent_body(LEAD_CLAIMS, {"widget lemma": ["c1", "general"],
+                                              "finite widget spanning": ["general"],
+                                              "Widget.spanning": ["general"]})
+        self.assertOk(self.run_body(body))
+        lone = self.absent_body(LEAD_CLAIMS, {"widget lemma": ["c1", "general"]})
+        lone["passages"][1]["receipt"]["queries"] = ["widget lemma", "widget lemma ", "WIDGET lemma"]
+        self.assertRule(self.run_body(lone), 5, "distinct")
+        self.assertRule(self.run_body(lone), 9, "a query of its own")
+
+    def test_an_absence_rejects_no_candidate_for_stating_a_part(self):
+        """The audit's false absences: the stating declaration was rejected as "not the
+        worked example" or "not the whole passage"."""
+        for reason, phrase in (("not the worked example", "not the worked example"),
+                               ("states only part of the passage", "only part"),
+                               ("a special case for finite widgets", "special case"),
+                               ("more general than the passage", "more general*")):
+            body = self.absent_body(LEAD_CLAIMS, {q: ["c1"] for q in (
+                "widget lemma", "finite widget spanning", "Widget.spanning")})
+            body["passages"][1]["receipt"]["candidates"] = [
+                {"library": "beta", "declaration": "Beta.Widget.gadget_of_finite",
+                 "verdict": "rejected", "reason": reason}]
+            with self.subTest(reason=reason):
+                self.assertRefusedOnlyUnderTheRules(body, f"rejected as {phrase!r}")
+        body["passages"][1]["receipt"]["candidates"][0]["reason"] = (
+            "states the spanning of gadgets, not of widgets")
+        self.assertOk(self.run_body(body))
+
 
 # --------------------------------------------------------------------------- #
 # FM6: the declaration instantiated at the passage's objects
@@ -309,7 +431,7 @@ class TestTheInstantiationLine(JudgedLocate):
         loc["instantiation"] = " ".join(G.THEOREM.split()[:15])
         self.assertRule(self.run_body(body), 1, "own words")
 
-    def test_the_leading_binders_as_the_index_prints_them(self):
+    def test_the_binder_positions_as_the_index_prints_them(self):
         cases = {
             GENERIC: ["[inst : WidgetLike W]", "[Finite W]"],
             PLAIN: [],
@@ -319,25 +441,52 @@ class TestTheInstantiationLine(JudgedLocate):
             "\u2200 {E : Type u} [inst : Normed E] (T : E \u2192\u2097[\u211d] E), "
             "T.Symm": ["[inst : Normed E]"],
             "\u2200 \u2983a b : \u03b1\u2984 [Fact (Prime p)], a = b": ["[Fact (Prime p)]"],
-            "\u2200 (n : \u2115), \u2200 [inst : Later n], n = n": [],
+            # a binder after a binder list, an anonymous argument or a hypothesis is at a
+            # binder position too
+            "\u2200 (n : \u2115), \u2200 [inst : Later n], n = n": ["[inst : Later n]"],
+            "{M : Type u_1} \u2192 Set M \u2192 [inst : WidgetLike M] \u2192 Widget M":
+                ["[inst : WidgetLike M]"],
+            "\u2200 {p : \u2115}, Nat.Prime p \u2192 \u2200 (W : Type u_1) [inst : WidgetLike W], "
+            "\u2203 g, Spans g W": ["[inst : WidgetLike W]"],
+            "Type u \u2192 [inst : Ring R] \u2192 R": ["[inst : Ring R]"],
+            # the conclusion is no binder position: an existential's body, a statement
+            "\u2203 x, P x \u2192 [inst : Foo x] \u2192 Q": [],
+            "\u2200 (a : \u03b1), a \u2208 s \u2192 a \u2261 b [ZMOD n]": [],
+            "\u2200 {f : \u03b9 \u2192 \u03b1} (h : \u2200 i, f i = 0), [Foo] = [Foo]": [],
             "Widget.Finite w": [], "": [],
         }
         for signature, want in cases.items():
             with self.subTest(signature=signature):
                 self.assertEqual(vl.instance_binders(signature), want)
-        self.assertEqual(vl.leading_binders("(a : \u03b1) (b"), ["(a : \u03b1)"])
+        # an unbalanced group ends the scan, and nothing raises
+        self.assertEqual(vl.binder_groups("\u2200 (a : \u03b1) (b"), ["(a : \u03b1)"])
+        self.assertEqual(vl.binder_groups("(a : \u03b1 \u2192 (b"), [])
+
+    def test_a_late_instance_binder_needs_the_line_too(self):
+        late = ("{M : Type u_1} \u2192 Set M \u2192 [inst : WidgetLike M] \u2192 Widget M")
+        sign(self.fx, "Widget.exists_spanning_gadget", late)
+        self.assertRefusedOnlyUnderTheRules(judged_body(), "[inst : WidgetLike M]")
+
+    def test_a_placeholder_is_no_instantiation(self):
+        sign(self.fx, "Widget.exists_spanning_gadget", GENERIC)
+        for line in ("n/a", "-", "none needed"):
+            body = judged_body()
+            body["passages"][0]["locations"][0]["instantiation"] = line
+            with self.subTest(line=line):
+                self.assertRule(self.run_body(body), 9, "says nothing")
 
 
 # --------------------------------------------------------------------------- #
-# FM3: a part of a proof is a displayed step it states
+# FM3: a part says what the declaration alone entails of the passage
 # --------------------------------------------------------------------------- #
 
-class TestAPartOfAProofNamesItsStep(JudgedLocate):
+class TestAPartNamesItsStep(JudgedLocate):
+    """Every hasPart and narrowMatch, on any passage kind; the audit's FM3 items sat on
+    theorem and definition passages as often as on proofs."""
 
-    def setUp(self):
-        super().setUp()
+    def kind(self, passage_kind: str) -> None:
         doc = G.locate_manifest_doc(self.fx)
-        doc["passages"][1]["passage_kind"] = "other"     # the theorem box, read as a proof
+        doc["passages"][1]["passage_kind"] = passage_kind    # the theorem box
         self.fx.manifest(self.TASK, doc)
 
     def body(self, relation="hasPart", **extra) -> dict:
@@ -345,21 +494,37 @@ class TestAPartOfAProofNamesItsStep(JudgedLocate):
         body["passages"][0]["locations"][0].update(relation=relation, clauses=["c1"], **extra)
         return body
 
-    def test_a_has_part_of_a_proof_names_the_step(self):
-        self.assertRefusedOnlyUnderTheRules(self.body(), "names the displayed step it states")
-        self.assertOk(self.run_body(self.body(step="the displayed existence of the gadget")))
-        self.assertRule(self.run_body(self.body(step="first\nsecond")), 9, "one line")
+    def test_a_has_part_or_narrow_match_names_the_step_on_every_kind(self):
+        for kind in ("other", "theorem", "definition"):
+            self.kind(kind)
+            for relation in ("hasPart", "narrowMatch"):
+                with self.subTest(kind=kind, relation=relation):
+                    needle = ("the displayed step" if kind == "other" else
+                              "the clause it states")
+                    self.assertRefusedOnlyUnderTheRules(self.body(relation), needle)
+                    self.assertOk(self.run_body(self.body(relation, step=STEP)))
 
-    def test_only_a_has_part_of_a_proof(self):
-        self.assertOk(self.run_body(self.body("narrowMatch")))
+    def test_the_step_is_a_line_that_says_something(self):
+        self.kind("other")
+        for step, needle in (("-", "says nothing"), ("n/a", "says nothing"),
+                             ("first\nsecond line here", "one line"),
+                             ("first line\rsecond line", "one line"),
+                             ("first line\u2028second line", "one line"),
+                             (["the", "step"], "not a list")):
+            with self.subTest(step=step):
+                self.assertRule(self.run_body(self.body(step=step)), 9, needle)
+
+    def test_no_other_relation_carries_a_step(self):
         body = judged_body()                                   # an exactMatch of every claim
         self.assertOk(self.run_body(body))
-        doc = G.locate_manifest_doc(self.fx)                   # the theorem passage again
-        self.fx.manifest(self.TASK, doc)
-        self.assertOk(self.run_body(self.body()))
+        body["passages"][0]["locations"][0]["step"] = STEP
+        self.assertRefusedOnlyUnderTheRules(body, "step belongs to a hasPart or narrowMatch")
+        # a long step on an exactMatch is checked like any step: the source verbatim
+        body["passages"][0]["locations"][0]["step"] = " ".join(G.THEOREM.split()[:15])
+        self.assertRule(self.run_body(body), 1, "own words")
 
 
-class TestAChallengersPartOfAProofNamesItsStep(G.GateTestCase):
+class TestAChallengersPartNamesItsStep(G.GateTestCase):
 
     TASK = "t-chl-0001"
     KEY = "9" * 64
@@ -369,11 +534,11 @@ class TestAChallengersPartOfAProofNamesItsStep(G.GateTestCase):
         self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
         self.fx.write_gate()
 
-    def records(self, relation, **extra):
+    def records(self, relation, kind="other", **extra):
         doc = G.locate_manifest_doc(self.fx)
         doc.pop("passages")
         doc["records"] = [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
-                           "span": G.THEOREM_SPAN, "passage_kind": "other",
+                           "span": G.THEOREM_SPAN, "passage_kind": kind,
                            "relation": relation, **extra}]
         self.fx.manifest(self.TASK, doc)
 
@@ -383,19 +548,32 @@ class TestAChallengersPartOfAProofNamesItsStep(G.GateTestCase):
                 "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
         return self.fx.run(self.fx.document(self.TASK, body))
 
-    def test_a_downgrade_to_has_part_names_the_step(self):
-        self.records("exactMatch")
-        self.assertRule(self.run_verdict(action="downgrade", relation="hasPart", clauses=["c1"]),
-                        9, "displayed step")
-        self.assertOk(self.run_verdict(action="downgrade", relation="hasPart", clauses=["c1"],
-                                       step="the displayed divisibility"))
+    def test_a_downgrade_to_a_part_names_the_step(self):
+        for kind in ("other", "theorem"):
+            for relation in ("hasPart", "narrowMatch"):
+                self.records("exactMatch", kind)
+                with self.subTest(kind=kind, relation=relation):
+                    self.assertRule(self.run_verdict(action="downgrade", relation=relation,
+                                                     clauses=["c1"]), 9, "names, in step")
+                    self.assertOk(self.run_verdict(action="downgrade", relation=relation,
+                                                   clauses=["c1"], step=STEP))
 
     def test_a_confirm_names_it_when_the_record_does_not(self):
         self.records("hasPart")
         self.assertRule(self.run_verdict(action="confirm", clauses=["c1"]), 9, "displayed step")
-        self.assertOk(self.run_verdict(action="confirm", clauses=["c1"], step="the bound"))
-        self.records("hasPart", step="the worker's step")
+        self.assertOk(self.run_verdict(action="confirm", clauses=["c1"], step=STEP))
+        self.records("hasPart", step="the worker's own step line")
         self.assertOk(self.run_verdict(action="confirm", clauses=["c1"]))
+        self.records("narrowMatch", "theorem")
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1"]), 9, "names, in step")
+
+    def test_a_verdict_that_leaves_no_part_carries_no_step(self):
+        self.records("exactMatch", "theorem")
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"], step=STEP), 9,
+                        "step belongs to a hasPart or narrowMatch")
+        self.assertRule(self.run_verdict(action="downgrade", relation="broadMatch",
+                                         clauses=["c1", "c2"], step=STEP), 9,
+                        "step belongs to a hasPart or narrowMatch")
 
 
 # --------------------------------------------------------------------------- #
@@ -420,17 +598,71 @@ class TestACloseMatchNamesItsConvention(JudgedLocate):
             with self.subTest(convention=convention):
                 self.assertOk(self.run_body(self.body(note=note, convention=convention)))
 
+    #: notes that name generality or strength, each with the phrase that catches it
+    GENERAL = (("a strict derivative for the passage's plain one", "strict derivative*"),
+               ("Stronger: any Banach codomain", "stronger"),
+               ("it is more general than the passage", "more general*"),
+               ("Mathlib proves it more generally, for every widget-like type", "more general*"),
+               ("it generalises the passage to any widget", "generali*"),
+               ("a generalization of the passage", "generali*"),
+               ("the passage is a special case of it", "special case"),
+               ("a weaker form of the passage", "weaker"),
+               ("it strengthens the passage's bound", "strengthen*"),
+               ("stated in greater generality", "generali*"),
+               ("a broader codomain than the passage's", "broader"),
+               ("phrased as strict differentiability", "strict differentiab*"),
+               ("it is strictly differentiable at every point", "strictly differentiab*"))
+    #: notes that name the mathematics, not a generality: a correct closeMatch says them
+    PLAIN = ("written with HasStrictDerivAt's notation",
+             "the passage's strict inequality a < b is written b > a",
+             "a strictly increasing list of primes encodes the factorisation",
+             "the gadget is written as a finite set")
+
     def test_a_close_match_note_says_no_generality(self):
-        for note, word in (("a strictly faster derivative", "strictly"),
-                           ("Stronger: any Banach codomain", "stronger"),
-                           ("the strict version of it", "strict"),
-                           ("it is more general than the passage", "more general")):
+        for note, phrase in self.GENERAL:
             with self.subTest(note=note):
                 self.assertRefusedOnlyUnderTheRules(self.body(note=note, convention="encoding"),
-                                                    f"says {word!r}")
-        # inside a name, the word is no claim of generality
-        self.assertOk(self.run_body(self.body(note="written with HasStrictDerivAt's notation",
-                                              convention="notation")))
+                                                    f"says {phrase!r}")
+        for note in self.PLAIN:
+            with self.subTest(note=note):
+                self.assertOk(self.run_body(self.body(note=note, convention="notation")))
+
+    def test_an_exact_match_note_says_no_generality_either(self):
+        """The audit's exactMatch for a general law against a finite table."""
+        body = judged_body()
+        body["passages"][0]["locations"][0]["note"] = "the law for every prime, more general"
+        self.assertRefusedOnlyUnderTheRules(body, "the exactMatch note says 'more general*'")
+        body["passages"][0]["locations"][0]["note"] = "the gadget is written as a finite set"
+        self.assertOk(self.run_body(body))
+
+    def test_no_other_relation_names_a_convention(self):
+        for relation, extra in (("exactMatch", {}), ("broadMatch", {}),
+                                ("hasPart", {"clauses": ["c1"], "step": STEP})):
+            body = judged_body()
+            body["passages"][0]["locations"][0].update(relation=relation, convention="notation",
+                                                       **extra)
+            with self.subTest(relation=relation):
+                self.assertRefusedOnlyUnderTheRules(body, "convention belongs to a closeMatch")
+        body["passages"][0]["locations"][0]["convention"] = ""          # blank is none
+        self.assertOk(self.run_body(body))
+
+    def test_a_hostile_shape_is_named_not_a_traceback(self):
+        """A list or an object where a word belongs is refused by name, and the rest of the
+        document is still read (no 'shape could not be checked' backstop)."""
+        cases = ({"relation": ["exactMatch"]}, {"convention": ["notation"]},
+                 {"convention": {"a": 1}}, {"clauses": {"c1": True}},
+                 {"instantiation": {"W": "G"}}, {"step": ["a", "step"]})
+        for change in cases:
+            body = self.body(note="the gadget is written as a finite set", convention="notation")
+            body["passages"][0]["locations"][0].update(change)
+            body["passages"][1]["claims"] = "not a list"             # still read and refused
+            result = self.run_body(body)
+            with self.subTest(change=change):
+                self.assertEqual(result["exit"], vl.EXIT_REJECTED, result)
+                self.assertFalse(any("could not be checked" in p for p in result["problems"]),
+                                 result["problems"])
+                self.assertTrue(any("claims is a non-empty list" in p
+                                    for p in result["problems"]), result["problems"])
 
     def test_the_closed_lists_are_cflibs(self):
         self.assertEqual(vl.CLOSE_MATCH_CONVENTIONS, vocab.CLOSE_MATCH_CONVENTIONS)
@@ -438,9 +670,12 @@ class TestACloseMatchNamesItsConvention(JudgedLocate):
         self.assertEqual(vocab.CLOSE_MATCH_CONVENTIONS,
                          {"notation", "encoding", "junk_value", "normalisation", "renaming",
                           "unfolding", "bundling"})
-        for note in ("strictly stronger", "more general", "stronger", "strict"):
-            self.assertEqual(vocab.says_generality(note), vl.says_generality(note))
-        self.assertIsNone(vocab.says_generality("a restriction of the codomain"))
+        for note, phrase in self.GENERAL:
+            self.assertEqual((vocab.says_generality(note), vl.says_generality(note)),
+                             (phrase, phrase))
+        for note in (*self.PLAIN, "a restriction of the codomain", "strict", "strictly"):
+            self.assertEqual((vocab.says_generality(note), vl.says_generality(note)),
+                             (None, None))
 
 
 class TestAChallengersCloseMatchNamesItsConvention(G.GateTestCase):
@@ -479,7 +714,7 @@ class TestAChallengersCloseMatchNamesItsConvention(G.GateTestCase):
         self.assertRule(self.run_verdict(**{k: v for k, v in down.items() if k != "note"},
                                          convention="encoding",
                                          witness="It is more general than the passage."),
-                        9, "'more general'")
+                        9, "'more general*'")
 
     def test_a_confirm_names_it_when_the_record_does_not(self):
         self.records("closeMatch", note="the order is a cardinal")
@@ -499,33 +734,97 @@ class TestAChallengersCloseMatchNamesItsConvention(G.GateTestCase):
         self.records("exactMatch", note="the order is a cardinal")
         self.assertOk(self.run_verdict(action="downgrade", relation="closeMatch",
                                        clauses=["c1", "c2"], convention="encoding"))
+        # a blank convention on a confirm is none: the record's stands
+        self.records("closeMatch", note="the order is a cardinal", convention="encoding")
+        self.assertOk(self.run_verdict(action="confirm", clauses=["c1", "c2"], convention=""))
+
+    def test_a_verdict_that_leaves_no_close_match_names_no_convention(self):
+        self.records("exactMatch")
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"],
+                                         convention="notation"), 9,
+                        "convention belongs to a closeMatch")
+        self.records("closeMatch", note="the order is a cardinal", convention="notation")
+        self.assertRule(self.run_verdict(action="downgrade", relation="broadMatch",
+                                         clauses=["c1", "c2"], convention="notation"), 9,
+                        "convention belongs to a closeMatch")
+        # the record's own convention is the outcomes' to drop, not the challenger's fault
+        self.assertOk(self.run_verdict(action="downgrade", relation="broadMatch",
+                                       clauses=["c1", "c2"]))
+
+    def test_a_confirm_carries_no_field_the_source_verbatim(self):
+        self.records("exactMatch")
+        verbatim = " ".join(G.THEOREM.split()[:15])
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"],
+                                         instantiation=verbatim), 1, "own words")
+        self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"],
+                                         instantiation="the widget\nand its gadget here"), 9,
+                        "one line")
 
 
 class TestAdmitsAMissingClause(unittest.TestCase):
 
+    #: notes that admit a clause the declaration does not state, with the phrase
+    GAPS = (("The bound is NOT STATED here.", "not stated"),
+            ("it doesn\u2019t state uniqueness", "does not state"),
+            ("states one direction; not the converse", "not the converse"),
+            ("existence, without uniqueness", "without uniqueness"),
+            ("the negative powers are not covered", "not covered"),
+            ("the size bound isn't stated", "not stated"),
+            ("it doesn't cover the divisibility", "does not cover"),
+            ("omits the divisibility clause", "omits"),
+            ("only proves existence", "only proves"),
+            ("the converse is not included", "converse is not"),
+            ("states one direction only", "one direction only"),
+            ("uniqueness is not asserted", "uniqueness is not"),
+            ("the bound is not a part of it", "not a part of"),
+            ("unlike the passage, it does not state the converse", "does not state"),
+            ("the passage's bound is not stated", "not stated"))
+    #: notes that admit nothing of the declaration's: negated, about the passage, or a
+    #: relative clause on an "unlike" clause's object
+    CLEAN = ("states both implications, not only one direction",
+             "existence and uniqueness, not only the existence",
+             "unlike its corollary, which does not state the bound, this one states both "
+             "clauses",
+             "junk value: Lean returns 0 at 0, a value which is not part of the passage",
+             "junk value: the passage does not cover n = 0, where Lean returns 0",
+             "encoding: the passage leaves the case x = 0 not covered",
+             "normalisation: the leading coefficient is 1, which the passage has not stated",
+             "", None, "junk value of deriv off the differentiable points",
+             "the notstated macro", "stated as a bijection of quotients")
+
     def test_the_closed_phrase_list(self):
-        for note, phrase in (
-                ("The bound is NOT STATED here.", "not stated"),
-                ("it doesn’t state uniqueness", "doesn't state"),
-                ("states one direction; not the converse", "not the converse"),
-                ("existence, without uniqueness", "without uniqueness"),
-                ("the negative powers are not covered", "not covered")):
+        for note, phrase in self.GAPS:
             with self.subTest(note=note):
                 self.assertEqual(vocab.admits_missing_clause(note), phrase)
                 self.assertEqual(vl.admits_missing_clause(note), phrase)
-        for note in ("", None, "junk value of deriv off the differentiable points",
-                     "the notstated macro", "stated as a bijection of quotients"):
+        for note in self.CLEAN:
             with self.subTest(note=note):
                 self.assertIsNone(vocab.admits_missing_clause(note))
                 self.assertIsNone(vl.admits_missing_clause(note))
 
+    def test_a_contraction_is_spelled_out(self):
+        self.assertEqual(vocab.fold_words("It DOESN\u2019T  cover it; can't; won't"),
+                         "it does not cover it; can not; will not")
+        self.assertEqual(vocab.fold_words("x"), vl.fold_words("x"))
+
     def test_the_gates_copies_are_cflibs(self):
         self.assertEqual(vl.JUDGMENT_RULES, vocab.JUDGMENT_RULES)
         self.assertEqual(vl.STRONG_RELATIONS, vocab.STRONG_RELATIONS)
+        self.assertEqual(vl.STEP_RELATIONS, vocab.STEP_RELATIONS)
         self.assertEqual(vl.CLAUSE_GAP_PHRASES, vocab.CLAUSE_GAP_PHRASES)
+        self.assertEqual(vl.CANDIDATE_PART_PHRASES, vocab.CANDIDATE_PART_PHRASES)
         self.assertEqual(vl.CLAIM_ID.pattern, vocab.CLAIM_ID.pattern)
         self.assertEqual((vl.MAX_PASSAGE_CLAIMS, vl.MAX_CLAIM_CHARS),
                          (vocab.MAX_PASSAGE_CLAIMS, vocab.MAX_CLAIM_CHARS))
+        self.assertEqual((vl.MAX_JUDGMENT_LINE_CHARS, vl.MIN_JUDGMENT_LINE_WORDS),
+                         (vocab.MAX_JUDGMENT_LINE_CHARS, vocab.MIN_JUDGMENT_LINE_WORDS))
+        self.assertEqual(vl.GENERAL_QUERY_TAG, vocab.GENERAL_QUERY_TAG)
+        for reason in ("not the worked example", "the whole thing", "generalises it", ""):
+            self.assertEqual(vl.rejects_a_part(reason), vocab.rejects_a_part(reason))
+        for phrase in (*vocab.CLAUSE_GAP_PHRASES, *vocab.CLOSE_MATCH_GENERALITY_PHRASES):
+            self.assertEqual(vl.phrase_pattern(phrase).pattern,
+                             vocab.phrase_pattern(phrase).pattern)
+
 
 
 # --------------------------------------------------------------------------- #
@@ -578,7 +877,7 @@ class TestTheChallengersClaims(G.GateTestCase):
     def test_a_confirm_names_the_challengers_claims(self):
         body = self.body()
         del body["claims"][G.THM_ITEM]
-        self.assertRule(self.run_body(body), 9, "claim list under claims first")
+        self.assertRule(self.run_body(body), 9, "rests on your own claim list")
         body = self.body()
         del body["verdicts"][0]["clauses"]
         self.assertRule(self.run_body(body), 9, "names the ids of the claims it states")
@@ -589,8 +888,10 @@ class TestTheChallengersClaims(G.GateTestCase):
 
     def test_a_downgrade_names_what_the_relation_it_leaves_states(self):
         body = self.body()
-        body["verdicts"][0].update(action="downgrade", relation="hasPart", clauses=["c2"])
+        body["verdicts"][0].update(action="downgrade", relation="hasPart", clauses=["c2"],
+                                   step="the divisibility of the gadget's size")
         self.assertOk(self.run_body(body))
+        body["verdicts"][0].pop("step")
         body["verdicts"][0].update(relation="relatedMatch", clauses=["c2"])
         self.assertRule(self.run_body(body), 9, "relatedMatch states no clause")
         del body["verdicts"][0]["clauses"]
@@ -606,7 +907,7 @@ class TestTheChallengersClaims(G.GateTestCase):
         body["verdicts"][0].update(action="downgrade", relation="broadMatch",
                                    note="it does not state the size bound")
         self.assertRule(self.run_body(body), 9, "admits a clause")
-        body["verdicts"][0].update(relation="hasPart", clauses=["c1"])
+        body["verdicts"][0].update(relation="hasPart", clauses=["c1"], step=STEP)
         self.assertOk(self.run_body(body))
 
     def test_a_records_own_note_never_forces_the_challengers_verdict(self):
@@ -619,7 +920,7 @@ class TestTheChallengersClaims(G.GateTestCase):
     def test_an_overturns_locations_are_judged_like_a_workers(self):
         body = self.body()
         del body["claims"][G.LEAD_ITEM]
-        self.assertRule(self.run_body(body), 9, "write the passage's claim list")
+        self.assertRule(self.run_body(body), 9, "a verdict on an absence rests on your own")
         body = self.body()
         del body["verdicts"][1]["locations"][0]["clauses"]
         self.assertRule(self.run_body(body), 9, "names the ids")
@@ -630,6 +931,115 @@ class TestTheChallengersClaims(G.GateTestCase):
         body = self.body()
         self.assertRule(self.run_body(body), 9, "takes instance argument(s)")
         body["verdicts"][1]["locations"][0]["instantiation"] = "W is the passage's widget"
+        self.assertOk(self.run_body(body))
+
+    def test_every_verdict_on_a_passage_rests_on_the_challengers_claims(self):
+        """The FM7-prone verdicts -- a refute, a downgrade to relatedMatch, an uphold --
+        list the passage's clauses first, as a confirm does."""
+        for verdict in ({"action": "refute"},
+                        {"action": "downgrade", "relation": "relatedMatch"}):
+            body = self.body()
+            del body["claims"][G.THM_ITEM]
+            body["verdicts"][0] = {"item": G.THM_ITEM, "target": "location",
+                                   "location_key": self.KEY, "witness": "read at the pin",
+                                   **verdict}
+            with self.subTest(verdict=verdict):
+                self.assertRule(self.run_body(body), 9, "rests on your own claim list")
+                self.assertOk(self.unruled(body))
+                self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+                self.fx.write_gate()
+        body = self.body()
+        del body["claims"][G.LEAD_ITEM]
+        body["verdicts"][1] = {"item": G.LEAD_ITEM, "target": "absence", "action": "uphold",
+                               "witness": "searched again", **self.SEARCH}
+        self.assertRule(self.run_body(body), 9, "a verdict on an absence rests on your own")
+
+    def test_a_challenger_never_drops_a_workers_claim(self):
+        worker = THM_CLAIMS + [{"id": "c3", "text": "the gadget is unique"}]
+        doc = G.locate_manifest_doc(self.fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                           "span": G.THEOREM_SPAN, "passage_kind": "theorem",
+                           "relation": "exactMatch", "claims": worker,
+                           "clauses": ["c1", "c2", "c3"]}]
+        self.fx.manifest(self.TASK, doc)
+        body = {"verdicts": [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                              "action": "confirm", "clauses": ["c1"], "witness": "states it"}],
+                "claims": {G.THM_ITEM: [THM_CLAIMS[0]]}}
+        self.assertRule(self.run_body(body), 9, "split a clause, never drop one")
+        # a downgrade to a part needs no longer list
+        body["verdicts"][0].update(action="downgrade", relation="hasPart", step=STEP)
+        self.assertOk(self.run_body(body))
+
+    #: an uphold's own search, tagged against LEAD_CLAIMS
+    SEARCH = {"queries": ["gadget spanning finite", "widget cover lemma", "Widget.cover"],
+              "query_clauses": {"gadget spanning finite": ["c1"], "widget cover lemma": ["c1"],
+                                "Widget.cover": ["c1"]}}
+
+    def test_an_uphold_lists_its_tagged_queries(self):
+        body = self.body()
+        body["verdicts"][1] = {"item": G.LEAD_ITEM, "target": "absence", "action": "uphold",
+                               "witness": "nothing states it"}
+        self.assertRule(self.run_body(body), 9, "an uphold lists the queries you ran")
+        self.assertOk(self.unruled(body))
+        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.write_gate()
+        body["verdicts"][1].update(copy.deepcopy(self.SEARCH))
+        self.assertOk(self.run_body(body))
+        body["verdicts"][1]["queries"] = self.SEARCH["queries"][:2]
+        body["verdicts"][1]["query_clauses"] = {q: ["c1"] for q in self.SEARCH["queries"][:2]}
+        self.assertRule(self.run_body(body), 9, "2 distinct queries; at least 3")
+        body["verdicts"][1].update(copy.deepcopy(self.SEARCH))
+        body["verdicts"][1]["query_clauses"].pop("Widget.cover")
+        self.assertRule(self.run_body(body), 9, "carries no tag")
+
+    def test_a_coverage_confirm_names_each_parts_clauses(self):
+        other = "8" * 64
+        doc = G.locate_manifest_doc(self.fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": G.THM_ITEM, "target": "coverage", "span": G.THEOREM_SPAN,
+                           "passage_kind": "theorem",
+                           "parts": [{"location_key": self.KEY, "relation": "hasPart"},
+                                     {"location_key": other, "relation": "hasPart"}]}]
+        self.fx.manifest(self.TASK, doc)
+        verdict = {"item": G.THM_ITEM, "target": "coverage", "action": "confirm",
+                   "witness": "the first states existence, the second divisibility"}
+        body = {"verdicts": [verdict], "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
+        self.assertRule(self.run_body(body), 9, "part_clauses")
+        verdict["part_clauses"] = {self.KEY: ["c1"], other: ["c1"]}
+        self.assertRule(self.run_body(body), 9, "no part states c2")
+        verdict["part_clauses"] = {self.KEY: ["c1"]}
+        self.assertRule(self.run_body(body), 9, "gives part 888888888888 no clauses")
+        verdict["part_clauses"] = {self.KEY: ["c1"], other: ["c2"]}
+        self.assertOk(self.run_body(body))
+        del body["claims"]
+        self.assertRule(self.run_body(body), 9, "a verdict on a coverage rests on your own")
+        # a refute rests on the claim list too
+        body = {"verdicts": [{"item": G.THM_ITEM, "target": "coverage", "action": "refute",
+                              "witness": "no part states the divisibility"}]}
+        self.assertRule(self.run_body(body), 9, "a verdict on a coverage rests on your own")
+
+    def test_a_confirm_instantiates_what_the_record_did_not(self):
+        """A run planned before the rules has no instantiation on any record: the
+        challenger who keeps a relation on a generic declaration instantiates it."""
+        sign(self.fx, "Widget.exists_spanning_gadget", GENERIC)
+        doc = G.locate_manifest_doc(self.fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                           "span": G.THEOREM_SPAN, "passage_kind": "theorem",
+                           "relation": "broadMatch", "library": "alpha",
+                           "declaration": "Widget.exists_spanning_gadget"}]
+        self.fx.manifest(self.TASK, doc)
+        body = {"verdicts": [{"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                              "action": "confirm", "clauses": ["c1", "c2"],
+                              "witness": "states it"}],
+                "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
+        self.assertRule(self.run_body(body), 9, "instantiate it yourself")
+        body["verdicts"][0]["instantiation"] = "W is the passage's widget G, WidgetLike by its law"
+        self.assertOk(self.run_body(body))
+        # a refute keeps nothing, and instantiates nothing
+        body["verdicts"][0] = {"item": G.THM_ITEM, "target": "location",
+                               "location_key": self.KEY, "action": "refute", "witness": "no"}
         self.assertOk(self.run_body(body))
 
     def test_claims_for_a_passage_the_task_does_not_judge(self):
@@ -762,6 +1172,81 @@ class TestTheFieldsReachTheOutcomesAndTheChallenger(unittest.TestCase):
         part = locs["Widget.card_dvd"]
         self.assertEqual((part["relation"], part["challenge"]), ("hasPart", None))
         self.assertFalse({"step", "challenge_clauses"} & set(part))
+
+
+class TestTheOutcomesKeepWhatFitsTheRelation(unittest.TestCase):
+    """What a verdict leaves on a location fits the relation it leaves (outcomes'
+    ``_fit_fields``), and an uphold's search and a coverage confirm's clauses are kept."""
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.paths = F.campaign(self, self.root)
+        F.plan_locate(self, self.root, run_id="loc-1")
+        docs = F.locate_documents(self.paths, "loc-1")
+        for doc in docs.values():
+            for p in doc["passages"]:
+                names = [l["declaration"] for l in p["locations"]]
+                if "Beta.Widget.gadget_of_finite" in names:
+                    p["locations"][1].update(relation="closeMatch", convention="notation",
+                                             note="the gadget is written as a finite set")
+                if "Widget.card_dvd" in names:
+                    p["locations"].append(F._loc("alpha", "Widget.Spanning", "hasPart", 2))
+                    p["coverage"] = {"complete": True, "parts": [1, 2],
+                                     "note": "the two lemmas together give the theorem"}
+        F.write_harvest(self.paths, "loc-1", docs)
+
+    def challenge(self, verdict) -> dict:
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                            "--sourceset", F.SS, "--universe", F.U, "--challenge-of", "loc-1",
+                            "--run-id", "chl-1")
+        self.assertEqual(code, 0, out + err)
+        F.write_harvest(self.paths, "chl-1", F.challenge_documents(self.paths, "chl-1",
+                                                                   verdict=verdict))
+        return outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+
+    def test_a_downgrade_off_close_match_leaves_no_convention(self):
+        def verdict(rec):
+            v = F.default_verdict(rec)
+            if rec.get("declaration") == "Beta.Widget.gadget_of_finite":
+                v.update(action="downgrade", relation="broadMatch", convention="notation")
+            if rec.get("declaration") == "Widget.exists_spanning_gadget":
+                # a confirm of an exactMatch that names a step and a convention keeps neither
+                v.update(convention="notation", step="a step that fits no exactMatch")
+            return v
+
+        built = self.challenge(verdict)
+        locs = {l["declaration"]: l for r in built["outcomes"] for l in r["locations"]}
+        self.assertEqual(locs["Beta.Widget.gadget_of_finite"]["relation"], "broadMatch")
+        self.assertNotIn("convention", locs["Beta.Widget.gadget_of_finite"])
+        self.assertFalse({"convention", "step"} & set(locs["Widget.exists_spanning_gadget"]))
+
+    def test_an_uphold_and_a_coverage_confirm_keep_what_the_challenger_said(self):
+        search = {"queries": ["gadget lattice height", "lattice of gadgets", "height bound"],
+                  "query_clauses": {"gadget lattice height": ["c1"],
+                                    "lattice of gadgets": ["c1"], "height bound": ["c1"]}}
+        part_clauses = {}
+
+        def verdict(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "absence":
+                v = {"item": rec["item"], "target": "absence", "action": "uphold",
+                     "witness": "nothing states it", **search}
+            if rec["target"] == "coverage":
+                keys = [part["location_key"] for part in rec["parts"]]
+                part_clauses.update({keys[0]: ["c1"], keys[1]: ["c2"]})
+                v["part_clauses"] = dict(part_clauses)
+            return v
+
+        built = self.challenge(verdict)
+        absent = next(r for r in built["outcomes"] if r["outcome"] == "absent"
+                      and r.get("challenge_receipt"))
+        self.assertEqual(absent["challenge_receipt"], search)
+        self.assertEqual(outcomes.outcome_row(absent)["challenge_receipt"], search)
+        covered = next(r for r in built["outcomes"] if r.get("coverage"))
+        self.assertEqual(covered["coverage_challenge_clauses"], part_clauses)
+        self.assertEqual(set(covered["coverage"]), {"complete", "parts", "note", "challenge"})
+        self.assertEqual(outcomes.outcome_row(covered)["coverage_challenge_clauses"],
+                         part_clauses)
 
 
 # --------------------------------------------------------------------------- #

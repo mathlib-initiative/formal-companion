@@ -79,19 +79,24 @@ references/locate-documents.md sections 2-4 and 9):
    them is gated as it was: a located or absent passage writes its claim list
    (``claims``); a location whose relation counts names the claim ids it states
    (``clauses``), every one for a strong relation, and a ``relatedMatch`` none;
-   a strong location whose note admits a clause it does not state is refused,
-   and so is a coverage claim whose parts leave a clause unstated; an absence's
-   receipt tags its queries with the claims they target
-   (``receipt.query_clauses``) and leaves no claim unsearched, a worked
-   example's also searching for its general theorem; a counting location on a
-   declaration whose signature (``corpus.sqlite``'s ``decls.signature``) takes
-   an instance argument says how it is instantiated (``instantiation``); a
-   ``hasPart`` of a proof or remark passage names the displayed step it states
-   (``step``); a ``closeMatch`` names its convention from a closed list
-   (``convention``) and its note says no "stronger", "strict" or "more
-   general"; a challenge document
-   carries the challenger's own claim lists, which its verdicts and overturn
-   locations name.
+   a strong location whose note or instantiation admits a clause it does not
+   state is refused, and so is a coverage claim whose parts leave a clause
+   unstated; an absence's receipt tags every query with the claims it targets
+   (``receipt.query_clauses``) and gives each claim a query of its own, a worked
+   example's general theorem too, and rejects no candidate for stating a part of
+   the passage; a counting location on a declaration whose signature
+   (``corpus.sqlite``'s ``decls.signature``) takes an instance argument at a
+   binder position says how it is instantiated (``instantiation``); a
+   ``hasPart`` or ``narrowMatch`` says what the declaration alone entails of the
+   passage (``step``); a ``closeMatch`` names its convention from a closed list
+   (``convention``), no other relation carries a convention or a step, and an
+   exact or close note names no generality; every one-line field is checked
+   wherever it appears, and every free text against the source in all its
+   spellings (the layer, without format characters, and the reading copy's);
+   a challenge document carries the challenger's own claim list of every
+   passage it judges a location, coverage claim, absence or unresolved outcome
+   of, which its verdicts name -- a coverage confirm per part, an uphold through
+   its own tagged queries.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -111,6 +116,7 @@ import sqlite3
 import stat
 import sys
 import time
+import unicodedata
 import urllib.parse
 from collections import Counter
 from typing import Any, Callable, Iterable
@@ -264,23 +270,49 @@ CLAIM_KEYS = frozenset({"id", "text"})
 #: (cflib.vocab.GENERAL_QUERY_TAG)
 GENERAL_QUERY_TAG = "general"
 PASSAGE_EXAMPLE = "example"
-#: a proof or a remark: its hasPart locations name the displayed step they state
+#: a proof, a remark or any statement of no other kind
 PASSAGE_OTHER = "other"
-#: the conventions a closeMatch names, and the words its note may not say
-#: (cflib.vocab.CLOSE_MATCH_CONVENTIONS, CLOSE_MATCH_GENERALITY_PHRASES)
+NARROW_MATCH = "narrowMatch"
+EXACT_MATCH = "exactMatch"
+#: the relations whose location names the step or clause the declaration alone
+#: entails (cflib.vocab.STEP_RELATIONS)
+STEP_RELATIONS = frozenset({HAS_PART, NARROW_MATCH})
+#: the conventions a closeMatch names, and the words an exact or close note may not
+#: say (cflib.vocab.CLOSE_MATCH_CONVENTIONS, CLOSE_MATCH_GENERALITY_PHRASES)
 CLOSE_MATCH_CONVENTIONS = frozenset({"notation", "encoding", "junk_value", "normalisation",
                                      "renaming", "unfolding", "bundling"})
-CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strict", "strictly", "more general")
-#: a judgment rule's one-line field (cflib.vocab.MAX_JUDGMENT_LINE_CHARS)
+CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strengthen*", "weaker", "weaken*",
+                                  "more general*", "generali*", "special case",
+                                  "particular case", "broader", "narrower",
+                                  "strict derivative*", "strict differentiab*",
+                                  "strictly differentiab*")
+#: a judgment rule's one-line field (cflib.vocab.MAX_JUDGMENT_LINE_CHARS,
+#: MIN_JUDGMENT_LINE_WORDS)
 MAX_JUDGMENT_LINE_CHARS = 300
-#: the brackets of a binder group in a signature as the index prints it
+MIN_JUDGMENT_LINE_WORDS = 3
+#: the brackets of a binder group in a signature as the index prints it, and the
+#: other pairs a binder-position scan keeps its depth by
 BINDER_BRACKETS = {"(": ")", "{": "}", "[": "]", "\u2983": "\u2984"}
+DEPTH_BRACKETS = {**BINDER_BRACKETS, "\u27e8": "\u27e9"}
 #: the phrases by which a strong record's note admits a clause it does not state
-#: (cflib.vocab.CLAUSE_GAP_PHRASES; the matcher is cflib.vocab._phrase_in's)
-CLAUSE_GAP_PHRASES = ("does not state", "doesn't state", "not stated", "is not part of",
-                      "rather than asserting", "rather than stating", "only the existence",
-                      "only one direction", "not the converse", "without uniqueness",
-                      "does not cover", "not covered")
+#: (cflib.vocab.CLAUSE_GAP_PHRASES; the matcher is cflib.vocab.admits_missing_clause's)
+CLAUSE_GAP_PHRASES = ("does not state", "do not state", "not stated", "not part of",
+                      "not a part of", "rather than asserting", "rather than stating",
+                      "rather than proving", "only the existence", "only existence",
+                      "only proves", "only states", "proves only", "states only",
+                      "only one direction", "one direction only", "not the converse",
+                      "converse is not", "without the converse", "without uniqueness",
+                      "uniqueness is not", "does not cover", "do not cover", "not covered",
+                      "not asserted", "not included", "omits", "omitted", "leaves out",
+                      "left out", "does not prove", "does not assert", "does not establish")
+#: the phrases by which an absence's rejected candidate is said to state a part, a
+#: case or a generalisation of the passage (cflib.vocab.CANDIDATE_PART_PHRASES)
+CANDIDATE_PART_PHRASES = ("only part", "part of the passage", "one clause",
+                          "one of the clauses", "not the whole", "not the full",
+                          "special case", "not the worked example", "not the example",
+                          "partially", "more general*", "generali*")
+#: what breaks a line (str.splitlines' boundaries): a one-line field holds none
+LINE_BREAKS = re.compile("[\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
 
 #: the one spelling of a passage item a stage writes (``items.passage_item``)
 ITEM = re.compile(r"In-text #[0-9a-f]{8}\Z")
@@ -584,11 +616,35 @@ class SourceView:
             self.map = lt.HeadMap(self.layer, formulas)
         except lt.HeadError as exc:
             raise GateBroken(f"{source_id}: formulas.json does not fit the layer ({exc})") from None
+        self.formulas = formulas
         self._paragraphs: list[dict] | None = None
+        self._views: tuple[str, str] | None = None
 
     @property
     def head(self) -> str:
         return self.map.head
+
+    def views(self) -> tuple[str, str]:
+        """The two other spellings of the source a worker may copy from (rule 9's cap).
+
+        The layer with every format character dropped (a zero-width space, a soft
+        hyphen), and the reading copy's spelling: ``text.txt`` writes each formula
+        as ``$<normalized alttext>$`` (``sources.render_html``), where the layer
+        carries the formula's fallback text and its ``{\\displaystyle ...}``
+        annotation, so a sentence copied from ``text.txt`` with a formula in it
+        never matches the layer.  Both are built here from ``layer.txt`` and
+        ``formulas.json``, the files this gate already pins.
+        """
+        if self._views is None:
+            pieces, cursor = [], 0
+            for formula in self.formulas:       # sorted and disjoint: HeadMap checked it
+                a, b = (int(x) for x in formula["span"])
+                pieces.append(self.layer[cursor:a])
+                pieces.append(f"${lt.normalize_alttext(str(formula.get('alttext', '')))}$")
+                cursor = b
+            pieces.append(self.layer[cursor:])
+            self._views = (strip_format(self.layer), strip_format("".join(pieces)))
+        return self._views
 
     def paragraphs(self) -> list[dict]:
         if self._paragraphs is None:
@@ -1264,57 +1320,242 @@ def _check_coverage(problems: Problems, where: str, coverage: Any, *, outcome: A
 # rule 9: the judgment rules (references/vocabulary.md section 1.11, R1-R7)
 # --------------------------------------------------------------------------- #
 
+def fold_words(text: Any) -> str:
+    """``text`` as the phrase lists read it (cflib.vocab.fold_words, inlined)."""
+    folded = str(text or "").replace("’", "'").casefold()
+    folded = re.sub(r"(?<![\w'])can't(?![\w'])", "can not", folded)
+    folded = re.sub(r"(?<![\w'])won't(?![\w'])", "will not", folded)
+    folded = re.sub(r"(?<![\w'])cannot(?![\w'])", "can not", folded)
+    folded = re.sub(r"(?<=\w)n't(?![\w'])", " not", folded)
+    return " ".join(folded.split())
+
+
+def phrase_pattern(phrase: str) -> re.Pattern:
+    """A phrase of a list as a pattern (cflib.vocab.phrase_pattern, inlined)."""
+    wild = phrase.endswith("*")
+    body = r"\s".join(re.escape(word) for word in phrase.rstrip("*").split())
+    return re.compile(rf"(?<![\w']){body}" + (r"[\w']*" if wild else r"(?![\w'])"))
+
+
 def _phrase_in(text: Any, phrases: Iterable[str]) -> str | None:
-    """The first of ``phrases`` in ``text`` as whole words, case-folded (cflib.vocab's)."""
-    folded = " ".join(str(text or "").replace("\u2019", "'").casefold().split())
+    """The first of ``phrases`` in ``text`` (cflib.vocab._phrase_in, inlined)."""
+    folded = fold_words(text)
     for phrase in phrases:
-        if re.search(rf"(?<![\w']){re.escape(phrase)}(?![\w'])", folded):
+        if phrase_pattern(phrase).search(folded):
             return phrase
     return None
 
 
+_CLAUSE_END = re.compile(r"[.;:!?,()\[\]]")
+_PASSAGE_WORD = re.compile(r"(?<![\w'])(?:passage|article)(?![\w'])")
+_PASSAGE_AFTER = re.compile(r"\s*(?:by |in |of |from |for )?(?:the |this )(?:passage|article)"
+                            r"(?![\w'])")
+_NEGATED = re.compile(r"(?<![\w'])not\s*\Z")
+_RELATIVE = re.compile(r"\s*(?:which|that|whose|where)(?![\w'])")
+
+
+def _gap_exempt(folded: str, start: int, end: int, phrase: str) -> bool:
+    """A gap phrase's hit that admits no gap of the declaration's (cflib.vocab's)."""
+    before, after = folded[:start], folded[end:]
+    if phrase.startswith("only") and _NEGATED.search(before):
+        return True
+    cuts = [m.end() for m in _CLAUSE_END.finditer(before)]
+    clause_start = cuts[-1] if cuts else 0
+    clause = before[clause_start:]
+    stop = _CLAUSE_END.search(after)
+    if _PASSAGE_WORD.search(clause) or _PASSAGE_AFTER.match(after[:stop.start() if stop
+                                                                    else len(after)]):
+        return True
+    if len(cuts) >= 1 and _RELATIVE.match(clause):
+        previous = before[cuts[-2] if len(cuts) >= 2 else 0:clause_start - 1]
+        if previous.strip().startswith("unlike"):
+            return True
+    return False
+
+
 def admits_missing_clause(note: Any) -> str | None:
     """The ``CLAUSE_GAP_PHRASES`` phrase by which a note admits a clause it does not state."""
-    return _phrase_in(note, CLAUSE_GAP_PHRASES)
+    folded = fold_words(note)
+    for phrase in CLAUSE_GAP_PHRASES:
+        for hit in phrase_pattern(phrase).finditer(folded):
+            if not _gap_exempt(folded, hit.start(), hit.end(), phrase):
+                return phrase
+    return None
 
 
 def says_generality(note: Any) -> str | None:
-    """The ``CLOSE_MATCH_GENERALITY_PHRASES`` word a closeMatch note says (cflib.vocab's)."""
+    """The ``CLOSE_MATCH_GENERALITY_PHRASES`` phrase an exact or close note says."""
     return _phrase_in(note, CLOSE_MATCH_GENERALITY_PHRASES)
 
 
-def check_convention(problems: Problems, where: str, convention: Any, note: Any) -> None:
-    """Rule 9 (R1, FM4): a closeMatch names its convention, and its note no generality."""
-    if convention not in CLOSE_MATCH_CONVENTIONS:
-        problems.add(9, where, f"a closeMatch names the convention it differs by, one of "
-                               f"{', '.join(sorted(CLOSE_MATCH_CONVENTIONS))} (convention: "
-                               f"<one>); a difference that is none of them is no closeMatch "
-                               f"(R1)")
+def rejects_a_part(reason: Any) -> str | None:
+    """The ``CANDIDATE_PART_PHRASES`` phrase a candidate's rejection says (cflib.vocab's)."""
+    return _phrase_in(reason, CANDIDATE_PART_PHRASES)
+
+
+def strip_format(text: str) -> str:
+    """``text`` without its format characters (Unicode category Cf: U+200B, U+00AD, ...)."""
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
+def own_words_run(text: str, source: Any, *, raw: bool = True) -> str | None:
+    """The source verbatim past the export's cap in ``text``, in any spelling a worker reads.
+
+    The layer as it is (``raw``; what rule 1 holds every exported free text to
+    already, through ``locate_records``), the layer without format characters,
+    and the reading copy's spelling of it (:meth:`SourceView.views`), each with the
+    format characters dropped from ``text`` too: a zero-width space after every
+    word, or a sentence copied from ``text.txt`` with its formula as ``$x$``, is
+    still the source's words.  None when ``source`` is None.
+    """
+    if source is None:
+        return None
+    run = lr.verbatim_run(text, source.layer)
+    if run is not None:
+        return run if raw else None           # not raw: rule 1's own check names it
+    bare = strip_format(str(text or ""))
+    for view in source.views():
+        run = lr.verbatim_run(bare, view)
+        if run is not None:
+            return run
+    return None
+
+
+def _verbatim(problems: Problems, where: str, what: str, text: str, source: Any, *,
+              raw: bool = True) -> bool:
+    """Rule 1's cap on a worker's free text, in every spelling (:func:`own_words_run`)."""
+    run = own_words_run(text, source, raw=raw)
+    if run is not None:
+        spelled = "" if raw and lr.verbatim_run(text, source.layer) else (
+            ", as the reading copy or the layer spells it")
+        problems.add(1, where, f"{what} carries {len(run.split())}+ words of the source verbatim "
+                               f"({run[:40]!r}...){spelled}, past the {lr.QUOTE_WORDS}-word "
+                               f"quote cap: say it in your own words")
+        return True
+    return False
+
+
+def _blank(value: Any) -> bool:
+    """None, or a string of whitespace: a field that says nothing (and no wrong shape)."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _one_line(value: str) -> bool:
+    return LINE_BREAKS.search(value) is None
+
+
+def _words_with_letters(value: str) -> int:
+    return sum(1 for word in value.split() if any(ch.isalpha() for ch in word))
+
+
+def check_line_field(problems: Problems, where: str, field: str, value: Any,
+                     source: Any) -> bool:
+    """A judgment rule's one-line field wherever a location or verdict carries it.
+
+    Absent (None) or blank says nothing (False).  Otherwise it is a string of one
+    line (no line break of any kind), at most ``MAX_JUDGMENT_LINE_CHARS``
+    characters and at least ``MIN_JUDGMENT_LINE_WORDS`` words with a letter in
+    them ("n/a" or "-" is no line), in the worker's own words (rule 1's cap, in
+    every spelling).  True when it carries a usable line.
+    """
+    if _blank(value):
+        return False
+    if not isinstance(value, str):
+        problems.add(9, where, f"{field} is one line of text, not a {type(value).__name__}")
+        return False
+    if not _one_line(value) or len(value) > MAX_JUDGMENT_LINE_CHARS:
+        problems.add(9, where, f"{field} is one line of at most {MAX_JUDGMENT_LINE_CHARS} "
+                               f"characters")
+        return False
+    if _words_with_letters(value) < MIN_JUDGMENT_LINE_WORDS:
+        problems.add(9, where, f"{field} {value!r} says nothing: at least "
+                               f"{MIN_JUDGMENT_LINE_WORDS} words of your own")
+        return False
+    return not _verbatim(problems, where, f"the {field}", value, source)
+
+
+def check_free_text(problems: Problems, where: str, texts: Iterable[tuple[str, Any]],
+                    source: Any) -> None:
+    """Rule 1's cap, under the judgment rules, on the free texts the export publishes.
+
+    A location's note and an absence's queries and reasons are held to the layer
+    already (``locate_records.check_note``, ``receipt_document``); this holds them
+    to the layer's other spellings too (:func:`own_words_run` without the raw
+    layer, which names its own refusal), for a run planned under the rules only:
+    a run planned before them exports exactly what it did.
+    """
+    for what, text in texts:
+        if isinstance(text, str) and text.strip():
+            _verbatim(problems, where, what, text, source, raw=False)
+
+
+def check_generality(problems: Problems, where: str, relation: Any, note: Any) -> None:
+    """Rule 9 (R1-R3, FM4): an exactMatch or closeMatch note names no generality."""
+    if not _one_of(relation, (EXACT_MATCH, CLOSE_MATCH)):
+        return
     word = says_generality(note)
     if word:
-        problems.add(9, where, f"a closeMatch note says {word!r}: a strengthening or a "
-                               f"generalisation is broadMatch (R2), a special case "
-                               f"narrowMatch (R3), never a convention (R1)")
+        problems.add(9, where, f"the {relation} note says {word!r}: an exactMatch differs from "
+                               f"its passage by nothing and a closeMatch by a convention only "
+                               f"(R1); a declaration stronger or more general is broadMatch "
+                               f"(R2), a special case narrowMatch (R3), a weakening hasPart or "
+                               f"relatedMatch (R5). If the words name the mathematics instead "
+                               f"(a strict inequality, an increasing list), reword the note")
 
 
-def _verbatim(problems: Problems, where: str, what: str, text: str, layer: str) -> None:
-    """Rule 1's cap on a worker's free text that the gate reads but the export does not."""
-    run = lr.verbatim_run(text, layer) if layer else None
-    if run is not None:
-        problems.add(1, where, f"{what} carries {len(run.split())}+ words of the source verbatim "
-                               f"({run[:40]!r}...), past the {lr.QUOTE_WORDS}-word quote cap: "
-                               f"say it in your own words")
+def check_convention(problems: Problems, where: str, relation: Any, convention: Any) -> None:
+    """Rule 9 (R1, FM4): a closeMatch names its convention; nothing else names one."""
+    given = not _blank(convention)
+    if relation == CLOSE_MATCH:
+        if not _one_of(convention, CLOSE_MATCH_CONVENTIONS):
+            problems.add(9, where, f"a closeMatch names the convention it differs by, one of "
+                                   f"{', '.join(sorted(CLOSE_MATCH_CONVENTIONS))} (convention: "
+                                   f"<one>); a difference that is none of them is no closeMatch "
+                                   f"(R1)")
+    elif given:
+        problems.add(9, where, f"convention belongs to a closeMatch; a {relation} differs from "
+                               f"its passage by no convention: drop it, or the relation is "
+                               f"closeMatch")
 
 
-def check_claims(problems: Problems, where: str, claims: Any, layer: str, *,
+def check_step(problems: Problems, where: str, relation: Any, step: Any, source: Any, *,
+               passage_kind: Any, required: bool = True) -> None:
+    """Rule 9 (R5, FM3): a hasPart or narrowMatch says what the declaration alone entails.
+
+    A lemma the proof uses, one that reaches the clause only with another
+    declaration, a neighbouring passage's fact: none states a part of the passage,
+    and each is ``relatedMatch`` (R5).  A ``hasPart`` or ``narrowMatch`` names, in
+    ``step``, what the declaration alone entails of this passage -- on a proof the
+    displayed step, on any other passage the clause, as the declaration states it.
+    Any other relation carries no step.  ``required`` False (a confirm of a record
+    that names one) checks a given step's form only.
+    """
+    given = check_line_field(problems, where, "step", step, source)
+    if relation in STEP_RELATIONS:
+        if required and not given and not _nonempty_str(step):
+            what = ("the displayed step it states (the equation, the case, the inequality)"
+                    if passage_kind == PASSAGE_OTHER else
+                    "the clause it states, as the declaration states it")
+            problems.add(9, where, f"a {relation} names, in step, what the declaration alone "
+                                   f"entails of this passage: {what} (step: <one line>); a "
+                                   f"lemma the argument only uses, or one that needs another "
+                                   f"declaration to reach the clause, is relatedMatch (R5)")
+    elif not _blank(step):
+        problems.add(9, where, f"step belongs to a hasPart or narrowMatch; a {relation} states "
+                               f"the whole passage or none of it: drop it")
+
+
+def check_claims(problems: Problems, where: str, claims: Any, source: Any, *,
                  required: bool) -> list[str] | None:
     """Rule 9: a passage's claim list, ``[{id, text}, ...]``; returns its ids, or None.
 
     The worker writes the passage's formal clauses before it judges a declaration
     (rule R4): ``id`` is ``c1``, ``c2``, ... (``CLAIM_ID``), distinct; ``text`` is
-    one line of at most ``MAX_CLAIM_CHARS`` characters in the worker's own words
-    (rule 1's verbatim cap); at most ``MAX_PASSAGE_CLAIMS`` claims.  None when
-    the list is absent (refused when ``required``) or unusable.
+    one line (no line break of any kind) of at most ``MAX_CLAIM_CHARS`` characters
+    in the worker's own words -- rule 1's cap in every spelling of the source, on
+    each claim and on the claims read one after the other, so a sentence split
+    over two claims is the source verbatim still; at most ``MAX_PASSAGE_CLAIMS``
+    claims.  None when the list is absent (refused when ``required``) or unusable.
     """
     if claims is None:
         if required:
@@ -1330,7 +1571,8 @@ def check_claims(problems: Problems, where: str, claims: Any, layer: str, *,
                                f"formal clause)")
         return None
     ids: list[str] = []
-    usable = True
+    texts: list[str] = []
+    usable, copied = True, False
     for i, claim in enumerate(claims):
         at = f"{where}.claims[{i}]"
         if not isinstance(claim, dict) or set(claim) != CLAIM_KEYS:
@@ -1349,10 +1591,14 @@ def check_claims(problems: Problems, where: str, claims: Any, layer: str, *,
         ids.append(cid)
         if not _nonempty_str(text):
             problems.add(9, at, "text says the clause, in a short paraphrase")
-        elif "\n" in text or len(text) > MAX_CLAIM_CHARS:
+        elif not _one_line(text) or len(text) > MAX_CLAIM_CHARS:
             problems.add(9, at, f"text is one line of at most {MAX_CLAIM_CHARS} characters")
         else:
-            _verbatim(problems, at, "the claim's text", text, layer)
+            texts.append(text)
+            copied = _verbatim(problems, at, "the claim's text", text, source) or copied
+    if len(texts) > 1 and not copied:
+        _verbatim(problems, where, "the claims, read one after the other,", " ".join(texts),
+                  source)
     return ids if usable else None
 
 
@@ -1366,7 +1612,7 @@ def check_clauses(problems: Problems, where: str, relation: Any, clauses: Any,
     since it states something else.  ``ids`` None (no usable claim list, refused
     already) checks the list's shape alone.
     """
-    if relation not in LOCATE_RELATIONS:
+    if not _one_of(relation, LOCATE_RELATIONS):
         return
     if relation == RELATED_MATCH:
         if clauses not in (None, []):
@@ -1398,161 +1644,234 @@ def check_clauses(problems: Problems, where: str, relation: Any, clauses: Any,
                                    f"when the parts together state them all (R4)")
 
 
-def _closing(text: str, start: int) -> int:
-    """The index of the bracket that closes the group opened at ``start``, or -1."""
+def _scan_group(text: str, start: int) -> int:
+    """The index of the bracket closing the group opened at ``start`` (any depth pair), or -1."""
     want: list[str] = []
     for k in range(start, len(text)):
         ch = text[k]
-        if ch in BINDER_BRACKETS:
-            want.append(BINDER_BRACKETS[ch])
+        if ch in DEPTH_BRACKETS:
+            want.append(DEPTH_BRACKETS[ch])
         elif want and ch == want[-1]:
             want.pop()
             if not want:
                 return k
-        elif ch in BINDER_BRACKETS.values():
+        elif ch in DEPTH_BRACKETS.values():
             return -1
     return -1
 
 
-def leading_binders(signature: Any) -> list[str]:
-    """The binder groups a signature opens with, as the library index prints its type.
+def _skip_space(text: str, at: int) -> int:
+    while at < len(text) and text[at].isspace():
+        at += 1
+    return at
 
-    ``∀ {G : Type u} [inst : Group G] (p : ℕ), …`` and ``{R : Type u} → [inst :
-    CommRing R] → (f : ι → Ideal R) → …``: after an optional ``∀``, each balanced
-    group in ``()``, ``{}``, ``[]`` or ``⦃⦄`` separated by spaces or an arrow, up to
-    the first ``,`` or the first token that opens no group.  A binder written later
-    (``… → ∀ [inst : …], …``) and a bracket in the statement (``a ≡ b [MOD n]``)
-    are not leading binders.
+
+def _next_arrow(text: str, at: int) -> tuple[int, int] | None:
+    """The next ``→`` (or ``->``) outside every bracket, as (index, length).
+
+    None when the text ends first, or when a ``,`` outside every bracket comes
+    first: the rest is the body of a binder (``∃ x, …``, ``∑ i ∈ s, …``), whose
+    arrows are no binder position of the declaration.
+    """
+    k = at
+    while k < len(text):
+        ch = text[k]
+        if ch in DEPTH_BRACKETS:
+            end = _scan_group(text, k)
+            if end < 0:
+                return None
+            k = end + 1
+            continue
+        if ch == ",":
+            return None
+        if ch == "→":
+            return k, 1
+        if text.startswith("->", k):
+            return k, 2
+        k += 1
+    return None
+
+
+def binder_groups(signature: Any) -> list[str]:
+    """Every binder group at a binder position of a signature, as the library index prints it.
+
+    The type is read as a telescope: ``∀ <binders>, <rest>`` gives the bracketed
+    groups of its binder list (``∀ {G : Type u} [inst : Group G] (p : ℕ), …``,
+    ``∀ ⦃a b : α⦄ …``), and ``<segment> → <rest>`` gives the segment when it is
+    one balanced group (``{R : Type u} → [inst : CommRing R] → …``); a segment
+    that is no group -- an anonymous explicit argument (``Set M →``), a
+    non-dependent hypothesis (``p.Prime →``) -- is passed over, and the scan goes
+    on, so a binder after one (``p.Prime → ∀ (W : Type) [inst : Foo W], …``) is
+    found.  It stops at the conclusion: a segment with no arrow after it, or a
+    ``,`` outside every bracket before the next arrow (an ``∃``'s body).  A bracket
+    in a statement (``a ≡ b [MOD n]``) is at no binder position.
     """
     text = str(signature or "")
-    n, i, groups = len(text), 0, []
-
-    def skip(at: int) -> int:
-        while at < n and text[at].isspace():
-            at += 1
-        return at
-
-    i = skip(i)
-    if text.startswith("\u2200", i):
-        i = skip(i + 1)
-    while i < n and text[i] in BINDER_BRACKETS:
-        end = _closing(text, i)
-        if end < 0:
+    groups: list[str] = []
+    i = _skip_space(text, 0)
+    for _ in range(10_000):                     # bounded: each turn consumes text
+        if i >= len(text):
             break
-        groups.append(text[i:end + 1])
-        i = skip(end + 1)
-        for arrow in ("\u2192", "->"):
-            if text.startswith(arrow, i):
-                i = skip(i + len(arrow))
-                break
-        if i < n and text[i] == ",":
+        if text.startswith("∀", i):
+            i = _skip_space(text, i + 1)
+            while i < len(text):
+                if text[i] in BINDER_BRACKETS:
+                    end = _scan_group(text, i)
+                    if end < 0:
+                        return groups
+                    groups.append(text[i:end + 1])
+                    i = _skip_space(text, end + 1)
+                elif text[i] == ",":
+                    i = _skip_space(text, i + 1)
+                    break
+                elif text[i] in DEPTH_BRACKETS:
+                    end = _scan_group(text, i)
+                    if end < 0:
+                        return groups
+                    i = _skip_space(text, end + 1)
+                else:
+                    i += 1                      # a bare binder name, or ∀ x ∈ s,
+            else:
+                return groups
+            continue
+        arrow = _next_arrow(text, i)
+        if arrow is None:
             break
+        segment = text[i:arrow[0]].strip()
+        if segment and segment[0] in BINDER_BRACKETS and _scan_group(segment, 0) == len(segment) - 1:
+            groups.append(segment)
+        i = _skip_space(text, arrow[0] + arrow[1])
     return groups
 
 
 def instance_binders(signature: Any) -> list[str]:
-    """The instance-implicit binders among a signature's leading ones: ``[…]`` groups."""
-    return [group for group in leading_binders(signature) if group.startswith("[")]
+    """The instance-implicit binders among a signature's binder groups: ``[…]`` groups."""
+    return [group for group in binder_groups(signature) if group.startswith("[")]
 
 
-def _one_line(problems: Problems, where: str, field: str, value: Any, layer: str) -> bool:
-    """A judgment rule's one-line field: non-empty, one line, capped, the worker's words."""
-    if not _nonempty_str(value):
-        return False
-    if "\n" in value or len(value) > MAX_JUDGMENT_LINE_CHARS:
-        problems.add(9, where, f"{field} is one line of at most {MAX_JUDGMENT_LINE_CHARS} "
-                               f"characters")
-    else:
-        _verbatim(problems, where, f"the {field}", value, layer)
-    return True
+def _binders_needing(cfg: GateConfig, ctx: Context, location: dict) -> list[str]:
+    """The instance binders of the declaration a location or record names, at the pin."""
+    library, name = location.get("library"), location.get("declaration")
+    if not (isinstance(library, str) and isinstance(name, str) and library in cfg.libraries):
+        return []
+    return instance_binders(ctx.signature(library, name))
 
 
-def check_step(problems: Problems, where: str, step: Any, layer: str) -> None:
-    """Rule 9 (FM3): a ``hasPart`` of a proof or remark names the displayed step it states.
+def _instantiation_problem(location: dict, binders: list[str], *, challenger: bool) -> str:
+    who = ("the record names no instantiation: instantiate it yourself at the passage's "
+           "objects before you keep a relation that counts"
+           if challenger else
+           "say at which of the passage's objects it applies and which instance or hypothesis "
+           "makes it apply")
+    return (f"{location.get('library')}:{location.get('declaration')} takes instance "
+            f"argument(s) {' '.join(binders[:3])}{' …' if len(binders) > 3 else ''}: {who} "
+            f"(instantiation: <one line>). A setting that neither contains nor is contained in "
+            f"the passage's is relatedMatch (R5); a special case of it narrowMatch (R3)")
 
-    A lemma the proof uses, or one that reaches the step only with another, states
-    no part of the passage: it is ``relatedMatch`` (R5).  A part names the step --
-    the displayed equation, the case, the inequality -- in one line of the
-    worker's own words (``step``).
-    """
-    if not _one_line(problems, where, "step", step, layer):
-        problems.add(9, where, "a hasPart of a proof or remark passage (passage_kind other) "
-                               "names the displayed step it states (step: <one line>); a "
-                               "lemma the argument only uses is relatedMatch (R5)")
+
+def _gap_problem(phrase: str, relation: str, field: str) -> str:
+    return (f"the {field} says {phrase!r}, which admits a clause the declaration does not "
+            f"state: then the relation is hasPart (R4), not {relation}. If the words are about "
+            f"the passage or a convention instead, say what the declaration does (\"Lean "
+            f"returns 0 at n = 0\")")
 
 
 def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
                    location: dict, *, ids: list[str] | None, passage_kind: Any,
-                   layer: str) -> None:
+                   source: Any) -> None:
     """Rule 9 over one location a document asserts: what it states of its passage.
 
-    Its ``clauses`` (R4); a strong one's note admits no gap; a ``closeMatch``
-    names its ``convention`` and its note no generality (R1, FM4); a ``hasPart`` of a
-    proof or remark (``passage_kind`` ``other``) names its ``step`` (FM3); and, when the
-    declaration's signature in ``corpus.sqlite`` (``decls.signature``, the
-    probe's printed type) takes an instance argument among its leading binders,
-    the ``instantiation`` that says at which of the passage's objects, and by
-    which instance or hypothesis, the declaration applies (FM6).  A declaration
-    with no recorded signature is not held to the last: the gate cannot see its
-    binders.
+    Its ``clauses`` (R4); a strong one's note and instantiation admit no gap; an
+    exact or close note names no generality (R1-R3, FM4); a ``closeMatch`` names
+    its ``convention``, and no other relation carries one; a ``hasPart`` or
+    ``narrowMatch`` names its ``step``, what the declaration alone entails of the
+    passage, and no other relation carries one (FM3); every one-line field is
+    checked wherever it appears; and, when the declaration's signature in
+    ``corpus.sqlite`` (``decls.signature``, the probe's printed type) takes an
+    instance argument at a binder position (:func:`binder_groups`), a counting
+    location carries the ``instantiation`` that says at which of the passage's
+    objects, and by which instance or hypothesis, the declaration applies (FM6).
+    A declaration with no recorded signature is not held to the last: the gate
+    cannot see its binders.
     """
     relation = location.get("relation")
-    check_clauses(problems, where, relation, location.get("clauses"), ids)
-    if relation in STRONG_RELATIONS:
-        phrase = admits_missing_clause(location.get("note"))
-        if phrase:
-            problems.add(9, where, f"the note says {phrase!r}: it admits a clause the "
-                                   f"declaration does not state, so the relation is hasPart "
-                                   f"(R4), not {relation}")
-    if relation == HAS_PART and passage_kind == PASSAGE_OTHER:
-        check_step(problems, where, location.get("step"), layer)
-    if relation == CLOSE_MATCH:
-        check_convention(problems, where, location.get("convention"), location.get("note"))
-    if relation in LOCATE_RELATIONS and relation != RELATED_MATCH:
-        given = _one_line(problems, where, "instantiation", location.get("instantiation"),
-                          layer)
-        library, name = location.get("library"), location.get("declaration")
-        if not given and isinstance(library, str) and isinstance(name, str) \
-                and library in cfg.libraries:
-            binders = instance_binders(ctx.signature(library, name))
-            if binders:
-                problems.add(9, where, f"{library}:{name} takes instance argument(s) "
-                                       f"{' '.join(binders[:3])}"
-                                       f"{' …' if len(binders) > 3 else ''}: say at which of "
-                                       f"the passage's objects it applies and which instance "
-                                       f"or hypothesis makes it apply (instantiation: <one "
-                                       f"line>); objects that cannot meet them make it a "
-                                       f"relatedMatch (R5)")
+    known = relation if _one_of(relation, LOCATE_RELATIONS) else None
+    check_clauses(problems, where, known, location.get("clauses"), ids)
+    instantiation = location.get("instantiation")
+    given = check_line_field(problems, where, "instantiation", instantiation, source)
+    if known is None:
+        return
+    check_step(problems, where, known, location.get("step"), source, passage_kind=passage_kind)
+    check_convention(problems, where, known, location.get("convention"))
+    check_generality(problems, where, known, location.get("note"))
+    if known in STRONG_RELATIONS:
+        for field in ("note", "instantiation"):
+            phrase = admits_missing_clause(location.get(field))
+            if phrase:
+                problems.add(9, where, _gap_problem(phrase, known, field))
+                break
+    if known != RELATED_MATCH and not given and _blank(instantiation):
+        binders = _binders_needing(cfg, ctx, location)
+        if binders:
+            problems.add(9, where, _instantiation_problem(location, binders, challenger=False))
+
+
+def _normal_query(query: str) -> str:
+    return " ".join(query.split()).casefold()
+
+
+def _match_tags(tags_of: dict[str, set[str]], needed: list[str]) -> list[str]:
+    """The ``needed`` tags left without a query of their own in a maximum matching.
+
+    ``tags_of`` maps each distinct query to the tags it carries; a query serves one
+    tag.  Augmenting paths (Kuhn's algorithm) over at most a dozen tags.
+    """
+    owner: dict[str, str] = {}
+
+    def assign(tag: str, seen: set[str]) -> bool:
+        for query, tags in tags_of.items():
+            if tag in tags and query not in seen:
+                seen.add(query)
+                if query not in owner or assign(owner[query], seen):
+                    owner[query] = tag
+                    return True
+        return False
+
+    return [tag for tag in needed if not assign(tag, set())]
 
 
 def check_query_clauses(problems: Problems, where: str, receipt: Any, ids: list[str] | None, *,
-                        absent: bool, passage_kind: Any) -> None:
+                        absent: bool, passage_kind: Any, what: str = "receipt") -> None:
     """Rule 9 (FM5): which claims each query of a receipt targets.
 
-    ``receipt.query_clauses`` maps queries of ``receipt.queries`` (exactly as
+    ``<what>.query_clauses`` maps queries of ``<what>.queries`` (exactly as
     written) to the claim ids each targets, or ``general`` for the general theorem
-    a worked example instantiates.  An absence carries it, and leaves no claim
-    without a query: an absence of a clause nobody searched for is no absence.
-    An ``example`` passage's absence also searched for its general theorem.  On a
-    located passage it is optional, and checked when given.
+    a worked example instantiates.  An absence carries it and tags every query it
+    lists, and each claim -- with ``general`` for an ``example`` passage -- has a
+    distinct query of its own among the tags (a matching of distinct queries to
+    claims; queries that differ in case or spacing are one): an absence of a
+    clause nobody searched for is no absence, and one query tagged with every
+    claim searched for one.  On a located passage it is optional, and checked
+    when given.
     """
     raw = receipt.get("query_clauses") if isinstance(receipt, dict) else None
     if raw is None:
         if absent:
-            problems.add(9, where, "an absence tags each query with the claims it targets: "
-                                   "receipt.query_clauses: {<query>: [c1, ...]}, every claim "
-                                   "searched for")
+            problems.add(9, where, f"an absence tags each query with the claims it targets: "
+                                   f"{what}.query_clauses: {{<query>: [c1, ...]}}, every query "
+                                   f"tagged and every claim searched for")
         return
     if not isinstance(raw, dict):
-        problems.add(9, where, "receipt.query_clauses is {<query>: [<claim id>, ...]}")
+        problems.add(9, where, f"{what}.query_clauses is {{<query>: [<claim id>, ...]}}")
         return
     queries = receipt.get("queries") if isinstance(receipt.get("queries"), list) else []
+    queries = [q for q in queries if isinstance(q, str)]
     tags = set(ids or []) | {GENERAL_QUERY_TAG}
-    targeted: set[str] = set()
+    tags_of: dict[str, set[str]] = {}
     for query, targets in sorted(raw.items()):
-        at = f"{where}.receipt.query_clauses[{query[:40]!r}]"
+        at = f"{where}.{what}.query_clauses[{query[:40]!r}]"
         if query not in queries:
-            problems.add(9, at, "is not one of receipt.queries, as written")
+            problems.add(9, at, f"is not one of {what}.queries, as written")
             continue
         if not isinstance(targets, list) or not targets or not all(
                 isinstance(t, str) for t in targets) or len(set(targets)) != len(targets):
@@ -1564,17 +1883,35 @@ def check_query_clauses(problems: Problems, where: str, receipt: Any, ids: list[
                 problems.add(9, at, f"{', '.join(unknown)} are neither claim ids of the passage "
                                     f"({', '.join(ids)}) nor {GENERAL_QUERY_TAG}")
                 continue
-        targeted.update(targets)
+        tags_of.setdefault(_normal_query(query), set()).update(targets)
     if not absent or ids is None:
         return
+    untagged = sorted({q for q in queries if q.strip() and q not in raw})
+    if untagged:
+        problems.add(9, where, f"an absence tags every query it lists, and "
+                               f"{', '.join(repr(q[:40]) for q in untagged[:3])}"
+                               f"{' …' if len(untagged) > 3 else ''} carries no tag: tag each "
+                               f"with the claims it targets")
+    targeted = set().union(*tags_of.values()) if tags_of else set()
     unsearched = [c for c in ids if c not in targeted]
     if unsearched:
         problems.add(9, where, f"an absence searched for every claim, and no query targets "
                                f"{', '.join(unsearched)}: run one for each, and tag it")
-    if passage_kind == PASSAGE_EXAMPLE and GENERAL_QUERY_TAG not in targeted:
+    example = passage_kind == PASSAGE_EXAMPLE
+    if example and GENERAL_QUERY_TAG not in targeted:
         problems.add(9, where, f"a worked example's absence also searched for the general "
                                f"theorem it is an instance of: a query tagged "
                                f"{GENERAL_QUERY_TAG}")
+    if unsearched or (example and GENERAL_QUERY_TAG not in targeted):
+        return
+    needed = list(ids) + ([GENERAL_QUERY_TAG] if example else [])
+    left = _match_tags(tags_of, needed)
+    if left:
+        problems.add(9, where, f"each claim{' and the general theorem' if example else ''} "
+                               f"has a query of its own, and {len(tags_of)} distinct tagged "
+                               f"quer{'y' if len(tags_of) == 1 else 'ies'} cannot give one to "
+                               f"each of {len(needed)}: {', '.join(left)} share a query with "
+                               f"another; run a query for each, and tag it with what it targets")
 
 
 def check_coverage_clauses(problems: Problems, where: str, coverage: dict,
@@ -1593,6 +1930,28 @@ def check_coverage_clauses(problems: Problems, where: str, coverage: dict,
         problems.add(9, f"{where}: coverage", f"no part states {', '.join(missing)}: a claim's "
                                               f"parts together state every clause of the "
                                               f"passage (R4)")
+
+
+def check_rejections(problems: Problems, where: str, receipt: dict) -> None:
+    """Rule 9 (FM5): an absence rejects no candidate for stating a part of the passage.
+
+    A declaration that states one clause, a special case or a generalisation of
+    the passage is a ``hasPart``, ``narrowMatch`` or ``broadMatch`` location (R2-R4),
+    so a rejection whose reason says so (:func:`rejects_a_part`) makes the absence
+    false: two of the smoke-2 audit's three false supporting absences rejected the
+    stating declaration as "not the worked example" or "not the whole passage".
+    """
+    for i, cand in enumerate(receipt.get("candidates") or []):
+        if cand.get("verdict") != "rejected":
+            continue
+        phrase = rejects_a_part(cand.get("reason"))
+        if phrase:
+            problems.add(9, f"{where}.receipt.candidates[{i}]",
+                         f"{cand.get('library')}:{cand.get('declaration')} is rejected as "
+                         f"{phrase!r}: a declaration that states a clause of the passage, a "
+                         f"special case of it or a generalisation of it is a hasPart, "
+                         f"narrowMatch or broadMatch location (R2-R4), and the passage is "
+                         f"located, not absent. If it states no claim, say which it misses")
 
 
 def _curated(ctx: Context, source_id: str) -> list[tuple[str, str]]:
@@ -1907,17 +2266,25 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
             _check_coverage(problems, where, p["coverage"], outcome=outcome,
                             locations=locations, layer=source.layer)
         if cfg.judgment_rules:
-            ids = check_claims(problems, where, p.get("claims"), source.layer,
+            kind = frozen[item].get("passage_kind")
+            ids = check_claims(problems, where, p.get("claims"), source,
                                required=outcome in ("located", "absent"))
             for j, loc in enumerate(locations):
                 check_judgment(cfg, ctx, problems, f"{where}.locations[{j}]", loc, ids=ids,
-                               passage_kind=frozen[item].get("passage_kind"), layer=source.layer)
-            if outcome == "located" and isinstance(p.get("coverage"), dict):
-                check_coverage_clauses(problems, where, p["coverage"], locations, ids)
+                               passage_kind=kind, source=source)
+            coverage = p.get("coverage") if isinstance(p.get("coverage"), dict) else None
+            if outcome == "located" and coverage is not None:
+                check_coverage_clauses(problems, where, coverage, locations, ids)
             if outcome in ("located", "absent"):
                 check_query_clauses(problems, where, p.get("receipt"), ids,
-                                    absent=outcome == "absent",
-                                    passage_kind=frozen[item].get("passage_kind"))
+                                    absent=outcome == "absent", passage_kind=kind)
+            if outcome == "absent":
+                check_rejections(problems, where, receipt)
+            check_free_text(problems, where, [
+                *(("a location's note", loc.get("note")) for loc in locations),
+                *(("a query", q) for q in receipt["queries"]),
+                *(("a candidate's reason", c.get("reason")) for c in receipt["candidates"]),
+                ("the coverage claim's note", (coverage or {}).get("note"))], source)
         # Rule 4's "located or rejected with a reason": a location whose relation
         # COUNTS locates a hit (a relatedMatch is "relevant but states something
         # else", so it discharges nothing on its own), and a rejection with a
@@ -1964,12 +2331,12 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
 
 
 def _challenge_claims(cfg: GateConfig, problems: Problems, name: str, doc: dict,
-                      records: dict[tuple, dict], layer: str) -> dict[str, list[str] | None]:
+                      records: dict[tuple, dict], source: Any) -> dict[str, list[str] | None]:
     """Rule 9: a challenge document's ``claims``, ``{<item>: [{id, text}, ...]}``.
 
     The challenger's own claim list of each passage it judges (the FM7 rule:
-    list the passage's clauses before you confirm or downgrade), which its
-    verdicts' ``clauses`` name.  Returns ``{item: ids}`` (ids None for a list
+    list the passage's clauses before you confirm, downgrade, refute or uphold),
+    which its verdicts name.  Returns ``{item: ids}`` (ids None for a list
     refused here); ``{}`` outside the judgment rules.
     """
     if not cfg.judgment_rules:
@@ -1987,12 +2354,12 @@ def _challenge_claims(cfg: GateConfig, problems: Problems, name: str, doc: dict,
         if item not in items:
             problems.add(9, name, f"claims names {item!r}, which no record of this task is on")
             continue
-        out[item] = check_claims(problems, f"{name}: claims[{item}]", claims, layer,
+        out[item] = check_claims(problems, f"{name}: claims[{item}]", claims, source,
                                  required=True)
     return out
 
 
-def _challenger_note(v: dict, rec: dict, layer: str, result: Any) -> str:
+def _challenger_note(v: dict, rec: dict, source: Any, result: Any) -> str:
     """The note a downgrade's challenger writes for the record it leaves.
 
     ``locate.outcomes`` keeps a location's non-empty note, and gives a
@@ -2005,54 +2372,178 @@ def _challenger_note(v: dict, rec: dict, layer: str, result: Any) -> str:
     """
     if result == CLOSE_MATCH and not str(rec.get("note") or "").strip():
         try:
-            return lr.downgrade_note(v, layer or None)
+            return lr.downgrade_note(v, source.layer if source is not None else None)
         except Exception:  # noqa: BLE001 - the note's own check (rule 1) names its fault
             pass
     return str(v.get("note") or "")
 
 
-def _judge_location_verdict(problems: Problems, where: str, v: dict, rec: dict,
-                            claims_of: dict[str, list[str] | None], layer: str) -> None:
+#: the verdicts whose challenger lists the passage's claims first (the FM7 rule): every
+#: judgment of what a passage asserts -- a location's, a coverage claim's, an absence's
+#: or an unresolved outcome's -- whatever its action
+CLAIMED_TARGETS = frozenset({"location", "coverage", "absence", "unresolved"})
+
+
+def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
+                            v: dict, rec: dict, ids: list[str] | None, source: Any) -> None:
     """Rule 9 over a location verdict: the relation it leaves states what it says.
 
     A confirm leaves the record's relation and a downgrade the one it names; one
     that counts names the claim ids it states (``clauses``, against the
     document's ``claims`` for the passage), all of them for a strong relation
-    (R4), and a ``relatedMatch`` names none.  A ``hasPart`` it leaves on a proof
-    or remark names its displayed ``step`` (FM3), and a ``closeMatch`` its
-    ``convention`` (R1, FM4): a downgrade's own, a confirm's when the record names
-    none.  A downgrade's own note (:func:`_challenger_note`) admits no gap on a
-    strong relation, and a closeMatch's says no generality.
+    (R4), and a ``relatedMatch`` names none.  A strong relation it keeps or leaves
+    rests on a claim list at least as long as the worker's (a challenger splits a
+    worker's clause, never drops one).  A ``hasPart`` or ``narrowMatch`` it leaves
+    names its ``step`` (FM3), and a ``closeMatch`` its ``convention`` (R1, FM4): a
+    downgrade's own, a confirm's when the record names none; a step or convention
+    on a verdict that leaves any other relation is refused.  The challenger's own
+    note (:func:`_challenger_note`) and instantiation admit no gap on a strong
+    relation, and an exact or close one's note says no generality.  A counting
+    relation it keeps on a declaration with instance arguments, whose record names
+    no instantiation (every record of a run planned before the rules), carries the
+    challenger's own.
     """
     action, old = v.get("action"), rec.get("relation")
     result = old if action == "confirm" else v.get("relation") if action == "downgrade" else None
-    if result not in LOCATE_RELATIONS:
+    if not _one_of(result, LOCATE_RELATIONS):
         return
-    item = v.get("item")
-    if result != RELATED_MATCH and item not in claims_of:
-        problems.add(9, where, f"a verdict that leaves a {result} names the claims it states: "
-                               f"write the passage's claim list under claims first, then "
-                               f"clauses: [c1, ...] on the verdict")
-    else:
-        check_clauses(problems, where, result, v.get("clauses"), claims_of.get(item))
-    if result == HAS_PART and rec.get("passage_kind") == PASSAGE_OTHER and (
-            action == "downgrade" or not _nonempty_str(rec.get("step"))):
-        # the record a verdict leaves is a hasPart of a proof: the step it states, the
-        # verdict's own unless the confirmed record names one
-        check_step(problems, where, v.get("step"), layer)
-    note = _challenger_note(v, rec, layer, result) if action == "downgrade" else ""
-    if result == CLOSE_MATCH:
-        # the closeMatch a verdict leaves names its convention: a downgrade's own, a
-        # confirm's when the record names none; the challenger's note says no generality
-        convention = (v.get("convention") if action == "downgrade" or "convention" in v
-                      else rec.get("convention"))
-        check_convention(problems, where, convention, note)
-    if action == "downgrade" and result in STRONG_RELATIONS:
-        phrase = admits_missing_clause(note)
-        if phrase:
-            problems.add(9, where, f"the note says {phrase!r}: it admits a clause the "
-                                   f"declaration does not state, so the relation is hasPart "
-                                   f"(R4), not {result}")
+    check_clauses(problems, where, result, v.get("clauses"), ids)
+    worker = rec.get("claims")
+    if result in STRONG_RELATIONS and ids is not None and isinstance(worker, list) \
+            and len(ids) < len(worker):
+        problems.add(9, where, f"a verdict that keeps a {result} states every clause, and your "
+                               f"claim list of the passage has {len(ids)} claim(s) where the "
+                               f"worker's has {len(worker)}: split a clause, never drop one; "
+                               f"list each clause the passage asserts, then judge")
+    keeps_step = action == "confirm" and _nonempty_str(rec.get("step"))
+    check_step(problems, where, result, v.get("step"), source,
+               passage_kind=rec.get("passage_kind"), required=not keeps_step)
+    own = v.get("convention")
+    if result == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own):
+        own = rec.get("convention")
+    check_convention(problems, where, result, own)
+    note = (_challenger_note(v, rec, source, result) if action == "downgrade"
+            else str(v.get("note") or ""))
+    check_generality(problems, where, result, note)
+    given = check_line_field(problems, where, "instantiation", v.get("instantiation"), source)
+    if result in STRONG_RELATIONS:
+        for field, text in (("note", note), ("instantiation", v.get("instantiation"))):
+            phrase = admits_missing_clause(text)
+            if phrase:
+                problems.add(9, where, _gap_problem(phrase, result, field))
+                break
+    if result != RELATED_MATCH and not given and _blank(v.get("instantiation")) \
+            and not _nonempty_str(rec.get("instantiation")):
+        binders = _binders_needing(cfg, ctx, rec)
+        if binders:
+            problems.add(9, where, _instantiation_problem(rec, binders, challenger=True))
+
+
+def _judge_coverage_confirm(problems: Problems, where: str, v: dict, rec: dict,
+                            ids: list[str] | None) -> None:
+    """Rule 9: a coverage confirm names, per part, the challenger's claims it states.
+
+    ``part_clauses: {<location_key>: [c1, ...]}``, one entry for each part of the
+    record and no other, each a non-empty list of distinct ids of the challenger's
+    claim list, together naming every claim: the decision D1 verdict that raises
+    a passage's status is checked against the challenger's own clauses, as a
+    location's is.
+    """
+    keys = [str(part.get("location_key")) for part in rec.get("parts") or []
+            if isinstance(part, dict)]
+    given = v.get("part_clauses")
+    if not isinstance(given, dict):
+        problems.add(9, where, "a coverage confirm names, for each part, the ids of your claims "
+                               "it states: part_clauses: {<part's location_key>: [c1, ...]}, "
+                               "the parts together naming every claim")
+        return
+    for key in sorted(set(given) - set(keys)):
+        problems.add(9, where, f"part_clauses names {key[:12]!r}, which is no part of the claim")
+    for key in keys:
+        if key not in given:
+            problems.add(9, where, f"part_clauses gives part {key[:12]} no clauses: name what "
+                                   f"it states, or refute the claim")
+    stated: set[str] = set()
+    for key in keys:
+        clauses = given.get(key)
+        if key not in given:
+            continue
+        if not isinstance(clauses, list) or not clauses or not all(
+                isinstance(c, str) for c in clauses) or len(set(clauses)) != len(clauses):
+            problems.add(9, where, f"part_clauses[{key[:12]}] is a non-empty list of distinct "
+                                   f"claim ids")
+            continue
+        if ids is not None:
+            unknown = [c for c in clauses if c not in ids]
+            if unknown:
+                problems.add(9, where, f"part_clauses[{key[:12]}] names {', '.join(unknown)}, "
+                                       f"which are not ids of your claims ({', '.join(ids)})")
+                continue
+        stated.update(clauses)
+    if ids is not None:
+        missing = [c for c in ids if c not in stated]
+        if missing:
+            problems.add(9, where, f"no part states {', '.join(missing)}: a claim stands only "
+                                   f"when its parts together state every clause (R4); refute it")
+
+
+def _judge_uphold(cfg: GateConfig, problems: Problems, where: str, v: dict, rec: dict,
+                  ids: list[str] | None, source: Any) -> None:
+    """Rule 9 (FM5): an uphold of an absence or an unresolved outcome says what it searched.
+
+    ``queries`` (at least ``min_absence_queries`` distinct, each in the
+    challenger's own words) and ``query_clauses``, tagged against the challenger's
+    claim list as a locate document's absence is (:func:`check_query_clauses`):
+    the hunt that upholds a false absence is held to the rule that refuses one.
+    """
+    queries = v.get("queries")
+    if not isinstance(queries, list) or not all(isinstance(q, str) for q in queries):
+        problems.add(9, where, f"an uphold lists the queries you ran: queries: [...], at least "
+                               f"{cfg.min_absence_queries} distinct, each tagged with the claims "
+                               f"it targets in query_clauses")
+        return
+    distinct = {_normal_query(q) for q in queries if q.strip()}
+    if len(distinct) < cfg.min_absence_queries:
+        problems.add(9, where, f"an uphold lists {len(distinct)} distinct quer"
+                               f"{'y' if len(distinct) == 1 else 'ies'}; at least "
+                               f"{cfg.min_absence_queries}")
+    for q in queries:
+        _verbatim(problems, where, "a query", q, source)
+    check_query_clauses(problems, where, {"queries": queries,
+                                          "query_clauses": v.get("query_clauses")},
+                        ids, absent=True, passage_kind=rec.get("passage_kind"), what="verdict")
+
+
+def check_verdict(cfg: GateConfig, ctx: Context, problems: Problems, where: str, v: dict,
+                  rec: dict, claims_of: dict[str, list[str] | None], source: Any) -> None:
+    """Rule 9 over one verdict of a challenge document (the FM7 rule and its checks).
+
+    Every verdict on a location, a coverage claim, an absence or an unresolved
+    outcome rests on the challenger's own claim list of the passage
+    (``claims[<item>]``), a refute and an uphold as much as a confirm; then each
+    kind of verdict is held to what it says: :func:`_judge_location_verdict`,
+    :func:`_judge_coverage_confirm`, :func:`_judge_uphold`.  Its free texts are
+    held to rule 1's cap in every spelling of the source.
+    """
+    target, action, item = v.get("target"), v.get("action"), v.get("item")
+    ids = claims_of.get(item)
+    if target in CLAIMED_TARGETS and item not in claims_of:
+        article = "an" if target[0] in "aeiou" else "a"
+        problems.add(9, where, f"a verdict on {article} {target} rests on your own claim list of "
+                               f"the passage: write it under claims first (claims: {{<item>: "
+                               f"[{{id, text}}, ...]}}), then judge against it")
+    if target == "location":
+        _judge_location_verdict(cfg, ctx, problems, where, v, rec, ids, source)
+    elif target == "coverage" and action == "confirm":
+        _judge_coverage_confirm(problems, where, v, rec, ids)
+    elif target in ("absence", "unresolved") and action == "uphold":
+        _judge_uphold(cfg, problems, where, v, rec, ids, source)
+    texts = [("the verdict's note", v.get("note"))]
+    if target == "location" and action == "downgrade" and v.get("relation") == CLOSE_MATCH \
+            and not str(rec.get("note") or "").strip() and not _nonempty_str(v.get("note")):
+        texts.append(("the note the outcomes take from the witness",
+                      _challenger_note(v, rec, source, CLOSE_MATCH)))
+    check_free_text(problems, where, texts, source)
 
 
 def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id: str,
@@ -2075,8 +2566,7 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
     stats["verdicts"] = len(verdicts)
     judged: set[tuple] = set()
     source = ctx.source(source_id)
-    layer = source.layer if source is not None else ""
-    claims_of = _challenge_claims(cfg, problems, name, doc, records, layer)
+    claims_of = _challenge_claims(cfg, problems, name, doc, records, source)
     for i, v in enumerate(verdicts):
         where = f"{name}: verdicts[{i}]"
         if not isinstance(v, dict):
@@ -2128,8 +2618,8 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                     problems.add(1, where, _own_words(exc, where, str(v.get("item")))
                                  + " (a downgrade to closeMatch exports its note, else a "
                                    "sentence of its witness, as the location's note)")
-        if cfg.judgment_rules and target == "location":
-            _judge_location_verdict(problems, where, v, records[key], claims_of, layer)
+        if cfg.judgment_rules:
+            check_verdict(cfg, ctx, problems, where, v, records[key], claims_of, source)
         if action == "overturn" and target == "prominence" \
                 and not _one_of(v.get("prominence"), PROMINENCE):
             problems.add(1, where, "a prominence overturn names the new prominence")
@@ -2143,13 +2633,15 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                        "location whose relation counts")
             rec = records[key]
             if cfg.judgment_rules and locations:
-                if v.get("item") not in claims_of:
+                if target == "scope" and v.get("item") not in claims_of:
                     problems.add(9, where, "an overturn's locations name the claims they state: "
                                            "write the passage's claim list under claims first")
                 for j, loc in enumerate(locations):
                     check_judgment(cfg, ctx, problems, f"{where}.locations[{j}]", loc,
                                    ids=claims_of.get(v.get("item")),
-                                   passage_kind=rec.get("passage_kind"), layer=layer)
+                                   passage_kind=rec.get("passage_kind"), source=source)
+                check_free_text(problems, where, [("a location's note", loc.get("note"))
+                                                  for loc in locations], source)
             span = _span(rec.get("span"), len(source.layer)) if source is not None else None
             if span is not None and locations:
                 try:

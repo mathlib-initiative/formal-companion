@@ -579,22 +579,27 @@ MAX_PASSAGE_CLAIMS = 12
 MAX_CLAIM_CHARS = 300
 #: The search receipt under the judgment rules (the smoke-2 audit's FM5: the
 #: queries covered one clause and skipped the formal one): ``query_clauses`` maps
-#: each query of ``queries`` to the claim ids it targets, and an absence leaves no
-#: claim without a query; a worked example's absence also searches for the general
-#: theorem it is an instance of, a query tagged ``GENERAL_QUERY_TAG``.
+#: each query of ``queries`` to the claim ids it targets.  An absence tags every
+#: query, and each claim -- and, for a worked example, the general theorem it is
+#: an instance of, tagged ``GENERAL_QUERY_TAG`` -- has a distinct query of its own
+#: among the tags (a matching of distinct queries to claims): one query tagged with
+#: every claim searched for one of them.  A challenger's uphold of an absence or an
+#: unresolved outcome lists its own queries, tagged the same way.
 GENERAL_QUERY_TAG = "general"
 #: A location's ``instantiation`` (the smoke-2 audit's FM6: a finite-dimensional
 #: lemma credited to an operator on an infinite-dimensional space, an abstract
 #: lattice theorem to subgroups it has no instance for): when the declaration's
-#: signature takes an instance argument, the location says, in one line, which of
-#: the passage's objects the declaration is instantiated at and which instance or
-#: hypothesis makes it apply there.  Objects that cannot meet the hypotheses make
-#: the relation ``relatedMatch`` (rule R5).
+#: signature takes an instance argument at a binder position, the location says,
+#: in one line, which of the passage's objects the declaration is instantiated at
+#: and which instance or hypothesis makes it apply there.  A setting that neither
+#: contains nor is contained in the passage's makes the relation ``relatedMatch``
+#: (rule R5); a special case of it is ``narrowMatch`` (R3).
 #: A location's ``step`` (the smoke-2 audit's FM3: a lemma used inside a proof
-#: credited as a part of it): ``hasPart`` and ``narrowMatch`` need the declaration
-#: alone, instantiated, to entail a clause the passage asserts, and on a proof or
-#: remark passage (``passage_kind`` ``other``) a ``hasPart`` names, in one line,
-#: the displayed step it states.
+#: credited as a part of it): a ``hasPart`` or ``narrowMatch`` (``STEP_RELATIONS``)
+#: says, in one line, what the declaration alone entails of the passage -- on a
+#: proof, the displayed step it states; on any other passage, the clause, as the
+#: declaration states it at the objects it applies to.
+STEP_RELATIONS = frozenset({HAS_PART, NARROW_MATCH})
 #: The conventions a ``closeMatch`` may differ from its passage by (rule R1; the
 #: smoke-2 audit's FM4: closeMatch for a strict derivative, a Banach codomain, a
 #: weaker statement): the location names one as its ``convention`` and says how in
@@ -610,28 +615,64 @@ CLOSE_MATCH_CONVENTIONS = frozenset({CONVENTION_NOTATION, CONVENTION_ENCODING,
                                      CONVENTION_JUNK_VALUE, CONVENTION_NORMALISATION,
                                      CONVENTION_RENAMING, CONVENTION_UNFOLDING,
                                      CONVENTION_BUNDLING})
-#: the words a ``closeMatch`` note may not say: each describes generality, which is
-#: ``broadMatch`` (R2) or ``narrowMatch`` (R3), never a convention (R1)
-#: (:func:`says_generality`; whole words, case-folded)
-CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strict", "strictly", "more general")
+#: The words an ``exactMatch`` or ``closeMatch`` note may not say: each describes
+#: generality or strength, which is ``broadMatch`` (R2), ``narrowMatch`` (R3) or a
+#: weakening (R5), never a convention (R1) and never an exact match
+#: (:func:`says_generality`).  A phrase is matched as whole words, case-folded; a
+#: trailing ``*`` matches any ending of its last word ("strengthen*" is
+#: "strengthens", "strengthening"; "generali*" is "generalises", "generalization",
+#: "generality").  "strict" and "strictly" alone are not on it: they name a strict
+#: inequality or a strictly monotone object as often as a strengthening, so the
+#: strengthening is named by the phrase ("strict derivative", "strict
+#: differentiability", "strictly differentiable").
+CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strengthen*", "weaker", "weaken*",
+                                  "more general*", "generali*", "special case",
+                                  "particular case", "broader", "narrower",
+                                  "strict derivative*", "strict differentiab*",
+                                  "strictly differentiab*")
 #: the fields the judgment rules add to a location of a locate document (and to an
 #: overturn's): the outcomes keep each one a document wrote, and a challenge task's
 #: manifest shows them to the challenger; none is exported (the record set's format
 #: is unchanged, references/locate-documents.md section 6)
 JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step", "convention")
 #: the longest one-line field a judgment rule asks of a location (``instantiation``,
-#: ``step``)
+#: ``step``), and the fewest words with a letter in it: "n/a", "-" or "none" is
+#: no instantiation and no step
 MAX_JUDGMENT_LINE_CHARS = 300
-#: The closed list of phrases by which a strong record's own note admits a clause
-#: its declaration does not state (smoke-2: "rather than asserting its degree
-#: bound", "is not part of this declaration").  The gate refuses such a record
-#: under the judgment rules, and the challenge plan refutes one by default
-#: whatever the run (:func:`admits_missing_clause`).  Matched case-folded, as
-#: whole words, with the apostrophe folded.
-CLAUSE_GAP_PHRASES = ("does not state", "doesn't state", "not stated", "is not part of",
-                      "rather than asserting", "rather than stating", "only the existence",
-                      "only one direction", "not the converse", "without uniqueness",
-                      "does not cover", "not covered")
+MIN_JUDGMENT_LINE_WORDS = 3
+#: The closed list of phrases by which a strong record's own note (or its
+#: ``instantiation``) admits a clause its declaration does not state -- synthetic
+#: examples: "it does not state the size bound", "only proves existence", "the
+#: converse is not included".  The gate refuses such a record under the judgment
+#: rules, and the challenge plan refutes one by default whatever the run
+#: (:func:`admits_missing_clause`).  Matched case-folded, as whole words, with the
+#: apostrophe folded and a contraction spelled out ("doesn't" is "does not"); a
+#: phrase is not counted when it is negated ("not only the existence"), when the
+#: passage is its subject ("the passage does not cover n = 0", "not part of the
+#: passage": a junk-value or normalisation note says what the passage leaves out),
+#: or in a relative clause on what an "unlike ..." clause names.  It is a
+#: tripwire, not a parser: a note it misreads is reworded to say what the
+#: declaration does.
+CLAUSE_GAP_PHRASES = ("does not state", "do not state", "not stated", "not part of",
+                      "not a part of", "rather than asserting", "rather than stating",
+                      "rather than proving", "only the existence", "only existence",
+                      "only proves", "only states", "proves only", "states only",
+                      "only one direction", "one direction only", "not the converse",
+                      "converse is not", "without the converse", "without uniqueness",
+                      "uniqueness is not", "does not cover", "do not cover", "not covered",
+                      "not asserted", "not included", "omits", "omitted", "leaves out",
+                      "left out", "does not prove", "does not assert", "does not establish")
+#: The phrases by which an absent passage's rejected candidate is said to state
+#: part of the passage, a case of it or a generalisation of it (the smoke-2 audit:
+#: two of its three false supporting absences rejected the declaration that states
+#: a clause, as "not the worked example" or "not the whole passage").  Such a
+#: declaration is a ``hasPart``, ``narrowMatch`` or ``broadMatch`` location, so the
+#: gate refuses the rejection on an absence under the judgment rules
+#: (:func:`rejects_a_part`; matched as :data:`CLOSE_MATCH_GENERALITY_PHRASES` are).
+CANDIDATE_PART_PHRASES = ("only part", "part of the passage", "one clause",
+                          "one of the clauses", "not the whole", "not the full",
+                          "special case", "not the worked example", "not the example",
+                          "partially", "more general*", "generali*")
 #: a locate task carries at most this many formal_math passages (section 3, L3b)
 MAX_PASSAGES_PER_LOCATE_TASK = 8
 #: a challenge task judges about this many records (section 5)
@@ -802,13 +843,70 @@ def is_bold_label(text: str) -> bool:
     return core.startswith("proof of ") or core.startswith("proof (")
 
 
+def fold_words(text) -> str:
+    """``text`` as the judgment rules' phrase lists read it.
+
+    Case-folded, the typographic apostrophe folded, a contraction spelled out
+    ("doesn't" is "does not", "can't" is "can not") and whitespace collapsed.
+    ``gate/verify_locate.py`` inlines the same function.
+    """
+    folded = str(text or "").replace("’", "'").casefold()
+    folded = re.sub(r"(?<![\w'])can't(?![\w'])", "can not", folded)
+    folded = re.sub(r"(?<![\w'])won't(?![\w'])", "will not", folded)
+    folded = re.sub(r"(?<![\w'])cannot(?![\w'])", "can not", folded)
+    folded = re.sub(r"(?<=\w)n't(?![\w'])", " not", folded)
+    return " ".join(folded.split())
+
+
+def phrase_pattern(phrase: str) -> re.Pattern:
+    """A phrase of a judgment-rule list as a pattern: whole words, a trailing ``*`` any ending."""
+    wild = phrase.endswith("*")
+    words = phrase.rstrip("*").split()
+    body = r"\s".join(re.escape(word) for word in words)
+    return re.compile(rf"(?<![\w']){body}" + (r"[\w']*" if wild else r"(?![\w'])"))
+
+
 def _phrase_in(text: str, phrases: Iterable[str]) -> str | None:
-    """The first of ``phrases`` in ``text`` as whole words, case-folded; or None."""
-    folded = " ".join(str(text or "").replace("’", "'").casefold().split())
+    """The first of ``phrases`` in ``text`` (:func:`fold_words`, :func:`phrase_pattern`)."""
+    folded = fold_words(text)
     for phrase in phrases:
-        if re.search(rf"(?<![\w']){re.escape(phrase)}(?![\w'])", folded):
+        if phrase_pattern(phrase).search(folded):
             return phrase
     return None
+
+
+#: what ends a clause, for :func:`admits_missing_clause`'s subject test
+_CLAUSE_END = re.compile(r"[.;:!?,()\[\]]")
+_PASSAGE_WORD = re.compile(r"(?<![\w'])(?:passage|article)(?![\w'])")
+_PASSAGE_AFTER = re.compile(r"\s*(?:by |in |of |from |for )?(?:the |this )(?:passage|article)"
+                            r"(?![\w'])")
+_NEGATED = re.compile(r"(?<![\w'])not\s*\Z")
+_RELATIVE = re.compile(r"\s*(?:which|that|whose|where)(?![\w'])")
+
+
+def _gap_exempt(folded: str, start: int, end: int, phrase: str) -> bool:
+    """A :data:`CLAUSE_GAP_PHRASES` hit that admits no gap of the declaration's.
+
+    Negated ("not only the existence"); the passage its subject, earlier in its
+    clause ("the passage does not cover n = 0") or its object right after it
+    ("not part of the passage"); or a relative clause on what an "unlike ..."
+    clause names ("unlike its corollary, which does not state the bound").
+    """
+    before, after = folded[:start], folded[end:]
+    if phrase.startswith("only") and _NEGATED.search(before):
+        return True
+    cuts = [m.end() for m in _CLAUSE_END.finditer(before)]
+    clause_start = cuts[-1] if cuts else 0
+    clause = before[clause_start:]
+    stop = _CLAUSE_END.search(after)
+    if _PASSAGE_WORD.search(clause) or _PASSAGE_AFTER.match(after[:stop.start() if stop
+                                                                    else len(after)]):
+        return True
+    if len(cuts) >= 1 and _RELATIVE.match(clause):
+        previous = before[cuts[-2] if len(cuts) >= 2 else 0:clause_start - 1]
+        if previous.strip().startswith("unlike"):
+            return True
+    return False
 
 
 def admits_missing_clause(note) -> str | None:
@@ -816,21 +914,32 @@ def admits_missing_clause(note) -> str | None:
 
     A strong relation (``exactMatch``, ``closeMatch``, ``broadMatch``) says the
     declaration states every clause of its passage (rule R4); a note that says
-    the declaration "does not state" one, or proves "only the existence", says
-    the opposite, and the record is ``hasPart`` at most.  Returns the phrase,
-    or None for a note that admits nothing.
+    the declaration "does not state" one, or "only proves existence", says the
+    opposite, and the record is ``hasPart`` at most.  Returns the first phrase of
+    the list with a hit :func:`_gap_exempt` does not set aside, or None.
     """
-    return _phrase_in(note, CLAUSE_GAP_PHRASES)
+    folded = fold_words(note)
+    for phrase in CLAUSE_GAP_PHRASES:
+        for hit in phrase_pattern(phrase).finditer(folded):
+            if not _gap_exempt(folded, hit.start(), hit.end(), phrase):
+                return phrase
+    return None
 
 
 def says_generality(note) -> str | None:
-    """The :data:`CLOSE_MATCH_GENERALITY_PHRASES` word a ``closeMatch`` note says, or None.
+    """The :data:`CLOSE_MATCH_GENERALITY_PHRASES` phrase an exact or close note says, or None.
 
-    A closeMatch differs from its passage by a convention only (rule R1): a note
-    that calls the declaration "stronger", "strict" or "more general" describes
-    a ``broadMatch`` or ``narrowMatch``, and the record is refused.
+    An ``exactMatch`` states its passage and a ``closeMatch`` differs from it by a
+    convention only (rule R1): a note that calls the declaration "stronger",
+    "more general" or "a special case" describes a ``broadMatch``, a
+    ``narrowMatch`` or a weakening (R2, R3, R5), and the record is refused.
     """
     return _phrase_in(note, CLOSE_MATCH_GENERALITY_PHRASES)
+
+
+def rejects_a_part(reason) -> str | None:
+    """The :data:`CANDIDATE_PART_PHRASES` phrase a candidate's rejection reason says, or None."""
+    return _phrase_in(reason, CANDIDATE_PART_PHRASES)
 
 
 def locate_mode(mode: str) -> bool:
@@ -902,7 +1011,7 @@ def _theorem_row(relation: str, proof_status: str, statement: bool) -> str:
         return STATUS_STATEMENT_ONLY
     # DATA (a definition without the statement flag): an exact or close match is
     # an equivalence, isomorphism, bijection or structure-valued construction that
-    # states the theorem -- the Chinese remainder theorem as a RingEquiv -- and
+    # states the theorem -- two quotient rings shown isomorphic, as a RingEquiv -- and
     # formalizes it (the maintainer's decision D1); the table's "broadMatch to a
     # definition" stays partial
     if relation in _STATES:

@@ -589,7 +589,8 @@ class Pipeline:
         if sid == WIDGET and passage.get("passage_kind") == "theorem":
             # one clause of two: a hasPart, never an exactMatch (R4)
             part = self._location("alpha", "Widget.card_dvd", "hasPart")
-            part["instantiation"] = "W is the passage's finite widget, Fintype by finiteness"
+            part.update(instantiation="W is the passage's finite widget, Fintype by finiteness",
+                        step="the divisibility of the gadget's size by the order")
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
                     "claims": self.THEOREM_CLAIMS, "locations": [part]}
         if sid == WIDGET and passage.get("passage_kind") == "other" and not self.proof_part:
@@ -769,6 +770,7 @@ class Pipeline:
 
     # ------------------------------------------------------------------- L5
     def challenge(self) -> None:
+        self.bad_upholds = 0
         self.cf("plan-locate", "--preset", "locate-challenge", "--sourceset", SS, "--universe", U,
                 "--challenge-of", "loc-1", "--run-id", "chl-1", "--max-cost", "50")
         out = self.made / "chl-1" / "findings"
@@ -779,17 +781,27 @@ class Pipeline:
                 for rec in d["records"]:
                     v = {"item": rec["item"], "target": rec["target"],
                          "witness": "re-read the signature at the pin (synthetic)"}
-                    if rec["target"] == "location":
-                        # the challenger's own claim list (the judgment rules), here the
-                        # worker's, which it checked; a strong relation names every claim
+                    if rec["target"] in ("location", "coverage", "absence", "unresolved"):
+                        # the challenger's own claim list (the judgment rules), under every
+                        # verdict on a passage's records; here the worker's, which it checked
                         mine = claims.setdefault(rec["item"], rec.get("claims")
                                                  or self.OTHER_CLAIMS)
                         ids = [c["id"] for c in mine]
+                    if rec["target"] == "location":
+                        # a strong relation names every claim
                         v.update(location_key=rec["location_key"], action="confirm")
                         if rec["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
                             v["clauses"] = ids
                         elif rec["relation"] != "relatedMatch":
                             v["clauses"] = rec.get("clauses") or ids[:1]
+                    elif rec["target"] in ("absence", "unresolved"):
+                        # an uphold lists the challenger's own search, a query of its own
+                        # for each claim (the judgment rules, FM5)
+                        queries = [f"synthetic hunt {n} for {rec['item'][-8:]}" for n in range(3)]
+                        tags = {q: [ids[n % len(ids)]] for n, q in enumerate(queries)}
+                        if rec.get("passage_kind") == "example":
+                            tags[queries[-1]] = tags[queries[-1]] + ["general"]
+                        v.update(action="uphold", queries=queries, query_clauses=tags)
                     else:
                         v["action"] = "uphold"
                     verdicts.append(v)
@@ -799,6 +811,19 @@ class Pipeline:
                 path = self.write_json(out / task_id / f"{d['source_id']}.json", doc)
                 code, text = self.gate("chl-1", path)
                 check(code == 0, f"the gate refused a good challenge document:\n{text}")
+                upheld = [i for i, v in enumerate(verdicts) if v.get("queries")]
+                if upheld:
+                    # an uphold that says nothing of its search is refused (rule 9)
+                    bare = json.loads(json.dumps(doc))
+                    for key in ("queries", "query_clauses"):
+                        bare["verdicts"][upheld[0]].pop(key)
+                    bad = self.write_json(self.made / "chl-bad" / task_id
+                                          / f"{d['source_id']}.json", bare)
+                    code, text = self.gate("chl-1", bad)
+                    self.refused(code, text, "uphold without its search", "rule 9")
+                    self.bad_upholds += 1
+        check(self.bad_upholds > 0, "no challenge task upheld an absence, so the uphold's "
+                                    "search rule was never exercised")
         self.harvest("chl-1", out)
 
     # ------------------------------------------------------------------- L6

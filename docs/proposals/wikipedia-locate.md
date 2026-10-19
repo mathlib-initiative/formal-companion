@@ -487,10 +487,13 @@ documents** (`--findings` from the bridge), loading only the sources they name:
    planned since; `gate.json` names `judgment_rules`): a located or absent
    passage writes its claim list, each counting location names the clauses it
    states (all of them for `exactMatch`, `closeMatch`, `broadMatch`), an
-   absence searched every clause, a declaration with instance arguments says
-   how it is instantiated, a part of a proof names its step and a
-   `closeMatch` its convention (`references/vocabulary.md` §1.11, rules
-   R1–R7; `references/locate-documents.md` §3–§4).
+   absence gives each clause a query of its own and rejects no candidate for
+   stating part of the passage, a declaration with instance arguments says how
+   it is instantiated, a `hasPart` or `narrowMatch` names what the declaration
+   alone entails and a `closeMatch` its convention, and a challenger writes its
+   own claim list under every verdict on a passage's records
+   (`references/vocabulary.md` §1.11, rules R1–R7;
+   `references/locate-documents.md` §3–§4).
 
 As built (`scripts/gate/verify_locate.py`; `references/locate-documents.md`
 §3): rule 4 has two sides. An inventory of an article with curated hits keeps a
@@ -526,11 +529,11 @@ re-runs forty-nine others:
   by default: the challenger matches each clause of the passage to a part and
   checks that no part adds a hypothesis, then confirms the claim or refutes it
   (the parts stay `hasPart`);
-- on a `supporting` passage, the location that sets its derived status (its
-  basis) is refuted like a central one whenever its relation is strong
-  (`exactMatch`, `closeMatch`, `broadMatch`): the passage's status rests on
-  that one record (the smoke-2 audit of 2026-10-19 found such records, then
-  never challenged, right about 45% of the time);
+- on a `supporting` passage, every location that sets its derived status on
+  its own (its bases) is refuted like a central one whenever its relation is
+  strong (`exactMatch`, `closeMatch`, `broadMatch`): the passage keeps its
+  status while any one of them stands (the smoke-2 audit of 2026-10-19 found
+  such records, then never challenged, right about 45% of the time);
 - a stratified sample is re-judged: of `non_math`/`expository` scopes,
   `supporting` demotions and weak relations (`relatedMatch`, `narrowMatch`,
   `hasPart`) at the plan's `sample_rate` (default 0.2); of a `supporting`
