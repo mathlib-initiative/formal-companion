@@ -83,7 +83,10 @@ def register(subparsers) -> None:
     add.add_argument("--commit", help="the 40-hex commit")
     add.add_argument("--toolchain", help="the lean-toolchain, e.g. leanprover/lean4:v4.34.0")
     add.add_argument("--roots", nargs="+", default=None, help="root modules")
-    add.add_argument("--brain-lib", default=None, help="the consumer's library token (default: the id)")
+    add.add_argument("--brain-lib", default=None,
+                     help="the consumer's library token: a letter, then letters, digits and _, "
+                          "at most 64, e.g. Mathlib or FF_AdicModules (default: the id, when "
+                          "it is one)")
     add.add_argument("--licence", default=None,
                      help="SPDX licence id; a record set needs it, and a re-add records a "
                           "missing one")

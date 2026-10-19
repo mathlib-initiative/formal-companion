@@ -9,8 +9,9 @@ build the same records a worker's document will become, and check them.
 Every input is a plain mapping:
 
 * ``source`` -- the sourceset entry (``source_id``, ``pageid``, ``revision``,
-  ``title``, ``html_sha256``, ``renderer``) plus ``uri`` (the revision's
-  permalink), ``container_title`` and ``licence`` (an SPDX id);
+  ``title``, ``wikidata``, ``html_sha256``, ``layer_sha256``, ``renderer``) plus
+  ``uri`` (the revision's permalink), ``container_title`` and ``licence`` (an
+  SPDX id);
 * ``passage`` -- the outcome row (``item``, ``passage_kind``, ``span``,
   ``status``, ``challenge``, ``section``, ``prominence``) of
   references/locate-documents.md section 10;
@@ -21,22 +22,28 @@ Every input is a plain mapping:
 * ``library`` -- the universe's library (``id``, ``repo``, ``commit``);
 * ``universe`` -- ``{id, sha256, libraries: [library, ...]}``.
 
-Three record shapes, all with ``id = <source_id>::<item>`` and the passage's
-``section`` (its heading path) and ``prominence`` in the locate extension when
-the passage row carries them -- :func:`passage_records`, the export's entry,
-requires both -- and, for a passage with a coverage claim (the maintainer's
-decision D1), ``coverage: {complete, parts: [location_key, ...], challenge}``
-on every one of its records (:func:`coverage_problem`):
+Three record shapes, all with ``id = <source_id>::<item>``, the same subject
+end -- the capped quote, and in its locate extension the passage's whole
+``span`` (half-open code-point offsets on the layer, never its text) beside the
+``layer_sha256`` they index and the ``span_sha256`` of those characters, so a
+consumer holding that layer highlights the passage, not only its quote, and on
+a ``subject`` passage the article's QID as ``identifiers.wikidata``
+(:func:`article_qid`) -- and the passage's ``section`` (its heading path) and
+``prominence`` in the locate extension when the passage row carries them --
+:func:`passage_records`, the export's entry, requires both -- and, for a
+passage with a coverage claim (the maintainer's decision D1), ``coverage:
+{complete, parts: [location_key, ...], challenge}`` on every one of its records
+(:func:`coverage_problem`):
 
 * :func:`location_record` -- one ``lean`` end at the declaration, ``role:
   key``, the relation and the passage's derived status; a ``closeMatch``
   names its convention difference in ``note`` (:func:`passage_records`
   refuses one with none);
 * :func:`absence_record` -- ``relation: noMatch``, ``status: not_formalized``,
-  one minimal ``lean`` end per universe library (``type``, ``uri``,
-  ``version`` and nothing else: the spec's checked-absence form, at a few
-  dozen bytes a library), and the search receipt referenced by sha256 and
-  count, never inline;
+  one minimal ``lean`` end per repository the universe searched at its commit
+  (``type``, ``uri``, ``version`` and nothing else: the spec's checked-absence
+  form, at a few dozen bytes a library; :func:`absence_ends`), and the search
+  receipt referenced by sha256 and count, never inline;
 * :func:`unresolved_record` -- ``object: []`` and no status.
 
 The quote is capped (:func:`cap_quote`): at most ``QUOTE_WORDS`` words of
@@ -94,6 +101,11 @@ PROMINENCES = frozenset({"subject", "central", "supporting"})
 #: ones its sidecar carries
 RECEIPT_CANDIDATE_KEYS = ("library", "declaration", "verdict", "reason")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_QID = re.compile(r"Q[1-9][0-9]*\Z")
+#: ``cflib.vocab.PROMINENCE``'s subject: the one prominence whose records carry the
+#: article's QID
+SUBJECT = "subject"
 _SPACE = re.compile(r"\s")
 
 
@@ -179,9 +191,57 @@ def cap_quote(layer: str, start: int, end: int | None = None, *,
 # ends
 # --------------------------------------------------------------------------
 
+def passage_span(passage: Mapping[str, Any]) -> list[int]:
+    """The passage's half-open layer span, two ints ``0 <= start < end``, or :class:`RecordError`."""
+    span = passage.get("span")
+    if (not isinstance(span, (list, tuple)) or len(span) != 2
+            or not all(type(offset) is int for offset in span)):
+        raise RecordError(f"{passage.get('item')}: no [start, end] layer span ({span!r})")
+    start, end = span
+    if not 0 <= start < end:
+        raise RecordError(f"{passage.get('item')}: the span [{start}, {end}] is not "
+                          "0 <= start < end")
+    return [start, end]
+
+
+def article_qid(source: Mapping[str, Any], passage: Mapping[str, Any]) -> str | None:
+    """The article's QID a passage's records carry, or None.
+
+    The maintainer's decision B5 (docs/proposals/wikipedia-locate.md sections 2.2
+    and 11.3): only a ``subject`` passage -- its prominence after the challenge --
+    carries its source's ``wikidata``, the page's own QID, as the subject end's
+    ``identifiers.wikidata``; no other passage does, since the article's QID on
+    every passage welds the wrong concepts.  The skill does not check that the
+    QID's enwiki sitelink is this article (no network in library code): its
+    consumer does, before any concept-level edge.  A source with no QID gives
+    None; one whose ``wikidata`` is no QID is refused, never guessed.
+    """
+    if passage.get("prominence") != SUBJECT:
+        return None
+    qid = source.get("wikidata")
+    if qid is None:
+        return None
+    if not isinstance(qid, str) or not _QID.match(qid):
+        raise RecordError(f"{source.get('source_id')}: wikidata {qid!r} is not a Wikidata QID, "
+                          "and a subject passage's records carry it")
+    return qid
+
+
 def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
-                span_sha256: str) -> dict:
-    """The ``html`` end: the revision's permalink, the quote, the CSL citation, the licence."""
+                span_sha256: str, span: Iterable[int], wikidata: str | None = None) -> dict:
+    """The ``html`` end: the revision's permalink, the quote, the CSL citation, the licence.
+
+    Its locate extension carries the passage's ``span`` on the layer whose sha is
+    the source's ``layer_sha256`` (offsets only: a consumer highlights its own
+    copy of that layer), beside ``span_sha256``, the sha of those characters.  A
+    span is offsets on one layer, so a source with no layer sha is refused.
+    ``wikidata`` (:func:`article_qid`) is written as ``identifiers.wikidata``,
+    outside the extension, where the format carries an end's identifiers.
+    """
+    layer_sha = str(source.get("layer_sha256") or "")
+    if not _HEX64.match(layer_sha):
+        raise RecordError(f"{source.get('source_id')}: no layer_sha256 for the subject end's span")
+    start, end = span
     uri = str(source["uri"])
     revision = str(source["revision"])
     citation = {"id": str(source["source_id"]), "type": "webpage",
@@ -194,11 +254,15 @@ def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
     if quote.get("suffix"):
         quote_out["suffix"] = quote["suffix"]
     ext = {"pageid": int(source["pageid"]), "html_sha256": str(source["html_sha256"]),
-           "renderer": str(source["renderer"]), "span_sha256": span_sha256,
+           "layer_sha256": layer_sha, "renderer": str(source["renderer"]),
+           "span": [int(start), int(end)], "span_sha256": span_sha256,
            "licence": str(source.get("licence") or "")}
-    return {"type": "html", "uri": uri, "version": revision,
-            "location": {"quote": quote_out}, "citation": citation,
-            "extensions": {EXTENSION: ext}}
+    end = {"type": "html", "uri": uri, "version": revision,
+           "location": {"quote": quote_out}, "citation": citation,
+           "extensions": {EXTENSION: ext}}
+    if wikidata is not None:
+        end["identifiers"] = {"wikidata": wikidata}
+    return end
 
 
 def _commit(library: Mapping[str, Any]) -> str:
@@ -212,8 +276,9 @@ def lean_end(library: Mapping[str, Any], location: Mapping[str, Any] | None = No
     """A ``lean`` end: at a declaration (``role: key``), or the bare library (an absence).
 
     An absence's end is ``{type, uri, version}`` and nothing else: the record
-    names every library of the universe, and the universe file already says
-    which id each repository is.  A declaration's end carries ``line`` and
+    names every repository of the universe at its commit (:func:`absence_ends`),
+    and the universe file already says which libraries each repository is.  A
+    declaration's end carries ``line`` and
     ``end_line`` only as the index has them.
     """
     end = {"type": "lean", "uri": str(library["repo"]), "version": _commit(library)}
@@ -358,7 +423,9 @@ def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                           "challenge value")
     record = {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
-        "subject": [subject_end(source, quote, span_sha256=span_sha256)],
+        "subject": [subject_end(source, quote, span_sha256=span_sha256,
+                                span=passage_span(passage),
+                                wikidata=article_qid(source, passage))],
         "object": [lean_end(library, location)],
         "relation": str(location["relation"]),
         "kind": str(passage["passage_kind"]),
@@ -375,19 +442,41 @@ def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     return record
 
 
+def absence_ends(universe: Mapping[str, Any]) -> list[dict]:
+    """The lean ends of a checked absence: one per distinct ``(repo, commit)``, by library id.
+
+    An absence names what was searched, and two universe libraries split from
+    one repository at one commit (lean-core's ``Init`` and ``Std``, one root
+    each: proposal section 2.3) are one search target, so they are one end; the
+    consumer checks the ends against the universe's ``(repo, commit)`` set, each
+    pair once.  The first library by id of each pair places it.
+    """
+    ends: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for lib in sorted(universe["libraries"], key=lambda lib: str(lib["id"])):
+        end = lean_end(lib)
+        key = (end["uri"], end["version"])
+        if key not in seen:
+            seen.add(key)
+            ends.append(end)
+    return ends
+
+
 def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                    universe: Mapping[str, Any], quote: Mapping[str, str], *,
                    span_sha256: str, receipt: Mapping[str, Any]) -> dict:
     """The checked absence; ``receipt`` is ``{sha256, queries, candidates}`` of the sidecar."""
-    libraries = sorted(universe["libraries"], key=lambda lib: str(lib["id"]))
-    if not libraries:
+    ends = absence_ends(universe)
+    if not ends:
         raise RecordError("an absence names the universe's libraries, and it has none")
     absence = passage.get("absence") or {}
     challenge = absence.get("challenge") or passage.get("challenge")
     record = {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
-        "subject": [subject_end(source, quote, span_sha256=span_sha256)],
-        "object": [lean_end(lib) for lib in libraries],
+        "subject": [subject_end(source, quote, span_sha256=span_sha256,
+                                span=passage_span(passage),
+                                wikidata=article_qid(source, passage))],
+        "object": ends,
         "relation": NO_MATCH,
         "status": NOT_FORMALIZED,
         "kind": str(passage["passage_kind"]),
@@ -405,7 +494,9 @@ def unresolved_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     """An unresolved outcome: ``object: []`` and no status; counted, never not formalized."""
     return {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
-        "subject": [subject_end(source, quote, span_sha256=span_sha256)],
+        "subject": [subject_end(source, quote, span_sha256=span_sha256,
+                                span=passage_span(passage),
+                                wikidata=article_qid(source, passage))],
         "object": [],
         "kind": str(passage["passage_kind"]),
         "extensions": {EXTENSION: _record_ext(passage, universe)},
@@ -545,10 +636,10 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
                     universe: Mapping[str, Any]) -> tuple[list[dict], list[tuple[str, str]]]:
     """Every record of one passage outcome, and the receipt sidecars they reference
     (``(sha256, text)``); a location note that carries the source past the cap is refused."""
-    span = passage.get("span")
-    if not span:
-        raise RecordError(f"{passage.get('item')}: no span to quote")
-    start, end = int(span[0]), int(span[1])
+    start, end = passage_span(passage)
+    if end > len(layer):
+        raise RecordError(f"{passage.get('item')}: the span [{start}, {end}] leaves the layer "
+                          f"(0..{len(layer)})")
     quote = cap_quote(layer, start, end)
     span_sha = sha256_text(layer[start:end])
     libs = {str(lib["id"]): lib for lib in universe["libraries"]}

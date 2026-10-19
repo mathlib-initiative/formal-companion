@@ -68,6 +68,13 @@ _TOOLCHAIN_PREFIX = "leanprover/lean4:"
 #: two of at most ``MAX_REASON_CHARS``
 MAX_NAME_CHARS = 300
 MAX_REASON_CHARS = 1000
+#: a library's ``brain_lib``, as a library added from now on carries it: the consumer's
+#: library token, a letter then letters, digits and ``_`` (at most 64 in all), the
+#: grammar the consumer's Brain admits as a library's area name (``FF_AdicModules``,
+#: never ``FF.AdicModules``).  Only :meth:`Universe.add_library` holds a NEW row to it;
+#: a universe written before it (u1's ``FF.<Root>``) still loads and exports, its
+#: tokens held to the length cap alone, since a frozen universe is never rewritten
+BRAIN_LIB = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 #: an SPDX licence id or expression, as a row's ``licence: {spdx: ...}`` carries it
 #: (``Apache-2.0``, ``MIT OR Apache-2.0``, ``LicenseRef-x``): a record set names it
 SPDX = re.compile(r"[A-Za-z0-9(][A-Za-z0-9.+:() -]{0,99}\Z")
@@ -262,6 +269,10 @@ class Universe:
         outside ``universe_sha256``, so the pins and indexes stay valid.  A
         re-add that names another licence or another ``brain_lib`` than the row
         records is refused, never silently ignored.
+
+        A new row's ``brain_lib`` -- the one given, else the id -- is a token of
+        :data:`BRAIN_LIB`, or the row is refused naming ``--brain-lib``; a re-add
+        keeps the token its row records, which may predate the grammar.
         """
         licence = str(licence).strip() if licence is not None else None
         row = {"id": library_id, "brain_lib": brain_lib or library_id, "repo": repo,
@@ -301,6 +312,12 @@ class Universe:
             if host is not None:
                 existing["host"] = row["host"]
             return existing
+        if not BRAIN_LIB.match(row["brain_lib"]):
+            given = "brain_lib" if brain_lib else "brain_lib (the library id, as none was given)"
+            raise CfError(f"library {library_id!r}: {given} {row['brain_lib']!r} is not a "
+                          f"library token: a letter, then letters, digits and _, at most 64",
+                          hint=f"name the consumer's token for it with --brain-lib, e.g. "
+                               f"--brain-lib {_token_hint(row['brain_lib'])}")
         if brain_lib:
             for existing in self.libraries:
                 if existing.get("brain_lib") == brain_lib and existing.get("repo") != repo:
@@ -481,6 +498,15 @@ def _host_problems(lib: dict) -> list[str]:
     except (universe_host.UniverseError, CfError) as exc:
         return [f"the host driver would refuse its line: {str(exc).replace('line 0: ', '')}"]
     return []
+
+
+def _token_hint(name: str) -> str:
+    """A spelling of ``name`` that :data:`BRAIN_LIB` admits, for a refusal's hint only:
+    each other character becomes ``_`` (``FF.AdicModules`` -> ``FF_AdicModules``)."""
+    token = re.sub(r"[^A-Za-z0-9_]", "_", str(name))
+    if not token[:1].isalpha():
+        token = "L" + token
+    return token[:64]
 
 
 def is_repo_url(repo) -> bool:

@@ -31,6 +31,26 @@ And from the re-export of smoke 2 in the agreed format (the proof run):
   quotes 19 words of the article ("The passage says only that '...' -- i.e. ..."),
   and the export refused the passage over the quote cap: the note is the first
   sentence the cap admits, and "i.e." ends no sentence.
+
+And from the consumer's agreement to the passage span (S5):
+
+* S5 -- a consumer could highlight only the capped twelve-word quote: the subject
+  end carries the passage's whole ``span`` on the layer and that layer's
+  ``layer_sha256``, the source's own, in the shape the consumer's builder admits
+  (two ints ``0 <= start < end``, 64 lowercase hex, the quote's ``exact`` the
+  span's head and ``span_sha256`` the sha of its characters).
+
+And from the maintainer's decision B5 (proposal sections 2.2 and 11.3):
+
+* B5 -- no record carried a QID, so a consumer could draw no concept-level edge:
+  a ``subject`` passage's records carry the article's QID as the subject end's
+  ``identifiers.wikidata``, and no other passage's records carry one.
+
+And from the consumer's agreement to several libraries per repository:
+
+* SPLIT -- lean-core split into ``Init`` and ``Std`` at one commit (proposal
+  section 2.3) gave an absence two identical lean4 ends, which the consumer
+  refuses; an absence names each searched ``(repo, commit)`` once.
 """
 from __future__ import annotations
 
@@ -63,6 +83,10 @@ from test_locate_planner import Campaign, ws  # noqa: E402
 EXT = records.EXTENSION
 UNIVERSE_LIBRARY_KEYS = {"id", "brain_lib", "repo", "commit", "toolchain", "roots", "licence",
                          "display_name"}
+#: the subject end's locate extension, every key the consumer's builder admits there
+#: (its required five and the optional span pair, which the export always writes)
+SUBJECT_EXT_KEYS = {"pageid", "html_sha256", "layer_sha256", "renderer", "span", "span_sha256",
+                    "licence"}
 
 
 def _records(out_dir: Path) -> list[dict]:
@@ -448,6 +472,55 @@ class TestTheRecords(_Exported):
              "version": F.LIBRARIES[lib]["commit"]} for lib in ("alpha", "beta")])
         self.assertEqual(records.check(absence), [])
 
+    def test_s5_every_subject_end_carries_its_passages_span_on_the_sources_layer(self):
+        self.challenge()
+        self.assertEqual(self.export()[0], 0)
+        out_dir = self.paths.export_dir("set-1")
+        sources = {row["source_id"]: row for row in
+                   map(json.loads, (out_dir / "sources.jsonl").read_text(encoding="utf-8")
+                       .splitlines())}
+        pin = read_yaml(self.paths.run_yaml("loc-1"))["locate"]["sourceset"]
+        recs = _records(out_dir)
+        self.assertTrue(recs)
+        for rec in recs:
+            sid = rec["id"].split("::")[0]
+            layer = export_mod.inputs.source_view(self.paths, pin["id"], sid).layer()
+            (end,) = rec["subject"]
+            ext = end["extensions"][EXT]
+            start, stop = ext["span"]
+            with self.subTest(record=rec["id"], relation=rec.get("relation")):
+                self.assertEqual(set(ext), SUBJECT_EXT_KEYS)
+                self.assertTrue(all(type(offset) is int for offset in ext["span"]))
+                self.assertTrue(0 <= start < stop <= len(layer))
+                self.assertEqual(ext["layer_sha256"], sources[sid]["layer_sha256"])
+                self.assertEqual(ext["layer_sha256"], records.sha256_text(layer))
+                self.assertEqual(ext["span_sha256"], records.sha256_text(layer[start:stop]))
+                exact = end["location"]["quote"]["exact"]
+                self.assertEqual(layer[start:start + len(exact)], exact)
+                self.assertLessEqual(len(exact), stop - start)
+
+    def test_b5_only_subject_passages_carry_the_articles_qid(self):
+        self.challenge()
+        self.assertEqual(self.export()[0], 0)
+        out_dir = self.paths.export_dir("set-1")
+        qids = {row["source_id"]: row["wikidata"] for row in
+                map(json.loads, (out_dir / "sources.jsonl").read_text(encoding="utf-8")
+                    .splitlines())}
+        carried = 0
+        for rec in _records(out_dir):
+            (end,) = rec["subject"]
+            prominence = rec["extensions"][EXT]["prominence"]
+            with self.subTest(record=rec["id"], prominence=prominence):
+                if prominence == "subject":
+                    qid = qids[rec["id"].split("::")[0]]
+                    self.assertIsNotNone(qid)
+                    self.assertEqual(end["identifiers"], {"wikidata": qid})
+                    self.assertNotIn("wikidata", end["extensions"][EXT])
+                    carried += 1
+                else:
+                    self.assertNotIn("identifiers", end)
+        self.assertGreater(carried, 0)
+
     def test_m6_a_downgrade_to_close_match_keeps_a_note(self):
         witness = ("The declaration indexes gadgets from 0 where the passage counts from 1. "
                    "Otherwise it states the passage.")
@@ -671,7 +744,8 @@ class TestRecordUnits(unittest.TestCase):
 
     def source(self):
         return {"source_id": F.W1, "pageid": 1001, "revision": 2002, "title": "Widget lemma",
-                "html_sha256": "1" * 64, "renderer": "web-html/3",
+                "html_sha256": "1" * 64, "layer_sha256": records.sha256_text(self.LAYER),
+                "renderer": "web-html/3",
                 "uri": "https://en.wikipedia.org/w/index.php?curid=1001&oldid=2002",
                 "container_title": "Wikipedia", "licence": "CC-BY-SA-4.0"}
 
@@ -761,6 +835,109 @@ class TestRecordUnits(unittest.TestCase):
         with self.assertRaises(records.RecordError) as caught:
             records.passage_records(self.source(), passage, self.LAYER, self.universe())
         self.assertIn("convention difference", str(caught.exception))
+
+    def located(self, **kw):
+        return self.passage(outcome="located", status="formalized", locations=[self.location()],
+                            **kw)
+
+    def test_s5_every_shape_carries_the_span_and_the_layer_sha(self):
+        absent = self.passage(outcome="absent", status="not_formalized", locations=[],
+                              absence={"receipt": {"queries": ["a", "b", "c"], "candidates": []},
+                                       "challenge": "survived"})
+        unresolved = self.passage(outcome="unresolved", locations=[])
+        for passage in (self.located(), absent, unresolved):
+            (rec,), _ = records.passage_records(self.source(), passage, self.LAYER,
+                                                self.universe())
+            ext = rec["subject"][0]["extensions"][EXT]
+            with self.subTest(outcome=passage["outcome"]):
+                self.assertEqual(set(ext), SUBJECT_EXT_KEYS)
+                self.assertEqual(ext["span"], [0, 40])
+                self.assertEqual(ext["layer_sha256"], records.sha256_text(self.LAYER))
+                self.assertEqual(ext["span_sha256"], records.sha256_text(self.LAYER[0:40]))
+                self.assertEqual(records.check(rec), [])
+
+    def test_s5_a_span_is_two_ints_with_start_before_end(self):
+        for bad in (None, [], [0], [0, 40, 41], [True, 40], [0, 40.0], ["0", "40"], [40, 40],
+                    [41, 40], [-1, 40], "0,40"):
+            with self.subTest(span=bad), self.assertRaises(records.RecordError):
+                records.passage_records(self.source(), self.located(span=bad), self.LAYER,
+                                        self.universe())
+        recs, _ = records.passage_records(self.source(), self.located(span=(0, 40)),
+                                          self.LAYER, self.universe())
+        self.assertEqual(recs[0]["subject"][0]["extensions"][EXT]["span"], [0, 40])
+
+    def test_s5_a_span_that_leaves_the_layer_is_refused(self):
+        with self.assertRaises(records.RecordError) as caught:
+            records.passage_records(self.source(), self.located(span=[0, len(self.LAYER) + 1]),
+                                    self.LAYER, self.universe())
+        self.assertIn("leaves the layer", str(caught.exception))
+        recs, _ = records.passage_records(self.source(), self.located(span=[0, len(self.LAYER)]),
+                                          self.LAYER, self.universe())
+        self.assertEqual(recs[0]["subject"][0]["extensions"][EXT]["span_sha256"],
+                         records.sha256_text(self.LAYER))
+
+    def shapes(self, **kw):
+        absent = self.passage(outcome="absent", status="not_formalized", locations=[],
+                              absence={"receipt": {"queries": ["a", "b", "c"], "candidates": []},
+                                       "challenge": "survived"}, **kw)
+        return (self.located(**kw), absent, self.passage(outcome="unresolved", locations=[],
+                                                         **kw))
+
+    def test_b5_a_subject_passage_carries_the_articles_qid(self):
+        source = {**self.source(), "wikidata": "Q99999001"}
+        for passage in self.shapes(prominence="subject"):
+            (rec,), _ = records.passage_records(source, passage, self.LAYER, self.universe())
+            with self.subTest(outcome=passage["outcome"]):
+                self.assertEqual(rec["subject"][0]["identifiers"], {"wikidata": "Q99999001"})
+                self.assertEqual(records.check(rec), [])
+
+    def test_b5_no_other_passage_carries_one(self):
+        source = {**self.source(), "wikidata": "Q99999001"}
+        for prominence in ("central", "supporting"):
+            for passage in self.shapes(prominence=prominence):
+                (rec,), _ = records.passage_records(source, passage, self.LAYER,
+                                                    self.universe())
+                with self.subTest(prominence=prominence, outcome=passage["outcome"]):
+                    self.assertNotIn("identifiers", rec["subject"][0])
+
+    def test_b5_a_source_with_no_qid_gives_none_and_a_bad_one_is_refused(self):
+        for source in (self.source(), {**self.source(), "wikidata": None}):
+            (rec,), _ = records.passage_records(source, self.located(prominence="subject"),
+                                                self.LAYER, self.universe())
+            self.assertNotIn("identifiers", rec["subject"][0])
+        for bad in ("", "Q0", "Q012", "42", "q42", "Q42 ", "Q42\n", 42, ["Q42"]):
+            source = {**self.source(), "wikidata": bad}
+            with self.subTest(wikidata=bad), \
+                    self.assertRaisesRegex(records.RecordError, "is not a Wikidata QID"):
+                records.passage_records(source, self.located(prominence="subject"),
+                                        self.LAYER, self.universe())
+            # a passage that carries no QID does not read it
+            records.passage_records(source, self.located(), self.LAYER, self.universe())
+
+    def test_split_one_repository_at_one_commit_is_one_absence_end(self):
+        lean4, core = "https://github.com/leanprover/lean4", "4" * 40
+        universe = {"id": "u2", "sha256": "2" * 64, "libraries": [
+            {"id": "std", "repo": lean4, "commit": core},
+            {"id": "mathlib", "repo": "https://example.org/mathlib4", "commit": "5" * 40},
+            {"id": "init", "repo": lean4, "commit": core}]}
+        (absence,), _ = records.passage_records(self.source(), self.shapes()[1], self.LAYER,
+                                                universe)
+        self.assertEqual(absence["object"], [
+            {"type": "lean", "uri": lean4, "version": core},
+            {"type": "lean", "uri": "https://example.org/mathlib4", "version": "5" * 40}])
+        self.assertEqual(records.check(absence), [])
+        # one repository at two commits is two search targets, and so two ends
+        universe["libraries"][0]["commit"] = "6" * 40
+        self.assertEqual([(e["uri"], e["version"]) for e in records.absence_ends(universe)],
+                         [(lean4, core), ("https://example.org/mathlib4", "5" * 40),
+                          (lean4, "6" * 40)])
+
+    def test_s5_a_span_needs_the_layer_it_indexes(self):
+        for layer_sha in (None, "", "A" * 64, "1" * 63):
+            source = {**self.source(), "layer_sha256": layer_sha}
+            with self.subTest(layer_sha256=layer_sha), \
+                    self.assertRaisesRegex(records.RecordError, "no layer_sha256"):
+                records.passage_records(source, self.located(), self.LAYER, self.universe())
 
 
 if __name__ == "__main__":
