@@ -592,6 +592,15 @@ class Pipeline:
             part["instantiation"] = "W is the passage's finite widget, Fintype by finiteness"
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
                     "claims": self.THEOREM_CLAIMS, "locations": [part]}
+        if sid == WIDGET and passage.get("passage_kind") == "other" and not self.proof_part:
+            # the widget's first remark paragraph, read as a proof: a hasPart of it names
+            # the displayed step it states (the judgment rules, FM3)
+            self.proof_part = passage["item"]
+            step = self._location("alpha", "Widget.card_dvd", "hasPart")
+            step.update(instantiation="W is the remark's widget, a Fintype",
+                        step="the displayed divisibility of the gadget's size")
+            return {"item": passage["item"], "outcome": "located", "receipt": receipt,
+                    "claims": self.OTHER_CLAIMS, "locations": [step]}
         # an absence searched for every claim, each query tagged with the one it targets;
         # a worked example's also for its general theorem (the judgment rules, FM5)
         receipt["query_clauses"] = {q: ["c1"] for q in receipt["queries"]}
@@ -601,6 +610,7 @@ class Pipeline:
                 "claims": self.OTHER_CLAIMS}
 
     def locate(self) -> None:
+        self.proof_part: str | None = None
         self.cf("plan-locate", "--preset", "locate", "--sourceset", SS, "--universe", U,
                 "--inventory-run", "inv-1", "--run-id", "loc-1", "--max-cost", "50")
         out = self.made / "loc-1" / "findings"
@@ -651,6 +661,10 @@ class Pipeline:
             p.update(outcome="absent", locations=[])
             p["receipt"]["queries"] = ["widget", "Widget "]
             p["receipt"]["query_clauses"] = {"widget": ["c1"]}
+        def stepless(doc):
+            for p in doc["passages"]:
+                for loc in p["locations"]:
+                    loc.pop("step", None)
         def uninstantiated(doc):
             for p in doc["passages"]:
                 for loc in p["locations"]:
@@ -697,10 +711,13 @@ class Pipeline:
                  # the judgment rules (rule 9): the claim list, and every clause on a strong one
                  "rule 9 claims": no_claims, "rule 9 clauses": strong_missing_a_clause,
                  "rule 9 queries": untagged_absence, "rule 9 instantiation": uninstantiated,
+                 "rule 9 step": stepless,
                  # the export's verbatim-source cap, applied by the gate (rule 1)
                  "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
         check(any(loc.get("instantiation") for p in good["passages"] for loc in p["locations"]),
               "the widget's locate document has no location to strip an instantiation from")
+        check(any(loc.get("step") for p in good["passages"] for loc in p["locations"]),
+              "the widget's locate document has no part of a proof to strip a step from")
         for name, fn in cases.items():
             path = self.write_json(self.made / "loc-bad" / name.replace(" ", "-")
                                    / task_id / f"{WIDGET}.json", mutate(fn))
@@ -794,6 +811,10 @@ class Pipeline:
         theorem = [r for r in rows if r["source_id"] == WIDGET and r.get("passage_kind") == "theorem"
                    and r.get("prominence") == "central"]
         check(theorem and theorem[0]["status"] == "partial", f"the hasPart theorem: {theorem}")
+        proof = [r for r in rows if r["item"] == self.proof_part]
+        check(proof and proof[0]["status"] == "partial"
+              and proof[0]["locations"][0].get("step"),
+              f"the part of a proof lost its step, or its partial status: {proof}")
         self.cf("export", "literature-links", "--run", "loc-1", "--challenge-run", "chl-1",
                 "--set-id", "set-1")
         set_dir = paths.export_dir("set-1")
