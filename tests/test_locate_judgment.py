@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover
 
 import copy
 import json
+import sqlite3
 import sys
 import unittest
 from pathlib import Path
@@ -256,6 +257,76 @@ class TestAnAbsenceSearchedEveryClause(JudgedLocate):
         self.assertRule(self.run_body(body), 9, "c3 are neither claim ids")
 
 
+# --------------------------------------------------------------------------- #
+# FM6: the declaration instantiated at the passage's objects
+# --------------------------------------------------------------------------- #
+
+#: synthetic signatures in the shape the library index prints them
+GENERIC = ("\u2200 {W : Type u_1} [inst : WidgetLike W] [Finite W] (w : W), "
+           "\u2203 g, Spans g w")
+PLAIN = "\u2200 (w : Widget), w.Finite \u2192 \u2203 g, g.Spans w"
+
+
+def sign(fx, name: str, signature: str | None) -> None:
+    """Record ``signature`` for every declaration ``name`` in the fixture's corpus.sqlite."""
+    con = sqlite3.connect(fx.db)
+    con.execute("UPDATE decls SET signature = ? WHERE name = ?", (signature, name))
+    con.commit()
+    con.close()
+
+
+class TestTheInstantiationLine(JudgedLocate):
+
+    def test_a_declaration_with_instance_arguments_says_how_it_applies(self):
+        sign(self.fx, "Widget.exists_spanning_gadget", GENERIC)
+        body = judged_body()
+        self.assertRefusedOnlyUnderTheRules(body, "takes instance argument(s) "
+                                                  "[inst : WidgetLike W] [Finite W]")
+        body["passages"][0]["locations"][0]["instantiation"] = (
+            "W is the passage's widget G; WidgetLike and Finite hold for it")
+        self.assertOk(self.run_body(body))
+
+    def test_one_without_them_or_without_a_recorded_signature_needs_none(self):
+        for signature in (PLAIN, None):
+            sign(self.fx, "Widget.exists_spanning_gadget", signature)
+            with self.subTest(signature=signature):
+                self.assertOk(self.run_body(judged_body()))
+
+    def test_a_related_match_asserts_nothing_to_instantiate(self):
+        sign(self.fx, "Widget.Spanning", GENERIC)
+        body = judged_body()
+        body["passages"][1]["locations"] = [G.location(decl="Widget.Spanning",
+                                                       relation="relatedMatch")]
+        self.assertOk(self.run_body(body))
+
+    def test_the_line_is_one_line_in_the_workers_words(self):
+        sign(self.fx, "Widget.exists_spanning_gadget", GENERIC)
+        body = judged_body()
+        loc = body["passages"][0]["locations"][0]
+        loc["instantiation"] = "W is the widget\nand Finite holds"
+        self.assertRule(self.run_body(body), 9, "one line")
+        loc["instantiation"] = " ".join(G.THEOREM.split()[:15])
+        self.assertRule(self.run_body(body), 1, "own words")
+
+    def test_the_leading_binders_as_the_index_prints_them(self):
+        cases = {
+            GENERIC: ["[inst : WidgetLike W]", "[Finite W]"],
+            PLAIN: [],
+            "{R : Type u} \u2192 [inst : Ring R] \u2192 (f : \u03b9 \u2192 R) \u2192 "
+            "Pairwise f \u2192 R": ["[inst : Ring R]"],
+            "\u2200 {x n : \u2115}, x.Coprime n \u2192 x ^ n \u2261 1 [MOD n]": [],
+            "\u2200 {E : Type u} [inst : Normed E] (T : E \u2192\u2097[\u211d] E), "
+            "T.Symm": ["[inst : Normed E]"],
+            "\u2200 \u2983a b : \u03b1\u2984 [Fact (Prime p)], a = b": ["[Fact (Prime p)]"],
+            "\u2200 (n : \u2115), \u2200 [inst : Later n], n = n": [],
+            "Widget.Finite w": [], "": [],
+        }
+        for signature, want in cases.items():
+            with self.subTest(signature=signature):
+                self.assertEqual(vl.instance_binders(signature), want)
+        self.assertEqual(vl.leading_binders("(a : \u03b1) (b"), ["(a : \u03b1)"])
+
+
 class TestAdmitsAMissingClause(unittest.TestCase):
 
     def test_the_closed_phrase_list(self):
@@ -370,6 +441,13 @@ class TestTheChallengersClaims(G.GateTestCase):
         del body["verdicts"][1]["locations"][0]["clauses"]
         self.assertRule(self.run_body(body), 9, "names the ids")
         self.assertOk(self.unruled(body))
+
+    def test_an_overturn_location_says_how_its_declaration_applies(self):
+        sign(self.fx, "Beta.Widget.gadget_of_finite", GENERIC)
+        body = self.body()
+        self.assertRule(self.run_body(body), 9, "takes instance argument(s)")
+        body["verdicts"][1]["locations"][0]["instantiation"] = "W is the passage's widget"
+        self.assertOk(self.run_body(body))
 
     def test_claims_for_a_passage_the_task_does_not_judge(self):
         body = self.body()
@@ -529,6 +607,18 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("with at least one query for every clause of your claim list",
                       self.worker(vocab.LOCATE_CHALLENGE))
         self.assertIn("an absence whose `query_clauses` leave a claim without a query",
+                      self.rendered[vocab.LOCATE]["worker-system.md"])
+
+    def test_fm6_the_declaration_is_instantiated_at_the_passages_objects(self):
+        worker = self.worker()
+        self.assertIn("**Instantiate** each declaration you would cite at the passage's own "
+                      "objects", worker)
+        self.assertIn("**If the passage's objects cannot meet the declaration's hypotheses**",
+                      worker)
+        self.assertIn("the relation is `relatedMatch`, however close its statement reads", worker)
+        self.assertIn('"instantiation": "<the passage', worker)
+        self.assertIn("Check the record's `instantiation`", self.worker(vocab.LOCATE_CHALLENGE))
+        self.assertIn("without its `instantiation` line",
                       self.rendered[vocab.LOCATE]["worker-system.md"])
 
     def test_fm1_the_challenger_lists_the_clauses_itself(self):

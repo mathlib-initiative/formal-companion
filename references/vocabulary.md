@@ -463,12 +463,13 @@ record no verdict judged.
 | `CLAIM_ID` | `c1`, `c2`, … (`c[1-9][0-9]?`): the id of a passage's claim, one formal clause of its claim list (`claims` of a locate or challenge document, references/locate-documents.md §3–§4), which a location's `clauses` name |
 | `CLAUSE_GAP_PHRASES` | `does not state` · `doesn't state` · `not stated` · `is not part of` · `rather than asserting` · `rather than stating` · `only the existence` · `only one direction` · `not the converse` · `without uniqueness` · `does not cover` · `not covered` — the closed list by which a strong record's note admits a clause its declaration does not state (`admits_missing_clause`: whole words, case-folded, the apostrophe folded); the gate refuses such a record under the judgment rules, and the challenge plan refutes it by default |
 | `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one under the judgment rules |
-| `JUDGMENT_LOCATION_FIELDS` | `clauses` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported |
+| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported |
 | `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
 
 Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
-`MAX_PASSAGE_CLAIMS` (12 claims in a passage's claim list) and `MAX_CLAIM_CHARS` (300 characters,
-one line, of a claim's text),
+`MAX_PASSAGE_CLAIMS` (12 claims in a passage's claim list), `MAX_CLAIM_CHARS` (300 characters,
+one line, of a claim's text) and `MAX_JUDGMENT_LINE_CHARS` (300 characters, one line, of a
+location's `instantiation`),
 `MIN_COVERAGE_PARTS` (2 distinct `hasPart` parts in a coverage claim), `COVERAGE_RECORD_KEYS`
 (`complete` · `parts` · `challenge`, the keys of a record's claim and of `derive_status`'s),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge

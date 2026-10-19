@@ -83,7 +83,10 @@ references/locate-documents.md sections 2-4 and 9):
    and so is a coverage claim whose parts leave a clause unstated; an absence's
    receipt tags its queries with the claims they target
    (``receipt.query_clauses``) and leaves no claim unsearched, a worked
-   example's also searching for its general theorem; a challenge document
+   example's also searching for its general theorem; a counting location on a
+   declaration whose signature (``corpus.sqlite``'s ``decls.signature``) takes
+   an instance argument says how it is instantiated (``instantiation``); a
+   challenge document
    carries the challenger's own claim lists, which its verdicts and overturn
    locations name.
 
@@ -258,6 +261,10 @@ CLAIM_KEYS = frozenset({"id", "text"})
 #: (cflib.vocab.GENERAL_QUERY_TAG)
 GENERAL_QUERY_TAG = "general"
 PASSAGE_EXAMPLE = "example"
+#: a judgment rule's one-line field (cflib.vocab.MAX_JUDGMENT_LINE_CHARS)
+MAX_JUDGMENT_LINE_CHARS = 300
+#: the brackets of a binder group in a signature as the index prints it
+BINDER_BRACKETS = {"(": ")", "{": "}", "[": "]", "\u2983": "\u2984"}
 #: the phrases by which a strong record's note admits a clause it does not state
 #: (cflib.vocab.CLAUSE_GAP_PHRASES; the matcher is cflib.vocab._phrase_in's)
 CLAUSE_GAP_PHRASES = ("does not state", "doesn't state", "not stated", "is not part of",
@@ -600,6 +607,7 @@ class Context:
         self._manifests: dict[str, dict | None] = {}
         self._db: sqlite3.Connection | None = None
         self._exists: dict[tuple[str, str, str], bool] = {}
+        self._signatures: dict[tuple[str, str, str], str | None] = {}
 
     def source(self, source_id: str) -> SourceView | None:
         if source_id not in self.cfg.sources or not _safe_name(source_id):
@@ -650,6 +658,19 @@ class Context:
             self._candidates[source_id] = data
         return self._candidates[source_id]
 
+    def _corpus(self) -> sqlite3.Connection:
+        if self._db is None:
+            if self.cfg.corpus_db is None:
+                raise GateBroken("gate.json names no corpus_db; rule 3 fails closed")
+            if not self.cfg.corpus_db.is_file():
+                raise GateBroken(f"corpus.sqlite is missing at {self.cfg.corpus_db}")
+            try:
+                self._db = sqlite3.connect(ro_uri(self.cfg.corpus_db), uri=True)
+            except sqlite3.Error as exc:
+                raise GateBroken(f"corpus.sqlite at {self.cfg.corpus_db} will not open "
+                                 f"({exc})") from None
+        return self._db
+
     def exists(self, library: str, name: str) -> bool:
         """Is ``library:name`` in the exact table at the universe's commit?"""
         lib = self.cfg.libraries.get(library)
@@ -657,24 +678,36 @@ class Context:
             return False
         key = (library, lib["commit"], name)
         if key not in self._exists:
-            if self._db is None:
-                if self.cfg.corpus_db is None:
-                    raise GateBroken("gate.json names no corpus_db; rule 3 fails closed")
-                if not self.cfg.corpus_db.is_file():
-                    raise GateBroken(f"corpus.sqlite is missing at {self.cfg.corpus_db}")
-                try:
-                    self._db = sqlite3.connect(ro_uri(self.cfg.corpus_db), uri=True)
-                except sqlite3.Error as exc:
-                    raise GateBroken(f"corpus.sqlite at {self.cfg.corpus_db} will not open "
-                                     f"({exc})") from None
             try:
-                row = self._db.execute(
+                row = self._corpus().execute(
                     "SELECT 1 FROM decls WHERE library = ? AND commit_sha = ? AND name = ? LIMIT 1",
                     key).fetchone()
             except sqlite3.Error as exc:
                 raise GateBroken(f"corpus.sqlite is not the cf-corpus/1 schema ({exc})") from None
             self._exists[key] = row is not None
         return self._exists[key]
+
+    def signature(self, library: str, name: str) -> str | None:
+        """``library:name``'s printed type in the exact table at the universe's commit.
+
+        The ``decls.signature`` column the library probe recorded (cf-corpus/1,
+        references/locate-documents.md section 8), or None when the declaration is
+        not there or its type was not recorded.
+        """
+        lib = self.cfg.libraries.get(library)
+        if lib is None:
+            return None
+        key = (library, lib["commit"], name)
+        if key not in self._signatures:
+            try:
+                row = self._corpus().execute(
+                    "SELECT signature FROM decls WHERE library = ? AND commit_sha = ? "
+                    "AND name = ? LIMIT 1", key).fetchone()
+            except sqlite3.Error as exc:
+                raise GateBroken(f"corpus.sqlite is not the cf-corpus/1 schema ({exc})") from None
+            self._signatures[key] = (row[0] if row is not None and isinstance(row[0], str)
+                                     and row[0].strip() else None)
+        return self._signatures[key]
 
     def close(self) -> None:
         if self._db is not None:
@@ -1336,10 +1369,88 @@ def check_clauses(problems: Problems, where: str, relation: Any, clauses: Any,
                                    f"when the parts together state them all (R4)")
 
 
+def _closing(text: str, start: int) -> int:
+    """The index of the bracket that closes the group opened at ``start``, or -1."""
+    want: list[str] = []
+    for k in range(start, len(text)):
+        ch = text[k]
+        if ch in BINDER_BRACKETS:
+            want.append(BINDER_BRACKETS[ch])
+        elif want and ch == want[-1]:
+            want.pop()
+            if not want:
+                return k
+        elif ch in BINDER_BRACKETS.values():
+            return -1
+    return -1
+
+
+def leading_binders(signature: Any) -> list[str]:
+    """The binder groups a signature opens with, as the library index prints its type.
+
+    ``∀ {G : Type u} [inst : Group G] (p : ℕ), …`` and ``{R : Type u} → [inst :
+    CommRing R] → (f : ι → Ideal R) → …``: after an optional ``∀``, each balanced
+    group in ``()``, ``{}``, ``[]`` or ``⦃⦄`` separated by spaces or an arrow, up to
+    the first ``,`` or the first token that opens no group.  A binder written later
+    (``… → ∀ [inst : …], …``) and a bracket in the statement (``a ≡ b [MOD n]``)
+    are not leading binders.
+    """
+    text = str(signature or "")
+    n, i, groups = len(text), 0, []
+
+    def skip(at: int) -> int:
+        while at < n and text[at].isspace():
+            at += 1
+        return at
+
+    i = skip(i)
+    if text.startswith("\u2200", i):
+        i = skip(i + 1)
+    while i < n and text[i] in BINDER_BRACKETS:
+        end = _closing(text, i)
+        if end < 0:
+            break
+        groups.append(text[i:end + 1])
+        i = skip(end + 1)
+        for arrow in ("\u2192", "->"):
+            if text.startswith(arrow, i):
+                i = skip(i + len(arrow))
+                break
+        if i < n and text[i] == ",":
+            break
+    return groups
+
+
+def instance_binders(signature: Any) -> list[str]:
+    """The instance-implicit binders among a signature's leading ones: ``[…]`` groups."""
+    return [group for group in leading_binders(signature) if group.startswith("[")]
+
+
+def _one_line(problems: Problems, where: str, field: str, value: Any, layer: str) -> bool:
+    """A judgment rule's one-line field: non-empty, one line, capped, the worker's words."""
+    if not _nonempty_str(value):
+        return False
+    if "\n" in value or len(value) > MAX_JUDGMENT_LINE_CHARS:
+        problems.add(9, where, f"{field} is one line of at most {MAX_JUDGMENT_LINE_CHARS} "
+                               f"characters")
+    else:
+        _verbatim(problems, where, f"the {field}", value, layer)
+    return True
+
+
 def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
                    location: dict, *, ids: list[str] | None, passage_kind: Any,
                    layer: str) -> None:
-    """Rule 9 over one location a document asserts: what it states of its passage."""
+    """Rule 9 over one location a document asserts: what it states of its passage.
+
+    Its ``clauses`` (R4); a strong one's note admits no gap; and, when the
+    declaration's signature in ``corpus.sqlite`` (``decls.signature``, the
+    probe's printed type) takes an instance argument among its leading binders,
+    the ``instantiation`` that says at which of the passage's objects, and by
+    which instance or hypothesis, the declaration applies (FM6).  A declaration
+    with no recorded signature is not held to the last: the gate cannot see its
+    binders.
+    """
     relation = location.get("relation")
     check_clauses(problems, where, relation, location.get("clauses"), ids)
     if relation in STRONG_RELATIONS:
@@ -1348,6 +1459,21 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
             problems.add(9, where, f"the note says {phrase!r}: it admits a clause the "
                                    f"declaration does not state, so the relation is hasPart "
                                    f"(R4), not {relation}")
+    if relation in LOCATE_RELATIONS and relation != RELATED_MATCH:
+        given = _one_line(problems, where, "instantiation", location.get("instantiation"),
+                          layer)
+        library, name = location.get("library"), location.get("declaration")
+        if not given and isinstance(library, str) and isinstance(name, str) \
+                and library in cfg.libraries:
+            binders = instance_binders(ctx.signature(library, name))
+            if binders:
+                problems.add(9, where, f"{library}:{name} takes instance argument(s) "
+                                       f"{' '.join(binders[:3])}"
+                                       f"{' …' if len(binders) > 3 else ''}: say at which of "
+                                       f"the passage's objects it applies and which instance "
+                                       f"or hypothesis makes it apply (instantiation: <one "
+                                       f"line>); objects that cannot meet them make it a "
+                                       f"relatedMatch (R5)")
 
 
 def check_query_clauses(problems: Problems, where: str, receipt: Any, ids: list[str] | None, *,

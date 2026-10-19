@@ -208,8 +208,10 @@ class Pipeline:
             self._decl("Widget.Spans", "Alpha.Widget", "Alpha/Widget.lean", 10, 10, kind="def",
                        status="definition", signature="Gadget → Widget → Prop",
                        docstring="Spanning."),
+            # an instance argument among its binders: a location on it says how it is
+            # instantiated at the passage's objects (the judgment rules, FM6)
             self._decl("Widget.card_dvd", "Alpha.Widget", "Alpha/Widget.lean", 12, 12,
-                       signature="∀ (w : Widget), True"),
+                       signature="∀ {W : Type} [inst : Fintype W] (w : W), True"),
             self._decl("Widget.sorried", "Alpha.Widget", "Alpha/Widget.lean", 14, 14,
                        status="statement_only", axioms=["sorryAx"]),
             self._decl("Widget", "Alpha.Basic", "Alpha/Basic.lean", 1, 1, kind="structure",
@@ -586,9 +588,10 @@ class Pipeline:
                     "locations": [self._location("alpha", "Widget.exists_spanning_gadget")]}
         if sid == WIDGET and passage.get("passage_kind") == "theorem":
             # one clause of two: a hasPart, never an exactMatch (R4)
+            part = self._location("alpha", "Widget.card_dvd", "hasPart")
+            part["instantiation"] = "W is the passage's finite widget, Fintype by finiteness"
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
-                    "claims": self.THEOREM_CLAIMS,
-                    "locations": [self._location("alpha", "Widget.card_dvd", "hasPart")]}
+                    "claims": self.THEOREM_CLAIMS, "locations": [part]}
         # an absence searched for every claim, each query tagged with the one it targets;
         # a worked example's also for its general theorem (the judgment rules, FM5)
         receipt["query_clauses"] = {q: ["c1"] for q in receipt["queries"]}
@@ -648,6 +651,10 @@ class Pipeline:
             p.update(outcome="absent", locations=[])
             p["receipt"]["queries"] = ["widget", "Widget "]
             p["receipt"]["query_clauses"] = {"widget": ["c1"]}
+        def uninstantiated(doc):
+            for p in doc["passages"]:
+                for loc in p["locations"]:
+                    loc.pop("instantiation", None)
         def untagged_absence(doc):
             p = doc["passages"][located]
             p.update(outcome="absent", locations=[])
@@ -689,9 +696,11 @@ class Pipeline:
                  "closeMatch note": close_without_note,
                  # the judgment rules (rule 9): the claim list, and every clause on a strong one
                  "rule 9 claims": no_claims, "rule 9 clauses": strong_missing_a_clause,
-                 "rule 9 queries": untagged_absence,
+                 "rule 9 queries": untagged_absence, "rule 9 instantiation": uninstantiated,
                  # the export's verbatim-source cap, applied by the gate (rule 1)
                  "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
+        check(any(loc.get("instantiation") for p in good["passages"] for loc in p["locations"]),
+              "the widget's locate document has no location to strip an instantiation from")
         for name, fn in cases.items():
             path = self.write_json(self.made / "loc-bad" / name.replace(" ", "-")
                                    / task_id / f"{WIDGET}.json", mutate(fn))
