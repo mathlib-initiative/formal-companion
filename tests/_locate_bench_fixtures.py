@@ -51,8 +51,8 @@ GATE_FILES = {"verify_locate.py": "d" * 64, "locate_text.py": "e" * 64}
 CONFIG_SHAS = {"prompts": {"locate.md.tmpl": "a" * 64, "locate-worker-system.md.tmpl": "b" * 64},
                "gate_files": dict(GATE_FILES),
                "agents": {"agent_host": "claude", "model": "claude-sonnet-5",
-                          "allow_sandbox_bypass": False, "attempt_cap": 3,
-                          "merge_target": "main"}}
+                          "allow_sandbox_bypass": False, "agentbox_profile": None,
+                          "attempt_cap": 3, "merge_target": "main"}}
 
 
 def canonical(obj) -> str:

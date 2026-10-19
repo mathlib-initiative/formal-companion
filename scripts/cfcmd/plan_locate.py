@@ -413,8 +413,8 @@ def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
     task manifests, the ``bin/*-agent.sh`` wrappers, and any staged file whose
     bytes name one of ``run_paths``; ``agents`` is what those wrappers run with
     that names no run (``locate.tend_root.agent_settings``: the agent host, the
-    model, the sandbox bypass, the attempt cap and the merge target), as the
-    plan decided it (review SEAM-1).  Two plans of one configuration that
+    model, the sandbox bypass, the agentbox profile, the attempt cap and the
+    merge target), as the plan decided it (review SEAM-1).  Two plans of one configuration that
     differ only in run id record equal maps, which is what the bench's A/A
     check compares (review M-01; references/locate-documents.md section 9).
     """

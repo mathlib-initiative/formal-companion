@@ -492,6 +492,25 @@ class TestAPartlyRenderedSourceset(unittest.TestCase):
         self.assertTrue(draw["excluded"][0]["reason"].startswith("parity refused"))
         self.assertIn("1 of them render refused for parity", out)
 
+    def test_the_frame_line_counts_a_parity_refusal_apart_from_not_yet_seam2(self):
+        """Review SEAM-2, its residual: an undrawn frame article whose render stands refused
+        for parity is no render away, so the summary does not count it "not yet"."""
+        from sources import render_html
+        from sources.sourceset import Sourceset
+        plain, refused = self.others[:2]
+        for sid in (plain, refused):
+            self.unrender(sid)
+        self.world.change_entry(refused, adopted_from={"consumer": "wikilean",
+                                                       "pins_sha256": "3" * 64,
+                                                       "layer_sha256": "1" * 64})
+        ss = Sourceset.open(WorkspacePaths(self.world.root), fx.SOURCESET)
+        ss.record_parity_refusals({refused: {"layer_sha256": "2" * 64,
+                                             "renderer": render_html.RENDERER,
+                                             "producer_layer_sha256": "1" * 64}})
+        out = self.build()
+        self.assertIn("4 rendered, 1 not yet, 1 render refused for parity (the layer is not "
+                      f"the producer's; no render of {fx.SOURCESET} settles it)", out)
+
     def test_or_excluded_with_its_inclusion_probabilities(self):
         gone = sorted(self.drawn)[0]
         self.unrender(gone)

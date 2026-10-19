@@ -441,8 +441,14 @@ def _build(ws, args) -> int:
           f"drawn {len(articles)} ({drawn['uniform']['n']} uniform, {drawn['curated']['n']} curated), "
           f"{len(clusters['clusters'])} cluster(s), {len(spans)} G3 span(s)")
     if frame["unrendered"]:
-        print(f"  frame    : {frame['N_rendered']} rendered, {len(frame['unrendered'])} not yet "
-              f"(frame.json unrendered); the draw is the whole frame's, so only drawn ones must be")
+        # a standing parity refusal is not "not yet": no render of this sourceset settles it
+        frame_refused = sum(1 for sid in frame["unrendered"] if sid in standing)
+        print(f"  frame    : {frame['N_rendered']} rendered, "
+              f"{len(frame['unrendered']) - frame_refused} not yet"
+              + (f", {frame_refused} render refused for parity (the layer is not the "
+                 f"producer's; no render of {args.sourceset} settles it)" if frame_refused else "")
+              + " (frame.json unrendered); the draw is the whole frame's, so only drawn ones "
+                "must be")
     if drawn.get("excluded"):
         listed = (f"; {layout.unrendered_list} lists {'the rest' if refused else 'them'}"
                   if fetchable else "")

@@ -92,7 +92,16 @@ def run(args) -> int:
              f"{result['dropped']} curated name(s) dropped (not in the universe)"
              + (f", {result['withheld']} withheld (not in the planted database; named in "
                 f"no file a worker reads)" if kind == vocab.TOOLS_DB_PLANTED else ""))
-    if result["skipped_unrendered"]:
-        log.warn(f"{len(result['skipped_unrendered'])} source(s) are not rendered and have no "
-                 "candidates file yet")
+    refused = result["parity_refused"]
+    pending = len(result["skipped_unrendered"]) - len(refused)
+    if pending:
+        log.warn(f"{pending} source(s) are not rendered and have no candidates file yet")
+    if refused:
+        # a standing parity refusal is no render away (review SEAM-2)
+        log.warn(f"{len(refused)} source(s) have no candidates file because render refused "
+                 f"them, the layer not the producer's: " + ", ".join(refused[:5])
+                 + (f" (+{len(refused) - 5} more)" if len(refused) > 5 else "")
+                 + f"; no render of {args.sourceset} settles that (`cf sourceset status "
+                   f"{args.sourceset} --verify` lists them): the producer's corrected delivery, "
+                   f"adopted into a new sourceset, does")
     return 0

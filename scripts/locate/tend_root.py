@@ -102,8 +102,9 @@ def agent_settings(settings: dict[str, Any], env: dict[str, dict[str, str]]) -> 
     """``run.yaml`` ``locate.config_shas.agents``: what the wrappers run with, no run's own.
 
     ``settings`` is ``make_tend_root``'s ``agent_settings`` (``CF_AGENT_HOST``,
-    ``CF_MODEL``, ``CF_ALLOW_SANDBOX_BYPASS``) and ``env`` is :func:`wrapper_env`'s
-    map, whose ``CF_ATTEMPT_CAP`` and ``CF_MERGE_TARGET`` both roles export.  The
+    ``CF_MODEL``, ``CF_ALLOW_SANDBOX_BYPASS``, ``CF_AGENTBOX_PROFILE``) and
+    ``env`` is :func:`wrapper_env`'s map, whose ``CF_ATTEMPT_CAP`` and
+    ``CF_MERGE_TARGET`` both roles export.  The
     wrappers' own shas name the run's paths, so ``config_shas.gate_files`` leaves
     them out; this map is what the bench's A/A check compares instead (review
     SEAM-1: a run whose agents ran with the sandbox bypass was otherwise accepted

@@ -1256,15 +1256,17 @@ like a faithfulness run:
   manifests aside). `config_shas` is the configuration behind those bytes, free
   of the run's own id and paths: `{prompts: {<templates/prompts/ file the plan
   rendered>: sha256 of its bytes}, gate_files: {<path as in gate_files>:
-  sha256}, agents: {agent_host, model, allow_sandbox_bypass, attempt_cap,
-  merge_target}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
+  sha256}, agents: {agent_host, model, allow_sandbox_bypass, agentbox_profile,
+  attempt_cap, merge_target}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
   the `bin/*-agent.sh` wrappers and any staged file whose bytes name one of the
   run's paths, and whose `agents` is what those wrappers run with that names no
   run, as the planner decided it (never read back from the wrappers): the
   bridge's agent CLI (`CF_AGENT_HOST`, null for a bridge that takes none), the
   model (`CF_MODEL`), whether the agents run with approvals and the sandbox off
-  (`CF_ALLOW_SANDBOX_BYPASS`, `--allow-sandbox-bypass`), the attempt cap
-  (`CF_ATTEMPT_CAP`) and the merge target (`CF_MERGE_TARGET`). Two plans of one
+  (`CF_ALLOW_SANDBOX_BYPASS`, `--allow-sandbox-bypass`), the agentbox profile
+  they run under (`CF_AGENTBOX_PROFILE`, the workspace's `hosts.agentbox_profile`;
+  null when the plan exports none and the bridge takes the host user's), the
+  attempt cap (`CF_ATTEMPT_CAP`) and the merge target (`CF_MERGE_TARGET`). Two plans of one
   configuration that differ only in run id
   record equal `config_shas` — what the bench's A/A check compares, so a run whose
   agents ran with the bypass is no replicate of one whose agents did not, while the
@@ -1280,7 +1282,9 @@ like a faithfulness run:
   because its layer is not the producer's (§7, `Sourceset.parity_refusals`),
   which no render of the sourceset settles; a `--source` naming one is refused
   with the step that does (the producer's corrected delivery adopted into a new
-  sourceset), as `cf locate candidates --source` refuses it. `remote` names the host directories of
+  sourceset), as `cf locate candidates --source` refuses it (a candidates run
+  over every source writes it no file and warns of it apart from the sources not
+  rendered yet). `remote` names the host directories of
   the sourceset's sources, the universe and the candidates
   (`sourcesets/<id>/sources`, `corpora/<u>`, `sourcesets/<id>/candidates/<u>`);
   `repos` and `sources` are empty. `budget.max_cost` comes only from

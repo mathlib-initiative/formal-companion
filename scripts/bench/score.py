@@ -262,7 +262,7 @@ def config_shas(run: dict) -> dict:
     ``cf plan-locate`` records the sha of every prompt template it rendered and
     of every gate and bin file it staged except the run-specific ones, and the
     agent wrappers' settings that name no run (``agents``: host, model, sandbox
-    bypass, attempt cap, merge target), so two plans of one configuration
+    bypass, agentbox profile, attempt cap, merge target), so two plans of one configuration
     record equal maps (references/locate-documents.md section 9); a plan from
     before that records none, or no ``agents``, and those pins read
     ``unrecorded``.
