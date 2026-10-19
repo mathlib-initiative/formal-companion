@@ -49,7 +49,9 @@ def _records(out_dir: Path) -> list[dict]:
 
 
 class _Challenged(Campaign):
-    """``loc-1`` with W2's supporting passage made a checked absence, as the field's was."""
+    """``loc-1`` with W2's supporting passage made a checked absence, as the field's was,
+    and W1's supporting definition passage given a second strong location beside its
+    basis (a ``closeMatch`` to a proved theorem, ``partial`` on a definition passage)."""
 
     def setUp(self):
         super().setUp()
@@ -62,6 +64,10 @@ class _Challenged(Campaign):
                                       "receipt": F._receipt("gadget induction",
                                                             "induction on gadgets",
                                                             "widget induction step")}
+            if doc["source_id"] == F.W1:
+                doc["passages"][2]["locations"].append(
+                    F._loc("alpha", "Widget.card_dvd", "closeMatch", 3,
+                           note="the order is written as a cardinal"))
         F.write_harvest(self.paths, "loc-1", docs)
         self.items = {sid: [p["item"] for p in F.frozen_formal_math(self.paths, sid)]
                       for sid in (F.W1, F.W2)}
@@ -89,8 +95,10 @@ class TestCH2AProminenceOverturnReopensThePassage(_Challenged):
                      "prominence": "central",
                      "witness": "a named statement the article states as its own"}
             return v
-        # sample rate 1: every supporting passage's prominence record is judged
-        self.challenge("--sample-rate", "1", verdict=promote)
+        # sample rate 1: every supporting passage's prominence record is judged; the
+        # supporting absence and the strong location beside the basis are left undrawn
+        self.challenge("--sample-rate", "1", "--absence-sample-rate", "0",
+                       "--strong-sample-rate", "0", verdict=promote)
 
     def test_ch2_an_unhunted_absence_is_pending_not_not_required(self):
         row = self.outcome(F.W2, 1)
@@ -103,9 +111,11 @@ class TestCH2AProminenceOverturnReopensThePassage(_Challenged):
         row = self.outcome(F.W1, 2)
         self.assertEqual(row["prominence"], "central")
         by_decl = {loc["declaration"]: loc["challenge"] for loc in row["locations"]}
-        # the exactMatch was outside every rule under `supporting`; the relatedMatch
-        # was in the weak-relation sample and a verdict confirmed it
-        self.assertEqual(by_decl, {"Widget.Spanning": vocab.CHALLENGE_PENDING,
+        # the closeMatch was in the strong sample and not drawn under `supporting`; the
+        # exactMatch, the passage's basis, and the relatedMatch, in the weak-relation
+        # sample, were judged, and a verdict confirmed each
+        self.assertEqual(by_decl, {"Widget.Spanning": vocab.CHALLENGE_SURVIVED,
+                                   "Widget.card_dvd": vocab.CHALLENGE_PENDING,
                                    "Widget.spanning_conj": vocab.CHALLENGE_SURVIVED})
         self.assertEqual(row["challenge"], vocab.CHALLENGE_PENDING)
 
@@ -121,10 +131,12 @@ class TestCH2AProminenceOverturnReopensThePassage(_Challenged):
         self.assertIn(vocab.CHALLENGE_PENDING, vocab.CHALLENGE_VERDICTS)
 
     def test_ch2_a_supporting_passage_that_stays_supporting_is_untouched(self):
-        self.challenge("--sample-rate", "1", run_id="chl-2")      # every prominence upheld
+        self.challenge("--sample-rate", "1", "--absence-sample-rate", "0",
+                       run_id="chl-2")                           # every prominence upheld
         row = self.outcome(F.W2, 1, challenge_runs=("chl-2",))
         self.assertEqual(row["prominence"], "supporting")
-        self.assertEqual(row["absence"]["challenge"], vocab.CHALLENGE_NOT_REQUIRED)
+        # inside the supporting absences' sample, and not drawn
+        self.assertEqual(row["absence"]["challenge"], vocab.CHALLENGE_SAMPLED_OUT)
 
 
 class TestX4RanksAfterARefute(Campaign):
