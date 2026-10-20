@@ -23,7 +23,7 @@ export const meta = {
 // mode no prompt carries the article's Wikidata QID, the labeler judges only what
 // the hunters found, and the transcriber counts only those finds.
 
-const LABELER_VERSION = 'locate-label/4'
+const LABELER_VERSION = 'locate-label/5'
 const A = args || {}
 const MODE = A.mode
 const TASKS = A.tasks || []
@@ -56,8 +56,9 @@ ${libLines}
 
 The relations, subject = the passage, object = the declaration:
   exactMatch    the declaration states the passage
-  closeMatch    the same up to a convention (R1): name it in evidence, one of notation, encoding, junk_value,
-                normalisation, renaming, unfolding, bundling
+  closeMatch    the same up to a convention (R1), the two differing where both are defined: name it in
+                evidence, one of notation, encoding, normalisation, renaming, unfolding, bundling (a
+                junk value is none: R1's three-way test, PD7)
   broadMatch    the passage follows from the declaration by instantiation or weakening (R2)
   narrowMatch   the declaration is the passage at special objects (R3)
   hasPart       the declaration states one clause of a passage that says several things (R4)
@@ -65,13 +66,16 @@ The relations, subject = the passage, object = the declaration:
 
 Before you judge any declaration, list the passage's claims to yourself: one line per formal clause it asserts
 (each conclusion, each direction of an iff, existence and uniqueness apart, each computation of a worked
-example, each condition of a definition). exactMatch, closeMatch and broadMatch only when the declaration
-states every claim; one that states some of them is hasPart. Instantiate each declaration at the passage's
-objects before you judge it.
+example, each condition of a definition; never proof narration, PD5, and a stated reason only by PD9).
+exactMatch, closeMatch and broadMatch only when the declaration states every claim; one that states some of
+them is hasPart, and one that alone states them all is never a part (PD6). Instantiate each declaration at the
+passage's objects before you judge it; what is left after instantiating closes by decidable arithmetic, or the
+relation is relatedMatch (PD8). When the declaration is also defined where the passage is not, say in evidence
+why each case outside the passage's domain is trivial, or which one has content (PD7).
 
 How to judge a relation: rules R1-R7, the same the system's workers and challengers are given, pairwise, the
 passage against the one declaration:
-- **R1** — \`closeMatch\` only for a convention: notation, encoding, junk values, normalisation, renaming, unfolding, bundling (the location's \`convention\`). A strengthening, a generalisation or a weakening is never one.
+- **R1** — \`closeMatch\` only for a convention: notation, encoding, normalisation, renaming, unfolding, bundling (the location's \`convention\`). A strengthening, a generalisation or a weakening is never one, and neither is a junk value (PD7). Where the declaration's map f′ : X′ → Y extends the passage's f : X → Y (X ⊂ X′): if f′ agrees with f on X and every case outside X is mathematically trivial — a junk or default value (x/0 = 0, \`riemannZeta\` at its pole) or an extra case that reduces to a tautology (p = q, where the statement becomes IsSquare 0 ↔ IsSquare 0) — it is \`exactMatch\`; if it agrees on X and some case outside X has real mathematical content, it is \`broadMatch\` (R2), a generalisation; if f′(x) ≠ f(x) at some x where both are defined, it is \`closeMatch\` (a convention) or weaker.
 - **R2** — \`broadMatch\` when the passage follows from the declaration by instantiation or weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all primes for a finite table), with no hypothesis stronger than the passage's; a stronger hypothesis makes it at most \`narrowMatch\` (R3).
 - **R3** — \`narrowMatch\` when the declaration is the passage at special objects: the passage, instantiated at the declaration's objects, says what the declaration says (a natural-number statement for an integer one, a field for a commutative ring, the n = 1 case). It is also \`narrowMatch\` when the declaration proves the passage's conclusion, or a stronger one, under stronger hypotheses that some of the passage's own cases meet (global continuity where the passage has local): a special case (PD4).
 - **R4** — \`hasPart\` when the declaration states one clause of a passage that says several things; \`exactMatch\`, \`closeMatch\` and \`broadMatch\` only when it states every clause.
@@ -84,10 +88,16 @@ The policy defaults, the maintainer's (the gold follows them; an override change
 - **PD2** — a statement over ℕ where the passage has ℤ is \`narrowMatch\` (R3).
 - **PD3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is \`narrowMatch\`, never vacuous: it is not refuted for being trivial.
 - **PD4** — a declaration that proves the passage's conclusion, or a stronger one, under stronger hypotheses that some of the passage's own cases meet (global instead of local continuity) is \`narrowMatch\` (R3), not \`relatedMatch\` and not \`broadMatch\`.
+- **PD5** — only definitions, theorems, equations and declarative statements about mathematical objects are passages. Proof narration and commentary (what a proof uses, how it goes) is no passage: it is \`expository\`, never located, and has no status. Inside a proof, each definition, theorem, equation or declarative statement is a passage of its own. Linking a single word to the Lean definition it names is a separate feature, not a passage.
+- **PD6** — a part of a coverage claim that alone states every clause is no part: it is one location with its own relation (a centralizer defined in any ring, where the passage has a matrix's centralizer, is \`broadMatch\`, PD1), and a coverage claim stands only on parts that each state some of the clauses.
+- **PD7** — whether a case outside the passage's domain is trivial (R1) is a judgment: an \`exactMatch\` or \`broadMatch\` that rests on it says why in its \`note\`, and a case with real mathematical content makes a generalisation, never a junk value. (PD3's trivial case is the other way round: a declaration that states only a degenerate case of the passage.)
+- **PD8** — a passage follows from a declaration by instantiation (R2) only when, after instantiating, what is left closes by decidable arithmetic (\`omega\`, \`norm_num\`, \`decide\`); a bridge that needs a named lemma (\`Nat.mul_mod\`, a parity lemma for (−1)^n) makes it \`relatedMatch\` (R5).
+- **PD9** — a stated reason ("it holds because X") makes X a claim only when X is a declarative mathematical statement that no neighbouring passage already states.
 
 A passage's kind: ${KINDS.join(', ')}. A passage's scope: formal_math (a mathematical statement to locate),
-expository (mathematics explained, nothing stated), non_math (history, people, applications, notation tables
-that state nothing).`
+expository (mathematics explained, nothing stated: proof narration and commentary among it, PD5), non_math
+(history, people, applications, notation tables that state nothing). Inside a proof, each definition, theorem,
+equation or declarative statement is a passage of its own (PD5); the proof as a whole is none.`
 
 const huntTools = `Hunt with tools the system under test does not use, all of them where you can:
   1. ripgrep over each pinned checkout (\`rg -n '<pattern>' <checkout>\`): names, docstrings, statement shapes;
@@ -247,7 +257,8 @@ ${sourceBlock(t)}
 
 You are enumerator #${k + 1} of 2, working independently. List EVERY passage of the article that states something
 (a definition, a theorem, a conjecture, an example, a construction, a notation), however minor, each with its
-quote, kind and scope -- an exhaustive inventory, not a summary. The deterministic finders proposed these, which
+quote, kind and scope -- an exhaustive inventory, not a summary. By PD5, each statement inside a proof is its
+own passage and a proof's narration is expository, never one formal_math passage for the whole proof. The deterministic finders proposed these, which
 you must also judge (keep each that is a passage):
 ${finders || '  (none)'}
 Copy task_id "${t.task_id}" unchanged.`,

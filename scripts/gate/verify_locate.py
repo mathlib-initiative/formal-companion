@@ -107,7 +107,12 @@ references/locate-documents.md sections 2-4 and 9):
    a challenge document carries the challenger's own claim list of every
    passage it judges a location, coverage claim, absence or unresolved outcome
    of, which its verdicts name -- a coverage confirm per part, an uphold through
-   its own tagged queries.
+   its own tagged queries.  Under version 2 of the rules (the maintainer's
+   PD5-PD9, references/vocabulary.md section 1.11) two checks join them: a
+   coverage claim, or a challenger's confirm of one, one of whose parts alone
+   names every claim of the passage is refused (PD6: such a part is one location
+   with its own relation), and ``junk_value`` is no convention (PD7), save on a
+   confirm that keeps a record's own, written under version 1.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -289,8 +294,12 @@ MIN_ABSENCE_QUERIES = 3
 LOCATE_EXTENSION = "org.mathlib-initiative.formal-companion.locate"
 #: the judgment rules this gate knows (rule 9; cflib.vocab.JUDGMENT_RULES): a
 #: gate.json names the version its run was planned under as ``judgment_rules``,
-#: and one without the key (a run planned before them) is gated without rule 9
-JUDGMENT_RULES = 1
+#: and one without the key (a run planned before them) is gated without rule 9.
+#: Version 1 is R1-R7; version 2 (cflib.vocab.RULES_PD5_PD9) adds PD5-PD9's two
+#: mechanical checks: no coverage part that alone names every claim (PD6), and no
+#: ``junk_value`` convention (PD7)
+JUDGMENT_RULES = 2
+RULES_PD5_PD9 = 2
 #: the span-end rule this gate knows (rule 2's end check; cflib.vocab.SPAN_END_RULE):
 #: a gate.json names the version its run was planned under as ``span_end_rule``, and
 #: one without the key (a run planned before it, whose inventories ``passage_ids.py``
@@ -316,9 +325,13 @@ EXACT_MATCH = "exactMatch"
 #: entails (cflib.vocab.STEP_RELATIONS)
 STEP_RELATIONS = frozenset({HAS_PART, NARROW_MATCH})
 #: the conventions a closeMatch names, and the words an exact or close note may not
-#: say (cflib.vocab.CLOSE_MATCH_CONVENTIONS, CLOSE_MATCH_GENERALITY_PHRASES)
-CLOSE_MATCH_CONVENTIONS = frozenset({"notation", "encoding", "junk_value", "normalisation",
-                                     "renaming", "unfolding", "bundling"})
+#: say (cflib.vocab.CLOSE_MATCH_CONVENTIONS, CLOSE_MATCH_GENERALITY_PHRASES); under
+#: judgment rules 1 the list held ``junk_value`` too
+#: (cflib.vocab.LEGACY_CLOSE_MATCH_CONVENTIONS), which PD7 took off it
+CONVENTION_JUNK_VALUE = "junk_value"
+CLOSE_MATCH_CONVENTIONS = frozenset({"notation", "encoding", "normalisation", "renaming",
+                                     "unfolding", "bundling"})
+LEGACY_CLOSE_MATCH_CONVENTIONS = CLOSE_MATCH_CONVENTIONS | {CONVENTION_JUNK_VALUE}
 CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strengthen*", "weaker", "weaken*",
                                   "more general*", "generali*", "special case",
                                   "particular case", "broader", "narrower",
@@ -1694,13 +1707,33 @@ def check_generality(problems: Problems, where: str, relation: Any, note: Any) -
                                f"(a strict inequality, an increasing list), reword the note")
 
 
-def check_convention(problems: Problems, where: str, relation: Any, convention: Any) -> None:
-    """Rule 9 (R1, FM4): a closeMatch names its convention; nothing else names one."""
+def check_convention(problems: Problems, where: str, relation: Any, convention: Any, *,
+                     rules: int, kept: bool = False) -> None:
+    """Rule 9 (R1, FM4): a closeMatch names its convention; nothing else names one.
+
+    The list is the judgment rules' (``rules``, the gate.json's version): from
+    version 2 a junk value is none (PD7), and the refusal says what the
+    declaration is instead.  ``kept`` is a challenger's confirm that keeps the
+    record's own convention: a record written under version 1 may carry
+    ``junk_value``, and a challenge, which never raises a relation, cannot make
+    it the ``exactMatch`` PD7 would, so that convention stands.
+    """
     given = not _blank(convention)
     if relation == CLOSE_MATCH:
-        if not _one_of(convention, CLOSE_MATCH_CONVENTIONS):
+        listed = (CLOSE_MATCH_CONVENTIONS if rules >= RULES_PD5_PD9 and not kept
+                  else LEGACY_CLOSE_MATCH_CONVENTIONS)
+        if convention == CONVENTION_JUNK_VALUE and convention not in listed:
+            problems.add(9, where, "a junk value is no convention (PD7): a declaration that "
+                                   "agrees with the passage on the passage's domain is "
+                                   "exactMatch when every case outside it is trivial (a junk "
+                                   "or default value, x/0 = 0; an extra case that reduces to "
+                                   "a tautology), with a note that says why, and broadMatch "
+                                   "(R2) when some case outside it has real mathematical "
+                                   "content; closeMatch is for a difference where both sides "
+                                   "are defined")
+        elif not _one_of(convention, listed):
             problems.add(9, where, f"a closeMatch names the convention it differs by, one of "
-                                   f"{', '.join(sorted(CLOSE_MATCH_CONVENTIONS))} (convention: "
+                                   f"{', '.join(sorted(listed))} (convention: "
                                    f"<one>); a difference that is none of them is no closeMatch "
                                    f"(R1)")
     elif given:
@@ -1993,7 +2026,8 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
     if known is None:
         return
     check_step(problems, where, known, location.get("step"), source, passage_kind=passage_kind)
-    check_convention(problems, where, known, location.get("convention"))
+    check_convention(problems, where, known, location.get("convention"),
+                     rules=cfg.judgment_rules)
     check_generality(problems, where, known, location.get("note"))
     if known in STRONG_RELATIONS:
         for field in ("note", "instantiation"):
@@ -2105,22 +2139,45 @@ def check_query_clauses(problems: Problems, where: str, receipt: Any, ids: list[
                                f"another; run a query for each, and tag it with what it targets")
 
 
+#: what a part that alone states every clause is instead (PD6), in both refusals
+WHOLE_PART = ("a part that alone states every clause is no part (PD6): it is one location "
+              "with its own relation (exactMatch, closeMatch or broadMatch by R1-R2, "
+              "narrowMatch by R3)")
+
+
 def check_coverage_clauses(problems: Problems, where: str, coverage: dict,
-                           locations: list[dict], ids: list[str] | None) -> None:
-    """Rule 9: a coverage claim's parts together state every clause of the passage."""
+                           locations: list[dict], ids: list[str] | None, *,
+                           rules: int) -> None:
+    """Rule 9: a coverage claim's parts together state every clause of the passage.
+
+    Under judgment rules 2 (PD6) no part names every claim alone: a part that
+    does is one location with its own relation, and the claim stands only on
+    parts that each state some of the clauses.
+    """
     if ids is None or not isinstance(coverage.get("parts"), list):
         return
     by_rank = {_rank_of(loc): loc for loc in locations if _rank_of(loc) is not None}
     stated: set[str] = set()
+    whole: list[int] = []
     for rank in coverage["parts"]:
         clauses = (by_rank.get(rank) or {}).get("clauses") if isinstance(rank, int) else None
         if isinstance(clauses, list):
-            stated.update(c for c in clauses if isinstance(c, str))
+            named = {c for c in clauses if isinstance(c, str)}
+            stated.update(named)
+            if ids and set(ids) <= named and rank not in whole:
+                whole.append(rank)
     missing = [c for c in ids if c not in stated]
     if missing:
         problems.add(9, f"{where}: coverage", f"no part states {', '.join(missing)}: a claim's "
                                               f"parts together state every clause of the "
                                               f"passage (R4)")
+    if whole and rules >= RULES_PD5_PD9:
+        problems.add(9, f"{where}: coverage",
+                     f"part{'s' if len(whole) > 1 else ''} "
+                     f"{', '.join(f'rank {r}' for r in whole)} name{'' if len(whole) > 1 else 's'} "
+                     f"every claim ({', '.join(ids)}): {WHOLE_PART}; give "
+                     f"{'them their' if len(whole) > 1 else 'it its'} relation, and claim "
+                     f"coverage only over parts that each state some of the clauses, or none")
 
 
 def check_rejections(problems: Problems, where: str, receipt: dict) -> None:
@@ -2473,7 +2530,8 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
                                passage_kind=kind, source=source)
             coverage = p.get("coverage") if isinstance(p.get("coverage"), dict) else None
             if outcome == "located" and coverage is not None:
-                check_coverage_clauses(problems, where, coverage, locations, ids)
+                check_coverage_clauses(problems, where, coverage, locations, ids,
+                                       rules=cfg.judgment_rules)
             if outcome in ("located", "absent"):
                 check_query_clauses(problems, where, p.get("receipt"), ids,
                                     absent=outcome == "absent", passage_kind=kind)
@@ -2618,9 +2676,10 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
     check_step(problems, where, result, v.get("step"), source,
                passage_kind=rec.get("passage_kind"), required=not keeps_step)
     own = v.get("convention")
-    if result == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own):
+    kept = result == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own)
+    if kept:
         own = rec.get("convention")
-    check_convention(problems, where, result, own)
+    check_convention(problems, where, result, own, rules=cfg.judgment_rules, kept=kept)
     note = (_challenger_note(v, rec, source, result) if action == "downgrade"
             else str(v.get("note") or ""))
     check_generality(problems, where, result, note)
@@ -2639,14 +2698,16 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
 
 
 def _judge_coverage_confirm(problems: Problems, where: str, v: dict, rec: dict,
-                            ids: list[str] | None) -> None:
+                            ids: list[str] | None, *, rules: int) -> None:
     """Rule 9: a coverage confirm names, per part, the challenger's claims it states.
 
     ``part_clauses: {<location_key>: [c1, ...]}``, one entry for each part of the
     record and no other, each a non-empty list of distinct ids of the challenger's
     claim list, together naming every claim: the decision D1 verdict that raises
     a passage's status is checked against the challenger's own clauses, as a
-    location's is.
+    location's is.  Under judgment rules 2 (PD6) no part names every claim alone:
+    by the challenger's own clauses such a part is one location, not a part, and
+    the claim is refuted.
     """
     keys = [str(part.get("location_key")) for part in rec.get("parts") or []
             if isinstance(part, dict)]
@@ -2679,6 +2740,11 @@ def _judge_coverage_confirm(problems: Problems, where: str, v: dict, rec: dict,
                                        f"which are not ids of your claims ({', '.join(ids)})")
                 continue
         stated.update(clauses)
+        if ids and rules >= RULES_PD5_PD9 and set(ids) <= set(clauses):
+            problems.add(9, where, f"part_clauses[{key[:12]}] names every claim of your list "
+                                   f"({', '.join(ids)}): {WHOLE_PART}, so the claim stands "
+                                   f"on no such part; refute it, and judge that part's own "
+                                   f"record on its own")
     if ids is not None:
         missing = [c for c in ids if c not in stated]
         if missing:
@@ -2734,7 +2800,7 @@ def check_verdict(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
     if target == "location":
         _judge_location_verdict(cfg, ctx, problems, where, v, rec, ids, source)
     elif target == "coverage" and action == "confirm":
-        _judge_coverage_confirm(problems, where, v, rec, ids)
+        _judge_coverage_confirm(problems, where, v, rec, ids, rules=cfg.judgment_rules)
     elif target in ("absence", "unresolved") and action == "uphold":
         _judge_uphold(cfg, problems, where, v, rec, ids, source)
     texts = [("the verdict's note", v.get("note"))]

@@ -3,10 +3,16 @@ You are the worker for task file `tasks/$TEND_TASK_ID.yaml`: the **inventory** (
 Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`, then the source's reading copy `{{sources_dir}}/<source-id>/text.txt` from top to bottom. Never work from memory of the article: this revision is the one being inventoried.
 
 ## What a passage is
-A span of the source that states something: a definition, a theorem, a conjecture, an example, a construction or a notation (`passage_kind`; `other` when it states something that is none of these). One passage per statement. For each one decide:
+A span of the source that states something: a definition, a theorem, a conjecture, an example, a construction or a notation (`passage_kind`; `other` when it states something that is none of these). One passage per statement. **Only definitions, theorems, equations and declarative statements about mathematical objects are passages** (the maintainer's PD5):
+
+- **Proof narration and commentary is no passage** — a sentence on what a proof uses, how it goes or why a step is natural, or on what the article will do next: it states nothing a library could state. Never make it, or a span around it, a `formal_math` passage; where its paragraph must be covered (below), write it as a passage scoped `expository`, which is never located and gets no status.
+- **Inside a proof, each definition, theorem, equation or declarative statement is a passage of its own**, with the kind of what it states: never the proof as one passage, and never a statement folded into the span of another. End each where it ends (`until`, below) when its paragraph goes on.
+- A single word that names a defined object (a term a reader might want linked to its Lean definition) is no passage of its own: term links are a separate feature.
+
+For each passage decide:
 
 - `prominence`: `subject` — what the article is about (usually one passage, often in the lead) · `central` — a named result or definition the article states · `supporting` — anything else formal;
-- `scope`: `formal_math` — mathematics a library could state · `expository` — history, motivation, applications told about mathematics · `non_math` — anything else. Only `formal_math` passages are searched for later. While the candidates file `{{candidates_dir}}/<source-id>.json` holds a `curated` hit, keep at least one `formal_math` passage and never scope the subject passage out;
+- `scope`: `formal_math` — mathematics a library could state · `expository` — history, motivation, applications told about mathematics, and proof narration and commentary (PD5) · `non_math` — anything else. Only `formal_math` passages are searched for later. While the candidates file `{{candidates_dir}}/<source-id>.json` holds a `curated` hit, keep at least one `formal_math` passage and never scope the subject passage out;
 - `statement`: your informal restatement in one or two sentences, precise enough that a reader could check a Lean statement against it;
 - `concept`: always `null` (a passage's own Wikidata item is assigned by a validated method, never by a worker).
 

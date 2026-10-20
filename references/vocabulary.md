@@ -280,12 +280,19 @@ one). `RELATION_STRENGTH` orders the relations for a challenge's
 
 **How a relation is judged: rules R1–R7** (the smoke-2 audit of 2026-10-19, its resolver's
 rules, adopted for every run planned since; R3 and R5 are worded so the special case, the
-weakening and the mixed case each have one answer). A worker, a challenger and the bench's
-labeler judge each record by them, pairwise, the passage against the one declaration:
+weakening and the mixed case each have one answer; R1's junk values gave way to PD7's three-way
+test on 2026-10-20). A worker, a challenger and the bench's labeler judge each record by them,
+pairwise, the passage against the one declaration:
 
-- **R1** — `closeMatch` only for a convention: notation, encoding, junk values, normalisation,
-  renaming, unfolding, bundling (the location's `convention`). A strengthening, a generalisation
-  or a weakening is never one.
+- **R1** — `closeMatch` only for a convention: notation, encoding, normalisation, renaming,
+  unfolding, bundling (the location's `convention`). A strengthening, a generalisation or a
+  weakening is never one, and neither is a junk value (PD7). Where the declaration's map
+  f′ : X′ → Y extends the passage's f : X → Y (X ⊂ X′): if f′ agrees with f on X and every case
+  outside X is mathematically trivial — a junk or default value (x/0 = 0, `riemannZeta` at its
+  pole) or an extra case that reduces to a tautology (p = q, where the statement becomes
+  IsSquare 0 ↔ IsSquare 0) — it is `exactMatch`; if it agrees on X and some case outside X has
+  real mathematical content, it is `broadMatch` (R2), a generalisation; if f′(x) ≠ f(x) at some
+  x where both are defined, it is `closeMatch` (a convention) or weaker.
 - **R2** — `broadMatch` when the passage follows from the declaration by instantiation or
   weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all
   primes for a finite table), with no hypothesis stronger than the passage's; a stronger
@@ -312,14 +319,18 @@ labeler judge each record by them, pairwise, the passage against the one declara
 - **R7** — a definition passage is judged on the data it defines; bundled proof fields are
   packaging (R1's bundling).
 
-The **policy defaults**, the maintainer's (2026-10-19), numbered PD1–PD4 apart from the review
-patterns' P1–P13 (`references/review-patterns.md`). Each is a default, not a law of the
-format: it can be overridden, and an override is a change to this paragraph, to both prompts
-(`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`) and to the bench's labeler
-(`workflows/locate-label.workflow.js`, whose `LABELER_VERSION` it bumps), in one commit — all
-three carry these lines word for word, and `tests/test_locate_judgment.py` holds them together
-— followed by a relabel of the bench's gold, which lives on the operator's machine
-(`references/locate-bench.md` §1) and so is never in that commit:
+The **policy defaults**, the maintainer's (PD1–PD4 of 2026-10-19, PD5–PD9 of 2026-10-20),
+numbered PD1–PD9 apart from the review patterns' P1–P13 (`references/review-patterns.md`). Each
+is a default, not a law of the format: it can be overridden, and an override is a change to this
+paragraph, to both prompts (`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`)
+and to the bench's labeler (`workflows/locate-label.workflow.js`, whose `LABELER_VERSION` it
+bumps), in one commit — all three carry these lines word for word, and
+`tests/test_locate_judgment.py` holds them together; PD5 is also the inventory prompt's
+(`templates/prompts/locate-inventory.md.tmpl`) — followed by a relabel of the bench's gold,
+which lives on the operator's machine (`references/locate-bench.md` §1) and so is never in that
+commit. From PD5–PD9 on, the bench's score refuses gold labelled under other judgment rules than
+the runs it scores (`references/locate-bench.md` §8), so a run planned after an override waits
+for that relabel:
 
 - **PD1** — a definition stated over a general type parameter where the passage has a specific
   one (any ring where the passage has ℂ) is `broadMatch` (R2).
@@ -329,10 +340,66 @@ three carry these lines word for word, and `tests/test_locate_judgment.py` holds
 - **PD4** — a declaration that proves the passage's conclusion, or a stronger one, under
   stronger hypotheses that some of the passage's own cases meet (global instead of local
   continuity) is `narrowMatch` (R3), not `relatedMatch` and not `broadMatch`.
+- **PD5** — only definitions, theorems, equations and declarative statements about mathematical
+  objects are passages. Proof narration and commentary (what a proof uses, how it goes) is no
+  passage: it is `expository`, never located, and has no status. Inside a proof, each
+  definition, theorem, equation or declarative statement is a passage of its own. Linking a
+  single word to the Lean definition it names is a separate feature, not a passage.
+- **PD6** — a part of a coverage claim that alone states every clause is no part: it is one
+  location with its own relation (a centralizer defined in any ring, where the passage has a
+  matrix's centralizer, is `broadMatch`, PD1), and a coverage claim stands only on parts that
+  each state some of the clauses.
+- **PD7** — whether a case outside the passage's domain is trivial (R1) is a judgment: an
+  `exactMatch` or `broadMatch` that rests on it says why in its `note`, and a case with real
+  mathematical content makes a generalisation, never a junk value. (PD3's trivial case is the
+  other way round: a declaration that states only a degenerate case of the passage.)
+- **PD8** — a passage follows from a declaration by instantiation (R2) only when, after
+  instantiating, what is left closes by decidable arithmetic (`omega`, `norm_num`, `decide`); a
+  bridge that needs a named lemma (`Nat.mul_mod`, a parity lemma for (−1)^n) makes it
+  `relatedMatch` (R5).
+- **PD9** — a stated reason ("it holds because X") makes X a claim only when X is a declarative
+  mathematical statement that no neighbouring passage already states.
 
 PD1 makes a definition passage stated over a specific object `partial` against a definition over
 a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); PD2 and
 PD3 make a theorem passage `partial` against such a declaration, never `formalized` or unresolved.
+
+What PD5–PD9 replace or sharpen (the smoke-3 audit's open policy calls, its FM8):
+
+- PD5 sharpens the inventory's `expository` scope (FM9: a set-up passage scoped formal) and
+  settles the audit's question about proof passages: a proof is not one passage whose displayed
+  steps are its clauses, nor one the theorem it proves formalizes — each statement in it is
+  located on its own. The `step` "on a proof" (FM3) stays for inventories planned before it.
+- PD6 sharpens R4 and the coverage claim of decision D1: the maintainer's example is
+  `Subring.centralizer` for a matrix's centralizer, one `broadMatch` card ("more general"), not
+  a part. Gate rule 9 refuses such a part under judgment rules 2.
+- PD7 replaces R1's "junk values", which made a junk value a `closeMatch` convention:
+  `junk_value` leaves `CLOSE_MATCH_CONVENTIONS` (gate rule 9 refuses it under judgment rules 2),
+  and the prompts' example closeMatch note, Lean returning 0 at n = 0, is now an exactMatch's.
+- PD8 sharpens R2's "instantiation" and R5's "the connection needs another theorem".
+- PD9 sharpens the claim list (R4, FM1), beside "history, motivation and attribution are not
+  claims".
+
+**PD7 in the maintainer's words** (2026-10-20), verbatim:
+
+> A junk value means that X is exactly the same as Y, but the Lean case is just defined over
+> certain trivial values that do not effect the proof because they are usually left undefined.
+> Eg x/0. The Lean `f' : X' -> Y` extends the informal map `f : X -> Y` with X ⊂ X'. A non junk
+> value (e.g. closematch) would be when f(x) ≠ f'(x) for some x where both are well-defined.
+
+and, the same day:
+
+> this is slightly subjective regarding what "trivial" exactly means. If there are cases outside
+> of the passage's domain which are non-trivial mathematically then this should be marked as a
+> generalization not a junk value.
+
+So agreement on the passage's domain with only junk outside it is `exactMatch`: Mathlib's
+`riemannZeta`, which takes a value at its pole s = 1, states a passage that defines the zeta
+function away from it, and a division with x/0 = 0 one that leaves x/0 undefined. An extra case
+that is only a tautology (quadratic reciprocity's p = q, where both sides become
+IsSquare 0 ↔ IsSquare 0) is junk too. A case outside the domain that says something — a
+statement proved for every ring where the passage has a field, whose other rings carry content
+of their own — is a generalisation, `broadMatch`. Either way the record's note says which.
 
 **The challenger's rule** (the audit's FM7: 8 of 25 challenge results were wrong, each a reasoning
 slip, not a search miss), in the challenge prompt word for word:
@@ -358,7 +425,7 @@ the changelog cite):
 | FM5 | an incomplete hunt: a stating declaration missed, or a false absence | a query of its own per claim (`query_clauses`), the rejected-candidate check, the absence sample |
 | FM6 | a setting mismatch: the declaration's hypotheses exclude the passage's objects | `instantiation`, R3 and R5 |
 | FM7 | a challenger's reasoning slip (D1 ignored, a special case refuted, two encodings split) | the challenger's rule above, its own claim list on every verdict |
-| FM8 | policy the rules did not settle | R1–R7 and PD1–PD4 |
+| FM8 | policy the rules did not settle | R1–R7 and PD1–PD9 |
 | FM9 | data and inventory defects (a statement flag, a cut span, a set-up passage scoped formal) | not the judgment rules: ingest and inventory work |
 
 What the gate holds mechanically, under the judgment rules (gate rule 9,
@@ -367,10 +434,20 @@ and the words an `exactMatch` or `closeMatch` note may not say; R4 through the c
 record's `clauses`, and a strong record whose note or instantiation admits a gap; R5 through a
 declaration's `instantiation` and a `hasPart`'s or `narrowMatch`'s `step`; an absence's queries,
 a query of its own per claim, and its rejected candidates; and, in a challenge, the
-challenger's own claim list under every verdict on a passage's records. It rests on the claim
-list a worker writes: a list that leaves a clause out, with an `exactMatch` naming every claim
-on it, passes, and only the challenge re-checks it — the phrase lists are tripwires that catch an
-honest note, not a parser. The rest is judgment, which the challenge re-checks.
+challenger's own claim list under every verdict on a passage's records. Under judgment rules 2
+(`JUDGMENT_RULES`) two more: PD6 — a coverage claim one of whose parts names every claim alone
+is refused, and so is a challenger's confirm whose `part_clauses` give one part every claim of
+its own list — and PD7 — `junk_value` is no convention, save on a challenger's confirm that keeps
+a record's own `junk_value` (written under rules 1: a challenge never raises a relation, so it
+cannot make that record the `exactMatch` PD7 would). It rests on the claim list a worker writes:
+a list that leaves a clause out, with an `exactMatch` naming every claim on it, passes, and only
+the challenge re-checks it — the phrase lists are tripwires that catch an honest note, not a
+parser. The rest is judgment, which the challenge re-checks: PD5 (what the inventory makes a
+passage), PD7's "trivial", PD8's bridge and PD9's stated reasons are not checked mechanically.
+A bridge lemma named in a `broadMatch`'s `instantiation` cannot be told from the instances and
+hypotheses the line names by right (`Fact p.Prime`, a ring instance, the declaration's own
+name), and a `hasPart` naming every claim outside a coverage claim may be a weakening credited
+with its clause or a claim list too coarse to show the part, so neither is refused.
 
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
@@ -556,12 +633,12 @@ record no verdict judged.
 | `UNRESOLVED_BY` | `worker` (`UNRESOLVED_BY_WORKER`: the worker could not decide) · `attempt_cap` (the bridge, at the cap) — an `UNRESOLVED` document's `unresolved.by` |
 | `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, every coverage claim, a strong location whose own note admits a clause it does not state, `admits_missing_clause`, and every `subject` passage's prominence, stratum `prominence:subject`, since its records carry the article's QID) · `hunt` (an absence or unresolved outcome on one) · `basis` (`CHALLENGE_RULE_BASIS`: a location that sets a `supporting` passage's derived status on its own — every such one, not only the best-ranked — when its relation is one of `STRONG_RELATIONS`; required) · `sample` (the stratified sample's frame: scope demotions and `supporting` demotions and weak relations, at `sample_rate`; a `supporting` passage's other strong locations, one stratum per relation, at `strong_sample_rate`; a `supporting` passage's absence, stratum `outcome:absent`, at `absence_sample_rate`, hunted when drawn) · `none` (a `supporting` passage's unresolved outcome) — why the challenge plan put a record where it did |
 | `CHALLENGE_PLANNED` | `required` (`CHALLENGE_REQUIRED`: the record is in a challenge task and its verdict is owed) · `sampled_out` · `not_required` — what the challenge plan says a record is owed, before any verdict |
-| `JUDGMENT_RULES` | `1`: the version of the judgment rules (gate rule 9, R1–R7 below) a run's `gate.json` names as `judgment_rules`; `cf plan-locate` writes it into every run it plans, and a `gate.json` without it (a run planned before the rules) is gated without rule 9 |
+| `JUDGMENT_RULES` | `2`: the version of the judgment rules (gate rule 9, R1–R7 and the policy defaults above) a run's `gate.json` names as `judgment_rules`; `cf plan-locate` writes it into every run it plans, and the gate holds a run to the version it names: `1` R1–R7, `2` (`RULES_PD5_PD9`) PD5–PD9 too (PD6's whole part and PD7's junk value refused). A `gate.json` without it (a run planned before the rules) is gated without rule 9 |
 | `SPAN_END_RULE` | `1`: the version of the span-end rule (gate rule 2's end check: an inventory passage ends where `passage_ids.py` ends it, `locate_text.passage_end`) a run's `gate.json` names as `span_end_rule`; `cf plan-locate` writes it into every run it plans, and a `gate.json` without it (a run planned before the rule, whose `passage_ids.py` dropped `until`) is gated with the end held inside the layer and after the quote only. A locate or challenge document carries no span of its own, so there the key binds nothing (references/locate-documents.md §2 and §9) |
 | `CLAIM_ID` | `c1`, `c2`, … (`c[1-9][0-9]?`): the id of a passage's claim, one formal clause of its claim list (`claims` of a locate or challenge document, references/locate-documents.md §3–§4), which a location's `clauses` name |
 | `CLAUSE_GAP_PHRASES` | `does not state` · `do not state` · `not stated` · `not part of` · `not a part of` · `rather than asserting` · `rather than stating` · `rather than proving` · `only the existence` · `only existence` · `only proves` · `only states` · `proves only` · `states only` · `only one direction` · `one direction only` · `not the converse` · `converse is not` · `without the converse` · `without uniqueness` · `uniqueness is not` · `does not cover` · `do not cover` · `not covered` · `not asserted` · `not included` · `omits` · `omitted` · `leaves out` · `left out` · `does not prove` · `does not assert` · `does not establish` — the closed list by which a strong record's note or instantiation admits a clause its declaration does not state (`admits_missing_clause`: whole words, case-folded, the apostrophe folded and a contraction spelled out, so "doesn't state" is "does not state"; a hit is set aside when negated — "not only the existence" —, when the passage is its subject — "the passage does not cover n = 0", "not part of the passage" — or in a relative clause on what an "unlike …" clause names); the gate refuses such a record under the judgment rules, and the challenge plan refutes it by default. A tripwire, not a parser: a note it misreads is reworded to say what the declaration does |
 | `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one of its own under the judgment rules (each claim, and `general`, matched to a distinct query) |
-| `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `junk_value` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules |
+| `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules. `LEGACY_CLOSE_MATCH_CONVENTIONS` is the list under judgment rules 1, with `junk_value` (`CONVENTION_JUNK_VALUE`), which PD7 took off it: a run planned under rules 1 is gated by it, and its records keep the value |
 | `CLOSE_MATCH_GENERALITY_PHRASES` | `stronger` · `strengthen*` · `weaker` · `weaken*` · `more general*` · `generali*` · `special case` · `particular case` · `broader` · `narrower` · `strict derivative*` · `strict differentiab*` · `strictly differentiab*` — words an `exactMatch` or `closeMatch` note may not say (`says_generality`: whole words, case-folded, a trailing `*` any ending of the word, so "more generally" and "generalisation" are hits); each describes a `broadMatch`, a `narrowMatch` or a weakening. "strict" and "strictly" alone are not on it: a strict inequality or a strictly increasing list is no strengthening. The prompts render the list from this tuple |
 | `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only |
 | `STEP_RELATIONS` | `hasPart` · `narrowMatch` — the relations whose location says, in its `step`, what the declaration alone entails of the passage (on a proof the displayed step, on any other passage the clause) |

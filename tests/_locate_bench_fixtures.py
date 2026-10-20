@@ -296,7 +296,8 @@ class World:
                    tools: dict | None = None, skill_commit: str | None = RUN_COMMIT,
                    challenge_of: list[str] | None = None,
                    config_shas: dict | None = CONFIG_SHAS,
-                   planning: dict | None = None) -> None:
+                   planning: dict | None = None,
+                   judgment_rules: int | None = vocab.JUDGMENT_RULES) -> None:
         """``runs/<rid>/run.yaml`` and ``gate.json``: what plan-locate and cf run record.
 
         The rendered shas (``prompts``, ``locate.gate_files``) carry the run id, as a
@@ -305,7 +306,8 @@ class World:
         and ``None`` records none (a plan from before they were recorded).
         ``per_task``, ``seed`` and ``sample_rate`` are recorded as ``cf plan-locate``
         records them by default (each null where the mode has none); ``planning``
-        overrides any of them.
+        overrides any of them.  ``gate.json`` names the ``judgment_rules`` a plan
+        writes now (``None``: a run planned before the rules, which names none).
         """
         locate = {"mode": mode, "arm": arm, "inventory_run": inventory_run,
                   "sourceset": {"id": SOURCESET, "version": self.manifest.version,
@@ -332,7 +334,10 @@ class World:
             "run_id": rid, "preset": mode, "prompts": prompts or rendered,
             "versions": {"agent_cli": "2.0.0", "tend": "0.9", "agentbox": "1.1"},
             "locate": locate}))
-        self.write(f"runs/{rid}/gate.json", json.dumps({"schema": "cf-gate-locate/1", "mode": mode}))
+        gate = {"schema": "cf-gate-locate/1", "mode": mode}
+        if judgment_rules is not None:
+            gate["judgment_rules"] = judgment_rules
+        self.write(f"runs/{rid}/gate.json", json.dumps(gate))
 
     def receipt(self, rid: str, *, complete: bool = True, gated: bool | None = True,
                 cost: dict | None = None, models: dict | None = None, usd: float = 12.0) -> None:
@@ -364,19 +369,21 @@ class World:
             renderer_layer: dict | None = None, subject_only: bool = False,
             challenge_runs: list[str] = (), inventory_usd: float = 12.0,
             locate_usd: float = 12.0, skill_commit: str | None = RUN_COMMIT,
-            config_shas: dict | None = CONFIG_SHAS, planning: dict | None = None) -> None:
+            config_shas: dict | None = CONFIG_SHAS, planning: dict | None = None,
+            judgment_rules: int | None = vocab.JUDGMENT_RULES,
+            inventory_rules: int | None = vocab.JUDGMENT_RULES) -> None:
         """An inventory run and a locate run whose outcome rows are ``outcomes``."""
         sids = planned if planned is not None else sorted(passages)
         loc_sids = locate_sources if locate_sources is not None else sorted(passages)
         self.run_record(inventory_run, "locate-inventory", arm=inventory_arm or arm,
                         source_ids=sids, prompts=prompts, corpus_db_sha=corpus_db_sha,
                         universe_sha=universe_sha, skill_commit=skill_commit,
-                        config_shas=config_shas)
+                        config_shas=config_shas, judgment_rules=inventory_rules)
         self.run_record(run_id, "locate", arm=arm, inventory_run=inventory_run,
                         source_ids=loc_sids, subject_only=subject_only, prompts=prompts,
                         corpus_db_sha=corpus_db_sha, universe_sha=universe_sha, tools=tools,
                         skill_commit=skill_commit, config_shas=config_shas,
-                        planning=planning)
+                        planning=planning, judgment_rules=judgment_rules)
         for rid, usd in ((inventory_run, inventory_usd), (run_id, locate_usd)):
             self.receipt(rid, complete=complete, gated=gated, cost=cost, models=models, usd=usd)
         self.task_manifest(inventory_run, "t-inv", "locate-inventory", sids)
@@ -436,7 +443,8 @@ class World:
 
     def challenge_run(self, rid: str, *, of: str, arm: str = "assisted", gated: bool = True,
                       usd: float = 3.0, sids: list[str] = (), required: int = 1,
-                      tools: dict | None = None, planning: dict | None = None) -> None:
+                      tools: dict | None = None, planning: dict | None = None,
+                      judgment_rules: int | None = vocab.JUDGMENT_RULES) -> None:
         """A challenge run of locate run ``of``: planned, harvested, and ``of`` tallied again.
 
         Its ``challenge-plan.json`` requires ``required`` records of ``of`` (and
@@ -444,7 +452,8 @@ class World:
         task and never harvested, as ``cf plan-locate`` leaves such a challenge.
         """
         self.run_record(rid, "locate-challenge", arm=arm, source_ids=list(sids),
-                        challenge_of=[of], tools=tools, planning=planning)
+                        challenge_of=[of], tools=tools, planning=planning,
+                        judgment_rules=judgment_rules)
         records = [{"key": f"{rid}-k{n}", "target": "location", "run_id": of,
                     "planned": "required" if n < required else "not_required"}
                    for n in range(required + 1)]
