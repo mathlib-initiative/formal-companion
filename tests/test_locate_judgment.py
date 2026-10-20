@@ -1801,7 +1801,12 @@ class TestThePrompts(unittest.TestCase):
                        "nothing else differs)",
                        "is no PD8 bridge",
                        "It sharpens R1's encoding and limits PD8, which governs bridges between "
-                       "statements, not between two definitions of one notion."):
+                       "statements, not between two definitions of one notion.",
+                       # its exception: a link that is itself the passage's claim is no encoding
+                       "Its exception is a link that is itself what the passage asserts: when the "
+                       "lemma that links the two notions is the passage's own theorem, a "
+                       "declaration stated with the notion whose definition already contains that "
+                       "theorem's claim presupposes the passage, and it is `relatedMatch` (R5)."):
             self.assertIn(needle, lines["PD10"])
         # PD8 is about instantiation: R2's weakenings stay R2's
         self.assertIn("R2's weakenings (a strict derivative for a plain one, an iff for an if) are "
@@ -1848,6 +1853,12 @@ class TestThePrompts(unittest.TestCase):
                       "`closeMatch` when nothing else differs is the relation table's definition "
                       "of `closeMatch`, the same up to a convention, not a further ruling of his.",
                       vocabulary)
+        # nor is PD10's exception, which keeps R5's reading of a link that is the passage
+        self.assertIn("Neither is PD10's exception, a link that is itself what the passage "
+                      "asserts. His example links two definitions the passage takes as given",
+                      vocabulary)
+        self.assertIn("it is recorded as the exception so that PD10 does not reverse it, and it "
+                      "awaits the maintainer's confirmation.", vocabulary)
         # which earlier rule or example each one replaces or sharpens
         for needle in ("PD5 sharpens the inventory's `expository` scope",
                        "PD6 sharpens R4 and the coverage claim of decision D1",
@@ -1954,12 +1965,17 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("makes it `relatedMatch`, not `broadMatch` (PD8). A lemma that only links "
                       "two definitions of one notion (`Int.isCoprime_iff_gcd_eq_one`, between "
                       "`IsCoprime` and \"no common factor other than 1\") is no such bridge: the "
-                      "two differ by an `encoding` (PD10).", worker)
+                      "two differ by an `encoding` (PD10). A link that is itself what the passage "
+                      "asserts is PD10's exception: the declaration presupposes the passage, and "
+                      "it is `relatedMatch`.", worker)
         self.assertIn("a bridge through a named lemma makes it `relatedMatch` (PD8), and a lemma "
                       "that only links two definitions of one notion is no bridge: the two differ "
-                      "by an `encoding` (PD10).", challenger)
+                      "by an `encoding` (PD10). A link that is itself what the passage asserts is "
+                      "PD10's exception: the declaration presupposes the passage, and it is "
+                      "`relatedMatch`.", challenger)
         self.assertIn("(PD8; R2's weakenings are no instantiation, and a lemma that only links two "
-                      "definitions of one notion is no bridge but an encoding, PD10)", labeler)
+                      "definitions of one notion is no bridge but an encoding, PD10, unless that "
+                      "link is itself what the passage asserts)", labeler)
         # PD10 is judgment: it adds no gate check, so the rules stay version 2 and the labeler
         # /5 (a /6 would label by the same judgment rules, LABELER_RULES)
         self.assertEqual(vocab.JUDGMENT_RULES, 2)
@@ -1967,7 +1983,8 @@ class TestThePrompts(unittest.TestCase):
         self.assertEqual(gold_mod.labeler_rules(gold_mod.LABELER_VERSION), vocab.JUDGMENT_RULES)
         vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
                               .read_text(encoding="utf-8").split())
-        self.assertIn("**PD10 and PD7's test kept the labeler at `locate-label/5`.**", vocabulary)
+        self.assertIn("**PD10 and PD7's test kept the labeler at `locate-label/5`**, and so did "
+                      "PD10's exception, which joined them later the same day.", vocabulary)
         # what neither the version nor the rules hold: a rules-2 run of the earlier text
         self.assertIn("What neither version nor rules can hold is a run of judgment rules 2 "
                       "planned from the earlier text, whose prompts lack PD10 and PD7's test",
