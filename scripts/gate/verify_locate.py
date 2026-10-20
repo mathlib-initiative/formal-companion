@@ -1714,9 +1714,11 @@ def check_convention(problems: Problems, where: str, relation: Any, convention: 
     The list is the judgment rules' (``rules``, the gate.json's version): from
     version 2 a junk value is none (PD7), and the refusal says what the
     declaration is instead.  ``kept`` is a challenger's confirm that keeps the
-    record's own convention: a record written under version 1 may carry
-    ``junk_value``, and a challenge, which never raises a relation, cannot make
-    it the ``exactMatch`` PD7 would, so that convention stands.
+    record's own convention, by naming none or naming it again: a record written
+    under version 1 may carry ``junk_value``, and a challenge, which never raises
+    a relation, cannot make it the ``exactMatch`` PD7 would, so that convention
+    stands.  A confirm that keeps nothing -- the record names no convention, or
+    the verdict names another -- is held to its rules' own list.
     """
     given = not _blank(convention)
     if relation == CLOSE_MATCH:
@@ -1996,8 +1998,9 @@ def _instantiation_problem(location: dict, binders: list[str], *, challenger: bo
 def _gap_problem(phrase: str, relation: str, field: str) -> str:
     return (f"the {field} says {phrase!r}, which admits a clause the declaration does not "
             f"state: then the relation is hasPart (R4), not {relation}. If the words are about "
-            f"the passage or a convention instead, say what the declaration does (\"Lean "
-            f"returns 0 at n = 0\")")
+            f"the passage, a convention or a case outside the passage's domain instead, say "
+            f"what the declaration does (\"the map is bundled with its inverse\"; \"Lean also "
+            f"returns 0 at n = 0, which the passage leaves undefined\")")
 
 
 def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
@@ -2676,9 +2679,12 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
     check_step(problems, where, result, v.get("step"), source,
                passage_kind=rec.get("passage_kind"), required=not keeps_step)
     own = v.get("convention")
-    kept = result == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own)
-    if kept:
+    if result == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own):
         own = rec.get("convention")
+    # a confirm keeps the record's own convention when it names none or names it again;
+    # one that names another relabels it, held to its own rules' list like a downgrade's
+    kept = (result == CLOSE_MATCH and action == "confirm" and _nonempty_str(own)
+            and own == rec.get("convention"))
     check_convention(problems, where, result, own, rules=cfg.judgment_rules, kept=kept)
     note = (_challenger_note(v, rec, source, result) if action == "downgrade"
             else str(v.get("note") or ""))

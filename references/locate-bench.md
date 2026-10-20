@@ -414,8 +414,9 @@ on either side, they must be one version: gold of `locate-label/4` never scores 
 under PD5–PD9, nor gold of `locate-label/5` a run planned before them (a locate run of rules 2
 over an inventory of rules 1 included, since PD5 changed what an inventory makes a passage).
 Below it -- rules 0 and 1, labelers up to `/4` -- runs and gold were compared whatever their
-rules before the check, and still are. A challenge whose plan required nothing judged nothing
-and is not held. **So gold labelled before PD5–PD9 scores no run planned after them until it is
+rules before the check, and still are. A challenge whose plan required nothing of the scored run
+judged nothing of it and is not held, harvested or not (one that also challenged another locate
+run has a receipt). **So gold labelled before PD5–PD9 scores no run planned after them until it is
 relabelled under `/5`** (`cf bench anchor <id> --emit-args <mode>` for each tier, the labeler,
 `--transcribe`, then `cf bench freeze <id> --supersede`).
 

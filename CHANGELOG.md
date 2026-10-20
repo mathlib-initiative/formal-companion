@@ -48,26 +48,41 @@ release has something to say.
   `RULES_PD5_PD9`), and `cf plan-locate` writes `judgment_rules: 2` into every gate.json it
   plans; a run that names 1, or none, is gated as before, at harvest and by the checkout's gate.
   - **PD5**: only definitions, theorems, equations and declarative statements about mathematical
-    objects are passages. Proof narration and commentary is `expository`, never located, with
-    no status; inside a proof each statement is a passage of its own. The inventory prompt says
-    so, and the locate and challenge prompts keep narration off the claim list. Term links are a
-    later feature.
+    objects are `formal_math` passages. The inventory scopes proof narration and commentary
+    `expository` or leaves it out, so it is never located and has no status; inside a proof each
+    statement is a passage of its own, an asserted equation or fact of kind `theorem`. The
+    inventory prompt says so, and the locate and challenge prompts keep narration off the claim
+    list. A locate worker cannot re-scope a passage, so narration an inventory scoped
+    `formal_math` still ends `unresolved` (its reason naming PD5): one `UNRESOLVED` record, no
+    status, counted in the unresolved rate, until the source is inventoried again. Term links
+    are a later feature.
   - **PD6**: a coverage part that alone states every clause is one location with its own
     relation, not a part. Under rules 2 the gate refuses a coverage claim one of whose parts
     names every claim (from the `clauses` rule 9 already reads), and a challenger's coverage
-    confirm whose `part_clauses` give one part every claim of its own list.
+    confirm whose `part_clauses` give one part every claim of its own list. A challenge never
+    raises a relation, so that part stays a `hasPart` and the passage `partial`: a challenge
+    planned now of a locate run planned under rules 1 can lower a passage's status that the
+    run's coverage claim had raised. Locating it again under rules 2 gives the one location.
   - **PD7** replaces R1's junk values. A declaration that agrees with the passage on the
     passage's domain is `exactMatch` when every case outside it is mathematically trivial (a junk
-    or default value, x/0 = 0, `riemannZeta` at its pole; an extra case that reduces to a
-    tautology), `broadMatch` when one has real content (a generalisation), and `closeMatch` only
-    for a difference where both sides are defined. "Trivial" is a judgment, so the record's note
-    says why. `junk_value` leaves `CLOSE_MATCH_CONVENTIONS`; `LEGACY_CLOSE_MATCH_CONVENTIONS`
-    keeps it for runs of rules 1. Under rules 2 the gate refuses it, except on a challenger's
-    confirm that keeps a record's own `junk_value`, since a challenge cannot raise that record
-    to the `exactMatch` PD7 would make it. The prompts' closeMatch example ("Lean returns 0 at
-    n = 0") is now an exactMatch's note.
+    or default value, x/0 = 0; an extra case that reduces to a tautology), `broadMatch` when one
+    has real content (a generalisation), and `closeMatch` only for a difference where both sides
+    are defined. "Trivial" is a judgment, so the record's note says why; `riemannZeta` at its
+    pole, a value Mathlib ascribes and proves a closed form for, is left to it rather than given
+    as an example of either side. `junk_value` leaves `CLOSE_MATCH_CONVENTIONS`;
+    `LEGACY_CLOSE_MATCH_CONVENTIONS` keeps it for runs of rules 1. Under rules 2 the gate
+    refuses it, except on a challenger's confirm that keeps a record's own `junk_value` (naming
+    no convention, or naming it again), since a challenge cannot raise that record to the
+    `exactMatch` PD7 would make it. The
+    challenge prompt takes such a record through all three cases: confirm it as it stands when
+    every outside case is trivial, downgrade it to `broadMatch` when one has content, and, when
+    the two differ where both are defined, confirm it under the real convention (which replaces
+    the record's) or downgrade it. The prompts' closeMatch example ("Lean returns 0 at n = 0")
+    is now an exactMatch's note, and so is the gate's hint for a note that admits a gap.
   - **PD8**: `broadMatch` by instantiation only when what is left closes by decidable arithmetic
-    (`omega`, `norm_num`, `decide`); a bridge through a named lemma is `relatedMatch`.
+    (`omega`, `norm_num`, `decide`); a bridge through a named lemma is `relatedMatch`. It is read
+    of instantiation, as recorded ("after instantiating"): R2's weakenings, a strict derivative
+    for a plain one among them, stay `broadMatch`.
   - **PD9**: in "it holds because X", X is a claim only when it is a declarative mathematical
     statement no neighbouring passage already states.
   - Not made mechanical, because each could misfire: PD8 (a bridge lemma named in a
@@ -84,11 +99,16 @@ release has something to say.
     the gold's version from the rows, not from the checkout's constant. Rows from before the
     field keep the version their frozen manifest recorded, take this checkout's version when its
     labeler wrote them, and are otherwise refused. A gold whose tiers name two versions is
-    refused. `cf bench score` refuses gold whose labeler labels by other judgment rules than
-    any run of the score (inventory, locate, a challenge that judged something), from rules 2
-    on, on either side; rules 0 and 1 are compared as before. **Bench v0's gold must be labelled
-    again under `locate-label/5`** before it scores any run planned after this change: gold of
-    `locate-label/4` or earlier is refused against such a run.
+    refused. `bench.gold.LABELER_RULES` names each version literally, so a later bump of the
+    labeler leaves `/5` labelling by rules 2. The labeler's scope definitions are now the
+    inventory prompt's word for word: history and applications told about mathematics are
+    `expository` in the gold, as they are in the runs it scores, where the labeler had said
+    `non_math`. `cf bench score` refuses gold whose labeler labels by other judgment rules than
+    any run of the score (inventory, locate, a challenge that required something of the scored
+    run, harvested for another run or not), from rules 2 on, on either side; rules 0 and 1 are
+    compared as before. **Bench v0's gold must be labelled again under `locate-label/5`** before
+    it scores any run planned after this change: gold of `locate-label/4` or earlier is refused
+    against such a run.
 - The locate gate-log line gains `pre_merge`, true for tend's `--pre-merge` call. Both of the
   log's readers, the watchdog's gate-failure rate and the bench's `gate_rejections`, count the
   validation lines alone (`changed_files: true`, `pre_merge` not true): a contribution that tend

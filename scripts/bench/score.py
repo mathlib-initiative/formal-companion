@@ -160,6 +160,15 @@ def unharvested_challenges(paths, run_id: str, challenge_runs: list[str]) -> dic
             and not paths.receipt_json(rid).is_file()}
 
 
+def required_nothing(paths, run_id: str, challenge_runs: list[str]) -> set[str]:
+    """The challenge runs whose plan required no record of ``run_id``.
+
+    Harvested or not: a challenge that also challenged another locate run has a
+    receipt, and judged nothing of this one all the same (:func:`check_rules`).
+    """
+    return {rid for rid in challenge_runs if inputs.challenge_required(paths, run_id, rid) == 0}
+
+
 def check_tally(tally: dict, run_id: str, receipt_shas: dict[str, str]) -> None:
     """Refuse outcome rows the locate tally built from other harvests than the pinned receipts.
 
@@ -289,7 +298,9 @@ def check_rules(paths, manifest: dict, run_ids: list[str], judged_nothing: set[s
     scores a run planned under PD5-PD9, nor gold of locate-label/5 one planned
     before them.  Below it (rules 0 and 1, labelers up to /4) runs and gold were
     compared whatever their rules before this check, and still are.  A challenge
-    whose plan required nothing (``judged_nothing``) judged nothing.
+    whose plan required nothing of the scored run (``judged_nothing``,
+    :func:`required_nothing`) judged nothing of it, whether or not it was harvested
+    for another run it challenged, and is not held.
     """
     version = (manifest.get("labeler") or {}).get("version")
     gold_rules = gold_mod.labeler_rules(version)
@@ -848,7 +859,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
     yamls, receipts, receipt_shas = load_runs(paths, all_runs, unharvested,
                                               lower_bound_ok=article_costs_path is not None)
     check_tally(tally, run_id, receipt_shas)
-    check_rules(paths, manifest, all_runs, set(unharvested))
+    check_rules(paths, manifest, all_runs, required_nothing(paths, run_id, runs["challenge"]))
     run_arm = check_arms(yamls, run_id)
     if arm is not None and arm != run_arm:
         raise CfError(f"run {run_id} is the {run_arm} arm, not {arm}",
