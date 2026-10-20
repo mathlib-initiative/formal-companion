@@ -31,10 +31,13 @@ ratio per article cluster) and checks, at once:
 5. the A/A comparison -- the baseline against a distinct replicate run of its
    own configuration (the configuration shas each plan records, never the bytes
    it rendered for its own run id, and the planning keys, named one by one when
-   they differ) -- does NOT accept, and the two runs' outcomes AGREE: no metric
-   of a tier both hold differs by more than :data:`AA_TOLERANCE` on its paired
-   95% interval, nor the cost per article by more than :data:`AA_COST_TOLERANCE`
-   of the baseline's (references/locate-bench.md section 9, rule 5).
+   they differ) -- does NOT accept, and the two runs' outcomes do not DISAGREE:
+   no metric of a tier both hold is shown to differ by more than
+   :data:`AA_TOLERANCE` (its whole paired 95% interval past it), nor the cost
+   per article by more than :data:`AA_COST_TOLERANCE` of the baseline's
+   (references/locate-bench.md section 9, rule 5).  The burden of proof is on
+   the difference: this is no equivalence test, and each metric says whether
+   the A/A showed agreement within the tolerance or left it unresolved.
    :func:`aa_check` is that condition alone (``cf bench compare <id> <baseline>
    --aa <replicate>``): it claims nothing, spends no alpha and writes nothing;
 6. multiplicity: the alpha of the j-th claimed comparison in the bench's ledger
@@ -62,8 +65,8 @@ from cflib.errors import CfError
 from cflib.jsonio import read_json
 
 from . import metrics
-from .layout import (LEDGER_SCHEMA, UNRECORDED, BenchLayout, now, read_jsonl_rows, sha_of,
-                     write_canonical_jsonl)
+from .layout import (AA_SCHEMA, LEDGER_SCHEMA, UNRECORDED, BenchLayout, now, read_jsonl_rows,
+                     sha_of, write_canonical_jsonl)
 
 #: below both of these a decision is recorded, not claimed
 CLAIM_MIN_ARTICLES = 150
@@ -75,17 +78,18 @@ COST_MAX_INCREASE = 0.20
 #: the A/A's agreement (rule 5): a replicate's metric may differ from the baseline's by
 #: this much, absolute, before the two runs disagree -- the three points a stratum may
 #: drop -- and its cost per article by this fraction of the baseline's, the cost rule's
-#: own bound.  Judged on the paired interval at AA_LEVEL: the runs disagree on a metric
-#: only when the WHOLE interval of (replicate - baseline) lies past the tolerance, so a
-#: true A/A fails it by chance less often than its interval misses zero, 2.5% a side
+#: own bound.  Judged on the paired interval at AA_LEVEL, with the burden of proof on
+#: the difference: the runs disagree on a metric only when the WHOLE interval of
+#: (replicate - baseline) lies past the tolerance (vocab.BENCH_AA_VERDICTS).  So a true
+#: A/A fails one metric by chance less often than its interval misses zero, 2.5% a side,
+#: and some metric of the k it compares more often (up to 1 - 0.95**k were they
+#: independent); and an A/A too small to resolve 0.03 passes differences far larger
 AA_TOLERANCE = STRATUM_MAX_DROP
 AA_COST_TOLERANCE = COST_MAX_INCREASE
 AA_LEVEL = 0.95
 #: the answers of the A/A check, as `cf bench compare <id> <baseline> --aa <r>` prints them
 AA_OK = "aa ok"
 AA_FAILS = "aa FAILS"
-#: the document `cf bench compare ... --aa ... --json` prints for the A/A alone (not a file)
-AA_SCHEMA = "cf-bench-aa/1"
 DEFAULT_ALPHA = 0.05
 #: the fewest bootstrap draws that may lie below the bound an alpha asks for
 MIN_TAIL_DRAWS = 10
@@ -438,7 +442,7 @@ def accepted(conditions: dict) -> bool:
 
 
 # --------------------------------------------------------------------------
-# the A/A: the replicate does not accept, and the two runs agree
+# the A/A: the replicate does not accept, and the two runs do not disagree
 # --------------------------------------------------------------------------
 
 def _rate(cells: dict | None) -> float | None:
@@ -452,9 +456,28 @@ def _measured(cells: dict | None) -> bool:
     return bool(cells) and any(c[1] for c in cells.values())
 
 
-def _band(lo: float | None, hi: float | None, tolerance: float) -> bool:
-    """The interval ``[lo, hi]`` reaches the band ``[-tolerance, +tolerance]``."""
-    return lo is None or (lo <= tolerance and hi >= -tolerance)
+def _verdict(lo: float | None, hi: float | None, tolerance: float) -> str | None:
+    """What the interval ``[lo, hi]`` of ``replicate - baseline`` says against the band
+    ``[-tolerance, +tolerance]`` (vocab.BENCH_AA_VERDICTS); None when nothing was paired.
+
+    The burden of proof is on the difference: only an interval wholly past the band
+    ``differs``.  One wholly inside it shows agreement (``within``); one that reaches past
+    it without lying wholly beyond is ``unresolved`` -- the A/A was too small, or the runs
+    too far apart, to say either -- and passes, named.
+    """
+    if lo is None or hi is None:
+        return None
+    if lo > tolerance or hi < -tolerance:
+        return vocab.BENCH_AA_DIFFERS
+    if lo >= -tolerance and hi <= tolerance:
+        return vocab.BENCH_AA_WITHIN
+    return vocab.BENCH_AA_UNRESOLVED
+
+
+def _judged(row: dict, lo: float | None, hi: float | None, tolerance: float) -> dict:
+    verdict = _verdict(lo, hi, tolerance)
+    row.update(verdict=verdict, ok=verdict != vocab.BENCH_AA_DIFFERS)
+    return row
 
 
 def _metric_agreement(b: dict | None, r: dict | None, clusters: list[str], metric: str,
@@ -463,15 +486,17 @@ def _metric_agreement(b: dict | None, r: dict | None, clusters: list[str], metri
     tail = (1.0 - AA_LEVEL) / 2.0
     row: dict[str, Any] = {"baseline": _rate(b), "replicate": _rate(r)}
     if _measured(b) and _measured(r):
+        row["difference"] = row["replicate"] - row["baseline"]
         draws = metrics.paired(b, r, clusters, replicates=replicates, seed=seed)
         lo, hi = metrics.quantile(draws, tail), metrics.quantile(draws, 1.0 - tail)
         if lo is None:
-            row.update(lo=None, hi=None, ok=True,
+            row.update(lo=None, hi=None, verdict=None, ok=True,
                        why="no cluster that both runs measure: nothing to pair")
             return row
     elif metric in metrics.LOWER_IS_BETTER and (_measured(b) or _measured(r)):
         # an error rate one run never risked is a rate of zero there (as rule 2 reads it):
         # the difference is the other run's own rate, with its sign
+        row["difference"] = (row["replicate"] or 0.0) - (row["baseline"] or 0.0)
         one = metrics.bootstrap(r if _measured(r) else b, clusters, replicates=replicates,
                                 seed=seed, level=AA_LEVEL)
         lo, hi = one["lo"], one["hi"]
@@ -481,12 +506,12 @@ def _metric_agreement(b: dict | None, r: dict | None, clusters: list[str], metri
                       if _measured(r) else
                       "the replicate never risked it: the difference is the baseline's rate")
     else:
-        row.update(lo=None, hi=None, ok=True,
+        row.update(lo=None, hi=None, verdict=None, ok=True,
                    why=("measured by one run only: no rate to compare"
                         if _measured(b) or _measured(r) else "measured by neither run"))
         return row
-    row.update(lo=lo, hi=hi, ok=_band(lo, hi, AA_TOLERANCE))
-    return row
+    row.update(lo=lo, hi=hi)
+    return _judged(row, lo, hi, AA_TOLERANCE)
 
 
 def _cost_agreement(base: dict, replicate: dict, clusters: list[str], replicates: int,
@@ -498,38 +523,45 @@ def _cost_agreement(base: dict, replicate: dict, clusters: list[str], replicates
     row: dict[str, Any] = {"cells": cells, "baseline": _rate(b), "replicate": _rate(r),
                            "tolerance": AA_COST_TOLERANCE}
     if not _measured(b) or not _measured(r):
-        row.update(ok=True, why="a score has no cost per article: nothing to compare")
+        row.update(verdict=None, ok=True, why="a score has no cost per article: nothing to compare")
         return row
     basis = [base.get("cost", {}).get("basis"), replicate.get("cost", {}).get("basis")]
     if basis[0] != basis[1]:
-        row.update(ok=False, basis=basis,
+        row.update(verdict=None, ok=False, basis=basis,
                    why="the two scores price articles on different bases: score them alike")
         return row
+    row["difference"] = row["replicate"] - row["baseline"]
     tail = (1.0 - AA_LEVEL) / 2.0
     draws = metrics.paired(b, r, clusters, replicates=replicates, seed=seed)
     lo, hi = metrics.quantile(draws, tail), metrics.quantile(draws, 1.0 - tail)
     row.update(lo=lo, hi=hi)
     base_value = row["baseline"] or 0.0
     if base_value <= 0:
-        row.update(ok=lo is None or lo <= 0,
-                   why="the baseline cost nothing: the replicate must not cost more")
-        return row
+        # 20% of nothing is nothing: the replicate must not be shown to cost more
+        row["why"] = "the baseline cost nothing: the replicate must not cost more"
+        return _judged(row, lo, hi, 0.0)
     rel = (None, None) if lo is None else (lo / base_value, hi / base_value)
-    row.update(relative_lo=rel[0], relative_hi=rel[1],
-               ok=_band(rel[0], rel[1], AA_COST_TOLERANCE))
-    return row
+    row.update(relative_difference=row["difference"] / base_value,
+               relative_lo=rel[0], relative_hi=rel[1])
+    return _judged(row, rel[0], rel[1], AA_COST_TOLERANCE)
 
 
 def agreement(base: dict, replicate: dict, *, replicates: int, seed: int) -> dict:
-    """Whether the replicate's outcomes repeat the baseline's, within the stated tolerance.
+    """Whether the replicate's outcomes are shown to differ from the baseline's.
 
     Every metric of every tier both scores hold (``per_cluster``), paired cluster by
-    cluster as the rule pairs a candidate: the runs disagree on a metric when the
-    whole AA_LEVEL interval of ``replicate - baseline`` lies beyond AA_TOLERANCE, and on
-    cost when it lies beyond AA_COST_TOLERANCE of the baseline's cost per article.
-    The rule's own A/A check is one-sided (the replicate must not look better); this one
+    cluster as the rule pairs a candidate: the runs DISAGREE on a metric when the whole
+    AA_LEVEL interval of ``replicate - baseline`` lies beyond AA_TOLERANCE, and on cost
+    when it lies beyond AA_COST_TOLERANCE of the baseline's cost per article.  The
+    rule's own A/A check is one-sided (the replicate must not look better); this one
     also fails a replicate that is clearly worse, or one that differs on a metric the
     claim does not name.
+
+    It is no equivalence test: ``ok`` means no difference past the tolerance was shown.
+    ``within`` names the rows whose agreement the A/A did show (the whole interval inside
+    the tolerance), ``unresolved`` the rows it compared and could not settle either way,
+    and ``reach`` is the largest difference any metric's interval leaves possible, which
+    on a small A/A is far past the tolerance.
     """
     clusters = _clusters(base, replicate)
     checked: dict[str, dict] = {}
@@ -541,16 +573,27 @@ def agreement(base: dict, replicate: dict, *, replicates: int, seed: int) -> dic
                                     clusters, metric, replicates, f"{seed}:aa:{tier}:{metric}"),
                 "tolerance": AA_TOLERANCE}
     cost = _cost_agreement(base, replicate, clusters, replicates, f"{seed}:aa:cost")
+    rows = {**checked, "cost": cost}
     disagree = sorted(name for name, row in checked.items() if not row["ok"])
     if not cost["ok"]:
         disagree.append("cost")
+
+    def named(verdict: str) -> list[str]:
+        return [name for name, row in rows.items() if row.get("verdict") == verdict]
+
+    bounds = [abs(row[k]) for row in checked.values() if row.get("verdict") for k in ("lo", "hi")]
     return {"level": AA_LEVEL, "tolerance": AA_TOLERANCE, "cost_tolerance": AA_COST_TOLERANCE,
-            "metrics": checked, "cost": cost, "disagree": disagree, "ok": not disagree}
+            "metrics": checked, "cost": cost,
+            "compared": sum(1 for row in rows.values() if row.get("verdict")),
+            "within": named(vocab.BENCH_AA_WITHIN), "unresolved": named(vocab.BENCH_AA_UNRESOLVED),
+            "reach": max(bounds) if bounds else None,
+            "disagree": disagree, "ok": not disagree}
 
 
 def aa_condition(base: dict, replicate: dict, *, claim: str, alpha_j: float, replicates: int,
                  seed: int) -> dict:
-    """Rule 5 on a checked replicate: the rule does not accept it, and the runs agree."""
+    """Rule 5 on a checked replicate: the rule does not accept it, and the runs are not
+    shown to disagree (:func:`agreement`)."""
     rule = evaluate(base, replicate, claim=claim, alpha_j=alpha_j, replicates=replicates,
                     seed=seed)
     agree = agreement(base, replicate, replicates=replicates, seed=seed)

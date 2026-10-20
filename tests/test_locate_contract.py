@@ -69,6 +69,7 @@ class TestTheDocumentValues(unittest.TestCase):
                   | vocab.CANDIDATE_VERDICTS | vocab.CANDIDATE_VIA | vocab.TAG_KINDS
                   | vocab.CHALLENGE_TARGETS | vocab.CHALLENGE_ACTIONS | vocab.BENCH_TIERS
                   | vocab.BENCH_ARMS | vocab.BENCH_SPLITS | vocab.FNF_CAUSES | vocab.ERROR_CODES
+                  | vocab.BENCH_AA_VERDICTS
                   | vocab.SOURCE_ORIGINS | vocab.UNRESOLVED_BY | vocab.CHALLENGE_RULES
                   | vocab.CHALLENGE_PLANNED | vocab.INDEX_FLAGS | set(vocab.TOOLS_DB_KINDS)
                   | vocab.LOCATE_SKIP_REASONS

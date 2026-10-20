@@ -6,11 +6,14 @@ wikipedia-locate.md section 9, step 3: "the A/A run rejects").  The rule's own
 A/A condition is one-sided -- the rule applied to the baseline and its replicate
 must not accept -- so a replicate that came out clearly WORSE, or that differs on
 a metric the claim does not name, passed it.  These tests pin the agreement half
-(every metric of every tier both scores hold, and the cost per article, within a
-stated tolerance on the paired interval), the planning refusal by name, the
-challenge seed that is recorded and compared by nothing, and
-``cf bench compare <id> <baseline> --aa <replicate>``, the check alone, which
-answers ``aa ok`` or ``aa FAILS`` and writes nothing.  The score documents are
+(every metric of every tier both scores hold, and the cost per article, not
+shown to differ past a stated tolerance on the paired interval), what each row's
+verdict says (vocab.BENCH_AA_VERDICTS: the burden of proof is on the difference,
+so a small A/A passes a large difference ``unresolved`` and says so), the
+planning refusal by name, the challenge seed that is recorded and compared by
+nothing, and ``cf bench compare <id> <baseline> --aa <replicate>``, the check
+alone, which answers ``aa ok`` or ``aa FAILS`` and writes nothing, its candidate
+given after an option still parsing on Python 3.11.  The score documents are
 synthetic (``test_locate_bench.score_doc``).
 """
 from __future__ import annotations
@@ -39,6 +42,8 @@ except ImportError:  # pragma: no cover
 
 import cf as cf_main  # noqa: E402
 from bench import compare as compare_mod  # noqa: E402
+from bench import layout as layout_mod  # noqa: E402
+from cflib import vocab  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.yamlio import write_yaml  # noqa: E402
 
@@ -86,12 +91,19 @@ class TestTheAACheck(unittest.TestCase):
         rep = self.write("rep", score_doc(self.base_cells, mid="replicate"))
         doc = self.aa(base, rep)
         self.assertEqual((doc["answer"], doc["ok"], doc["failed"]), ("aa ok", True, []))
-        self.assertEqual(doc["schema"], "cf-bench-aa/1")
+        self.assertEqual(doc["schema"], layout_mod.AA_SCHEMA)
+        self.assertEqual(layout_mod.AA_SCHEMA, "cf-bench-aa/1")
+        self.assertFalse(hasattr(compare_mod, "AA_SCHEMA") and compare_mod.AA_SCHEMA
+                         is not layout_mod.AA_SCHEMA, "a second definition of the schema id")
         agree = doc["aa"]["agreement"]
         self.assertEqual(sorted(agree["metrics"]), ["G3.fnf_rate", "G3.overclaim_rate"])
-        self.assertTrue(all(row["ok"] and row["lo"] == row["hi"] == 0.0
+        self.assertTrue(all(row["ok"] and row["lo"] == row["hi"] == row["difference"] == 0.0
+                            and row["verdict"] == vocab.BENCH_AA_WITHIN
                             for row in agree["metrics"].values()))
         self.assertTrue(agree["cost"]["ok"])
+        # identical outcomes: agreement within the tolerance is SHOWN, on every row
+        self.assertEqual((agree["compared"], agree["within"], agree["unresolved"], agree["reach"]),
+                         (3, ["G3.fnf_rate", "G3.overclaim_rate", "cost"], [], 0.0))
         self.assertEqual((agree["tolerance"], agree["cost_tolerance"], agree["level"]),
                          (compare_mod.AA_TOLERANCE, compare_mod.AA_COST_TOLERANCE, 0.95))
         self.assertFalse(doc["aa"]["accepted"])
@@ -106,6 +118,7 @@ class TestTheAACheck(unittest.TestCase):
         self.assertEqual((doc["answer"], doc["failed"]), ("aa FAILS", ["G3.fnf_rate"]))
         row = doc["aa"]["agreement"]["metrics"]["G3.fnf_rate"]
         self.assertGreater(row["lo"], compare_mod.AA_TOLERANCE)
+        self.assertEqual(row["verdict"], vocab.BENCH_AA_DIFFERS)
         # and in a comparison: a gain over a baseline whose replicate does not repeat it
         cand = self.write("cand", score_doc(self.better_cells))
         entry = self.compare(base, cand, worse)
@@ -123,32 +136,82 @@ class TestTheAACheck(unittest.TestCase):
         self.assertEqual(doc["failed"], ["rule", "G3.fnf_rate"])
         self.assertEqual(doc["answer"], "aa FAILS")
 
-    def test_a_difference_inside_its_sampling_noise_agrees(self):
+    def test_a_difference_inside_its_sampling_noise_passes_unresolved_not_within(self):
         # two clusters of forty flip: a point difference of 0.05, past the tolerance, but
-        # an interval that reaches zero, so the runs do not disagree
+        # an interval that reaches zero -- no difference shown, so the runs do not
+        # disagree; and none ruled out, so agreement is not shown either
         noisy = dict(self.base_cells, c00=[1.0, 1.0], c02=[1.0, 1.0])
         base = self.write("base", score_doc(self.base_cells))
         rep = self.write("rep", score_doc(noisy, mid="noisy"))
         doc = self.aa(base, rep)
-        row = doc["aa"]["agreement"]["metrics"]["G3.fnf_rate"]
+        agree = doc["aa"]["agreement"]
+        row = agree["metrics"]["G3.fnf_rate"]
+        self.assertAlmostEqual(row["difference"], 0.05)
         self.assertAlmostEqual(row["replicate"] - row["baseline"], 0.05)
         self.assertLessEqual(row["lo"], compare_mod.AA_TOLERANCE)
+        self.assertGreater(row["hi"], compare_mod.AA_TOLERANCE)
+        self.assertEqual((row["verdict"], row["ok"]), (vocab.BENCH_AA_UNRESOLVED, True))
         self.assertEqual(doc["answer"], "aa ok", doc["failed"])
+        self.assertEqual(agree["unresolved"], ["G3.fnf_rate"])
+        self.assertNotIn("G3.fnf_rate", agree["within"])
+
+    def test_a_small_aa_passes_a_large_difference_and_says_it_resolved_nothing(self):
+        """The burden of proof is on the difference: ten clusters whose fnf_rate goes from
+        0.2 to 0.5 are not SHOWN to differ by more than 0.03, so the A/A answers aa ok --
+        and its report says the row is unresolved, how far the interval reaches, and never
+        that the metric is within 0.03."""
+        base_cells = {f"c{i}": [1.0 if i < 2 else 0.0, 1.0] for i in range(10)}
+        rep_cells = {f"c{i}": [1.0 if i < 5 else 0.0, 1.0] for i in range(10)}
+        base = self.write("base", score_doc(base_cells))
+        rep = self.write("rep", score_doc(rep_cells, mid="replicate"))
+        doc = self.aa(base, rep)
+        agree = doc["aa"]["agreement"]
+        row = agree["metrics"]["G3.fnf_rate"]
+        self.assertAlmostEqual(row["difference"], 0.3)
+        self.assertEqual((doc["answer"], row["verdict"]), ("aa ok", vocab.BENCH_AA_UNRESOLVED))
+        self.assertLessEqual(row["lo"], compare_mod.AA_TOLERANCE)
+        self.assertGreaterEqual(agree["reach"], 0.3)
+        self.assertEqual(agree["reach"], max(abs(row["lo"]), abs(row["hi"])))
+        self.assertEqual(agree["unresolved"], ["G3.fnf_rate"])
+        write_yaml(self.lay.bench_yaml, {"schema": "cf-bench/1", "id": "b1"})
+        code, out = self.run_cf("bench", "compare", "b1", base, "--aa", rep, "--claim",
+                                "G3.fnf_rate", "--bootstrap", 1000)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("within 0.03", out)
+        self.assertIn("no metric shown to differ by more than 0.03", out)
+        self.assertIn("agreement within the tolerance shown for 2 of 3, unresolved for 1", out)
+        self.assertIn(f"up to {agree['reach']:.3g} possible", out)
+        line = next(x for x in out.splitlines() if "G3.fnf_rate" in x and "difference" in x)
+        self.assertEqual(line.split()[0], vocab.BENCH_AA_UNRESOLVED, out)
+        self.assertIn(f"difference +0.3 in [{row['lo']:+.4g}, {row['hi']:+.4g}]", line)
 
     def test_a_cost_that_does_not_repeat_fails_the_agreement(self):
         base = self.write("base", score_doc(self.base_cells, cost=1.0))
         dear = self.write("dear", score_doc(self.base_cells, cost=1.5, mid="dear"))
         doc = self.aa(base, dear)
         self.assertEqual(doc["failed"], ["cost"])
-        self.assertAlmostEqual(doc["aa"]["agreement"]["cost"]["relative_lo"], 0.5)
+        cost = doc["aa"]["agreement"]["cost"]
+        self.assertAlmostEqual(cost["relative_lo"], 0.5)
+        self.assertAlmostEqual(cost["relative_difference"], 0.5)
+        self.assertEqual(cost["verdict"], vocab.BENCH_AA_DIFFERS)
         near = self.write("near", score_doc(self.base_cells, cost=1.1, mid="near"))
-        self.assertEqual(self.aa(base, near)["answer"], "aa ok")
+        doc = self.aa(base, near)
+        self.assertEqual(doc["answer"], "aa ok")
+        self.assertEqual(doc["aa"]["agreement"]["cost"]["verdict"], vocab.BENCH_AA_WITHIN)
+        # 20% of nothing is nothing: over a baseline that cost nothing, any cost differs
+        free = self.write("free", score_doc(self.base_cells, cost=0.0, mid="free"))
+        doc = self.aa(free, self.write("paid", score_doc(self.base_cells, cost=0.1, mid="paid")))
+        self.assertEqual((doc["failed"], doc["aa"]["agreement"]["cost"]["verdict"]),
+                         (["cost"], vocab.BENCH_AA_DIFFERS))
+        doc = self.aa(free, self.write("free2", score_doc(self.base_cells, cost=0.0, mid="f2")))
+        self.assertEqual(doc["answer"], "aa ok")
         # two cost bases cannot be compared at all
         other = score_doc(self.base_cells, mid="basis")
         other["cost"] = {"basis": "receipt spread"}
         doc = self.aa(base, self.write("basis", other))
         self.assertEqual(doc["failed"], ["cost"])
         self.assertIn("different bases", doc["aa"]["agreement"]["cost"]["why"])
+        self.assertIsNone(doc["aa"]["agreement"]["cost"]["verdict"])
 
     def test_an_error_rate_one_run_never_risked_is_a_rate_of_zero_there(self):
         base_doc = score_doc(self.base_cells)
@@ -158,7 +221,9 @@ class TestTheAACheck(unittest.TestCase):
         doc = self.aa(base, self.write("over", score_doc(self.base_cells, overclaim=over,
                                                          mid="over")))
         self.assertEqual(doc["failed"], ["G3.overclaim_rate"])
-        self.assertIn("never risked", doc["aa"]["agreement"]["metrics"]["G3.overclaim_rate"]["why"])
+        row = doc["aa"]["agreement"]["metrics"]["G3.overclaim_rate"]
+        self.assertIn("never risked", row["why"])
+        self.assertEqual((row["difference"], row["verdict"]), (1.0, vocab.BENCH_AA_DIFFERS))
         clean = {c: [0.0, 1.0] for c in self.base_cells}
         self.assertEqual(self.aa(base, self.write("clean", score_doc(
             self.base_cells, overclaim=clean, mid="clean")))["answer"], "aa ok")
@@ -166,7 +231,22 @@ class TestTheAACheck(unittest.TestCase):
         rep = score_doc(self.base_cells, mid="p1")
         rep["per_cluster"]["G3"]["precision_at_1"] = {c: [1.0, 1.0] for c in self.base_cells}
         doc = self.aa(base, self.write("p1", rep))
-        self.assertTrue(doc["aa"]["agreement"]["metrics"]["G3.precision_at_1"]["ok"])
+        row = doc["aa"]["agreement"]["metrics"]["G3.precision_at_1"]
+        self.assertTrue(row["ok"])
+        self.assertIsNone(row["verdict"])
+        self.assertNotIn("G3.precision_at_1", doc["aa"]["agreement"]["within"]
+                         + doc["aa"]["agreement"]["unresolved"])
+
+    def test_every_verdict_written_is_one_of_the_vocabulary(self):
+        """CLAUDE.md S4: the verdicts are vocab.BENCH_AA_VERDICTS, and nothing else."""
+        self.assertEqual(vocab.BENCH_AA_VERDICTS, {"differs", "within", "unresolved"})
+        base = self.write("base", score_doc(self.base_cells))
+        seen = set()
+        for name, cells in (("same", self.base_cells), ("worse", self.worse_cells),
+                            ("noisy", dict(self.base_cells, c00=[1.0, 1.0], c02=[1.0, 1.0]))):
+            agree = self.aa(base, self.write(name, score_doc(cells, mid=name)))["aa"]["agreement"]
+            seen |= {row["verdict"] for row in [*agree["metrics"].values(), agree["cost"]]}
+        self.assertEqual(seen, vocab.BENCH_AA_VERDICTS)
 
     def test_another_planning_key_is_refused_by_name(self):
         base = self.write("base", self.challenged("base", "chl1"))
@@ -236,7 +316,9 @@ class TestTheAACheck(unittest.TestCase):
         code, out = self.run_cf(*aa, "--aa", worse)
         self.assertEqual(code, 1, out)
         self.assertTrue(out.startswith("aa FAILS"), out)
-        self.assertIn("disagrees: G3.fnf_rate", out)
+        self.assertIn("FAILS shown to differ: G3.fnf_rate", out)
+        line = next(x for x in out.splitlines() if "G3.fnf_rate" in x and "difference" in x)
+        self.assertEqual(line.split()[0], vocab.BENCH_AA_DIFFERS, out)
         code, out = self.run_cf(*aa, "--aa", rep, "--json")
         self.assertEqual((code, json.loads(out)["answer"]), (0, "aa ok"))
         self.assertFalse(self.lay.ledger_jsonl.exists())
@@ -254,6 +336,33 @@ class TestTheAACheck(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("REJECT", out)
         self.assertIn("aa: the replicate disagrees with the baseline on G3.fnf_rate", out)
+
+    def parsed(self, *argv):
+        parser, _mapping = cf_main.build_parser()
+        return parser.parse_args(list(map(str, argv)))
+
+    def test_a_candidate_given_after_an_option_still_parses(self):
+        """An optional candidate must not cost the order that parsed while it was required:
+        Python 3.11's argparse matched it, empty, with the first run of positionals, so a
+        candidate after ``--claim`` was unrecognised there (3.12 parses it)."""
+        for argv, candidate in (
+                (("b1", "base", "cand", "--claim", "X", "--aa", "rep"), "cand"),
+                (("b1", "base", "--claim", "X", "cand", "--aa", "rep"), "cand"),
+                (("b1", "base", "--claim", "X", "--aa", "rep", "cand"), "cand"),
+                (("b1", "base", "--aa", "rep", "--claim", "X"), None)):
+            with self.subTest(argv=argv):
+                args = self.parsed("bench", "compare", *argv)
+                self.assertEqual(args.candidate, None if candidate is None else Path(candidate))
+                self.assertEqual((args.baseline, args.aa), (Path("base"), Path("rep")))
+        # a second candidate, or an option nobody declared, is still refused
+        for argv in (("b1", "base", "cand", "--claim", "X", "more"),
+                     ("b1", "base", "--claim", "X", "--frobnicate", "cand")):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit):
+                self.parsed("bench", "compare", *argv)
+        # and the other bench subcommands take no positional back
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.parsed("bench", "freeze", "b1", "--plant", "stray")
 
 
 if __name__ == "__main__":

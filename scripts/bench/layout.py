@@ -35,6 +35,8 @@ SCORE_SCHEMA = "cf-bench-score/1"
 LEDGER_SCHEMA = "cf-bench-ledger/1"
 SPEND_SCHEMA = "cf-bench-spend/1"
 ABLATION_SCHEMA = "cf-bench-ablation/1"
+#: the document `cf bench compare <id> <baseline> --aa <r> --json` prints (never a file)
+AA_SCHEMA = "cf-bench-aa/1"
 LABEL_ARGS_SCHEMA = "cf-locate-label-args-v1"
 LABEL_RESULT_SCHEMA = "cf-locate-label-v1"
 

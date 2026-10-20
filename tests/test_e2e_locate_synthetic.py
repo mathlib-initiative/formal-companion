@@ -103,8 +103,19 @@ class TestTheSyntheticLocateCampaign(unittest.TestCase):
         self.assertEqual((doc["answer"], doc["failed"]), ("aa ok", []))
         self.assertEqual(doc["replicate"], self.pipe.aa_replicate["measurement_id"])
         self.assertEqual(self.pipe.aa_replicate["runs"]["locate"], ["loc-2"])
-        self.assertEqual(doc["recorded"]["challenge_seed"],
-                         {"baseline": {"chl-1": 0}, "replicate": {"chl-2": 0}})
+        # each side's challenge run and its seed, as recorded: whatever the seed is (it
+        # comes from the run id once the planner derives it), the A/A compares none
+        seeds = doc["recorded"]["challenge_seed"]
+        self.assertEqual({side: sorted(runs) for side, runs in seeds.items()},
+                         {"baseline": ["chl-1"], "replicate": ["chl-2"]})
+        self.assertTrue(all(isinstance(seed, int) for runs in seeds.values()
+                            for seed in runs.values()), seeds)
+        # the synthetic worker answers both runs alike, so agreement is SHOWN on every row,
+        # not merely left unrefuted
+        agree = doc["aa"]["agreement"]
+        self.assertEqual((agree["unresolved"], agree["reach"]), ([], 0.0))
+        self.assertEqual(len(agree["within"]), agree["compared"])
+        self.assertGreater(agree["compared"], 2)
         self.assertIn("strong_sample_rate (--strong-sample-rate): 0.5 in the baseline, 1.0 in "
                       "the replicate", self.pipe.aa_refusal_text)
 
