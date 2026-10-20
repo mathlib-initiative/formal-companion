@@ -1095,16 +1095,19 @@ drivers' indexes is made, ingested, built and searched.
 `universe.yaml` is the proposal's §2.3 shape, written by `cf corpus`
 (`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
 a document names as `library`: a lowercase letter, then lowercase letters, digits
-and `._-`, at most 64 — `corpus.universe.LIBRARY_ID`, which a universe's own id
-follows too; the letter comes first so that no id reads as a YAML number or date,
-`1.5e-3` or `2026-10-17`), `brain_lib`, `repo` (an https repository URL a
+and `._-`, at most 64, and none of YAML's bool and null words `yes`, `no`, `true`,
+`false`, `on`, `off` and `null` — `corpus.universe.LIBRARY_ID`, which a universe's
+own id and an exclusion's id follow too, on load as at `cf corpus add`; the letter
+comes first and the words are left out so that no id reads as anything but itself
+in YAML, quoted or bare: not a number or date, `1.5e-3` or `2026-10-17`, and not a
+bool or null, `no` or `null`), `brain_lib`, `repo` (an https repository URL a
 record set's consumer can link: a dotted host and one to four path segments of
 letters, digits and `._~-`, at most 100 each, none of them `.` or `..`, so no
 empty segment and no trailing slash — `corpus.universe.REPO`, refused at `cf corpus
 add` and on load; the repo is outside `universe_sha256`; and **one spelling per
 repository**: libraries that share a repository spell it alike, and one whose repo
 is another library's repository spelled differently — the host's case, a `www.`, a
-trailing `.git`, and on github.com the owner's or name's case
+trailing `.git` in any case, and on github.com the owner's or name's case
 (`corpus.universe.repo_key`) — is refused at `cf corpus add` and on load, naming
 the spelling the universe uses, because everything downstream compares a repo
 exactly as written: an absence's one end per `(repo, commit)` (§6) and the

@@ -45,14 +45,20 @@ from cflib.yamlio import read_yaml, write_yaml
 
 from . import universe_host
 
-#: the universe-local library id (and a universe's own id): a lowercase letter, then
-#: lowercase letters, digits and ``._-``, at most 64.  The first character is a letter
-#: so no id is a YAML number or date look-alike (``1.5e-3``, ``0x10``, ``2026-10-17``)
-#: wherever an id is written; the host drivers' universe list (``universe_host._ID``)
-#: also admits a leading digit, a superset of what a universe may name
-LIBRARY_ID = re.compile(r"[a-z][a-z0-9._-]{0,63}\Z")
+#: the YAML bool and null words a lowercase id could spell, which both readers type
+#: (``no`` reads as False, ``null`` as None) wherever such an id is written bare
+YAML_WORD_IDS = ("yes", "no", "true", "false", "on", "off", "null")
+#: the universe-local library id (and a universe's own id, and an exclusion's): a
+#: lowercase letter, then lowercase letters, digits and ``._-``, at most 64, and none
+#: of :data:`YAML_WORD_IDS`.  The letter first means no id is a YAML number or date
+#: look-alike (``1.5e-3``, ``0x10``, ``2026-10-17``), and without the words no id is a
+#: bool or null, so an id reads as itself wherever it is written, quoted or bare; the
+#: host drivers' universe list (``universe_host._ID``) also admits a leading digit and
+#: the words, a superset of what a universe may name
+LIBRARY_ID = re.compile(rf"(?!(?:{'|'.join(YAML_WORD_IDS)})\Z)[a-z][a-z0-9._-]{{0,63}}\Z")
 #: how a refusal states :data:`LIBRARY_ID`
-LIBRARY_ID_RULE = "[a-z][a-z0-9._-]* (a lowercase letter first, at most 64)"
+LIBRARY_ID_RULE = ("[a-z][a-z0-9._-]* (a lowercase letter first, at most 64, and no YAML "
+                   "bool or null word: " + ", ".join(YAML_WORD_IDS) + ")")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
@@ -293,8 +299,9 @@ class Universe:
 
         One repository is spelled one way: a new row whose ``repo`` is another
         library's repository spelled differently (:func:`repo_key`: another case of
-        the host, a ``www.``, a trailing ``.git``, or another case of the owner or name
-        on github.com) is refused, naming the spelling the universe already uses.
+        the host, a ``www.``, a trailing ``.git`` in any case, or another case of the
+        owner or name on github.com) is refused, naming the spelling the universe
+        already uses.
         Everything downstream compares a repo exactly as written -- an absence's one
         end per ``(repo, commit)``, the consumer's ``(repo, root)`` rule -- and this rule
         is what keeps that correct.
@@ -372,7 +379,8 @@ class Universe:
                 raise CfError(f"brain_lib {token!r} already names {existing.get('id')}{same} "
                               f"({existing.get('repo')})",
                               hint="a brain_lib token names one repository, compared without "
-                                   "case (proposal section 11.3); pass another --brain-lib")
+                                   "case (references/locate-documents.md section 8); pass "
+                                   "another --brain-lib")
         self.data.setdefault("libraries", []).append(row)
         return row
 
@@ -442,8 +450,9 @@ class Universe:
     # -- checking and writing ----------------------------------------------
     def validate(self, *, require_indexes: bool = False) -> list[str]:
         problems: list[str] = []
-        if not LIBRARY_ID.match(self.id):
-            problems.append(f"id {self.id!r} is not {LIBRARY_ID_RULE}")
+        problem = _id_problem(self.data.get("id"))
+        if problem:
+            problems.append(f"id {problem}")
         if self.frozen and not _DATE.match(self.frozen):
             problems.append(f"frozen {self.frozen!r} is not a YYYY-MM-DD date")
         seen: set[str] = set()
@@ -463,6 +472,9 @@ class Universe:
             elif require_indexes:
                 problems.append(f"library {lib_id!r} has no index; run `cf corpus ingest`")
         for row in self.excluded:
+            problem = _id_problem(row.get("id")) if isinstance(row, dict) else None
+            if problem:
+                problems.append(f"an exclusion's id {problem}")
             if not isinstance(row, dict) or not row.get("reason"):
                 problems.append(f"an exclusion carries no reason: {row!r}")
             elif len(str(row["reason"])) > MAX_REASON_CHARS:
@@ -578,8 +590,9 @@ def _token_hint(name: str) -> str:
 def repo_key(repo) -> str:
     """The repository a ``repo`` URL names, one key for each way of spelling it.
 
-    The host lowercased and without ``www.``, no trailing ``.git``, and on a host of
-    :data:`CASE_INSENSITIVE_REPO_HOSTS` (github.com) the owner and name casefolded:
+    The host lowercased and without ``www.``, no trailing ``.git`` (in any case:
+    ``.GIT`` is the same suffix), and on a host of :data:`CASE_INSENSITIVE_REPO_HOSTS`
+    (github.com) the owner and name casefolded:
     ``https://www.GitHub.com/LeanProver/Lean4.git`` and
     ``https://github.com/leanprover/lean4`` are one key.  Only a universe's
     one-spelling rule compares on it (:meth:`Universe.add_library`,
@@ -596,9 +609,23 @@ def repo_key(repo) -> str:
         host = host[len("www."):]
     if host in CASE_INSENSITIVE_REPO_HOSTS:
         path = path.casefold()
-    if path.endswith(".git"):
+    if path[-len(".git"):].lower() == ".git":
         path = path[:-len(".git")]
     return f"{scheme.lower()}://{host}{slash}{path}"
+
+
+def _id_problem(value) -> str | None:
+    """Why ``value``, as a universe file holds an id, is no :data:`LIBRARY_ID`; else None.
+
+    A value YAML typed -- a bare ``no`` read as False, ``1e3`` as 1000.0 by PyYAML --
+    is named as the type it was read as, since its own spelling is gone by then.
+    """
+    if isinstance(value, str):
+        return None if LIBRARY_ID.match(value) else f"{value!r} is not {LIBRARY_ID_RULE}"
+    if value is None:
+        return f"None is not {LIBRARY_ID_RULE}"
+    return (f"{value!r} was read as a YAML {type(value).__name__}, not a string: an id is "
+            f"{LIBRARY_ID_RULE}")
 
 
 def written_brain_lib(lib: dict) -> str:
@@ -614,8 +641,9 @@ def is_repo_url(repo) -> bool:
 
 def _library_problems(lib: dict) -> list[str]:
     problems: list[str] = []
-    if not LIBRARY_ID.match(str(lib.get("id") or "")):
-        problems.append(f"id {lib.get('id')!r} is not {LIBRARY_ID_RULE}")
+    problem = _id_problem(lib.get("id"))
+    if problem:
+        problems.append(f"id {problem}")
     if not is_repo_url(lib.get("repo")):
         problems.append(f"repo {lib.get('repo')!r} is not an https repository URL: a dotted "
                         f"host and one to four path segments of letters, digits and ._~- "
