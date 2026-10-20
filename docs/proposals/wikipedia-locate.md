@@ -316,7 +316,7 @@ relation word with SKOS direction, subject = passage, object = declaration:
 | relation | meaning |
 |---|---|
 | `exactMatch` | the declaration states the passage |
-| `closeMatch` | the same up to a convention difference (0 ∈ ℕ, junk values, normalization), named in `note` |
+| `closeMatch` | the same up to a convention difference (0 ∈ ℕ, normalization), named in `note`; since PD7 (`references/vocabulary.md` §1.11) a junk value is none: a declaration that agrees on the passage's domain is `exactMatch` when every case outside it is trivial and `broadMatch` when one has content |
 | `broadMatch` | the declaration is more general; the passage is an instance |
 | `narrowMatch` | the declaration is a special case of the passage |
 | `hasPart` | the declaration states part of a passage that says several things |

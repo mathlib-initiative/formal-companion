@@ -348,9 +348,11 @@ is everything below but the two checks marked **(rules 2)**, which version 2
   `relatedMatch` (R5). The prompts render the list from that tuple. A challenge
   verdict that leaves a `closeMatch` names its convention too — a downgrade's
   own, a confirm's when the record names none, held to its run's list; a confirm
-  that keeps the record's own convention keeps a `junk_value` a run of version 1
-  wrote, since a challenge never raises a relation to the `exactMatch` PD7 would
-  make it — and the challenger's own note
+  that keeps the record's own convention, by naming none or naming it again,
+  keeps a `junk_value` a run of version 1 wrote, since a challenge never raises
+  a relation to the `exactMatch` PD7 would make it, and a confirm that names
+  another convention replaces the record's and is held to the list — and the
+  challenger's own note
   (the one `locate_records.downgrade_note` takes from the verdict when the
   record has none) is held to the same words; the record's own note, the
   worker's, is not.
@@ -455,7 +457,11 @@ a confirm — written before it judges (the FM7 rule, `references/vocabulary.md`
   is checked against the challenger's own clauses as a location's is).
   **(rules 2)** No part's list names every claim of the challenger's own: by
   its own clauses such a part is one location, not a part (PD6), and the claim
-  is refuted, its part's record judged on its own.
+  is refuted, its part's record judged on its own. A challenge never raises
+  that part's `hasPart`, so the passage is left `partial` until it is located
+  again; of a locate run planned under version 1, whose coverage claim raised
+  it, the challenge so lowers the passage's status
+  (`references/vocabulary.md` §1.11, PD6).
 - An `uphold` of an absence or an unresolved outcome lists the challenger's own
   search: `queries` (at least `min_absence_queries` distinct, in its own words)
   and `query_clauses`, every query tagged and each claim — with `general` for an

@@ -1711,6 +1711,31 @@ class TestAPolicyChangeRelabelsTheGold(unittest.TestCase):
         self.assertIn("chl1 was judged under rules 1", str(ctx.exception))
         self.assertNotIn("chl0", str(ctx.exception))
 
+    def test_a_harvested_challenge_that_required_nothing_of_the_run_is_not_held(self):
+        """A challenge of two locate runs is harvested for the one it required records of:
+        of the other it judged nothing, receipt or not, so its rules do not bind that score."""
+        world = frozen(self)
+        eval_run(world)
+        world.challenge_run("chl2", of="loc1", required=0, judgment_rules=1)
+        world.receipt("chl2", usd=3.0)                   # harvested for another run it challenged
+        tally = json.loads(world.paths.locate_tally_json("loc1").read_text(encoding="utf-8"))
+        world.tally("loc1", "inv1", tally["challenge_runs"])
+        self.assertEqual(score_mod.required_nothing(world.paths, "loc1", ["chl2"]), {"chl2"})
+        self.assertEqual(score(world)["run"], "loc1")
+
+    def test_each_labeler_version_labels_by_its_own_rules_after_a_bump(self):
+        """LABELER_RULES names each version literally: a later bump of LABELER_VERSION, for
+        any change to the labeler's contract, leaves /5 labelling by rules 2."""
+        self.assertEqual(gold_mod.LABELER_RULES["locate-label/5"], 2)
+        self.assertEqual(gold_mod.LABELER_RULES[gold_mod.LABELER_VERSION], vocab.JUDGMENT_RULES)
+        with mock.patch.object(gold_mod, "LABELER_VERSION", "locate-label/6"):
+            self.assertEqual(gold_mod.labeler_rules("locate-label/5"), 2)
+            self.assertEqual(gold_mod.labeler_rules("locate-label/4"), 1)
+        source = (Path(gold_mod.__file__)).read_text(encoding="utf-8")
+        line = next(l for l in source.splitlines() if l.startswith("LABELER_RULES = "))
+        self.assertNotIn("LABELER_VERSION", line)
+        self.assertNotIn("JUDGMENT_RULES", line)
+
     def test_freeze_refuses_rows_from_before_the_field_it_cannot_place(self):
         world = labelled(self)
         for tier in ("G1", "G3"):

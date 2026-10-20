@@ -65,8 +65,11 @@ LABELER_VERSION = "locate-label/5"
 #: the judgment rules (``cflib.vocab.JUDGMENT_RULES``) each labeler version labels by:
 #: the score holds gold and the runs it scores to one version from
 #: ``cflib.vocab.RULES_PD5_PD9`` on (references/locate-bench.md section 8), and a
-#: version not listed here (/1, /2, or none recorded) labelled by none of them
-LABELER_RULES = {"locate-label/3": 1, "locate-label/4": 1, LABELER_VERSION: vocab.JUDGMENT_RULES}
+#: version not listed here (/1, /2, or none recorded) labelled by none of them.  Each
+#: entry is a literal, frozen once its version is: a bump of ``LABELER_VERSION``
+#: (for a rules change or any other change to the labeler's contract) adds a line
+#: and never moves an old one
+LABELER_RULES = {"locate-label/3": 1, "locate-label/4": 1, "locate-label/5": 2}
 #: G4: at most this many maintainer spot checks per release (section 8.1)
 G4_MAX_NEGATIVES = 30
 G4_MAX_POSITIVES = 20
