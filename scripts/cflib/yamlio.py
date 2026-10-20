@@ -14,6 +14,13 @@ verbatim, markdown emphasis and all.
 One documented divergence: PyYAML resolves an unquoted ``2026-09-16`` to a
 ``datetime.date`` while the fallback returns the string, so the skill's own
 templates quote every date.
+
+The writer quotes every plain scalar either reader would type as anything but
+that string -- a value or a mapping key: a number of any base or with an exponent
+(``1.5e-3``), a bool or null word in any case, a date or timestamp, ``.inf`` and
+``.nan``, PyYAML's merge ``<<`` and value ``=`` -- and writes a float as both
+readers read a float back (``1.0e-05``, ``.inf``).  ``tests/test_yamlio_lookalikes.py``
+checks it against PyYAML's own resolver table when PyYAML is importable.
 """
 from __future__ import annotations
 
@@ -54,6 +61,9 @@ def read_yaml(path: str | Path, *, prefer_pyyaml: bool = True) -> Any:
 # --------------------------------------------------------------------------
 
 _KEY_RE = re.compile(r"^(?P<key>(?:\"[^\"]*\"|'[^']*'|[^:#]+?))\s*:(?:\s+(?P<val>.*))?$")
+#: a sequence item that opens with a QUOTED key (``- "no": x``): the quoted part is the
+#: whole key, so a quoted scalar item holding ``: `` (``- "a: b"``) is not one
+_QUOTED_KEY_RE = re.compile(r"^(?:\"[^\"\\]*\"|'[^']*')\s*:(?:\s+.*)?$")
 
 
 def _strip_comment(line: str) -> str:
@@ -109,6 +119,11 @@ def _scalar(tok: str) -> Any:
         return int(tok)
     if re.fullmatch(r"[+-]?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?", tok):
         return float(tok)
+    # PyYAML's spellings of the infinities and NaN, which the writer uses for a float
+    if re.fullmatch(r"[+-]?\.(?:inf|Inf|INF)", tok):
+        return float("-inf") if tok[0] == "-" else float("inf")
+    if re.fullmatch(r"\.(?:nan|NaN|NAN)", tok):
+        return float("nan")
     if tok.startswith("[") and tok.endswith("]"):
         inner = tok[1:-1].strip()
         return [] if not inner else [_scalar(x) for x in _split_flow(inner)]
@@ -345,7 +360,8 @@ def _parse_seq(lines, i: int, indent: int, where: str, text: str):
                 out.append(item)
             else:
                 out.append(None)
-        elif _KEY_RE.match(rest) and not rest.startswith(("\"", "'")):
+        elif _KEY_RE.match(rest) and (not rest.startswith(("\"", "'"))
+                                      or _QUOTED_KEY_RE.match(rest)):
             # inline first key of a mapping item; following deeper lines continue it
             sub = [(ind + 2, rest, lineno)]
             while i < len(lines) and lines[i][0] > ind:
@@ -370,12 +386,13 @@ def dump_yaml(obj: Any, indent: int = 0) -> str:
             return pad + "{}\n"
         out = []
         for k, v in obj.items():
+            key = _fmt_key(k)
             if isinstance(v, str) and "\n" in v and _block_safe(v):
-                out.append(f"{pad}{k}: {_block_head(v)}\n" + _block_lines(v, indent + 2))
+                out.append(f"{pad}{key}: {_block_head(v)}\n" + _block_lines(v, indent + 2))
             elif isinstance(v, (dict, list)) and v:
-                out.append(f"{pad}{k}:\n{dump_yaml(v, indent + 2)}")
+                out.append(f"{pad}{key}:\n{dump_yaml(v, indent + 2)}")
             else:
-                out.append(f"{pad}{k}: {_fmt_scalar(v)}\n")
+                out.append(f"{pad}{key}: {_fmt_scalar(v)}\n")
         return "".join(out)
     if isinstance(obj, list):
         if not obj:
@@ -440,11 +457,45 @@ _CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f  ﻿]")
 
 _CONTROL_NAMED = {"\n": "\\n", "\t": "\\t", "\r": "\\r", "\0": "\\0"}
 
-#: Anything PyYAML would type as a number rather than hand back as a string.
+#: Anything a reader would type as a number rather than hand back as a string.
 #: The fallback reader only understands decimals, so an unquoted `0x10` meant
-#: 16 with PyYAML installed and "0x10" without it.
+#: 16 with PyYAML installed and "0x10" without it; and an exponent was missing,
+#: so `1.5e-3` was written bare and read back as 0.0015.  PyYAML's own rules
+#: (``yaml.resolver.Resolver``, YAML 1.1) are narrower -- an exponent needs a dot
+#: and a sign, so `1e3` is a string to it but a float to a YAML 1.2 reader -- and
+#: this is deliberately wider than both: digits, ``._``, an optional exponent and
+#: sign, a base prefix, ``.inf`` and ``.nan``.  Base-60 numbers and timestamps
+#: carry a ``:``, which is quoted on its own.
 _NUMBER_LOOKALIKE = re.compile(
-    r"[+-]?(?:[\d.][\d._]*|0[xX][0-9a-fA-F_]+|0[oObB][0-7_]+|\.(?:inf|Inf|INF|nan|NaN|NAN))")
+    r"[+-]?(?:[\d.][\d._]*(?:[eE][+-]?[\d_]*)?|0[xX][0-9a-fA-F_]+|0[oObB][0-7_]+"
+    r"|\.(?:inf|Inf|INF|nan|NaN|NAN))")
+#: Plain words a reader types, compared lower-cased: PyYAML's bools and nulls (the
+#: fallback reader folds case, so ``yEs`` is quoted too), and its merge key ``<<``
+#: and value ``=``, which it refuses to construct at all, so a bare one made the
+#: whole file unreadable
+_TYPED_WORDS = frozenset({"true", "false", "null", "yes", "no", "on", "off", "~", "<<", "="})
+#: PyYAML reads an unquoted ``2026-09-16`` as a ``datetime.date``
+_DATE_LOOKALIKE = re.compile(r"\d{4}-\d{2}-\d{2}")
+#: the look-alikes that carry a ``:`` -- PyYAML's base-60 numbers (``1:30`` is 90) and
+#: its timestamps -- which a value is quoted for anyway, but a mapping key is not
+_COLON_LOOKALIKE = re.compile(
+    r"[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+(?:\.[0-9_]*)?"
+    r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:[Tt]|[ \t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?"
+    r"(?:[ \t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?")
+
+
+def _typed_plain(s: str) -> bool:
+    """Would either reader type the plain scalar ``s`` as anything but this string?
+
+    The one rule for both a value and a mapping key: PyYAML's implicit types
+    (bool, int, float, null, timestamp, merge, value) and the fallback reader's
+    (``_scalar``), as :data:`_NUMBER_LOOKALIKE`, :data:`_TYPED_WORDS`,
+    :data:`_DATE_LOOKALIKE` and :data:`_COLON_LOOKALIKE` state them, and the empty
+    string (a null to both).
+    """
+    return (s == "" or s.lower() in _TYPED_WORDS or _NUMBER_LOOKALIKE.fullmatch(s) is not None
+            or _DATE_LOOKALIKE.fullmatch(s) is not None
+            or _COLON_LOOKALIKE.fullmatch(s) is not None)
 
 
 def _escape_control(match: "re.Match[str]") -> str:
@@ -460,12 +511,48 @@ def _double_quoted(s: str) -> str:
     return '"' + _CONTROL_RE.sub(_escape_control, escaped) + '"'
 
 
+def _fmt_float(v: float) -> str:
+    """A float both readers read back as this float.
+
+    ``str()`` wrote ``1e-05``, ``1e+16`` and ``inf``, which PyYAML reads as strings
+    (its float needs a dot, and an infinity is ``.inf``): the mantissa gains its
+    ``.0`` and the infinities and NaN are written as YAML spells them.
+    """
+    if v != v:
+        return ".nan"
+    if v in (float("inf"), float("-inf")):
+        return ".inf" if v > 0 else "-.inf"
+    text = repr(v)
+    mantissa, e, exponent = text.partition("e")
+    if e:
+        if "." not in mantissa:
+            mantissa += ".0"
+        if exponent[:1] not in "+-":
+            exponent = "+" + exponent
+        return f"{mantissa}e{exponent}"
+    return text if "." in text else text + ".0"
+
+
+def _fmt_key(k: Any) -> str:
+    """A mapping key: bare, unless a reader would type it (``"no": ...``, ``"1.5e-3": ...``).
+
+    Both readers typed such a key -- PyYAML to ``False`` or ``0.0015``, the fallback
+    reader to the string ``"False"`` -- so a key cf wrote came back as another key.
+    """
+    s = str(k)
+    if isinstance(k, str) and _typed_plain(s):
+        return _double_quoted(s)
+    return s
+
+
 def _fmt_scalar(v: Any) -> str:
     if v is None:
         return "null"
     if isinstance(v, bool):
         return "true" if v else "false"
-    if isinstance(v, (int, float)):
+    if isinstance(v, float):
+        return _fmt_float(v)
+    if isinstance(v, int):
         return str(v)
     if isinstance(v, (list, dict)):
         return "[]" if isinstance(v, list) else "{}"
@@ -484,9 +571,7 @@ def _fmt_scalar(v: Any) -> str:
     #: block context: a title harvested as ", and other notes" was written bare and
     #: PyYAML then refused the whole file ("expected the node content, but found
     #: ','"), which is the same defect as the tab.
-    if s == "" or re.search(r"[:#\[\]{}]|^\s|\s$|^[-?&*!|>%@`,]", s) or s.lower() in {
-        "true", "false", "null", "yes", "no", "on", "off", "~"
-    } or _NUMBER_LOOKALIKE.fullmatch(s) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) \
+    if re.search(r"[:#\[\]{}]|^\s|\s$|^[-?&*!|>%@`,]", s) or _typed_plain(s) \
             or _CONTROL_RE.search(s) or s[:1] in "\"'":
         return _double_quoted(s)
     return s
