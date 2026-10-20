@@ -22,6 +22,12 @@ the shipped producer, not a fixture of the next stage's format:
     L5         cf plan-locate --preset locate-challenge; verdicts; gate; harvest
     L6         cf tally --locate, cf export literature-links (sealed, checked)
     bench      cf bench build / anchor / freeze / score over the same runs
+    A/A        loc-2 planned exactly as loc-1, run, challenged as chl-1 was,
+               tallied and scored; cf bench compare --aa answers "aa ok"
+               (references/locate-bench.md section 9, rule 5)
+    A/A refusal  loc-3 planned as loc-1 but challenged at another
+               --strong-sample-rate: cf bench compare --aa refuses it, naming
+               the planning key
 
 Nothing touches the network or a model.  Every check reads an artifact, never
 a log line.  Run it on its own with ``python3 tests/e2e/locate_synthetic/driver.py
@@ -610,26 +616,34 @@ class Pipeline:
         return {"item": passage["item"], "outcome": "absent", "locations": [], "receipt": receipt,
                 "claims": self.OTHER_CLAIMS}
 
-    def locate(self) -> None:
-        self.proof_part: str | None = None
-        self.cf("plan-locate", "--preset", "locate", "--sourceset", SS, "--universe", U,
-                "--inventory-run", "inv-1", "--run-id", "loc-1", "--max-cost", "50")
-        out = self.made / "loc-1" / "findings"
-        self.locate_docs: dict[tuple[str, str], Path] = {}
-        manifests = self._manifests("loc-1")
-        check(manifests, "the locate plan wrote no task manifest")
+    #: how every locate run of the campaign is planned (the A/A stage plans loc-2 so too)
+    LOCATE_PLAN = ("--preset", "locate", "--sourceset", SS, "--universe", U,
+                   "--inventory-run", "inv-1", "--max-cost", "50")
+
+    def _locate_run(self, run_id: str) -> tuple[Path, dict[tuple[str, str], Path]]:
+        """Plan one locate run as :data:`LOCATE_PLAN` says, answer and gate every document."""
+        self.proof_part = None
+        self.cf("plan-locate", *self.LOCATE_PLAN, "--run-id", run_id)
+        out = self.made / run_id / "findings"
+        docs: dict[tuple[str, str], Path] = {}
+        manifests = self._manifests(run_id)
+        check(manifests, f"the {run_id} plan wrote no task manifest")
         for task_id, manifest in manifests.items():
             for d in manifest["documents"]:
                 sid = d["source_id"]
                 check(len(d["passages"]) <= 8, f"{task_id} carries {len(d['passages'])} passages")
                 curated = d.get("curated") or []
-                doc = self._header("locate", "loc-1", task_id, d, universe=True)
+                doc = self._header("locate", run_id, task_id, d, universe=True)
                 doc["passages"] = [self._answer(sid, p, curated) for p in d["passages"]]
                 path = self.write_json(out / task_id / f"{sid}.json", doc)
-                self.locate_docs[(task_id, sid)] = path
-                code, text = self.gate("loc-1", path)
+                docs[(task_id, sid)] = path
+                code, text = self.gate(run_id, path)
                 check(code == 0, f"the staged gate refused the good locate document "
                                  f"{task_id}/{sid}:\n{text}")
+        return out, docs
+
+    def locate(self) -> None:
+        out, self.locate_docs = self._locate_run("loc-1")
         self._locate_refusals()
         self._ownership()
         receipt = self.harvest("loc-1", out)
@@ -769,14 +783,24 @@ class Pipeline:
             self.refused(code, text, "another task's findings", "rule 7")
 
     # ------------------------------------------------------------------- L5
+    #: how every challenge run is planned, but for the run it challenges
+    CHALLENGE_PLAN = ("--preset", "locate-challenge", "--sourceset", SS, "--universe", U,
+                      "--max-cost", "50")
+
     def challenge(self) -> None:
-        self.bad_upholds = 0
-        self.cf("plan-locate", "--preset", "locate-challenge", "--sourceset", SS, "--universe", U,
-                "--challenge-of", "loc-1", "--run-id", "chl-1", "--max-cost", "50")
-        out = self.made / "chl-1" / "findings"
-        for task_id, manifest in self._manifests("chl-1").items():
+        self.bad_upholds = self._challenge_run("chl-1", "loc-1", refusals=True)
+        check(self.bad_upholds > 0, "no challenge task upheld an absence, so the uphold's "
+                                    "search rule was never exercised")
+
+    def _challenge_run(self, run_id: str, of: str, *flags: str, refusals: bool = False) -> int:
+        """Plan a challenge of ``of``, answer and gate it, harvest; the bad upholds refused."""
+        bad_upholds = 0
+        self.cf("plan-locate", *self.CHALLENGE_PLAN, "--challenge-of", of, "--run-id", run_id,
+                *flags)
+        out = self.made / run_id / "findings"
+        for task_id, manifest in self._manifests(run_id).items():
             for d in manifest["documents"]:
-                doc = self._header("locate-challenge", "chl-1", task_id, d, universe=True)
+                doc = self._header("locate-challenge", run_id, task_id, d, universe=True)
                 verdicts, claims = [], {}
                 for rec in d["records"]:
                     v = {"item": rec["item"], "target": rec["target"],
@@ -809,22 +833,21 @@ class Pipeline:
                 if claims:
                     doc["claims"] = claims
                 path = self.write_json(out / task_id / f"{d['source_id']}.json", doc)
-                code, text = self.gate("chl-1", path)
-                check(code == 0, f"the gate refused a good challenge document:\n{text}")
+                code, text = self.gate(run_id, path)
+                check(code == 0, f"the gate refused a good {run_id} challenge document:\n{text}")
                 upheld = [i for i, v in enumerate(verdicts) if v.get("queries")]
-                if upheld:
+                if upheld and refusals:
                     # an uphold that says nothing of its search is refused (rule 9)
                     bare = json.loads(json.dumps(doc))
                     for key in ("queries", "query_clauses"):
                         bare["verdicts"][upheld[0]].pop(key)
                     bad = self.write_json(self.made / "chl-bad" / task_id
                                           / f"{d['source_id']}.json", bare)
-                    code, text = self.gate("chl-1", bad)
+                    code, text = self.gate(run_id, bad)
                     self.refused(code, text, "uphold without its search", "rule 9")
-                    self.bad_upholds += 1
-        check(self.bad_upholds > 0, "no challenge task upheld an absence, so the uphold's "
-                                    "search rule was never exercised")
-        self.harvest("chl-1", out)
+                    bad_upholds += 1
+        self.harvest(run_id, out)
+        return bad_upholds
 
     # ------------------------------------------------------------------- L6
     def export(self) -> None:
@@ -916,9 +939,7 @@ class Pipeline:
             "declarations": [], "evidence": "nothing at the pin states it (synthetic)",
             "hunters": []})
         self.cf("bench", "freeze", "b0")
-        code, out = self.cf("bench", "score", "b0", "--run", "loc-1", "--split", "eval",
-                            "--no-canary-check", "--bootstrap", "200", "--json")
-        score = json.loads(out[out.index("{"):])
+        score = self._score("loc-1")
         self.score = score
         check(score.get("measurement_id"), "the score document has no measurement_id")
         g1 = (score.get("tiers") or {}).get("G1") or {}
@@ -931,13 +952,97 @@ class Pipeline:
         check(set(score.get("pins") or {}) >= {"sourceset_manifest_sha256", "universe_sha256"}
               or "pins" in score, "the score pins nothing")
 
+    #: how every run is scored (the A/A stages score their replicates so too)
+    SCORE_FLAGS = ("--split", "eval", "--no-canary-check", "--bootstrap", "200")
+    #: the A/A's claim: G3 is the claimable tier the synthetic bench labels (G1 is
+    #: claimable in the blind arm only)
+    AA_CLAIM = "G3.inventory_recall"
+
+    def _score(self, run_id: str) -> dict:
+        code, out = self.cf("bench", "score", "b0", "--run", run_id, *self.SCORE_FLAGS, "--json")
+        return json.loads(out[out.index("{"):])
+
+    def _score_path(self, score: dict) -> Path:
+        from bench.layout import BenchLayout
+        path = BenchLayout.of(cf_main_paths(self.ws), "b0").score_json(score["score_id"])
+        check(path.is_file(), f"cf bench score wrote no {path}")
+        return path
+
+    def _replicate(self, locate_run: str, challenge_run: str, *challenge_flags: str) -> dict:
+        """A locate run planned as loc-1 and answered by the same worker, its challenge
+        planned as chl-1 was but for ``challenge_flags``, harvested, tallied and scored."""
+        out, docs = self._locate_run(locate_run)
+        receipt = self.harvest(locate_run, out)
+        check((receipt.get("locate") or {}).get("documents") == len(docs),
+              f"the {locate_run} receipt counts {receipt.get('locate')} locate documents")
+        self._challenge_run(challenge_run, locate_run, *challenge_flags)
+        self.cf("tally", "--locate", "--run", locate_run, "--challenge-run", challenge_run)
+        return self._score(locate_run)
+
+    def _aa_argv(self, baseline: dict, replicate: dict) -> tuple[str, ...]:
+        return ("bench", "compare", "b0", str(self._score_path(baseline)),
+                "--aa", str(self._score_path(replicate)), "--claim", self.AA_CLAIM,
+                "--bootstrap", "400")
+
+    # ------------------------------------------------------------------ A/A
+    def aa(self) -> None:
+        """The A/A stage: loc-2 is loc-1's configuration run again, and repeats it."""
+        base = self.score
+        replicate = self._replicate("loc-2", "chl-2")
+        self.aa_replicate = replicate
+        check(replicate["measurement_id"] != base["measurement_id"],
+              "the replicate measured the baseline's own runs")
+        check(replicate["runs"]["inventory"] == base["runs"]["inventory"] == ["inv-1"],
+              f"the replicate read another inventory: {replicate['runs']}")
+        planned = [sorted(json.dumps(v, sort_keys=True) for v in s["pins"]["planning"].values())
+                   for s in (base, replicate)]
+        check(planned[0] == planned[1], f"loc-2 was not planned as loc-1 was: {planned}")
+        code, out = self.cf(*self._aa_argv(base, replicate), "--json")
+        doc = json.loads(out[out.index("{"):])
+        self.aa_result = doc
+        check(doc.get("schema") == "cf-bench-aa/1" and doc.get("answer") == "aa ok"
+              and doc.get("ok") is True and doc.get("failed") == [],
+              f"the A/A of loc-1 and loc-2 does not answer aa ok: {doc.get('failed')}")
+        check((doc["baseline"], doc["replicate"])
+              == (base["measurement_id"], replicate["measurement_id"]),
+              f"the A/A compared other measurements: {doc['baseline']}, {doc['replicate']}")
+        agree = doc["aa"]["agreement"]
+        check(self.AA_CLAIM in agree["metrics"] and "G1.fnf_rate" in agree["metrics"]
+              and all(row["ok"] for row in agree["metrics"].values()) and agree["cost"]["ok"],
+              f"the replicate's outcomes do not agree with the baseline's: {agree}")
+        check(doc["aa"]["accepted"] is False,
+              "the acceptance rule accepted the replicate over its own baseline")
+        code, text = self.cf(*self._aa_argv(base, replicate))
+        check(text.splitlines()[0].startswith("aa ok"),
+              f"cf bench compare --aa does not answer aa ok:\n{text}")
+
+    def aa_refusal(self) -> None:
+        """One planning pin changed: loc-3's challenge samples strong records at another
+        rate, so loc-3 is no replicate of loc-1, and the A/A check says which key."""
+        from cflib import vocab
+        rate = 1.0
+        check(rate != vocab.CHALLENGE_STRONG_SAMPLE_RATE, "the changed pin is the default")
+        changed = self._replicate("loc-3", "chl-3", "--strong-sample-rate", str(rate))
+        planning = changed["pins"]["planning"]["chl-3"]
+        check(planning.get("strong_sample_rate") == rate,
+              f"chl-3's run.yaml does not record its strong-sample rate: {planning}")
+        code, out = self.cf(*self._aa_argv(self.score, changed), ok=False)
+        self.aa_refusal_text = out
+        check(code == 2 and "not the baseline's configuration" in out
+              and "planning differ" in out and "challenge strong_sample_rate" in out
+              and "--strong-sample-rate" in out,
+              f"the A/A check did not refuse another --strong-sample-rate by name "
+              f"(exit {code}):\n{out}")
+        check("aa ok" not in out and "aa FAILS" not in out,
+              f"a refused A/A was answered anyway:\n{out}")
+
 def cf_main_paths(ws: Path):
     from cflib.paths import WorkspacePaths
     return WorkspacePaths(Path(ws))
 
 
 STAGES = ("workspace", "universe", "sourceset", "candidates", "inventory", "locate",
-          "challenge", "export", "bench")
+          "challenge", "export", "bench", "aa", "aa_refusal")
 
 
 def run(root: Path, stages=STAGES) -> Pipeline:

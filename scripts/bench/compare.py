@@ -30,7 +30,13 @@ ratio per article cluster) and checks, at once:
    exceeds, fail;
 5. the A/A comparison -- the baseline against a distinct replicate run of its
    own configuration (the configuration shas each plan records, never the bytes
-   it rendered for its own run id) -- does NOT accept;
+   it rendered for its own run id, and the planning keys, named one by one when
+   they differ) -- does NOT accept, and the two runs' outcomes AGREE: no metric
+   of a tier both hold differs by more than :data:`AA_TOLERANCE` on its paired
+   95% interval, nor the cost per article by more than :data:`AA_COST_TOLERANCE`
+   of the baseline's (references/locate-bench.md section 9, rule 5).
+   :func:`aa_check` is that condition alone (``cf bench compare <id> <baseline>
+   --aa <replicate>``): it claims nothing, spends no alpha and writes nothing;
 6. multiplicity: the alpha of the j-th claimed comparison in the bench's ledger
    is ``alpha * 2**-j`` (alpha-spending), unless the comparison replicates an
    accepted claim of ANOTHER bench (a fresh draw), named by its ledger entry,
@@ -46,6 +52,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import json
 import os
 from pathlib import Path
 from typing import Any, Iterator
@@ -65,6 +72,20 @@ SAFETY_MAX_INCREASE = 0.01
 STRATUM_MIN_N = 30
 STRATUM_MAX_DROP = 0.03
 COST_MAX_INCREASE = 0.20
+#: the A/A's agreement (rule 5): a replicate's metric may differ from the baseline's by
+#: this much, absolute, before the two runs disagree -- the three points a stratum may
+#: drop -- and its cost per article by this fraction of the baseline's, the cost rule's
+#: own bound.  Judged on the paired interval at AA_LEVEL: the runs disagree on a metric
+#: only when the WHOLE interval of (replicate - baseline) lies past the tolerance, so a
+#: true A/A fails it by chance less often than its interval misses zero, 2.5% a side
+AA_TOLERANCE = STRATUM_MAX_DROP
+AA_COST_TOLERANCE = COST_MAX_INCREASE
+AA_LEVEL = 0.95
+#: the answers of the A/A check, as `cf bench compare <id> <baseline> --aa <r>` prints them
+AA_OK = "aa ok"
+AA_FAILS = "aa FAILS"
+#: the document `cf bench compare ... --aa ... --json` prints for the A/A alone (not a file)
+AA_SCHEMA = "cf-bench-aa/1"
 DEFAULT_ALPHA = 0.05
 #: the fewest bootstrap draws that may lie below the bound an alpha asks for
 MIN_TAIL_DRAWS = 10
@@ -195,9 +216,45 @@ def check_replicate(base: dict, replicate: dict) -> None:
                            "the configuration's shas), then run, harvest, tally and score them")
     differ = pin_differences(base, replicate, CONFIG_PINS)
     if differ:
+        detail = planning_differences(base, replicate) if "planning" in differ else []
         raise CfError(f"the A/A replicate is not the baseline's configuration: "
-                      f"{', '.join(differ)} differ",
-                      hint="an A/A replicate re-runs the baseline's configuration unchanged")
+                      f"{', '.join(differ)} differ"
+                      + (f" ({'; '.join(detail)})" if detail else ""),
+                      hint="an A/A replicate re-runs the baseline's configuration unchanged"
+                           + ("; re-plan it with the baseline's planning flags" if detail else ""))
+
+
+def planning_differences(base: dict, replicate: dict) -> list[str]:
+    """Each planning key whose values differ, by the stage of the runs that record it.
+
+    ``"challenge strong_sample_rate (--strong-sample-rate): 0.5 in the baseline, 1.0 in
+    the replicate"``: the ``planning`` pin is per run, and a run's stage is the score's
+    ``runs`` (inventory, locate, challenge).  Every planning key is ``cf plan-locate``'s
+    flag of the same spelling.  A key a run's ``run.yaml`` does not record (one planned
+    before it existed) is ``unrecorded``.
+    """
+    def by_stage(doc: dict) -> dict[tuple[str, str], set[str]]:
+        stage_of = {str(rid): stage for stage, rids in (doc.get("runs") or {}).items()
+                    for rid in rids or []}
+        out: dict[tuple[str, str], set[str]] = {}
+        planned = (doc.get("pins") or {}).get("planning") or {}
+        for rid, plan in sorted(planned.items() if isinstance(planned, dict) else []):
+            if not isinstance(plan, dict):
+                continue
+            for key, value in plan.items():
+                out.setdefault((stage_of.get(str(rid), "run"), key), set()).add(
+                    json.dumps(value, sort_keys=True))
+        return out
+
+    b, r = by_stage(base), by_stage(replicate)
+    found = []
+    for stage, key in sorted(set(b) | set(r)):
+        mine, theirs = b.get((stage, key), set()), r.get((stage, key), set())
+        if mine != theirs:
+            found.append(f"{stage} {key} (--{key.replace('_', '-')}): "
+                         f"{', '.join(sorted(mine)) or UNRECORDED} in the baseline, "
+                         f"{', '.join(sorted(theirs)) or UNRECORDED} in the replicate")
+    return found
 
 
 def _per_run(pin, doc: dict) -> list[tuple[str, Any]]:
@@ -380,6 +437,174 @@ def accepted(conditions: dict) -> bool:
     return all(conditions[k]["ok"] for k in keys) and conditions.get("claim_unseen", {"ok": True})["ok"]
 
 
+# --------------------------------------------------------------------------
+# the A/A: the replicate does not accept, and the two runs agree
+# --------------------------------------------------------------------------
+
+def _rate(cells: dict | None) -> float | None:
+    if not cells:
+        return None
+    den = sum(c[1] for c in cells.values())
+    return sum(c[0] for c in cells.values()) / den if den else None
+
+
+def _measured(cells: dict | None) -> bool:
+    return bool(cells) and any(c[1] for c in cells.values())
+
+
+def _band(lo: float | None, hi: float | None, tolerance: float) -> bool:
+    """The interval ``[lo, hi]`` reaches the band ``[-tolerance, +tolerance]``."""
+    return lo is None or (lo <= tolerance and hi >= -tolerance)
+
+
+def _metric_agreement(b: dict | None, r: dict | None, clusters: list[str], metric: str,
+                      replicates: int, seed: str) -> dict:
+    """One metric of one tier: the paired interval of ``replicate - baseline``."""
+    tail = (1.0 - AA_LEVEL) / 2.0
+    row: dict[str, Any] = {"baseline": _rate(b), "replicate": _rate(r)}
+    if _measured(b) and _measured(r):
+        draws = metrics.paired(b, r, clusters, replicates=replicates, seed=seed)
+        lo, hi = metrics.quantile(draws, tail), metrics.quantile(draws, 1.0 - tail)
+        if lo is None:
+            row.update(lo=None, hi=None, ok=True,
+                       why="no cluster that both runs measure: nothing to pair")
+            return row
+    elif metric in metrics.LOWER_IS_BETTER and (_measured(b) or _measured(r)):
+        # an error rate one run never risked is a rate of zero there (as rule 2 reads it):
+        # the difference is the other run's own rate, with its sign
+        one = metrics.bootstrap(r if _measured(r) else b, clusters, replicates=replicates,
+                                seed=seed, level=AA_LEVEL)
+        lo, hi = one["lo"], one["hi"]
+        if lo is not None and not _measured(r):
+            lo, hi = -hi, -lo
+        row["why"] = ("the baseline never risked it: the difference is the replicate's rate"
+                      if _measured(r) else
+                      "the replicate never risked it: the difference is the baseline's rate")
+    else:
+        row.update(lo=None, hi=None, ok=True,
+                   why=("measured by one run only: no rate to compare"
+                        if _measured(b) or _measured(r) else "measured by neither run"))
+        return row
+    row.update(lo=lo, hi=hi, ok=_band(lo, hi, AA_TOLERANCE))
+    return row
+
+
+def _cost_agreement(base: dict, replicate: dict, clusters: list[str], replicates: int,
+                    seed: str) -> dict:
+    """The cost per article, relative to the baseline's, on the cells rule 4 judges."""
+    cells = cost_cells(base, replicate)
+    b = ((base.get("per_cluster") or {}).get("cost") or {}).get(cells)
+    r = ((replicate.get("per_cluster") or {}).get("cost") or {}).get(cells)
+    row: dict[str, Any] = {"cells": cells, "baseline": _rate(b), "replicate": _rate(r),
+                           "tolerance": AA_COST_TOLERANCE}
+    if not _measured(b) or not _measured(r):
+        row.update(ok=True, why="a score has no cost per article: nothing to compare")
+        return row
+    basis = [base.get("cost", {}).get("basis"), replicate.get("cost", {}).get("basis")]
+    if basis[0] != basis[1]:
+        row.update(ok=False, basis=basis,
+                   why="the two scores price articles on different bases: score them alike")
+        return row
+    tail = (1.0 - AA_LEVEL) / 2.0
+    draws = metrics.paired(b, r, clusters, replicates=replicates, seed=seed)
+    lo, hi = metrics.quantile(draws, tail), metrics.quantile(draws, 1.0 - tail)
+    row.update(lo=lo, hi=hi)
+    base_value = row["baseline"] or 0.0
+    if base_value <= 0:
+        row.update(ok=lo is None or lo <= 0,
+                   why="the baseline cost nothing: the replicate must not cost more")
+        return row
+    rel = (None, None) if lo is None else (lo / base_value, hi / base_value)
+    row.update(relative_lo=rel[0], relative_hi=rel[1],
+               ok=_band(rel[0], rel[1], AA_COST_TOLERANCE))
+    return row
+
+
+def agreement(base: dict, replicate: dict, *, replicates: int, seed: int) -> dict:
+    """Whether the replicate's outcomes repeat the baseline's, within the stated tolerance.
+
+    Every metric of every tier both scores hold (``per_cluster``), paired cluster by
+    cluster as the rule pairs a candidate: the runs disagree on a metric when the
+    whole AA_LEVEL interval of ``replicate - baseline`` lies beyond AA_TOLERANCE, and on
+    cost when it lies beyond AA_COST_TOLERANCE of the baseline's cost per article.
+    The rule's own A/A check is one-sided (the replicate must not look better); this one
+    also fails a replicate that is clearly worse, or one that differs on a metric the
+    claim does not name.
+    """
+    clusters = _clusters(base, replicate)
+    checked: dict[str, dict] = {}
+    b_cells, r_cells = base.get("per_cluster") or {}, replicate.get("per_cluster") or {}
+    for tier in (t for t in TIERS if t in b_cells and t in r_cells):
+        for metric in sorted(set(b_cells[tier]) | set(r_cells[tier])):
+            checked[f"{tier}.{metric}"] = {
+                **_metric_agreement(b_cells[tier].get(metric), r_cells[tier].get(metric),
+                                    clusters, metric, replicates, f"{seed}:aa:{tier}:{metric}"),
+                "tolerance": AA_TOLERANCE}
+    cost = _cost_agreement(base, replicate, clusters, replicates, f"{seed}:aa:cost")
+    disagree = sorted(name for name, row in checked.items() if not row["ok"])
+    if not cost["ok"]:
+        disagree.append("cost")
+    return {"level": AA_LEVEL, "tolerance": AA_TOLERANCE, "cost_tolerance": AA_COST_TOLERANCE,
+            "metrics": checked, "cost": cost, "disagree": disagree, "ok": not disagree}
+
+
+def aa_condition(base: dict, replicate: dict, *, claim: str, alpha_j: float, replicates: int,
+                 seed: int) -> dict:
+    """Rule 5 on a checked replicate: the rule does not accept it, and the runs agree."""
+    rule = evaluate(base, replicate, claim=claim, alpha_j=alpha_j, replicates=replicates,
+                    seed=seed)
+    agree = agreement(base, replicate, replicates=replicates, seed=seed)
+    return {"accepted": accepted(rule), "ok": not accepted(rule) and agree["ok"],
+            "claim_improvement_lower": rule["claim"]["improvement_lower"],
+            "agreement": agree,
+            "replicate": replicate["measurement_id"],
+            "replicate_score": replicate.get("score_id")}
+
+
+def _seeds(doc: dict) -> dict:
+    """A score's challenge runs' seeds, ``{run: seed}``: recorded, compared by nothing."""
+    pin = (doc.get("pins") or {}).get("challenge_seed")
+    challenge = {str(r) for r in (doc.get("runs") or {}).get("challenge") or []}
+    return ({rid: seed for rid, seed in sorted(pin.items()) if rid in challenge}
+            if isinstance(pin, dict) else {})
+
+
+def aa_check(layout: BenchLayout, base_path: Path, aa_path: Path, *, claim: str,
+             alpha: float = DEFAULT_ALPHA, replicates: int = 2000, seed: int = 0) -> dict:
+    """The A/A alone: is ``aa_path`` a replicate of ``base_path`` whose outcomes repeat it?
+
+    The refusals are every comparison's and :func:`check_replicate`'s, by name; the
+    answer is rule 5's condition at the full ``alpha``, the largest any comparison of
+    the bench uses: a replicate the rule does not accept there it accepts at no spent
+    alpha either.  Nothing is claimed, no alpha is spent and nothing is written: the
+    document is returned for the caller to print.
+    """
+    if not (isinstance(alpha, (int, float)) and 0.0 < float(alpha) < 0.5):
+        raise CfError(f"--alpha {alpha} is not a one-sided significance level",
+                      hint="pass 0 < alpha < 0.5 (default 0.05)")
+    base, replicate = load_score(base_path), load_score(aa_path)
+    refuse_subset(base, base_path, "baseline")
+    refuse_subset(replicate, aa_path, "A/A replicate")
+    if base.get("bench") != layout.bench_id:
+        raise CfError(f"{base_path} is a score of bench {base.get('bench')!r}, not {layout.bench_id!r}")
+    check_replicate(base, replicate)
+    differences = refuse_incomparable(base, replicate)
+    condition = aa_condition(base, replicate, claim=claim, alpha_j=float(alpha),
+                             replicates=replicates, seed=seed + 1)
+    failed = (["rule"] if condition["accepted"] else []) + condition["agreement"]["disagree"]
+    return {"schema": AA_SCHEMA, "bench": layout.bench_id, "claim": claim,
+            "split": base.get("split"), "arm": base.get("arm"),
+            "baseline": base["measurement_id"], "baseline_score": base.get("score_id"),
+            "replicate": replicate["measurement_id"], "replicate_score": replicate.get("score_id"),
+            "alpha": alpha, "bootstrap": replicates, "seed": seed,
+            "configuration": {"compared": list(CONFIG_PINS), "same": True},
+            "recorded": {"challenge_seed": {"baseline": _seeds(base),
+                                            "replicate": _seeds(replicate)}},
+            "aa": condition, "ok": condition["ok"], "failed": failed,
+            "answer": AA_OK if condition["ok"] else AA_FAILS,
+            "differences": differences}
+
+
 def claimable(cand: dict) -> tuple[bool, str]:
     coverage = cand.get("coverage") or {}
     articles = int(coverage.get("articles") or 0)
@@ -471,12 +696,8 @@ def compare(layout: BenchLayout, base_path: Path, cand_path: Path, *, claim: str
         if replicate is None:
             conditions["aa"] = {"ok": False, "why": "no A/A replicate: the rule needs one to reject"}
         else:
-            aa = evaluate(base, replicate, claim=claim, alpha_j=alpha_j, replicates=replicates,
-                          seed=seed + 1)
-            conditions["aa"] = {"accepted": accepted(aa), "ok": not accepted(aa),
-                                "claim_improvement_lower": aa["claim"]["improvement_lower"],
-                                "replicate": replicate["measurement_id"],
-                                "replicate_score": replicate.get("score_id")}
+            conditions["aa"] = aa_condition(base, replicate, claim=claim, alpha_j=alpha_j,
+                                            replicates=replicates, seed=seed + 1)
         decision = "accept" if accepted(conditions) and conditions["aa"]["ok"] else "reject"
         claimed, why = claimable(cand)
         entry = {

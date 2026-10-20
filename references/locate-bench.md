@@ -575,7 +575,8 @@ and any transcript (or host scan) holding the canary, which fails the run (§8.4
 ## 9. The acceptance rule and the loop ledger
 
 `cf bench compare <id> <baseline> <candidate> --claim <tier.metric> [--aa <replicate>]
-[--replication BENCH:ENTRY] [--alpha 0.05] [--bootstrap N]` refuses a subset score (§8: a
+[--replication BENCH:ENTRY] [--alpha 0.05] [--bootstrap N]` (leave out the candidate for the
+A/A check alone, below) refuses a subset score (§8: a
 pre-registered subset is a measurement, never a claim) as the baseline, the candidate or the
 A/A replicate, before it reads anything else; an alpha outside
 `0 < alpha < 0.5`; two scores of different benches, splits, arms, gold manifests or scorers
@@ -610,27 +611,68 @@ accepts only when every condition holds:
    spend as a rise or hides one), and so does any rise over a zero-cost baseline (20% of nothing
    is nothing);
 5. `aa`: the same rule applied to the baseline and its A/A replicate does **not** accept (no
-   `--aa` fails the condition). The replicate must be a distinct run -- not the baseline's
+   `--aa` fails the condition), **and the two runs' outcomes agree** (`conditions.aa.agreement`).
+   The replicate must be a distinct run -- not the baseline's
    measurement, run or locate receipt -- of the baseline's configuration: the comparison is
    refused when any of `universe_sha256`, `sourceset_manifest_sha256`, the tool versions, the
    runs' `skill_commit`, `gate_files` and `prompts` (the configuration shas, never the rendered
    ones, which name each run), `agents` (so a run whose agents ran with the sandbox bypass, or
    under another agentbox profile, is no replicate of one whose agents did not), `planning` (a
    run planned with `--per-task 8` is no replicate of one planned with `--per-task 1`, nor one
-   challenged at another `--sample-rate`), or
+   challenged at another `--sample-rate`, `--strong-sample-rate` or `--absence-sample-rate`), or
    `price_table_sha256` differ, and when either score
    holds a run whose `run.yaml` records no `locate.config_shas`, or no `config_shas.agents`
-   (re-plan it). The challenge's seed is recorded (`challenge_seed`) and compared by nothing: it picks one
+   (re-plan it). A `planning` refusal names each key that differs, by the stage of the runs
+   that record it, with the `cf plan-locate` flag of the same spelling and both values
+   (`challenge strong_sample_rate (--strong-sample-rate): 0.5 in the baseline, 1.0 in the
+   replicate`; a key a run planned before it existed does not record is `unrecorded`). The challenge's seed is recorded (`challenge_seed`) and compared by nothing: it picks one
    draw at the sample rate, not a way of running. Record keys are run-free, so one seed draws
    the same records of the two runs wherever they agree, and a replicate under another seed
    re-draws them: that is sampling variance the A/A replicate exists to measure, and requiring
    one seed would only hide it. Every plan already records the three planning keys, so
-   `planning` needs no re-plan;
+   `planning` needs no re-plan.
+   **Agreement** is the half the rule alone cannot see: a replicate that came out clearly
+   worse than its baseline, or that differs on a metric the claim does not name, is no
+   evidence that the measurement repeats, yet the rule does not accept it. Every metric of
+   every tier both scores hold (`per_cluster`) is paired cluster by cluster, and the runs
+   **disagree** on a metric when the whole 95% interval of `replicate − baseline` lies beyond
+   the tolerance, **0.03** (the three points a stratum may drop, `AA_TOLERANCE`), and on cost
+   when the interval of the cost per article (the cells rule 4 judges, `cost.cells`) lies
+   beyond **20%** of the baseline's (`AA_COST_TOLERANCE`, rule 4's bound). An error rate
+   (`metrics.LOWER_IS_BETTER`) that one run never risked is a rate of zero there, as rule 2
+   reads it, so the difference is the other run's own rate; a rate that is no error rate and
+   that one run alone measures has nothing to compare and passes, named (`why`); two cost
+   bases disagree. A true A/A, whose expected difference is zero, fails a metric by chance
+   less often than its interval misses zero: 2.5% a side.
+   `conditions.aa` holds `{accepted, ok, claim_improvement_lower, agreement: {level,
+   tolerance, cost_tolerance, metrics: {<tier>.<metric>: {baseline, replicate, lo, hi,
+   tolerance, ok, why?}}, cost: {cells, baseline, replicate, lo, hi, relative_lo,
+   relative_hi, tolerance, ok, why?}, disagree, ok}, replicate, replicate_score}`;
 6. multiplicity: the j-th claimed, non-replication entry of the bench's ledger uses
    `alpha · 2^-j` (alpha-spending). `--replication <bench>:<entry id>` replicates an accepted,
    claimed entry of ANOTHER bench's ledger (a fresh draw is a new bench) for the same claim, and
    uses alpha; it is refused within one bench, for an entry that is no accepted claim, and a
    second time for one entry.
+
+**The A/A check alone.** `cf bench compare <id> <baseline> --aa <replicate> --claim
+<tier.metric> [--alpha 0.05] [--bootstrap N] [--json]`, with no candidate, is condition 5 by
+itself, for the baseline twice before any candidate exists (the pilot's A/A, Tier A's before
+signing). It refuses everything a comparison refuses between the two scores, and every
+replicate refusal above, by name; then it judges the rule at the full `--alpha` (the largest any
+comparison of the bench uses, so a replicate the rule does not accept there it accepts at no
+spent alpha) and the agreement, and answers on its first line
+**`aa ok`** (exit 0) or **`aa FAILS`** (exit 1), naming each metric the runs disagree on and
+whether the rule accepted the replicate; a refusal exits 2. It claims nothing, spends no
+alpha and **writes nothing**: the ledger is untouched. `--json` prints the document
+(`cf-bench-aa/1`, never a file): `{schema, bench, claim, split, arm, baseline, baseline_score,
+replicate, replicate_score, alpha, bootstrap, seed, configuration: {compared, same}, recorded:
+{challenge_seed: {baseline, replicate}}, aa, ok, failed, answer, differences}`, where each
+recorded seed map is `{challenge run: seed}`, `aa` is `conditions.aa` and `failed` lists
+`rule` (the rule accepted the replicate) and the metrics the runs disagree on. A
+`--replication` with it is refused (an A/A replicates no claim).
+`tests/e2e/locate_synthetic/driver.py` runs it: `loc-2` planned exactly as `loc-1`, challenged as
+`chl-1` was, harvested, tallied and scored, answers `aa ok`, and `loc-3`, challenged with
+another `--strong-sample-rate`, is refused naming the key.
 
 The ledger is always `benches/<id>/ledger.jsonl`; a comparison holds an exclusive lock on
 `ledger.jsonl.lock` from reading it to appending, so two comparisons never spend one alpha.
