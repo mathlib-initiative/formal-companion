@@ -288,11 +288,12 @@ pairwise, the passage against the one declaration:
   unfolding, bundling (the location's `convention`). A strengthening, a generalisation or a
   weakening is never one, and neither is a junk value (PD7). Where the declaration's map
   f′ : X′ → Y extends the passage's f : X → Y (X ⊂ X′): if f′ agrees with f on X and every case
-  outside X is mathematically trivial — a junk or default value (x/0 = 0) or an extra case that
-  reduces to a tautology (p = q, where the statement becomes IsSquare 0 ↔ IsSquare 0) — it is
-  `exactMatch`; if it agrees on X and some case outside X has
-  real mathematical content, it is `broadMatch` (R2), a generalisation; if f′(x) ≠ f(x) at some
-  x where both are defined, it is `closeMatch` (a convention) or weaker.
+  outside X is mathematically trivial — the passage's mathematics does not depend on f′'s value
+  there, as with a junk or default value (x/0 = 0, `riemannZeta` at its pole s = 1) or an extra
+  case that reduces to a tautology (p = q, where the statement becomes IsSquare 0 ↔ IsSquare 0)
+  — it is `exactMatch`; if it agrees on X and some case outside X has real mathematical content,
+  it is `broadMatch` (R2), a generalisation; if f′(x) ≠ f(x) at some x where both are defined,
+  it is `closeMatch` (a convention) or weaker.
 - **R2** — `broadMatch` when the passage follows from the declaration by instantiation or
   weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all
   primes for a finite table), with no hypothesis stronger than the passage's; a stronger
@@ -319,8 +320,8 @@ pairwise, the passage against the one declaration:
 - **R7** — a definition passage is judged on the data it defines; bundled proof fields are
   packaging (R1's bundling).
 
-The **policy defaults**, the maintainer's (PD1–PD4 of 2026-10-19, PD5–PD9 of 2026-10-20),
-numbered PD1–PD9 apart from the review patterns' P1–P13 (`references/review-patterns.md`). Each
+The **policy defaults**, the maintainer's (PD1–PD4 of 2026-10-19, PD5–PD10 of 2026-10-20),
+numbered PD1–PD10 apart from the review patterns' P1–P13 (`references/review-patterns.md`). Each
 is a default, not a law of the format: it can be overridden, and an override is a change to this
 paragraph, to both prompts (`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`)
 and to the bench's labeler (`workflows/locate-label.workflow.js`, whose `LABELER_VERSION` it
@@ -350,10 +351,14 @@ for that relabel:
   location with its own relation (a centralizer defined in any ring, where the passage has a
   matrix's centralizer, is `broadMatch`, PD1), and a coverage claim stands only on parts that
   each state some of the clauses.
-- **PD7** — whether a case outside the passage's domain is trivial (R1) is a judgment: an
-  `exactMatch` or `broadMatch` that rests on it says why in its `note`, and a case with real
-  mathematical content makes a generalisation, never a junk value. (PD3's trivial case is the
-  other way round: a declaration that states only a degenerate case of the passage.)
+- **PD7** — a case outside the passage's domain is trivial (R1) when the passage's
+  mathematics does not depend on the declaration's value there — in the maintainer's words, "it
+  shouldn't matter what the value of riemannZeta 1 is" — so `riemannZeta` at s = 1 is a junk
+  value, though Mathlib proves a closed form for it (`riemannZeta_one`). Whether a case is
+  trivial is still a judgment: an `exactMatch` or `broadMatch` that rests on it says why in its
+  `note`, and a case with real mathematical content makes a generalisation, never a junk value.
+  (PD3's trivial case is the other way round: a declaration that states only a degenerate case
+  of the passage.)
 - **PD8** — a passage follows from a declaration by instantiation (R2) only when, after
   instantiating, what is left closes by decidable arithmetic (`omega`, `norm_num`, `decide`); a
   bridge that needs a named lemma (`Nat.mul_mod`, a parity lemma for (−1)^n) makes it
@@ -361,12 +366,20 @@ for that relabel:
   are no instantiation: PD8 leaves them to R2.
 - **PD9** — a stated reason ("it holds because X") makes X a claim only when X is a declarative
   mathematical statement that no neighbouring passage already states.
+- **PD10** — one notion in two encodings is no bridge: a declaration that uses Mathlib's
+  standard notion where the passage has its own definition of the same thing (`IsCoprime m n`
+  where the passage says m and n have no common factor other than 1, linked by
+  `Int.isCoprime_iff_gcd_eq_one`) differs from the passage by an `encoding` (R1: a `closeMatch`
+  when nothing else differs), and the library lemma that links the two definitions is no PD8
+  bridge. It sharpens R1's encoding and limits PD8, which governs bridges between statements,
+  not between two definitions of one notion.
 
 PD1 makes a definition passage stated over a specific object `partial` against a definition over
 a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); PD2 and
 PD3 make a theorem passage `partial` against such a declaration, never `formalized` or unresolved.
 
-What PD5–PD9 replace or sharpen (the smoke-3 audit's open policy calls, its FM8):
+What PD5–PD10 replace or sharpen (the smoke-3 audit's open policy calls, its FM8; PD10 and
+PD7's test for "trivial" are the maintainer's later answers that day):
 
 - PD5 sharpens the inventory's `expository` scope (FM9: a set-up passage scoped formal) and
   settles the audit's question about proof passages: a proof is not one passage whose displayed
@@ -392,12 +405,30 @@ What PD5–PD9 replace or sharpen (the smoke-3 audit's open policy calls, its FM
 - PD7 replaces R1's "junk values", which made a junk value a `closeMatch` convention:
   `junk_value` leaves `CLOSE_MATCH_CONVENTIONS` (gate rule 9 refuses it under judgment rules 2),
   and the prompts' example closeMatch note, Lean returning 0 at n = 0, is now an exactMatch's.
+  Its test for "trivial", the maintainer's later the same day, is whether the passage's
+  mathematics depends on the value outside its domain, not whether that value has a theory of
+  its own: `riemannZeta` at s = 1 is R1's junk-value example again (an earlier text of the rule
+  left it to the record's note, since Mathlib proves a closed form there).
 - PD8 sharpens R2's "instantiation" and R5's "the connection needs another theorem". It is
   read as the maintainer recorded it, of what is left "after instantiating": R2's other route, a
   weakening (a strict derivative for a plain one, which needs `HasStrictDerivAt.hasDerivAt`), is
   no instantiation and stays `broadMatch` by R2.
 - PD9 sharpens the claim list (R4, FM1), beside "history, motivation and attribution are not
   claims".
+- PD10 sharpens R1's `encoding` and limits PD8: a library lemma that links Mathlib's standard
+  notion to the passage's notion of the same thing (`IsCoprime` and "no common factor other than
+  1", through `Int.isCoprime_iff_gcd_eq_one`) is an encoding difference, not a PD8 bridge, since
+  PD8 governs bridges between statements, not between two definitions of one notion. PD8 is
+  otherwise as recorded, and a weakening stays R2's.
+
+**PD10 and PD7's test kept the labeler at `locate-label/5`.** An override bumps the labeler's
+version (the paragraph above); these two did not, because what a version decides in the bench is
+the judgment rules `bench.gold.LABELER_RULES` maps it to, which the score holds gold and runs to,
+and they add no gate check: `JUDGMENT_RULES` stays 2, so a `/6` would map to 2 too and the score
+would refuse nothing it does not refuse now. `/5` had labelled no gold when they joined it, and
+the labeler's file sha moved with them, so the transcriber refuses a result of args emitted from
+the earlier text and gold of `/5` is labelled by this one. Once gold has been labelled under a
+version, a change to the rules it carries bumps it.
 
 **PD7 in the maintainer's words** (2026-10-20), verbatim:
 
@@ -412,19 +443,27 @@ and, the same day:
 > of the passage's domain which are non-trivial mathematically then this should be marked as a
 > generalization not a junk value.
 
+and, later the same day, of `riemannZeta` at s = 1:
+
+> RiemannZeta is hard but I'd still classify it as a junk value personally since the mathematics
+> here doesn't actually depend on the value of riemannZeta 1. The point is that it shouldn't
+> matter what the value of riemannZeta 1 is, and that is still the case.
+
 So agreement on the passage's domain with only junk outside it is `exactMatch`: a division with
-x/0 = 0 states a passage that leaves x/0 undefined. An extra case that is only a tautology
-(quadratic reciprocity's p = q, where both sides become IsSquare 0 ↔ IsSquare 0) is junk too. A
-case outside the domain that says something — a statement proved for every ring where the
-passage has a field, whose other rings carry content of their own — is a generalisation,
-`broadMatch`. Either way the record's note says which. Between the two the call is the
-record's, as the maintainer says: Mathlib's `riemannZeta` takes a value at its pole s = 1,
-which its own docstring calls mathematically undefined and for which it proves a closed form
-(`riemannZeta_one`), so whether that value is trivial against a passage that defines the zeta
-function away from s = 1 is a judgment the note argues, not a settled example. A record of rules
-1 whose `junk_value` sits on a declaration that differs from the passage where both are defined
-(a count that is 0 for an infinite group, where the passage counts with cardinals) was never a
-junk value: it is a `closeMatch` by a real convention, or weaker.
+x/0 = 0 states a passage that leaves x/0 undefined, and Mathlib's `riemannZeta`, which takes a
+value at its pole s = 1, states a passage that defines the zeta function away from it. An extra
+case that is only a tautology (quadratic reciprocity's p = q, where both sides become
+IsSquare 0 ↔ IsSquare 0) is junk too. A case outside the domain that says something — a
+statement proved for every ring where the passage has a field, whose other rings carry content
+of their own — is a generalisation, `broadMatch`. Either way the record's note says which. The
+test for "trivial" is the maintainer's last word: whether the passage's mathematics depends on
+the value outside its domain. A value with a theory of its own can still be junk to the passage:
+Mathlib's documentation calls ζ(s) undefined at s = 1 and proves a closed form for the value it
+assigns there (`riemannZeta_one`), and a passage that defines the zeta function away from s = 1
+depends on neither. A record of rules 1 whose `junk_value` sits on a declaration that differs
+from the passage where both are defined (a count that is 0 for an infinite group, where the
+passage counts with cardinals) was never a junk value: it is a `closeMatch` by a real
+convention, or weaker.
 
 **The challenger's rule** (the audit's FM7: 8 of 25 challenge results were wrong, each a reasoning
 slip, not a search miss), in the challenge prompt word for word:
@@ -450,7 +489,7 @@ the changelog cite):
 | FM5 | an incomplete hunt: a stating declaration missed, or a false absence | a query of its own per claim (`query_clauses`), the rejected-candidate check, the absence sample |
 | FM6 | a setting mismatch: the declaration's hypotheses exclude the passage's objects | `instantiation`, R3 and R5 |
 | FM7 | a challenger's reasoning slip (D1 ignored, a special case refuted, two encodings split) | the challenger's rule above, its own claim list on every verdict |
-| FM8 | policy the rules did not settle | R1–R7 and PD1–PD9 |
+| FM8 | policy the rules did not settle | R1–R7 and PD1–PD10 |
 | FM9 | data and inventory defects (a statement flag, a cut span, a set-up passage scoped formal) | not the judgment rules: ingest and inventory work |
 
 What the gate holds mechanically, under the judgment rules (gate rule 9,
@@ -470,7 +509,8 @@ rests on the claim list a worker writes:
 a list that leaves a clause out, with an `exactMatch` naming every claim on it, passes, and only
 the challenge re-checks it — the phrase lists are tripwires that catch an honest note, not a
 parser. The rest is judgment, which the challenge re-checks: PD5 (what the inventory makes a
-passage), PD7's "trivial", PD8's bridge and PD9's stated reasons are not checked mechanically.
+passage), PD7's "trivial", PD8's bridge, PD9's stated reasons and PD10's encodings are not
+checked mechanically.
 A bridge lemma named in a `broadMatch`'s `instantiation` cannot be told from the instances and
 hypotheses the line names by right (`Fact p.Prime`, a ring instance, the declaration's own
 name), and a `hasPart` naming every claim outside a coverage claim may be a weakening credited
@@ -665,7 +705,7 @@ record no verdict judged.
 | `CLAIM_ID` | `c1`, `c2`, … (`c[1-9][0-9]?`): the id of a passage's claim, one formal clause of its claim list (`claims` of a locate or challenge document, references/locate-documents.md §3–§4), which a location's `clauses` name |
 | `CLAUSE_GAP_PHRASES` | `does not state` · `do not state` · `not stated` · `not part of` · `not a part of` · `rather than asserting` · `rather than stating` · `rather than proving` · `only the existence` · `only existence` · `only proves` · `only states` · `proves only` · `states only` · `only one direction` · `one direction only` · `not the converse` · `converse is not` · `without the converse` · `without uniqueness` · `uniqueness is not` · `does not cover` · `do not cover` · `not covered` · `not asserted` · `not included` · `omits` · `omitted` · `leaves out` · `left out` · `does not prove` · `does not assert` · `does not establish` — the closed list by which a strong record's note or instantiation admits a clause its declaration does not state (`admits_missing_clause`: whole words, case-folded, the apostrophe folded and a contraction spelled out, so "doesn't state" is "does not state"; a hit is set aside when negated — "not only the existence" —, when the passage is its subject — "the passage does not cover n = 0", "not part of the passage" — or in a relative clause on what an "unlike …" clause names); the gate refuses such a record under the judgment rules, and the challenge plan refutes it by default. A tripwire, not a parser: a note it misreads is reworded to say what the declaration does |
 | `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one of its own under the judgment rules (each claim, and `general`, matched to a distinct query) |
-| `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules. `LEGACY_CLOSE_MATCH_CONVENTIONS` is the list under judgment rules 1, with `junk_value` (`CONVENTION_JUNK_VALUE`), which PD7 took off it: a run planned under rules 1 is gated by it, and its records keep the value |
+| `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules. `LEGACY_CLOSE_MATCH_CONVENTIONS` is the list under judgment rules 1, with `junk_value` (`CONVENTION_JUNK_VALUE`), which PD7 took off it: a run planned under rules 1 is gated by it, and its records keep the value. `encoding` covers one notion under two definitions that a library lemma links (PD10) |
 | `CLOSE_MATCH_GENERALITY_PHRASES` | `stronger` · `strengthen*` · `weaker` · `weaken*` · `more general*` · `generali*` · `special case` · `particular case` · `broader` · `narrower` · `strict derivative*` · `strict differentiab*` · `strictly differentiab*` — words an `exactMatch` or `closeMatch` note may not say (`says_generality`: whole words, case-folded, a trailing `*` any ending of the word, so "more generally" and "generalisation" are hits); each describes a `broadMatch`, a `narrowMatch` or a weakening. "strict" and "strictly" alone are not on it: a strict inequality or a strictly increasing list is no strengthening. The prompts render the list from this tuple |
 | `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only |
 | `STEP_RELATIONS` | `hasPart` · `narrowMatch` — the relations whose location says, in its `step`, what the declaration alone entails of the passage (on a proof the displayed step, on any other passage the clause) |

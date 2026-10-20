@@ -276,7 +276,7 @@ service, and every hit counts only once found in the pinned checkout.
 
 **Frozen.** The args stamp `labeler: {version, workflow_sha256, skill_commit}` (the checkout
 they were emitted from) and a `digest` over themselves;
-the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/5`: the rules R1–R7 and PD1–PD9 of `references/vocabulary.md` §1.11; /3 added R1–R7 and PD1–PD3, /4 added PD4, /5 added PD5–PD9 and replaced R1's junk values with PD7's test). The
+the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/5`: the rules R1–R7 and PD1–PD10 of `references/vocabulary.md` §1.11; /3 added R1–R7 and PD1–PD3, /4 added PD4, /5 added PD5–PD10 and replaced R1's junk values with PD7's test; PD10 and PD7's test for "trivial" joined /5 without a bump, for the reason §1.11 gives). The
 transcriber refuses a result for other args, from another labeler version, or when the workflow
 file's sha changed since emission, and refuses a label for a task the args never named or
 labelled twice (the workflow also forces each answer's `task_id` to its task's). An unlabelled

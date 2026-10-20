@@ -198,7 +198,7 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
    query of its own per clause, the instantiation line, a part's step, a
    closeMatch's convention, a challenger's own claim list under every verdict,
    and since PD5–PD9 no coverage part that alone states every clause and no
-   junk value as a convention; rules R1–R7 and the policy defaults PD1–PD9 in
+   junk value as a convention; rules R1–R7 and the policy defaults PD1–PD10 in
    `references/vocabulary.md` §1.11).
    Larger work is a `cf campaign` of shards.
 5. `cf tally --locate --run <r> --challenge-run <c>` — passage outcomes and the
