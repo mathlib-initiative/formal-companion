@@ -57,8 +57,8 @@ from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GO
 #: the labeler, frozen by its file's sha (its prompts are inline in it)
 LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: bumped whenever the labeler's contract (args or result shape) or the rules it
-#: labels by change (/5: PD5-PD10, and R1's junk values replaced by PD7's test, whose
-#: test for "trivial" and PD10 joined /5 unbumped: they add no gate check, so a /6
+#: labels by change (/5: PD5-PD10, and R1's junk values replaced by PD7's test; PD10
+#: and PD7's test for a value joined /5 unbumped: they add no gate check, so a /6
 #: would label by the same judgment rules in LABELER_RULES below, and /5 had labelled
 #: no gold yet (references/vocabulary.md section 1.11); /4:
 #: PD4, a stronger-hypotheses special case is narrowMatch; /3: the judgment rules

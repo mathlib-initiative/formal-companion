@@ -1768,19 +1768,31 @@ class TestThePrompts(unittest.TestCase):
                       "states", lines["PD9"])
         # R1: PD7's three-way test replaced its junk values
         self.assertNotIn("junk values", lines["R1"])
-        # PD7's test for "trivial" (the maintainer's, 2026-10-20): the passage's mathematics does
-        # not depend on the value outside its domain, so riemannZeta at its pole is R1's
-        # junk-value example again (40f364d had taken it out as the record's call)
-        self.assertIn("the passage's mathematics does not depend on f′'s value there, as with a "
-                      "junk or default value (x/0 = 0, `riemannZeta` at its pole s = 1)", lines["R1"])
-        self.assertIn("a case outside the passage's domain is trivial (R1) when the passage's "
-                      "mathematics does not depend on the declaration's value there", lines["PD7"])
+        # PD7's test for a value (the maintainer's, 2026-10-20): the passage's mathematics does
+        # not depend on the value the declaration gives outside its domain, so riemannZeta at
+        # its pole is R1's junk-value example again (40f364d had taken it out as the record's
+        # call)
+        self.assertIn("a junk or default value, given where the passage leaves f undefined, that "
+                      "the passage's mathematics does not depend on (x/0 = 0, `riemannZeta` at "
+                      "its pole s = 1), or an extra case that reduces to a tautology", lines["R1"])
+        self.assertIn("a value the declaration gives where the passage leaves one undefined (a "
+                      "junk or default value, R1) is trivial when the passage's mathematics does "
+                      "not depend on it", lines["PD7"])
         self.assertIn("in the maintainer's words, \"it shouldn't matter what the value of "
-                      "riemannZeta 1 is\" — so `riemannZeta` at s = 1 is a junk value",
-                      lines["PD7"])
-        # a case outside the domain with real content is still a generalisation
-        self.assertIn("a case with real mathematical content makes a generalisation, never a "
-                      "junk value", lines["PD7"])
+                      "riemannZeta 1 is\" — so `riemannZeta` at s = 1 is a junk value against a "
+                      "passage that defines the zeta function away from s = 1", lines["PD7"])
+        # the test is of values: an extra case of the statement is trivial as a tautology, and
+        # one with real content is still a generalisation, so the test never makes every
+        # generalisation (whose extra cases the passage does not depend on either) an exactMatch
+        self.assertIn("That test is for such values: an extra case of the statement itself (a "
+                      "ring that is not a field, where the passage has a field) is trivial when it "
+                      "reduces to a tautology, and one with real mathematical content makes a "
+                      "generalisation, never a junk value.", lines["PD7"])
+        for name in ("R1", "PD7"):
+            for every_case in ("does not depend on f′'s value there",
+                               "does not depend on the declaration's value there",
+                               "a case outside the passage's domain is trivial (R1) when"):
+                self.assertNotIn(every_case, lines[name])
         # PD10: one notion in two encodings is R1's encoding, no PD8 bridge
         for needle in ("one notion in two encodings is no bridge",
                        "(`IsCoprime m n` where the passage says m and n have no common factor "
@@ -1796,7 +1808,8 @@ class TestThePrompts(unittest.TestCase):
                       "no instantiation: PD8 leaves them to R2", lines["PD8"])
         self.assertIn("a strict derivative for a plain one", lines["R2"])
         for needle in ("neither is a junk value (PD7)",
-                       "a junk or default value (x/0 = 0, `riemannZeta` at its pole s = 1) or",
+                       "`riemannZeta` at its pole s = 1), or an extra case that reduces to a "
+                       "tautology (p = q,",
                        "IsSquare 0 ↔ IsSquare 0) — it is `exactMatch`",
                        "some case outside X has real mathematical content, it is `broadMatch` "
                        "(R2), a generalisation",
@@ -1822,6 +1835,19 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("> matter what the value of riemannZeta 1 is, and that is still the case.",
                       vocabulary)
         self.assertNotIn("is a judgment the note argues, not a settled example", vocabulary)
+        # the test is of values, his first and last words; his second settles the extra cases
+        self.assertIn("The test is of values, which his first and last words speak of (\"trivial "
+                      "values … usually left undefined\", \"the value of riemannZeta 1\"), and not "
+                      "of an extra case of the statement, which his second words settle",
+                      vocabulary)
+        self.assertIn("Its test for a value outside the passage's domain, the maintainer's, given "
+                      "later the same day, is whether", vocabulary)
+        self.assertNotIn("the maintainer's later the same day", vocabulary)
+        # PD10's closeMatch is the relation table's, the convention the maintainer's
+        self.assertIn("The maintainer named the difference, an encoding (R1); that it is a "
+                      "`closeMatch` when nothing else differs is the relation table's definition "
+                      "of `closeMatch`, the same up to a convention, not a further ruling of his.",
+                      vocabulary)
         # which earlier rule or example each one replaces or sharpens
         for needle in ("PD5 sharpens the inventory's `expository` scope",
                        "PD6 sharpens R4 and the coverage claim of decision D1",
@@ -1911,17 +1937,19 @@ class TestThePrompts(unittest.TestCase):
         labeler = " ".join(labeler[labeler.index("const RULES = `"):labeler.index("const huntTools")]
                            .replace("\\`", "`").split())
         # PD7: the exactMatch instructions carry the test and the example
+        tests_of_a_value = ("a junk or default value that the passage's mathematics does not "
+                            "depend on, or an extra case that reduces to a tautology")
         self.assertIn("(Lean's x/0 = 0, `riemannZeta` at s = 1) still states it when it agrees "
                       "with the passage on the passage's domain and every case outside it is "
-                      "trivial — the passage's mathematics does not depend on the value there",
-                      worker)
+                      "trivial — " + tests_of_a_value + " —", worker)
         self.assertIn("(Lean's x/0 = 0, `riemannZeta` at s = 1) is judged by R1's three-way test "
                       "(PD7): an `exactMatch` when it agrees on the passage's domain and every "
-                      "case outside it is trivial (the passage's mathematics does not depend on "
-                      "the value there)", challenger)
-        self.assertIn("why each case outside the passage's domain is trivial (the passage's "
-                      "mathematics does not depend on the value there), or which one has content "
-                      "(PD7)", labeler)
+                      "case outside it is trivial (" + tests_of_a_value + ")", challenger)
+        self.assertIn("why each case outside the passage's domain is trivial ("
+                      + tests_of_a_value + "), or which one has content (PD7)", labeler)
+        # the dependence test is a test of values, never stated of every case outside the domain
+        for text in (worker, challenger, labeler):
+            self.assertNotIn("does not depend on the value there", text)
         # PD10 where each acts on PD8's bridge, PD8's own wording kept
         self.assertIn("makes it `relatedMatch`, not `broadMatch` (PD8). A lemma that only links "
                       "two definitions of one notion (`Int.isCoprime_iff_gcd_eq_one`, between "
@@ -1940,6 +1968,12 @@ class TestThePrompts(unittest.TestCase):
         vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
                               .read_text(encoding="utf-8").split())
         self.assertIn("**PD10 and PD7's test kept the labeler at `locate-label/5`.**", vocabulary)
+        # what neither the version nor the rules hold: a rules-2 run of the earlier text
+        self.assertIn("What neither version nor rules can hold is a run of judgment rules 2 "
+                      "planned from the earlier text, whose prompts lack PD10 and PD7's test",
+                      vocabulary)
+        self.assertIn("one planned from a checkout of the earlier text is planned again from this "
+                      "one before it is scored", vocabulary)
         self.assertIn("PD9's stated reasons and PD10's encodings are not checked mechanically",
                       vocabulary)
 

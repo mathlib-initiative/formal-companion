@@ -288,12 +288,12 @@ pairwise, the passage against the one declaration:
   unfolding, bundling (the location's `convention`). A strengthening, a generalisation or a
   weakening is never one, and neither is a junk value (PD7). Where the declaration's map
   f′ : X′ → Y extends the passage's f : X → Y (X ⊂ X′): if f′ agrees with f on X and every case
-  outside X is mathematically trivial — the passage's mathematics does not depend on f′'s value
-  there, as with a junk or default value (x/0 = 0, `riemannZeta` at its pole s = 1) or an extra
-  case that reduces to a tautology (p = q, where the statement becomes IsSquare 0 ↔ IsSquare 0)
-  — it is `exactMatch`; if it agrees on X and some case outside X has real mathematical content,
-  it is `broadMatch` (R2), a generalisation; if f′(x) ≠ f(x) at some x where both are defined,
-  it is `closeMatch` (a convention) or weaker.
+  outside X is mathematically trivial — a junk or default value, given where the passage leaves f
+  undefined, that the passage's mathematics does not depend on (x/0 = 0, `riemannZeta` at its
+  pole s = 1), or an extra case that reduces to a tautology (p = q, where the statement becomes
+  IsSquare 0 ↔ IsSquare 0) — it is `exactMatch`; if it agrees on X and some case outside X has
+  real mathematical content, it is `broadMatch` (R2), a generalisation; if f′(x) ≠ f(x) at some
+  x where both are defined, it is `closeMatch` (a convention) or weaker.
 - **R2** — `broadMatch` when the passage follows from the declaration by instantiation or
   weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all
   primes for a finite table), with no hypothesis stronger than the passage's; a stronger
@@ -351,14 +351,17 @@ for that relabel:
   location with its own relation (a centralizer defined in any ring, where the passage has a
   matrix's centralizer, is `broadMatch`, PD1), and a coverage claim stands only on parts that
   each state some of the clauses.
-- **PD7** — a case outside the passage's domain is trivial (R1) when the passage's
-  mathematics does not depend on the declaration's value there — in the maintainer's words, "it
-  shouldn't matter what the value of riemannZeta 1 is" — so `riemannZeta` at s = 1 is a junk
-  value, though Mathlib proves a closed form for it (`riemannZeta_one`). Whether a case is
-  trivial is still a judgment: an `exactMatch` or `broadMatch` that rests on it says why in its
-  `note`, and a case with real mathematical content makes a generalisation, never a junk value.
-  (PD3's trivial case is the other way round: a declaration that states only a degenerate case
-  of the passage.)
+- **PD7** — a value the declaration gives where the passage leaves one undefined (a junk or
+  default value, R1) is trivial when the passage's mathematics does not depend on it — in the
+  maintainer's words, "it shouldn't matter what the value of riemannZeta 1 is" — so
+  `riemannZeta` at s = 1 is a junk value against a passage that defines the zeta function away
+  from s = 1, though Mathlib proves a closed form for it (`riemannZeta_one`). That test is for
+  such values: an extra case of the statement itself (a ring that is not a field, where the
+  passage has a field) is trivial when it reduces to a tautology, and one with real mathematical
+  content makes a generalisation, never a junk value. Whether a case is trivial is still a
+  judgment: an `exactMatch` or `broadMatch` that rests on it says why in its `note`. (PD3's
+  trivial case is the other way round: a declaration that states only a degenerate case of the
+  passage.)
 - **PD8** — a passage follows from a declaration by instantiation (R2) only when, after
   instantiating, what is left closes by decidable arithmetic (`omega`, `norm_num`, `decide`); a
   bridge that needs a named lemma (`Nat.mul_mod`, a parity lemma for (−1)^n) makes it
@@ -405,10 +408,12 @@ PD7's test for "trivial" are the maintainer's later answers that day):
 - PD7 replaces R1's "junk values", which made a junk value a `closeMatch` convention:
   `junk_value` leaves `CLOSE_MATCH_CONVENTIONS` (gate rule 9 refuses it under judgment rules 2),
   and the prompts' example closeMatch note, Lean returning 0 at n = 0, is now an exactMatch's.
-  Its test for "trivial", the maintainer's later the same day, is whether the passage's
-  mathematics depends on the value outside its domain, not whether that value has a theory of
-  its own: `riemannZeta` at s = 1 is R1's junk-value example again (an earlier text of the rule
-  left it to the record's note, since Mathlib proves a closed form there).
+  Its test for a value outside the passage's domain, the maintainer's, given later the same day,
+  is whether the passage's mathematics depends on that value, not whether the value has a theory
+  of its own: `riemannZeta` at s = 1 is R1's junk-value example again (an earlier text of the
+  rule left it to the record's note, since Mathlib proves a closed form there). The test is of
+  values, not of the extra cases of a statement, which are trivial when they reduce to a
+  tautology (the paragraph after the maintainer's words says why).
 - PD8 sharpens R2's "instantiation" and R5's "the connection needs another theorem". It is
   read as the maintainer recorded it, of what is left "after instantiating": R2's other route, a
   weakening (a strict derivative for a plain one, which needs `HasStrictDerivAt.hasDerivAt`), is
@@ -419,7 +424,9 @@ PD7's test for "trivial" are the maintainer's later answers that day):
   notion to the passage's notion of the same thing (`IsCoprime` and "no common factor other than
   1", through `Int.isCoprime_iff_gcd_eq_one`) is an encoding difference, not a PD8 bridge, since
   PD8 governs bridges between statements, not between two definitions of one notion. PD8 is
-  otherwise as recorded, and a weakening stays R2's.
+  otherwise as recorded, and a weakening stays R2's. The maintainer named the difference, an
+  encoding (R1); that it is a `closeMatch` when nothing else differs is the relation table's
+  definition of `closeMatch`, the same up to a convention, not a further ruling of his.
 
 **PD10 and PD7's test kept the labeler at `locate-label/5`.** An override bumps the labeler's
 version (the paragraph above); these two did not, because what a version decides in the bench is
@@ -428,7 +435,13 @@ and they add no gate check: `JUDGMENT_RULES` stays 2, so a `/6` would map to 2 t
 would refuse nothing it does not refuse now. `/5` had labelled no gold when they joined it, and
 the labeler's file sha moved with them, so the transcriber refuses a result of args emitted from
 the earlier text and gold of `/5` is labelled by this one. Once gold has been labelled under a
-version, a change to the rules it carries bumps it.
+version, a change to the rules it carries bumps it. What neither version nor rules can hold is a
+run of judgment rules 2 planned from the earlier text, whose prompts lack PD10 and PD7's test:
+the score holds a run to its `judgment_rules`, and pins its prompts' shas
+(`config_shas.prompts`) in the measurement without comparing them with the gold's labeler, so it
+would score such a run against gold of this text, and a `/6` would not refuse it either. None
+had been planned when these rules joined; one planned from a checkout of the earlier text is
+planned again from this one before it is scored.
 
 **PD7 in the maintainer's words** (2026-10-20), verbatim:
 
@@ -456,14 +469,18 @@ case that is only a tautology (quadratic reciprocity's p = q, where both sides b
 IsSquare 0 ↔ IsSquare 0) is junk too. A case outside the domain that says something — a
 statement proved for every ring where the passage has a field, whose other rings carry content
 of their own — is a generalisation, `broadMatch`. Either way the record's note says which. The
-test for "trivial" is the maintainer's last word: whether the passage's mathematics depends on
-the value outside its domain. A value with a theory of its own can still be junk to the passage:
-Mathlib's documentation calls ζ(s) undefined at s = 1 and proves a closed form for the value it
-assigns there (`riemannZeta_one`), and a passage that defines the zeta function away from s = 1
-depends on neither. A record of rules 1 whose `junk_value` sits on a declaration that differs
-from the passage where both are defined (a count that is 0 for an infinite group, where the
-passage counts with cardinals) was never a junk value: it is a `closeMatch` by a real
-convention, or weaker.
+test for a value is the maintainer's last word: whether the passage's mathematics depends on the
+value the declaration gives where the passage gives none. A value with a theory of its own can
+still be junk to the passage: Mathlib's documentation calls ζ(s) undefined at s = 1 and proves a
+closed form for the value it assigns there (`riemannZeta_one`), and a passage that defines the
+zeta function away from s = 1 depends on neither. The test is of values, which his first and
+last words speak of ("trivial values … usually left undefined", "the value of riemannZeta 1"),
+and not of an extra case of the statement, which his second words settle: the passage's
+mathematics does not depend on the rings that are not fields either, yet a statement proved for
+them says something of its own and so makes a generalisation, where p = q says nothing. A record
+of rules 1 whose `junk_value` sits on a declaration that differs from the passage where both are
+defined (a count that is 0 for an infinite group, where the passage counts with cardinals) was
+never a junk value: it is a `closeMatch` by a real convention, or weaker.
 
 **The challenger's rule** (the audit's FM7: 8 of 25 challenge results were wrong, each a reasoning
 slip, not a search miss), in the challenge prompt word for word:
