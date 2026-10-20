@@ -506,7 +506,7 @@ never a rejection. A
 rule is the line's `by_rule` key, else the reason's `[rule N]` prefix; `by_reason` classes are
 `rule_<N>` plus, when the message says which, `:<sub-class>` (`phantom_declaration`,
 `outside_universe`, `universe_pin`, `proof_status_written`, `curated`, `absence_receipt`,
-`ranks`, `note`, `pin`, `quote`, `passage_id`, `coverage`, `ownership`, `schema`), matched on
+`ranks`, `note`, `span_end`, `pin`, `quote`, `passage_id`, `coverage`, `ownership`, `schema`), matched on
 the message after the `<document>: <where>:` prefix so a passage's item id never classifies a
 reason. `audit`: about 30 exact/broad run locations outside every gold passage, seeded, written
 to `audits/<score_id>.jsonl` (`<split>-<id16>-<s8>`, the score's own name) with `verdict: null`

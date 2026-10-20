@@ -16,7 +16,10 @@ start inside a word or a formula, two passages with one head.
 
 A passage ends at ``until`` when the passage gives one (the end of the first
 occurrence of that string after the start), else at the end of the paragraph
-of ``paragraphs.json`` it starts in, else at the end of the quote.
+of ``paragraphs.json`` it starts in, else at the end of the quote
+(``locate_text.passage_end``, the rule gate rule 2 re-computes).  ``until``
+stays in the document, so the gate can re-compute the end from it and refuse
+any other: an offset edited by hand, or counted in UTF-16 units.
 
     passage_ids.py --source-dir <sources>/<source-id> --document findings/<task>/<source>.json [--write]
 
@@ -45,17 +48,6 @@ import locate_text as lt  # noqa: E402
 ITEM_PREFIX = "In-text #"
 
 
-def _paragraph_end(paragraphs: list, start: int) -> int | None:
-    for para in paragraphs:
-        try:
-            a, b = (int(x) for x in para["span"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if a <= start < b:
-            return b
-    return None
-
-
 def place(doc: dict, layer: str, formulas: list, paragraphs: list) -> list[str]:
     """Fill the document's passages in place; return the problems, one per passage."""
     problems: list[str] = []
@@ -77,17 +69,11 @@ def place(doc: dict, layer: str, formulas: list, paragraphs: list) -> list[str]:
         except lt.HeadError as exc:
             problems.append(f"{where}: {exc}")
             continue
-        end = start + len(exact)
-        until = passage.get("until")
-        if until:
-            at = layer.find(str(until), start)
-            if at < 0:
-                problems.append(f"{where}: `until` {str(until)[:40]!r} is not on the layer "
-                                f"after the passage's start")
-                continue
-            end = max(end, at + len(str(until)))
-        else:
-            end = max(end, _paragraph_end(paragraphs, start) or end)
+        try:
+            end = lt.passage_end(layer, paragraphs, start, exact, passage.get("until"))
+        except lt.HeadError as exc:
+            problems.append(f"{where}: {exc}")
+            continue
         passage["span"] = [start, end]
         placed.append((passage, head_start))
     if problems:
@@ -99,7 +85,6 @@ def place(doc: dict, layer: str, formulas: list, paragraphs: list) -> list[str]:
     for (passage, _h), (_start, digest, words) in zip(placed, ids):
         passage["item"] = ITEM_PREFIX + digest
         passage["head_words"] = words
-        passage.pop("until", None)
     return []
 
 

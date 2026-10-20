@@ -15,7 +15,9 @@ bridge reads:
   tools refuse a repeated or abbreviated ``--db`` and, in the gate directory,
   any database but the one ``gate.json`` pins (``corpus_search.check_db``);
 * ``CF_REVIEWER_TOOLS`` (the reviewer's wrapper only) -- the bridge's read-only
-  default plus the gate itself, which the reviewer prompt has it run;
+  default plus the gate's ``--findings`` check (the whole gate command with
+  ``--findings``), which the reviewer prompt has it run; tend's
+  ``--changed-files`` call stays tend's;
 * ``CF_TASK_MANIFESTS`` -- ``<gate>/tasks``, where the bridge finds the task
   manifest it writes the ``UNRESOLVED`` document from at the attempt cap;
 * ``CF_ATTEMPT_CAP`` -- ``cflib.vocab.LOCATE_ATTEMPT_CAP``, the genuine reviewer
@@ -91,9 +93,12 @@ def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str,
               "CF_ATTEMPT_CAP": str(vocab.LOCATE_ATTEMPT_CAP),
               "CF_MERGE_TARGET": merge_target,
               "CF_FINDINGS_GLOB": "findings/${TEND_TASK_ID:-*}/*.json"}
-    # the reviewer's job is the form and the gate's output: it runs the gate, and nothing else
-    reviewer_tools = ("Read,Glob,Grep,Bash(git:*),"
-                      f"Bash(python3 {host_gate_dir}/{GATE_SCRIPT}:*)")
+    # the reviewer's job is the form and the gate's output: it runs the gate's --findings
+    # check, the call its prompt renders, and nothing else -- never tend's --changed-files
+    # call, the only one the gate log's readers count as an attempt (the bridge derives
+    # the same entry for a worker from CF_GATE_CMD)
+    gate_command = f"python3 {host_gate_dir}/{GATE_SCRIPT} --gate-config {host_gate_dir}/gate.json"
+    reviewer_tools = f"Read,Glob,Grep,Bash(git:*),Bash({gate_command} --findings:*)"
     return {"worker": {**common, "CF_EXTRA_TOOLS": ",".join(tools)},
             "reviewer": {**common, "CF_REVIEWER_TOOLS": reviewer_tools}}
 

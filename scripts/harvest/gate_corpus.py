@@ -11,9 +11,19 @@ This module closes that: ``cf harvest --gate`` / ``cf import-corpus --gate`` cal
 :func:`gate_corpus` on what landed, and the RECEIPT is not complete unless it
 passed.  It reuses ``verify_findings``'s own functions rather than shelling out,
 so a gate failure is a list of problems the receipt can carry.
+
+A locate corpus is re-gated by the run's OWN gate: the copy its plan staged in
+``runs/<id>/tend-root/gate/``, each file checked against ``run.yaml``
+``locate.gate_files`` and then loaded apart from the checkout's modules
+(:func:`gate_locate_corpus`), so a gate edited or upgraded since the plan never
+judges the corpus its workers were judged by; the receipt's ``gate_code`` names
+that gate by hash (references/locate-documents.md section 10).
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -24,7 +34,7 @@ if str(_SCRIPTS) not in sys.path:  # pragma: no cover - import side effect
 
 from gate import verify_findings as vf  # noqa: E402
 
-from harvest._compat import CfError, finding_name, iter_finding_files  # noqa: E402
+from harvest._compat import CfError, finding_name, hashing, iter_finding_files  # noqa: E402
 
 #: A harvested corpus keeps its findings directly in ``corpus/<run-id>/``, not in
 #: a ``findings/`` subdirectory the way a worker's worktree does.
@@ -96,26 +106,167 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
     }
 
 
-def gate_locate_corpus(dest: str | Path, gate_config: str | Path) -> dict:
+#: what a locate gate directory imports by its own top-level names (verify_locate.py,
+#: its siblings and the vendored packages): swapped out of ``sys.modules`` while a
+#: run's own gate copy is loaded, so it runs on its own files, never the checkout's
+_GATE_MODULES = ("verify_locate", "locate_text", "verify_findings", "locate_records")
+_GATE_PACKAGES = ("literature_links", "formal_companion_annotations")
+#: the staged files of a run's gate directory that are no gate code: the host config,
+#: whose local twin is gate.local.json, and the task manifests (not in gate_files)
+_NOT_GATE_CODE = ("gate/gate.json",)
+#: what Python can import from a directory on its path
+_IMPORTABLE = frozenset({".py", ".pyc", ".pyo", ".pyd", ".so", ".pth"})
+
+
+class GateLoadError(Exception):
+    """A run's own gate copy that does not import: the gate could not run."""
+
+
+def _is_gate_module(name: str) -> bool:
+    return name in _GATE_MODULES or name.split(".")[0] in _GATE_PACKAGES
+
+
+@contextlib.contextmanager
+def _isolated_gate(gate_dir: Path):
+    """Import ``<gate_dir>/verify_locate.py`` with its siblings and vendored packages.
+
+    A gate directory is self-contained (references/locate-documents.md section 9:
+    every module it imports is the standard library or a file of the directory),
+    so the copy runs as it ran on the host: the checkout's modules of the same
+    names are set aside for the duration and put back after, with ``sys.path``.
+    """
+    saved = {name: module for name, module in sys.modules.items() if _is_gate_module(name)}
+    for name in saved:
+        del sys.modules[name]
+    saved_path = list(sys.path)
+    saved_bytecode = sys.dont_write_bytecode
+    sys.path[:0] = [str(gate_dir), str(gate_dir / "vendor")]
+    # the run's directory is the plan's record: an import leaves no __pycache__ in it
+    sys.dont_write_bytecode = True
+    try:
+        spec = importlib.util.spec_from_file_location("verify_locate", gate_dir / "verify_locate.py")
+        if spec is None or spec.loader is None:
+            raise GateLoadError(f"{gate_dir / 'verify_locate.py'} cannot be imported")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["verify_locate"] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:  # noqa: BLE001 - any failure to import is one failure
+            raise GateLoadError(f"the run's own gate at {gate_dir} did not load "
+                                f"({type(exc).__name__}: {exc})") from None
+        yield module
+    finally:
+        for name in [n for n in sys.modules if _is_gate_module(n)]:
+            del sys.modules[name]
+        sys.modules.update(saved)
+        sys.path[:] = saved_path
+        sys.dont_write_bytecode = saved_bytecode
+
+
+def run_gate_code(gate_dir: Path, gate_files: dict | None) -> tuple[dict, list[str]]:
+    """``(gate_code block, problems)``: the run's own gate copy, checked against its pins.
+
+    ``gate_files`` is ``run.yaml`` ``locate.gate_files`` (``{path under the tend
+    root: sha256}``, what the planner staged); every ``gate/`` file but the host
+    config must be on disk as pinned, so the gate that re-judges the corpus is
+    the one the workers ran, not one edited since.  The block records the gate
+    script's sha256 and ``files_sha256``, the sha256 of the sorted
+    ``<path>\\t<sha256>`` lines of the files checked: the receipt's record of
+    which gate judged the corpus.
+    """
+    script = gate_dir / "verify_locate.py"
+    block = {"from": "run", "dir": str(gate_dir), "sha256": None, "files_sha256": None,
+             "files": 0}
+    pins = {rel: sha for rel, sha in sorted((gate_files or {}).items())
+            if rel.startswith("gate/") and rel not in _NOT_GATE_CODE}
+    if not pins:
+        return block, [f"run.yaml records no locate.gate_files for {gate_dir}, so the run's own "
+                       f"gate cannot be told from an edited one"]
+    problems = []
+    for rel, sha in pins.items():
+        path = gate_dir.parent / rel
+        if not path.is_file():
+            problems.append(f"the run's gate file {rel} is missing from {gate_dir.parent}")
+        elif hashing.sha256_file(path) != sha:
+            problems.append(f"the run's gate file {rel} is not the bytes its plan staged "
+                            f"(run.yaml locate.gate_files)")
+    if f"gate/{script.name}" not in pins:
+        problems.append(f"run.yaml locate.gate_files pins no gate/{script.name}")
+    # The copy is imported with its directory first on the path, as on the host, so a
+    # module the plan never staged there (a planted json.py) would run with it; any
+    # other stray file (a desktop's .DS_Store) imports nothing and is let be.
+    for path in sorted(gate_dir.rglob("*")) if gate_dir.is_dir() else []:
+        rel = path.relative_to(gate_dir.parent).as_posix()
+        if path.is_dir() or path.suffix not in _IMPORTABLE or rel in pins \
+                or "__pycache__" in path.parts:
+            continue
+        problems.append(f"the run's gate directory holds {rel}, which its plan did not stage")
+    if problems:
+        return block, problems
+    lines = "".join(f"{rel}\t{sha}\n" for rel, sha in pins.items())
+    block.update(sha256=pins[f"gate/{script.name}"], files=len(pins),
+                 files_sha256=hashlib.sha256(lines.encode("utf-8")).hexdigest())
+    return block, []
+
+
+def checkout_gate_code() -> dict:
+    """The ``gate_code`` block of a re-gate by this checkout's gate (``--checkout-gate``)."""
+    script = _SCRIPTS / "gate" / "verify_locate.py"
+    return {"from": "checkout", "dir": str(script.parent),
+            "sha256": hashing.sha256_file(script)}
+
+
+def gate_locate_corpus(dest: str | Path, gate_config: str | Path, *,
+                       gate_dir: str | Path | None = None,
+                       gate_files: dict | None = None) -> dict:
     """Run the LOCATE gate (``gate/verify_locate.py``) over a landed locate corpus.
 
     The corpus keeps ``<task-id>/<source-id>.json`` at its top, so the gate runs in
     directory mode with ``--findings-dir .``, in-process, and returns the shape
     :func:`gate_corpus` returns so the receipt and :func:`render` read it alike.
     An empty corpus fails here too: the gate refuses an empty set itself.
-    """
-    from gate import verify_locate as vl
 
+    With ``gate_dir`` -- the run's own gate directory, ``runs/<id>/tend-root/gate``
+    -- the gate that runs is that copy, the one planned into the run, after each
+    of its files is checked against ``gate_files`` (:func:`run_gate_code`); the
+    result's ``gate_code`` names it by hash, and a copy that is not the planned
+    bytes fails the gate without running.  Without it, the checkout's gate runs
+    (``gate_code.from: checkout``).
+    """
     cfg_path = Path(gate_config).expanduser()
     if not cfg_path.exists():
         raise CfError(f"no gate config at {cfg_path}",
                       hint="the locate planner writes runs/<id>/gate.local.json; pass --gate-config")
+    if gate_dir is None:
+        from gate import verify_locate as vl
+
+        return _gate_locate_with(vl, dest, cfg_path, checkout_gate_code())
+    gate_dir = Path(gate_dir)
+    block, problems = run_gate_code(gate_dir, gate_files)
+    if problems:
+        return {"ok": False, "config": str(cfg_path), "preset": "locate", "sources": [],
+                "files": 0, "problems": [f"the gate could not run: {p}" for p in problems],
+                "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0,
+                "broken": problems, "gate_code": block}
+    try:
+        with _isolated_gate(gate_dir) as vl:
+            return _gate_locate_with(vl, dest, cfg_path, block)
+    except GateLoadError as exc:
+        why = str(exc)
+        return {"ok": False, "config": str(cfg_path), "preset": "locate", "sources": [],
+                "files": 0, "problems": [f"the gate could not run: {why}"], "partial_quotes": [],
+                "binding_notes": [], "unbound_quotes": 0, "broken": [why], "gate_code": block}
+
+
+def _gate_locate_with(vl, dest: str | Path, cfg_path: Path, gate_code: dict) -> dict:
+    """:func:`gate_locate_corpus` with the gate module ``vl`` (the run's or the checkout's)."""
     try:
         cfg = vl.GateConfig.load(cfg_path)
     except vl.GateBroken as exc:
         return {"ok": False, "config": str(cfg_path), "preset": "locate", "sources": [],
                 "files": 0, "problems": [f"the gate could not run: {exc}"], "partial_quotes": [],
-                "binding_notes": [], "unbound_quotes": 0, "broken": [str(exc)]}
+                "binding_notes": [], "unbound_quotes": 0, "broken": [str(exc)],
+                "gate_code": gate_code}
     # A whole-corpus re-gate is not a worker's attempt: its line in the gate log
     # (task_id "", every document) would sit beside the workers' own and be
     # read as one by the bench and the watchdog.  The host's log comes home
@@ -133,9 +284,10 @@ def gate_locate_corpus(dest: str | Path, gate_config: str | Path) -> dict:
            "preset": cfg.preset,
            "mode": cfg.mode, "sources": sorted(cfg.sources), "files": result["documents"],
            "problems": problems, "by_rule": result["by_rule"], "broken": result["broken"],
-           "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0}
+           "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0,
+           "gate_code": gate_code}
     if cfg.mode == vl.LOCATE_INVENTORY:
-        out["skipped"] = skipped_summary(result["stats"])
+        out["skipped"] = skipped_summary(result.get("stats") or [])
     return out
 
 
@@ -169,6 +321,14 @@ def render(result: dict, max_named: int = 12) -> str:
     head = (f"gate {result['preset']} [{sources}]: {result['files']} file(s), "
             + ("PASSED" if result["ok"] else f"FAILED ({len(result['problems'])} problem(s))"))
     lines = [head]
+    code = result.get("gate_code") or {}
+    if code.get("from") == "run":
+        lines.append(f"  gate code: the run's own copy ({code.get('dir')}), verify_locate.py "
+                     + (f"{str(code['sha256'])[:12]}, {code.get('files')} file(s) as planned"
+                        if code.get("sha256") else "not checked"))
+    elif code.get("from") == "checkout":
+        lines.append(f"  gate code: this checkout's, verify_locate.py "
+                     f"{str(code.get('sha256') or '')[:12]}")
     skipped = result.get("skipped") or {}
     if skipped.get("skips"):
         lines.append(f"  skips: {skipped['skips']} cover {skipped['chars']} character(s), "

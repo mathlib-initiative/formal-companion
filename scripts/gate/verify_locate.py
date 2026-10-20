@@ -17,9 +17,11 @@ its contract:
 * **the exit vocabulary** -- 0 every document validated; 1 REJECTED, fix the
   documents; 3 the gate could not run (no, unreadable or malformed gate.json,
   a vendored package that is not the pinned release, a layer missing or not
-  the pinned bytes, a formula list or paragraph table missing or malformed, an
-  unreadable corpus.sqlite, a missing task-manifest directory, a change set
-  git cannot read safely, a gate directory missing one of its own modules, a
+  the pinned bytes, a formula list or paragraph table missing, malformed or
+  not the view the pin names, an unreadable corpus.sqlite or one that is not
+  the pinned bytes, a candidates file that is not the pinned bytes, a missing
+  task-manifest directory, a change set git cannot read safely, a gate
+  directory missing one of its own modules, a command line it refuses, a
   crash of the gate itself).
   Every infrastructure failure arrives as 3, never as the interpreter's 1 out
   of a traceback, because the worker's prompt says 1 means "your documents
@@ -44,16 +46,22 @@ references/locate-documents.md sections 2-4 and 9):
    least two of its ``hasPart`` locations, with a note in the worker's own
    words, and no challenge document confirms one while refuting a part;
 2. every quote matches exactly once on the source's layer, at its passage's
-   span start and inside the span, and its ``In-text #<hex>`` is the hash of
-   that start's head (an inventory's ids recomputed over all its passages; a
-   locate document's passages are exactly the task's frozen ones); the
-   document's ``source_sha``, ``layer_sha256`` and ``renderer`` are the pinned
-   source's, and ``layer.txt`` hashes to the pin;
+   span start and inside the span, an inventory passage ends where
+   ``passage_ids.py``'s rule ends it (``locate_text.passage_end``: its
+   ``until``, else its paragraph, else its quote), and its ``In-text #<hex>`` is
+   the hash of that start's head (an inventory's ids recomputed over all its
+   passages; a locate document's passages are exactly the task's frozen ones);
+   the document's ``source_sha``, ``layer_sha256`` and ``renderer`` are the
+   pinned source's, ``layer.txt`` hashes to the pin, and so do ``formulas.json``
+   and ``paragraphs.json`` when the pin carries their ``views``;
 3. every declaration a document names as found exists in ``corpus.sqlite``'s
-   exact table at that library and the universe's commit; ``proof_status``,
-   ``commit`` and ``version`` are refused wherever a worker writes them;
-4. with L2 curated hits for the article (read here, from the candidates file,
-   never from the document): an inventory keeps a ``subject`` passage scoped
+   exact table at that library and the universe's commit, the database being
+   the bytes ``gate.json`` pins (``corpus_db.sha256``, compared when the gate
+   first opens it); ``proof_status``, ``commit`` and ``version`` are refused
+   wherever a worker writes them;
+4. with L2 curated hits for the article (read here, from the candidates file
+   whose sha ``gate.json`` pins under ``candidates_sha256``, never from the
+   document): an inventory keeps a ``subject`` passage scoped
    ``formal_math`` and scopes no ``subject`` passage out; a locate document
    leaves no hit handed to its task unhandled -- each is located with a
    relation that counts (a ``relatedMatch`` does not) or rejected with a
@@ -100,7 +108,18 @@ references/locate-documents.md sections 2-4 and 9):
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
-never fails the gate.
+never fails the gate.  The line's ``caller`` says which call it was:
+``validation`` (``--changed-files``, tend's validation command), ``pre_merge``
+(``--changed-files --pre-merge``), ``findings_check`` (``--findings``, an
+agent's own check) or ``directory`` (a directory of documents, as at harvest).
+
+**The command line is the label**, so the gate refuses one that could fake it,
+with exit 3 and before it reads anything: ``--findings`` with
+``--changed-files``, ``--pre-merge`` without ``--changed-files``, an
+abbreviated flag, a repeated ``--gate-config``, and -- when a ``gate.json``
+sits beside this script, as in every gate directory -- a ``--gate-config``
+that resolves to any other file.  A refused command line validates nothing
+and writes no log line.
 """
 from __future__ import annotations
 
@@ -191,6 +210,17 @@ GATE_MODULES = ("locate_text.py", "verify_findings.py", "locate_records.py")
 
 GATE_SCHEMA = "cf-gate-locate/1"
 DOCUMENT_SCHEMA = "cf-locate/1"
+#: the tables beside ``layer.txt`` that a source pin's ``views`` holds the sha of
+#: (copied by the planner from the source's ``render.json``; references/locate-documents.md
+#: section 9)
+PINNED_VIEWS = ("formulas.json", "paragraphs.json")
+#: what a gate log line's ``caller`` says the call was (``run_gate``;
+#: cflib.vocab.GATE_CALLERS, inlined and pinned by a test)
+CALLER_VALIDATION = "validation"
+CALLER_PRE_MERGE = "pre_merge"
+CALLER_FINDINGS = "findings_check"
+CALLER_DIRECTORY = "directory"
+CALLERS = (CALLER_VALIDATION, CALLER_PRE_MERGE, CALLER_FINDINGS, CALLER_DIRECTORY)
 
 # --------------------------------------------------------------------------- #
 # the vocabulary, inlined from cflib.vocab (no cflib on the host).  Keep in
@@ -448,6 +478,30 @@ def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+#: a sha256 as gate.json pins one
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def _sha256_file(path: pathlib.Path) -> str:
+    """The sha256 of a file's bytes, read in chunks (a corpus.sqlite is hundreds of MB)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha_map(value: Any, key: str) -> dict[str, str] | None:
+    """A ``{name: sha256}`` pin of gate.json, or None when gate.json has no such key."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) and SHA256.match(v)
+            for k, v in value.items()):
+        raise GateBroken(f"gate.json {key} is not a map of names to sha256 pins")
+    return dict(value)
+
+
 def _safe_name(value: Any) -> bool:
     """An id that names one file inside a directory and nothing else."""
     return (isinstance(value, str) and bool(value.strip()) and "/" not in value
@@ -508,6 +562,9 @@ class GateConfig:
                                          if isinstance(v, dict)}
         self.candidates_dir = (_path_field(data["candidates_dir"], "candidates_dir")
                                if data.get("candidates_dir") else None)
+        #: ``{source_id: sha256}`` of each candidates file the plan read, or None for a
+        #: gate.json planned before the pin (whose candidates are read as found)
+        self.candidates_sha256 = _sha_map(data.get("candidates_sha256"), "candidates_sha256")
         self.blind = bool(data.get("blind"))
         if not data.get("tasks_dir"):
             raise GateBroken("gate.json names no tasks_dir (the task manifests)")
@@ -605,10 +662,10 @@ class SourceView:
             raise GateBroken(f"{source_id}: layer.txt on this host is {got[:12]}…, the run pinned "
                              f"{want[:12] or 'nothing'}… (not the rendering this run was planned on)")
         self.layer = raw.decode("utf-8")
-        formulas_path = self.dir / "formulas.json"
+        self.view_pins = self._view_pins()
         try:
-            formulas = load_json_strict(formulas_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
+            formulas = load_json_strict(self._view_bytes("formulas.json").decode("utf-8"))
+        except ValueError as exc:
             raise GateBroken(f"{source_id}: formulas.json is unreadable ({exc})") from None
         if not isinstance(formulas, list) or not all(isinstance(f, dict) for f in formulas):
             raise GateBroken(f"{source_id}: formulas.json is not a list of formula entries")
@@ -623,6 +680,37 @@ class SourceView:
     @property
     def head(self) -> str:
         return self.map.head
+
+    def _view_pins(self) -> dict[str, str] | None:
+        """The pin's ``views`` (``{"formulas.json": sha, "paragraphs.json": sha}``), or None.
+
+        The planner copies them from the source's ``render.json``; a gate.json
+        planned before the pin has none, and its tables are read as found.
+        """
+        views = self.pin.get("views")
+        if views is None:
+            return None
+        if not isinstance(views, dict) or not all(
+                isinstance(views.get(name), str) and SHA256.match(views[name])
+                for name in PINNED_VIEWS):
+            raise GateBroken(f"gate.json sources.{self.source_id}.views is not a sha256 pin of "
+                             f"each of {', '.join(PINNED_VIEWS)}")
+        return {name: views[name] for name in PINNED_VIEWS}
+
+    def _view_bytes(self, name: str) -> bytes:
+        """``<source>/<name>``'s bytes, held to the pin's ``views`` sha when it has one."""
+        path = self.dir / name
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise GateBroken(f"{self.source_id}: {name} is unreadable ({exc})") from None
+        if self.view_pins is not None:
+            got, want = _sha256_bytes(raw), self.view_pins[name]
+            if got != want:
+                raise GateBroken(f"{self.source_id}: {name} on this host is {got[:12]}…, the run "
+                                 f"pinned {want[:12]}… (not the rendering this run was planned "
+                                 f"on)")
+        return raw
 
     def views(self) -> tuple[str, str]:
         """The two other spellings of the source a worker may copy from (rule 9's cap).
@@ -648,16 +736,64 @@ class SourceView:
 
     def paragraphs(self) -> list[dict]:
         if self._paragraphs is None:
-            path = self.dir / "paragraphs.json"
             try:
-                data = load_json_strict(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
+                data = load_json_strict(self._view_bytes("paragraphs.json").decode("utf-8"))
+            except ValueError as exc:
                 raise GateBroken(f"{self.source_id}: paragraphs.json is unreadable ({exc})") from None
             if not isinstance(data, list) or not all(isinstance(p, dict) for p in data):
                 raise GateBroken(f"{self.source_id}: paragraphs.json is not a list of block "
                                  f"entries")
             self._paragraphs = data
         return self._paragraphs
+
+
+def check_corpus_pin(cfg: GateConfig) -> None:
+    """``corpus.sqlite`` is the bytes gate.json pins (``corpus_db.sha256``); else :class:`GateBroken`.
+
+    Rule 3 is only as good as the database it asks: a doctored copy with one
+    more row would pass a phantom declaration.  ``cf run``'s verify stage checks
+    the sha once on the host, but a gate run anywhere else (a contributor's
+    machine, a harvest's re-gate) had nothing comparing it, so the gate hashes
+    the file itself when it first opens it -- once per call, in the modes that
+    read it.  A database rebuilt after planning is refused here too, because two
+    builds of one universe are not byte identical: re-plan to pin the new one.
+    """
+    if cfg.corpus_db is None:
+        raise GateBroken("gate.json names no corpus_db; rule 3 fails closed")
+    if not SHA256.match(cfg.corpus_db_sha):
+        raise GateBroken("gate.json pins no corpus_db.sha256; rule 3 fails closed without the "
+                         "database's own pin")
+    if not cfg.corpus_db.is_file():
+        raise GateBroken(f"corpus.sqlite is missing at {cfg.corpus_db}")
+    try:
+        got = _sha256_file(cfg.corpus_db)
+    except OSError as exc:
+        raise GateBroken(f"corpus.sqlite at {cfg.corpus_db} is unreadable ({exc})") from None
+    if got != cfg.corpus_db_sha:
+        raise GateBroken(f"corpus.sqlite at {cfg.corpus_db} is {got[:12]}…, gate.json pins "
+                         f"{cfg.corpus_db_sha[:12]}… (not the database this run was planned "
+                         f"with)")
+
+
+def check_candidates_pin(cfg: GateConfig, source_id: str, raw: bytes, path: pathlib.Path) -> None:
+    """A candidates file is the bytes gate.json pins (``candidates_sha256``); else :class:`GateBroken`.
+
+    Rule 4 reads the curated hits from this file, never from the document, so a
+    file swapped or edited after planning would change what the rule asks.  A
+    gate.json planned before the pin (no ``candidates_sha256``) reads the file
+    as found; one that has the key pins every source whose file it reads.
+    """
+    pins = cfg.candidates_sha256
+    if pins is None:
+        return
+    want = pins.get(source_id)
+    if not want:
+        raise GateBroken(f"{source_id}: gate.json pins the candidates files and none for this "
+                         f"source: gate rule 4 fails closed")
+    got = _sha256_bytes(raw)
+    if got != want:
+        raise GateBroken(f"{source_id}: candidates file {path} is {got[:12]}…, gate.json pins "
+                         f"{want[:12]}… (not the file this run was planned with)")
 
 
 class Context:
@@ -709,11 +845,16 @@ class Context:
         if source_id not in self._candidates:
             path = self.cfg.candidates_dir / f"{source_id}.json"
             try:
-                data = load_json_strict(path.read_text(encoding="utf-8"))
+                raw = path.read_bytes()
             except FileNotFoundError:
                 raise GateBroken(f"{source_id}: no candidates file at {path}: gate rule 4 reads "
                                  f"L2 itself and fails closed without it") from None
-            except (OSError, ValueError) as exc:
+            except OSError as exc:
+                raise GateBroken(f"{source_id}: candidates file {path} is unreadable ({exc})") from None
+            check_candidates_pin(self.cfg, source_id, raw, path)
+            try:
+                data = load_json_strict(raw.decode("utf-8"))
+            except ValueError as exc:
                 raise GateBroken(f"{source_id}: candidates file {path} is unreadable ({exc})") from None
             if not isinstance(data, dict) or data.get("source_id") != source_id:
                 raise GateBroken(f"{path} is not {source_id}'s candidates file")
@@ -726,10 +867,7 @@ class Context:
 
     def _corpus(self) -> sqlite3.Connection:
         if self._db is None:
-            if self.cfg.corpus_db is None:
-                raise GateBroken("gate.json names no corpus_db; rule 3 fails closed")
-            if not self.cfg.corpus_db.is_file():
-                raise GateBroken(f"corpus.sqlite is missing at {self.cfg.corpus_db}")
+            check_corpus_pin(self.cfg)
             try:
                 self._db = sqlite3.connect(ro_uri(self.cfg.corpus_db), uri=True)
             except sqlite3.Error as exc:
@@ -856,6 +994,34 @@ def _span(value: Any, length: int) -> tuple[int, int] | None:
             and 0 <= value[0] < value[1] <= length):
         return value[0], value[1]
     return None
+
+
+def _end_problem(layer: str, paragraphs: list[dict], span: tuple[int, int], exact: str,
+                 until: Any) -> str:
+    """Why an inventory passage's end is not the one ``passage_ids.py``'s rule gives, or ''.
+
+    ``locate_text.passage_end`` is the rule (references/locate-documents.md
+    section 2): the end of the passage's ``until``, else of the paragraph it
+    starts in, else of its quote.  Since the export carries the span, the end
+    is the extent a consumer highlights, so any other end is refused: an
+    offset edited by hand, one past the paragraph or into the next passage
+    with no ``until`` that puts it there, or one counted in UTF-16 units.
+    """
+    try:
+        want = lt.passage_end(layer, paragraphs, span[0], exact, until)
+    except lt.HeadError as exc:
+        return f"{exc}; give the passage's last words exactly as the layer has them"
+    if span[1] == want:
+        return ""
+    if until not in (None, ""):
+        rule = "the end of its `until`"
+    elif lt.paragraph_end(paragraphs, span[0]) is not None:
+        rule = "the end of the paragraph it starts in"
+    else:
+        rule = "the end of its quote"
+    return (f"the passage ends at {span[1]}, and passage_ids.py ends it at {want} ({rule}; "
+            f"offsets count code points): run passage_ids.py again rather than edit an "
+            f"offset, and give `until` to end it elsewhere")
 
 
 def _union_length(spans: list[tuple[int, int]]) -> int:
@@ -2058,6 +2224,11 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                    f"{found[0] + len(exact)}; its passage is {list(span)}: the quote "
                                    f"starts the passage and lies inside it")
             continue
+        # The end is what a reader highlights: the one passage_ids.py writes.  The
+        # start is right here, so the passage still keys the others' ids below.
+        end_problem = _end_problem(layer, source.paragraphs(), span, exact, p.get("until"))
+        if end_problem:
+            problems.add(2, where, end_problem)
         try:
             head_start = source.map.to_head(span[0])
         except lt.HeadError as exc:
@@ -3162,6 +3333,22 @@ def _merge_base_reader(root: pathlib.Path, base: str) -> Callable[[str], str | N
     return read
 
 
+def caller_of(*, changed_files: bool, pre_merge: bool, findings: bool) -> str:
+    """Which call a gate run is, as its log line's ``caller`` says it.
+
+    ``validation`` is tend's validation command (a change set, ``--changed-files``)
+    and the only call the log's readers count as an attempt; ``pre_merge`` is its
+    pre-merge command (``--changed-files --pre-merge``); ``findings_check`` is a
+    worker's, a reviewer's or the bridge's own check of named documents
+    (``--findings``); ``directory`` is a directory of documents (a harvested
+    corpus, a hand check).  The command line refuses every combination that
+    would blur two of them (:func:`_main`).
+    """
+    if changed_files:
+        return CALLER_PRE_MERGE if pre_merge else CALLER_VALIDATION
+    return CALLER_FINDINGS if findings else CALLER_DIRECTORY
+
+
 def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path] | None = None,
              findings_dir: str = DEFAULT_FINDINGS_DIR, changed_files: bool = False,
              base: str = "main", task_id: str = "", allow_empty: bool = False,
@@ -3174,12 +3361,13 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     the default, or ``$TEND_TASK_ID``).  Raises nothing: an infrastructure
     failure is ``exit: 3`` with ``broken`` set.  Every call appends one line to
     the gate log with its verdict, the ``ownership`` line, ``task_id_from``,
-    whether it judged a change set (``changed_files``) and whether it was tend's
-    batched pre-merge check (``pre_merge``, ``--pre-merge``): the one call in
-    which a change set of several tasks' new documents is admitted without a
-    task id (rule 7), and a re-check of contributions already validated, which
-    the log's readers count apart from the validation calls.  A line written
-    before the field has no ``pre_merge`` and reads as false.
+    which call it was (``caller``, :func:`caller_of`), whether it judged a
+    change set (``changed_files``) and whether it was tend's batched pre-merge
+    check (``pre_merge``, ``--pre-merge``): the one call in which a change set
+    of several tasks' new documents is admitted without a task id (rule 7), and
+    a re-check of contributions already validated, which the log's readers
+    count apart from the validation calls.  A line written before either field
+    has none, and a missing ``pre_merge`` reads as false.
     """
     result: dict[str, Any] = {"exit": EXIT_OK, "problems": [], "broken": [], "documents": 0,
                               "by_rule": {}, "stats": [], "ownership": "", "task_id": task_id,
@@ -3259,9 +3447,12 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     if result["exit"] == EXIT_OK and len(problems):
         result["exit"] = EXIT_REJECTED
     result["task_id_from"] = how if task_id else None
+    result["caller"] = caller_of(changed_files=changed_files, pre_merge=pre_merge,
+                                 findings=bool(findings))
     write_log(cfg, {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     "run_id": cfg.run_id, "mode": cfg.mode, "task_id": task_id,
                     "task_id_from": result["task_id_from"],
+                    "caller": result["caller"],
                     "changed_files": bool(changed_files),
                     "pre_merge": bool(pre_merge),
                     "ownership": result["ownership"] or None,
@@ -3280,9 +3471,11 @@ def self_check(cfg: GateConfig) -> str:
     ``python3 -I`` from the gate directory alone, before any agent starts: the
     gate's own modules imported (a missing or broken one -- ``locate_records``
     imports ``literature_links`` -- is exit 3 before this runs), both vendored
-    packages the pinned releases, and the task manifests, the sources and
-    ``corpus.sqlite`` where gate.json says they are.  A gate directory staged without one of its modules used to
-    surface only as every worker's first validation failing (field defect P2).
+    packages the pinned releases, the task manifests and the sources where
+    gate.json says they are, ``corpus.sqlite`` there and the pinned bytes, and
+    each candidates file gate.json pins the pinned bytes.  A gate directory
+    staged without one of its modules used to surface only as every worker's
+    first validation failing (field defect P2).
     """
     verify_vendor(cfg)
     if not cfg.tasks_dir.is_dir():
@@ -3292,11 +3485,24 @@ def self_check(cfg: GateConfig) -> str:
         raise GateBroken(f"{cfg.tasks_dir} holds no task manifest")
     if not cfg.sources_dir.is_dir():
         raise GateBroken(f"the sources directory {cfg.sources_dir} is missing")
-    if cfg.corpus_db is not None and not cfg.corpus_db.is_file():
-        raise GateBroken(f"corpus.sqlite is missing at {cfg.corpus_db}")
+    if cfg.corpus_db is not None:
+        check_corpus_pin(cfg)
+    pinned = 0
+    if cfg.candidates_sha256 is not None and cfg.candidates_dir is not None and not cfg.blind:
+        for source_id in sorted(cfg.candidates_sha256):
+            path = cfg.candidates_dir / f"{source_id}.json"
+            try:
+                raw = path.read_bytes()
+            except OSError as exc:
+                raise GateBroken(f"{source_id}: the pinned candidates file {path} is unreadable "
+                                 f"({exc})") from None
+            check_candidates_pin(cfg, source_id, raw, path)
+            pinned += 1
     return (f"OK: gate self-check: {cfg.mode} run {cfg.run_id}, {manifests} task manifest(s), "
-            f"{len(cfg.sources)} pinned source(s), the vendored packages are the pinned releases "
-            f"and import from {VENDOR}")
+            f"{len(cfg.sources)} pinned source(s), "
+            + ("corpus.sqlite the pinned bytes, " if cfg.corpus_db is not None else "")
+            + (f"{pinned} candidates file(s) the pinned bytes, " if pinned else "")
+            + f"the vendored packages are the pinned releases and import from {VENDOR}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3310,20 +3516,76 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_GATE_BROKEN
 
 
+class UsageRefused(Exception):
+    """A command line the gate refuses: exit 3, before anything is read or logged."""
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse whose refusals are exit 3 with one ``FAIL`` line, never its exit 2."""
+
+    def error(self, message: str):  # noqa: D401 - argparse's hook
+        raise UsageRefused(message)
+
+
+class _Once(argparse.Action):
+    """An option that may be given once: a second ``--gate-config`` is refused.
+
+    argparse keeps the LAST of a repeated option, so an allowlist entry whose
+    prefix holds ``--gate-config <gate>/gate.json`` would otherwise let a caller
+    append another and choose the config -- and with it the log directory and
+    the label its line carries.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, f"_{self.dest}_given", False):
+            raise UsageRefused(f"{option_string} is given twice; the gate takes one config")
+        setattr(namespace, f"_{self.dest}_given", True)
+        setattr(namespace, self.dest, values)
+
+
+def check_command_line(args: argparse.Namespace, here: pathlib.Path = HERE) -> None:
+    """Refuse a command line that could fake the log line's label (:class:`UsageRefused`).
+
+    argparse refuses ``--findings`` with ``--changed-files`` (a mutually exclusive
+    group), an abbreviation (``allow_abbrev=False``) and a repeated
+    ``--gate-config`` (:class:`_Once`); this refuses ``--pre-merge`` without
+    ``--changed-files``, and, when a ``gate.json`` sits beside the script -- as in
+    every gate directory a planner stages -- a ``--gate-config`` that resolves to
+    any other file: the gate directory's own config names the log the watchdog
+    and the bench read, and no caller may point the gate at another.  A
+    checkout's ``scripts/gate/`` holds no gate.json, so a hand check there takes
+    any config.
+    """
+    if args.pre_merge and not args.changed_files:
+        raise UsageRefused("--pre-merge is tend's pre-merge call and comes with --changed-files")
+    beside = here / "gate.json"
+    if beside.is_file():
+        given = pathlib.Path(args.gate_config).expanduser()
+        try:
+            same = given.resolve() == beside.resolve()
+        except OSError:
+            same = False
+        if not same:
+            raise UsageRefused(f"--gate-config {given} is not {beside}, the config beside this "
+                               f"gate: a gate directory runs with its own gate.json only")
+
+
 def _main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gate-config", default=str(HERE / "gate.json"),
-                    help="the locate gate.json (cf-gate-locate/1; default: next to this script)")
+    ap = _Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+                 allow_abbrev=False)
+    ap.add_argument("--gate-config", default=str(HERE / "gate.json"), action=_Once,
+                    help="the locate gate.json (cf-gate-locate/1; default: next to this script; "
+                         "given once, and in a gate directory only that file)")
     ap.add_argument("--root", default=".", help="the worktree (or harvested corpus) root")
     ap.add_argument("--findings-dir", default=DEFAULT_FINDINGS_DIR,
                     help="with neither --findings nor --changed-files: the directory of "
                          "<task-id>/<source-id>.json documents under --root (a harvested corpus: '.')")
-    ap.add_argument("--findings", action="append", default=[],
-                    help="validate this document only (repeatable); its task is its directory")
-    ap.add_argument("--changed-files", action="store_true",
-                    help="validate the documents this contribution changed and refuse any other "
-                         "path (rule 7)")
+    which = ap.add_mutually_exclusive_group()
+    which.add_argument("--findings", action="append", default=[],
+                       help="validate this document only (repeatable); its task is its directory")
+    which.add_argument("--changed-files", action="store_true",
+                       help="validate the documents this contribution changed and refuse any "
+                            "other path (rule 7)")
     ap.add_argument("--base", default="main", help="the branch the change set is read against")
     ap.add_argument("--task-id", default=None,
                     help="the worker's own task id (default: $TEND_TASK_ID, else "
@@ -3337,7 +3599,14 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--self-check", action="store_true",
                     help="check that this gate can run (its modules, the vendored packages, the "
                          "task manifests, the sources, corpus.sqlite) and validate nothing")
-    args = ap.parse_args(argv)
+    try:
+        args = ap.parse_args(argv)
+        check_command_line(args)
+    except UsageRefused as exc:
+        print(f"FAIL: the command line is refused ({exc}) — the gate could not run: this is "
+              f"not a finding of yours", file=sys.stderr)
+        print("ownership: not checked (the gate could not run)")
+        return EXIT_GATE_BROKEN
 
     if IMPORT_ERRORS:
         # one line, never a traceback: exit 1 would tell the worker to fix its documents

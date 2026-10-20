@@ -589,8 +589,12 @@ token grammars (`references/locate-documents.md` §6, the consumer's own): `RECO
 machinery's: `MAX_TASKS_PER_ROOT` (500 tasks in one tend root; a larger plan is campaign
 shards), `LOCATE_ATTEMPT_CAP` (3: the genuine reviewer rejection that reaches it writes the
 `UNRESOLVED` document), `SESSION_SLOTS` (15 `flock` slots, one below the account's 16 sessions)
-and `AGENT_TIMEOUT` (`45m` per agent call). The host-side scripts that cannot import `cflib`
-keep copies of these, which tests pin.
+and `AGENT_TIMEOUT` (`45m` per agent call), and `GATE_CALLERS`, what a locate gate log line's
+`caller` says the call was (`references/locate-documents.md` §9): `validation` (tend's
+`--changed-files` call, the only one the log's readers count as an attempt) · `pre_merge`
+(`--changed-files --pre-merge`) · `findings_check` (an agent's or the bridge's own
+`--findings` check) · `directory` (a directory of documents: a harvest, a hand check). The
+host-side scripts that cannot import `cflib` keep copies of these, which tests pin.
 
 **The benchmark's values** (the proposal's §8 and §9):
 

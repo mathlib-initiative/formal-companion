@@ -557,7 +557,8 @@ class TestPlanInventory(Campaign):
             "schema", "mode", "preset", "run_id", "kinds", "universe", "corpus_db",
             "tools_corpus_db", "sourceset", "sources", "candidates_dir", "blind", "inventory",
             "challenged_runs", "findings_dir", "tasks_dir", "log_dir", "orchestrator_db",
-            "max_locations", "min_absence_queries", "judgment_rules", "vendor"})
+            "max_locations", "min_absence_queries", "judgment_rules", "vendor",
+            "candidates_sha256"})
         self.assertEqual(gate["schema"], "cf-gate-locate/1")
         self.assertEqual(gate["judgment_rules"], vocab.JUDGMENT_RULES)
         self.assertEqual(gate["kinds"], ["PASSAGE", "UNRESOLVED"])
@@ -1085,9 +1086,12 @@ class TestTheStagedRootDrivesTheBridge(Campaign):
 
     def test_the_reviewer_may_run_the_gate_its_prompt_renders(self):
         program = f"python3 {self.gate_dir}/verify_locate.py"
-        entry = f"Bash({program}:*)"
+        # the --findings check, never tend's --changed-files call (the label hardening)
+        check = f"{program} --gate-config {self.gate_dir}/gate.json --findings"
+        entry = f"Bash({check}:*)"
         reviewer = self.tools("reviewer")
         self.assertIn(entry, reviewer)
+        self.assertNotIn(f"Bash({program}:*)", reviewer)
         self.assertEqual(reviewer[:4], ["Read", "Glob", "Grep", "Bash(git:*)"])
         self.assertFalse([t for t in reviewer if t in ("Edit", "Write", "Bash(python3:*)")])
         self.assertFalse([t for t in reviewer if "corpus_" in t or "passage_ids" in t])
@@ -1097,12 +1101,21 @@ class TestTheStagedRootDrivesTheBridge(Campaign):
             text = (pdir / name).read_text(encoding="utf-8")
             for line in text.splitlines():
                 if "verify_locate.py" in line and line.lstrip().startswith("python3"):
-                    self.assertTrue(line.strip().startswith(program + " "), (name, line))
-        self.assertIn(program + " --gate-config", (pdir / "reviewer.md").read_text())
+                    self.assertTrue(line.strip().startswith(check + " "), (name, line))
+        self.assertIn(check + " ", (pdir / "reviewer.md").read_text())
 
     def test_the_worker_keeps_the_gate_and_its_tools(self):
         worker = self.tools("worker")
-        self.assertIn(f"Bash(python3 {self.gate_dir}/verify_locate.py:*)", worker)
+        program = f"python3 {self.gate_dir}/verify_locate.py"
+        check = f"{program} --gate-config {self.gate_dir}/gate.json --findings"
+        self.assertIn(f"Bash({check}:*)", worker)
+        self.assertNotIn(f"Bash({program}:*)", worker)
+        # every gate invocation the worker prompts render is under that entry
+        pdir = self.paths.prompts_dir("inv-1")
+        for name in ("worker.md", "worker-system.md"):
+            for line in (pdir / name).read_text(encoding="utf-8").splitlines():
+                if "verify_locate.py" in line and line.lstrip().startswith("python3"):
+                    self.assertTrue(line.strip().startswith(check + " "), (name, line))
         self.assertIn(f"Bash(python3 {self.gate_dir}/passage_ids.py:*)", worker)
         db = self.paths.corpus_db(F.U)
         self.assertIn(f"Bash(python3 {self.gate_dir}/corpus_search.py --db {db}:*)", worker)

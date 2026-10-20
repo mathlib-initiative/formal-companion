@@ -387,9 +387,9 @@ its stages share the run, gate, bridge, harvest and cost machinery above
 | L1 sources | `cf sourceset create / enumerate-wikiproject / adopt / fetch / flag-biographies / render / status` | `sourcesets/<id>/manifest-<n>.jsonl` (append-only versions, page flags), `state.json`, and each source's rendered files (`web-html/3`; `create --from` seeds a new sourceset for a new renderer) |
 | L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json`; `--blind` or `--tools-corpus-db` write their own `<kind>/` directory under it (a planted one names no hit its database lacks) |
 | L3a/L3b/L5 | `cf plan-locate --preset locate-inventory / locate / locate-challenge` | `runs/<id>/{run.yaml (a locate block), tasks/, prompts/, gate.json, gate.local.json, challenge-plan.json, tend-root/}` |
-| L4 gate | `scripts/gate/verify_locate.py`, out of tree (tend's validation `--changed-files`, its pre-merge `--changed-files --pre-merge`) | nothing but its own log line; exit 0 / 1 / 3 |
+| L4 gate | `scripts/gate/verify_locate.py`, out of tree (tend's validation `--changed-files`, its pre-merge `--changed-files --pre-merge`; an agent may run only the `--findings` check, and a command line that could fake the label is exit 3) | nothing but its own log line, which names its `caller`; exit 0 / 1 / 3 |
 | — | `cf run`, `cf campaign plan / render / status` | `run.yaml`'s records; `campaigns/<id>/` |
-| L6 | `cf harvest`, `cf tally --locate`, `cf export literature-links` | `corpus/<run>/<task>/<source>.json` + `RECEIPT.json`, `reports/locate-{outcomes,tally}.<run>.*`, `exports/<set>/` |
+| L6 | `cf harvest` (re-gated by the run's own staged gate), `cf tally --locate`, `cf export literature-links` | `corpus/<run>/<task>/<source>.json` + `RECEIPT.json` (its gate block's `gate_code` names the gate by hash), `reports/locate-{outcomes,tally}.<run>.*`, `exports/<set>/` |
 | bench | `cf bench build / anchor / freeze / score / compare` | `benches/<id>/` |
 
 Three rules hold for every locate stage. **Nothing about a declaration is a
@@ -399,7 +399,13 @@ refused in any document a worker wrote; the commit is the universe's. **A
 locate run is pinned by content**: the sourceset by `(id, version, manifest
 sha)`, the universe by `universe_sha256` (a `corpus.sqlite` is matched to it by
 its `meta.universe_sha256`, since two builds of one universe are not byte
-identical), the renderer by its id. A run names two databases: the full `corpus.sqlite`
+identical), the renderer by its id. What its gate reads is pinned by bytes: the
+CHECK database by `gate.json` `corpus_db.sha256` (so a database rebuilt after
+planning needs a re-plan), each candidates file the plan read by
+`candidates_sha256`, each source's layer by `layer_sha256` and the two tables
+beside it by the pin's `views`; the gate compares each and stops (exit 3) on a
+mismatch, and the harvest re-gates with the run's own gate copy, checked against
+`run.yaml` `locate.gate_files` (`references/locate-documents.md` §9 and §10). A run names two databases: the full `corpus.sqlite`
 that the gate, the outcomes, the export and the bench check, and the tools
 database its workers search (`gate.json` `tools_corpus_db`, recorded in
 `run.yaml` `locate.universe.tools_corpus_db`: the full one, the blind build or
