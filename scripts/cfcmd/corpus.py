@@ -78,15 +78,19 @@ def register(subparsers) -> None:
     add = sub.add_parser("add", parents=common,
                          help="pin one library in a universe, or exclude it with a reason")
     add.add_argument("universe")
-    add.add_argument("--library", required=True, help="the universe-local id (a document's `library`)")
-    add.add_argument("--repo", help="https repository URL")
+    add.add_argument("--library", required=True,
+                     help="the universe-local id (a document's `library`): a lowercase letter, "
+                          "then lowercase letters, digits and ._-, at most 64, and no YAML "
+                          "bool or null word (yes, no, true, false, on, off, null)")
+    add.add_argument("--repo", help="https repository URL, spelled as the universe's other "
+                                    "libraries of the same repository spell it")
     add.add_argument("--commit", help="the 40-hex commit")
     add.add_argument("--toolchain", help="the lean-toolchain, e.g. leanprover/lean4:v4.34.0")
     add.add_argument("--roots", nargs="+", default=None, help="root modules")
     add.add_argument("--brain-lib", default=None,
                      help="the consumer's library token: a letter, then letters, digits and _, "
                           "at most 64, e.g. Mathlib or FF_AdicModules (default: the id, when "
-                          "it is one)")
+                          "it is one); it names one repository, compared without case")
     add.add_argument("--licence", default=None,
                      help="SPDX licence id; a record set needs it, and a re-add records a "
                           "missing one")

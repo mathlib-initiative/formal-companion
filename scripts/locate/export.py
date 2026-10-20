@@ -52,6 +52,12 @@ What it refuses, passage by passage, naming each one in the export report
   the family's SPDX licence id the records carry -- every record quotes its
   passage, and no redacted quote form exists to fall back on.
 
+What it flags without refusing: every library whose written ``brain_lib`` (its
+own, else its id) is no library token of ``corpus.universe.BRAIN_LIB``, as the
+report's ``brain_lib_not_token`` (:func:`brain_lib_not_token`).  A frozen
+universe written before the token grammar still exports; a consumer's Brain
+refuses such a name as a library token.
+
 The citation is the sources stage's: ``sources.websource.family`` (which
 refuses an unknown or broken family) gives the container title and the SPDX
 id, and ``sources.websource.revision_url`` the permalink of the pinned revision.
@@ -81,6 +87,7 @@ from cflib.errors import CfError
 from cflib.jsonio import atomic_write, write_json
 from cflib.paths import WorkspacePaths, skill_root
 
+from corpus.universe import BRAIN_LIB, written_brain_lib
 from sources import websource
 
 from . import inputs, outcomes as outcomes_mod, records
@@ -203,7 +210,7 @@ def _universe_json(universe: inputs.Universe) -> dict:
                            "--licence <SPDX id>` (outside universe_sha256: the pins stay valid)")
     libs = []
     for lid, lib in sorted(universe.libraries.items()):
-        name = str(lib.get("brain_lib") or lid)
+        name = written_brain_lib({**lib, "id": lid})
         libs.append({"id": lid, "brain_lib": name, "repo": lib.get("repo"),
                      "commit": lib["commit"], "toolchain": lib.get("toolchain"),
                      "roots": [str(r) for r in lib.get("roots") or []],
@@ -213,6 +220,25 @@ def _universe_json(universe: inputs.Universe) -> dict:
                 for row in sorted(universe.excluded, key=lambda r: str(r.get("id")))]
     return {"id": universe.id, "universe_sha256": universe.sha256, "frozen": frozen,
             "libraries": libs, "excluded": excluded}
+
+
+def brain_lib_not_token(universe: inputs.Universe) -> list[dict]:
+    """Every library whose written ``brain_lib`` is no :data:`corpus.universe.BRAIN_LIB` token.
+
+    ``[{library, brain_lib, from_id}]`` by library id: the name ``universe.json``
+    writes (the row's own, else its id -- ``from_id`` true, as for ``lean-core``)
+    when the consumer's Brain would refuse it as a library token.  The export
+    report names them and exports anyway: a universe written before the token
+    grammar (u1's ``FF.<Root>``) is frozen and still exports; the next universe
+    carries tokens.
+    """
+    flagged = []
+    for lid, lib in sorted(universe.libraries.items()):
+        name = written_brain_lib({**lib, "id": lid})
+        if not BRAIN_LIB.match(name):
+            flagged.append({"library": lid, "brain_lib": name,
+                            "from_id": not lib.get("brain_lib")})
+    return flagged
 
 
 def _spdx(licence) -> str:
@@ -404,6 +430,7 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
                             "manifest_sha256": manifest.sha256},
               "exported": dict(sorted(exported.items())),
               "skipped": dict(sorted(skipped.items())), "refused": refused,
+              "brain_lib_not_token": brain_lib_not_token(universe),
               "byte_budget": byte_budget, "seal_sha256": hashing.sha256_file(out / "SEAL.json")}
     write_json(paths.export_report_json(set_id), report, sort_keys=True)
     return report

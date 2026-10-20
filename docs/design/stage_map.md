@@ -44,7 +44,8 @@ is what let an earlier copy fall one rule behind without anyone noticing.
 - **Locate** asks the inverse question, over libraries rather than companions
   (`docs/proposals/wikipedia-locate.md` §2). A **library** is a Lean package at a
   40-hex commit; a **universe** is a named, frozen set of them
-  (`corpora/<u>/universe.yaml`, `universe_sha256`); a **passage** is a span of a
+  (`corpora/<u>/universe.yaml`, `universe_sha256`) that spells each repository
+  one way (`references/locate-documents.md` §8); a **passage** is a span of a
   web source keyed `In-text #<hex>`; a **location** is (passage,
   declaration@commit, relation), keyed run-free by `cflib.hashing.location_key`;
   an **absence** is a checked statement that a passage was searched for in a

@@ -97,6 +97,35 @@ release has something to say.
     never turns on its challenge. The proposal's examples carry no real QID: the record
     example's subject end now carries the QID that B5 gives a subject passage, as a
     placeholder, and §2.1's sourceset row names it the same way.
+- A universe and its YAML, after the brain4 review (F2, F3, F5). Nothing about a run, a
+  gate or the record set's format changes.
+  - **One spelling per repository.** `cf corpus add` and loading a universe refuse a library
+    whose repo is another library's repository spelled another way: the host's case, a
+    `www.`, a trailing `.git` in any case, or on github.com the owner's or name's case
+    (`corpus.universe.repo_key`). The refusal names the spelling the universe uses.
+    Everything downstream still compares a repo exactly as written, an absence's one end per
+    `(repo, commit)` included, and the rule keeps that correct. A second spelling of lean4
+    was refused before, wrongly, as a `brain_lib` "naming two repositories". It is now
+    refused as a spelling.
+  - **`brain_lib` tokens.** The export report lists as `brain_lib_not_token` every library
+    whose written `brain_lib` is no `BRAIN_LIB` token, the id fallback included (`lean-core`).
+    The set still exports, and u1's `FF.<Root>` names still export. A re-add whose
+    `--brain-lib` is no token is refused, even when it is the name the row records; a re-add
+    without the flag keeps that name. Tokens are compared without case across repositories:
+    `Mathlib` and `MATHLIB` both passed before, and now the second is refused, the id
+    fallback included.
+  - **YAML look-alikes.** The writer quoted `0x10` and `.inf` but not an exponent, so
+    `1.5e-3` reloaded as 0.0015. It now quotes every plain scalar either reader would type,
+    in a value or a mapping key: a number of any base or with an exponent, a bool or null
+    word in any case, a date or timestamp, and PyYAML's `<<` and `=`, which PyYAML refuses to
+    load at all. A float is written as both readers read a float back (`1.0e-05`, `.inf`, where
+    `str()` gave `1e-05` and `inf`, both strings to PyYAML), and the fallback reader reads
+    `.inf` and `.nan`, and a sequence item whose first key is quoted. A library id and a
+    universe id now start with a letter and are none of YAML's bool and null words (`yes`,
+    `no`, `true`, `false`, `on`, `off`, `null`), so no id reads as anything but itself
+    even written bare (`corpus.universe.LIBRARY_ID`). Loading a universe now checks an
+    exclusion's id too, and names an id YAML read as another type (a bare `no` as False).
+    No shipped id or fixture id breaks, and neither does u1's.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.
