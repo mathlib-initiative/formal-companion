@@ -45,21 +45,28 @@ release has something to say.
 - Locate judgment rules: PD7's test for "trivial", and PD10 on encodings (the maintainer's later
   answers of 2026-10-20; `references/vocabulary.md` §1.11 has both, and his words on
   `riemannZeta` verbatim beside his earlier ones on PD7).
-  - **PD7**: a case outside the passage's domain is trivial when the passage's mathematics does
-    not depend on the declaration's value there; in the maintainer's words, "it shouldn't matter
-    what the value of riemannZeta 1 is". So `riemannZeta` at its pole s = 1 is again R1's example
-    of a junk value (`exactMatch`), beside x/0 = 0 and quadratic reciprocity's p = q, though
-    Mathlib proves a closed form there (`riemannZeta_one`). This reverses the earlier text that
-    left it to the record's note, and the test that held it out of R1. A case outside the domain
-    with real mathematical content is still a generalisation (`broadMatch`). The exactMatch
-    instructions of both prompts and the labeler's evidence line state the test.
+  - **PD7**: a value the declaration gives where the passage leaves one undefined (a junk or
+    default value) is trivial when the passage's mathematics does not depend on it; in the
+    maintainer's words, "it shouldn't matter what the value of riemannZeta 1 is". So
+    `riemannZeta` at its pole s = 1 is again R1's example of a junk value (`exactMatch`) against
+    a passage that defines the zeta function away from s = 1, beside x/0 = 0 and quadratic
+    reciprocity's p = q, though Mathlib proves a closed form there (`riemannZeta_one`). This
+    reverses the earlier text that left it to the record's note, and the test that held it out
+    of R1. The test is of values, the subject of his first and last answers: an extra case of
+    the statement itself (a ring that is not a field, where the passage has a field) is trivial
+    when it reduces to a tautology, and one with real mathematical content is still a
+    generalisation (`broadMatch`), although the passage's mathematics does not depend on it
+    either. Read as a test of every case, it would have made every generalisation an
+    `exactMatch`. R1, PD7, the exactMatch instructions of both prompts and the labeler's
+    evidence line state it so.
   - **PD10, encodings**: a library lemma that links Mathlib's standard notion to the passage's
     notion of the same thing (`IsCoprime` and "no common factor other than 1", through
     `Int.isCoprime_iff_gcd_eq_one`) is an encoding difference (R1: a `closeMatch` by `encoding`
     when nothing else differs), not a PD8 bridge. PD8 governs bridges between statements, not
     between two definitions of one notion, so PD10 sharpens R1 and limits PD8. The prompts' and
     the labeler's PD8 instructions say so; PD8 is otherwise as encoded, and a weakening stays
-    R2's.
+    R2's. The maintainer named the convention; the `closeMatch` is the relation table's
+    definition (the same up to a convention), not a further ruling of his.
   - Neither is checked mechanically. No gate check changes, `JUDGMENT_RULES` stays 2 and
     `verify_locate.py` is unchanged, so `config_shas.gate_files` does not move. The prompt
     templates `locate.md.tmpl` and `locate-challenge.md.tmpl` changed, so
@@ -72,7 +79,12 @@ release has something to say.
     would refuse nothing it does not refuse now. `/5` had labelled no gold yet (bench v0's
     relabel under it is still to come), and the transcriber refuses a result whose args were
     emitted from another labeler sha, so gold of `/5` is labelled by this text. Once gold has
-    been labelled under a version, a change to its rules bumps it.
+    been labelled under a version, a change to its rules bumps it. Neither the version nor the
+    rules tell a run of rules 2 planned from the earlier text (no PD10, no test for a value)
+    from one planned from this: the score holds a run to its `judgment_rules` and pins its
+    `config_shas.prompts` without comparing them with the gold's labeler, and a `/6` would map
+    to 2 as well. None had been planned; one planned from the earlier text is planned again
+    before it is scored.
 - Locate judgment rules PD5–PD9 (the maintainer's policy calls of 2026-10-20, after the smoke-3
   audit; `references/vocabulary.md` §1.11 has each rule, what it replaces or sharpens, and his
   words on PD7 verbatim). Gate rule 9 is now version 2 (`cflib.vocab.JUDGMENT_RULES`,
