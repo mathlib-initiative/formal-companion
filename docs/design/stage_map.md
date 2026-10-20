@@ -408,7 +408,7 @@ beside it by the pin's `views`; the gate compares each and stops (exit 3) on a
 mismatch, and the harvest re-gates with the run's own gate copy, checked against
 `run.yaml` `locate.gate_files` and run from its sources only, with a
 `gate.local.json` that is the staged `gate/gate.json` but for the layout's paths
-and the task manifests `runs/<run>/planned.json` records (`references/locate-documents.md` §9 and §10). A rule the gate gained after a run was planned binds the run only when its `gate.json` names the rule's version — `judgment_rules` for rule 9, `span_end_rule` for rule 2's end check on an inventory passage — which `cf plan-locate` writes into every run it plans, so any re-gate, by the run's own gate or the checkout's, judges an older run by the rules it ran under. A run names two databases: the full `corpus.sqlite`
+and the task manifests `runs/<run>/planned.json` records (`references/locate-documents.md` §9 and §10). Two rules are versioned so far: rule 9 (`judgment_rules`) and rule 2's end check on an inventory passage (`span_end_rule`). Each binds a run only when its `gate.json` names the rule's version, which `cf plan-locate` writes into every run it plans, so a re-gate by the run's own gate or the checkout's judges an older run by the version it ran under. Other rules the gate gained later are not versioned and bind every run. A run names two databases: the full `corpus.sqlite`
 that the gate, the outcomes, the export and the bench check, and the tools
 database its workers search (`gate.json` `tools_corpus_db`, recorded in
 `run.yaml` `locate.universe.tools_corpus_db`: the full one, the blind build or
