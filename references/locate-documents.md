@@ -108,6 +108,21 @@ is enough.
   or the passage is refused under rule 1 — a worker's longer quote may be
   unique where the exported one is not, and the refusal comes while the start
   can still move, not at `cf export literature-links`.
+- **The end**: `span[1]` is where `passage_ids.py` ends the passage
+  (`locate_text.passage_end`), and gate rule 2 recomputes it: the end of the
+  first occurrence of the passage's `until` (its last words, as the layer has
+  them) at or after its start when it gives one, else the end of the outermost
+  `paragraphs.json` block it starts in, else the end of its quote, and never
+  before the end of its quote. The export carries the span, so the end is the
+  extent a reader highlights, and any other end is refused under rule 2: an
+  offset edited by hand, an end past the paragraph or into the next kept
+  passage with no `until` that puts it there, or an end counted in UTF-16 units
+  (every offset counts code points of the layer, and on a layer with
+  astral-plane characters a UTF-16 count runs further). `until` stays in the
+  document, so the end can be recomputed, and a second run of the tool places
+  the same spans; an `until` that is not a string or is not on the layer after
+  the start is refused. Two passages of one paragraph may overlap: each runs to
+  the paragraph's end unless its `until` ends it sooner.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
   deterministic passage of the task is dropped only with a skip whose span
@@ -505,6 +520,11 @@ another's files):
  "lexical": [
    {"library": "beta", "declaration": "…", "score": 12.4, "matched": "title"}]}
 ```
+
+An inventory or locate plan pins each candidates file it read by the sha256 of
+its bytes, in `gate.json` `candidates_sha256` (§9), and the gate refuses
+(exit 3) one that is not those bytes: rule 4 reads the curated hits from this
+file, so a file swapped or edited after planning would change what it asks.
 
 `via` ∈ `cflib.vocab.CANDIDATE_VIA`. `terms` are the title and the lead's bold
 terms (`bold_definition` finders whose `section` is the lead's `[]`), which
@@ -1447,8 +1467,11 @@ like a faithfulness run:
    "sourceset": {"id": "wpm", "version": 3, "manifest_sha256": "<hex>",
                  "sources_dir": "<host path>/sources"},
    "sources": {"enwiki-1001-2002": {"html_sha256": "<hex>", "layer_sha256": "<hex>",
-                                    "renderer": "web-html/3"}},
+                                    "renderer": "web-html/3",
+                                    "views": {"formulas.json": "<hex>",
+                                              "paragraphs.json": "<hex>"}}},
    "candidates_dir": "<host path>/candidates/u1", "blind": false,
+   "candidates_sha256": {"enwiki-1001-2002": "<hex>"},
    "inventory": {"run_id": "r-…"}, "challenged_runs": [], "findings_dir": "findings",
    "tasks_dir": "<gate dir>/tasks", "log_dir": "<tend root>/gate-log",
    "orchestrator_db": "<tend root>/orchestrator.sqlite",
@@ -1463,6 +1486,27 @@ like a faithfulness run:
   otherwise, so a run planned before the rules — its gate.json has no such key —
   is gated, also at harvest, by the rules it ran under. A version above the
   gate's own, or a value that is not a non-negative integer, is exit 3.
+
+  Three pins hold what the gate reads to the bytes the plan read; each is exit 3
+  on a mismatch. `corpus_db.sha256`, the sha256 of the CHECK database when the
+  run was planned, is compared when the gate first opens the database (rule 3:
+  once per call, in the modes that read it), so a doctored copy never passes a
+  phantom declaration — on the run host, on a contributor's machine or at a
+  harvest's re-gate — and a gate.json naming a database with no pin is exit 3
+  too; two builds of one universe are not byte identical, so a rebuild after
+  planning is refused until a re-plan pins it. `candidates_sha256`
+  (`{source_id: sha256}`, written by an inventory or locate plan, the modes whose
+  gate reads the files) pins each candidates file the plan read (§5); with the
+  key, a source whose file the gate reads and the map leaves out is exit 3. Each
+  source pin's `views` (`{"formulas.json": <sha256>, "paragraphs.json":
+  <sha256>}`, copied by the planner from the source's `render.json` once each
+  file is checked against it, `locate.plan.source_views`) holds the two tables
+  the gate opens beside `layer.txt` as `layer_sha256` holds the layer. A
+  gate.json planned before the pins has no `candidates_sha256` and no `views`,
+  and its candidates and tables are read as found, so the additions keep the
+  schema `cf-gate-locate/1`; `corpus_db.sha256` was always written and is now
+  compared. `--self-check` compares the database and every pinned candidates
+  file.
 
   `orchestrator_db` lies in the tend root, so its directory is also where the
   gate reads the bridge's `attempts/<task-id>.json` (§1); on a run host the
@@ -1510,9 +1554,10 @@ like a faithfulness run:
   `unresolved_record`, `cap_quote` and `check_note`; the challenge value,
   the location key and the joined proof status are placeholders, the source's
   citation fields too unless the `sources` entry carries `uri`, `title`,
-  `container_title` and `licence`), from the gate directory, or from the
-  checkout's `scripts/locate/records.py` when the harvest runs the gate
-  in-process. A sibling that is missing or does not import is exit 3 with one
+  `container_title` and `licence`), from the gate directory — also when the
+  harvest runs the run's own staged copy in-process (§10) — or from the
+  checkout's `scripts/locate/records.py` when the checkout's gate runs
+  in-process (`cf harvest --checkout-gate`). A sibling that is missing or does not import is exit 3 with one
   `FAIL` line naming it, never a traceback. Every SQLite database is opened
   through a percent-quoted `file:` URI with `mode=ro&immutable=1`.
 
@@ -1528,7 +1573,17 @@ like a faithfulness run:
   `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus, or
   `--self-check`, which validates nothing and exits 0 or 3 (its modules, the
   vendored pins, the task manifests, the sources and `corpus.sqlite`) and is
-  what `cf run`'s verify stage runs on the host, under `python3 -I`. It
+  what `cf run`'s verify stage runs on the host, under `python3 -I`. **The
+  command line is the log line's label**, so the gate refuses, with exit 3 and
+  one `FAIL` line before it reads or logs anything: `--findings` with
+  `--changed-files` (a mutually exclusive pair), `--pre-merge` without
+  `--changed-files`, an abbreviated flag (`allow_abbrev=False`), a repeated
+  `--gate-config` (argparse would keep the last), and, when a `gate.json` sits
+  beside the script — in every staged gate directory — a `--gate-config` that
+  resolves to any other file, since the directory's own config names the log the
+  watchdog and the bench read. The checkout's `scripts/gate/` holds no
+  `gate.json`, so a hand check there takes any config; the staged copy runs with
+  its own only. It
   validates only the documents the change set touched (or names), loads only
   the sources, candidates files and task manifests those documents name, exits
   0 / 1 (rejected) / 3 (could not run) like `verify_findings.py`, prefixes each
@@ -1644,8 +1699,8 @@ like a faithfulness run:
   The verify stage checks each database against its pinned sha256 once, and
   every source layer the run reads against gate.json's `layer_sha256`, read
   from the host's own gate.json once that file is shown to be the staged one,
-  and the `formulas.json` and `paragraphs.json` the gate opens beside it (which
-  gate.json does not pin) as JSON lists of objects (each failure named, as
+  and the `formulas.json` and `paragraphs.json` the gate opens beside it as JSON
+  lists of objects and, when the source's pin carries `views`, as those shas (each failure named, as
   `sha256sum -c` names it), so a run whose layers were neither sent nor
   already there stops at verify instead of failing every gate call. No
   command sent to the host grows with the number of sources: the transfer
@@ -1669,7 +1724,11 @@ signal, stdout_bytes, cost: unknown}}`, and prose stdout is kept beside it as
 `.out`), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
 the count of genuine reviewer rejections), `gate-log/gate.jsonl` (one JSON line
 per gate call: `at`, `run_id`, `mode`, `task_id`, `task_id_from` (`--task-id`,
-`$TEND_TASK_ID`, `orchestrator.sqlite…`, or null with no id), `changed_files`
+`$TEND_TASK_ID`, `orchestrator.sqlite…`, or null with no id), `caller` (which call
+it was: `validation` for `--changed-files`, tend's validation command; `pre_merge` for
+`--changed-files --pre-merge`; `findings_check` for `--findings`, an agent's or the
+bridge's own check; `directory` for a directory of documents; a line from a gate
+older than the field has none), `changed_files`
 (whether the call judged a change set), `pre_merge` (whether it was tend's
 pre-merge call, `--pre-merge`; a line with no `pre_merge`, from a gate older than
 the field, reads as false), `ownership` (the call's ownership line, null without
@@ -1693,15 +1752,25 @@ count under `cflib.vocab.LOCATE_ATTEMPT_CAP`), `CF_TASK_MANIFESTS`
 change set is read against, as the gate reads it; default `main`), `CF_EXTRA_TOOLS` (the allowlist entries for the two
 host tools, each `Bash(python3 <gate>/corpus_search.py --db <tools path>:*)` —
 and in an inventory run the passage-id tool — worker role only),
-`CF_REVIEWER_TOOLS` (the reviewer's read-only default plus the gate, which its
-prompt has it run; reviewer role only) and `CF_FINDINGS_GLOB`
+`CF_REVIEWER_TOOLS` (the reviewer's read-only default plus the gate's `--findings`
+check, which its prompt has it run, as the whole gate command with `--findings`;
+reviewer role only) and `CF_FINDINGS_GLOB`
 (`findings/$TEND_TASK_ID/*.json` for the nested layout), all exported by the
 generated wrappers in `bin/`; the planner stages every helper the bridge runs
 (`agent_call.py`, `attempt_cap.py`, `normalize_result.py`,
 `extract_final_json.py`, and for a locate run `watchdog.py`) beside it in
-`bin/`. Both roles' default allowlists in the bridge also carry the gate
-program, `Bash(python3 <gate>/verify_locate.py:*)`, derived from `CF_GATE_CMD`:
-the prefix of every gate invocation both prompts render. A timeout exits 124 and
+`bin/`. Both roles' default allowlists in the bridge also carry the gate,
+derived from `CF_GATE_CMD` and depending on the gate script: for the locate gate
+the whole command with `--findings`, `Bash(python3 <gate>/verify_locate.py
+--gate-config <gate>/gate.json --findings:*)`, the prefix of every gate
+invocation the locate prompts render, so an agent runs its own check and never
+tend's `--changed-files` call — the only one the log's readers count as an
+attempt — and whatever it appends to that prefix to fake one is a command line
+the gate refuses; for the findings gate of the faithfulness pipeline, whose
+prompts render the bare `{{gate_command}}`, the program alone,
+`Bash(python3 <gate>/verify_findings.py:*)`. (A codex worker has no allowlist and
+could still call `--changed-files` on its own worktree: that skews a watchdog
+rate, never a record.) A timeout exits 124 and
 an empty or 409 envelope 75, with no contribution printed, so tend retries the
 same worktree; only a `request_changes` from a call that completed, which the
 reviewer stated — in its result file, or with none an explicit `verdict:` in its
@@ -1711,9 +1780,9 @@ puts every other path the rejected attempts changed since the merge base back
 as it is there (a neighbour's task file, a stray file, a deletion; `.tend/`
 aside) and keeps the task file's lines with `status: complete`, and the reviewer
 side approves mechanically only a change set of exactly those documents and that
-status. Both roles' allowlists carry the gate command's program by absolute
-path (`CF_GATE_CMD` without its flags): the worker runs it before committing and
-the reviewer to confirm the gate passes. When an agent writes no result file,
+status. Both roles' allowlists carry that gate entry by absolute path: the
+worker runs the check before committing and the reviewer to confirm the gate
+passes. When an agent writes no result file,
 the bridge's fallback runs that command with `--findings <file>` for each of the
 task's own documents (the `CF_FINDINGS_GLOB` matches) and reports the gate's
 refusals from stderr.
@@ -1728,7 +1797,44 @@ listed, not landed (the rsync runs `--no-links`) and not counted, and with
 `--verify-sha` a landed file the source gave no checksum for is named in
 `sha_unverified` and makes the receipt incomplete). Every file the receipt
 counts is one the re-gate validated or names. The landed corpus is gated
-again with `verify_locate.py` and the run's `gate.local.json`, and the receipt's
+again with `gate.local.json` by **the run's own gate**: the copy of
+`verify_locate.py`, its siblings and `vendor/` that the plan staged in
+`runs/<run-id>/tend-root/gate/`, each file first checked against `run.yaml`
+`locate.gate_files` and then loaded in-process apart from the checkout's
+modules of the same names, so a gate edited or upgraded since the plan never
+judges the corpus its workers were judged by. A copy whose file is missing or
+not the planned bytes, one that holds a Python module its plan did not stage
+(the directory comes first on the import path, as on the host), or a run whose
+`run.yaml` records no `gate_files`, fails the gate without running (the
+receipt is not complete). The copy runs from its pinned sources only: the
+import writes no bytecode into the run's directory and reads none from it
+(bytecode is looked up under an empty directory of its own), so a `.pyc`
+planted in its `__pycache__/` never runs in place of the source it claims to
+be. The modules set aside while it runs are read off the directory (each
+`<name>.py` beside the gate and each package under `vendor/`), not kept in a
+second list. Nor does the re-gate take the plan's pins from the config alone:
+`gate.local.json` must be the `gate/gate.json` the plan staged (itself the
+bytes `gate_files` pins) in every field but the ones that name the layout's
+paths (`corpus_db.path`, `tools_corpus_db.path`, `sourceset.sources_dir`,
+`candidates_dir`, `tasks_dir`, `log_dir`, `orchestrator_db`), so its
+`corpus_db.sha256`, `candidates_sha256` and source pins are the plan's; its
+`corpus_db.sha256` must be `run.yaml` `locate.universe.corpus_db_sha256`; and
+every task manifest in its `tasks_dir` must be the one `runs/<run-id>/planned.json`
+records, with none missing and none added, so an emptied `curated` list (which
+would hand a task no curated hit and turn rule 4 off) or a manifest for a task
+the plan never had is refused. Any of these fails the gate without running,
+and the refusal says what settles it: `cf harvest --checkout-gate`, which
+re-gates with this checkout's gate instead, for a gate copy that cannot be told
+from an edited one; putting back the plan's file, or a re-plan, for a config or
+manifest that is not the plan's. With `--checkout-gate` the run's own copy and
+its staged `gate.json` are not consulted, the `run.yaml` corpus pin still is,
+and the manifests are held to `planned.json` when the run has one (a run
+planned before `planned.json` reads them as found). `cf harvest` then says the
+gate could not judge the findings, never that they failed it. The receipt's
+`gate` block records which gate ran as `gate_code`: `{from: "run", dir, sha256,
+files, files_sha256}` — the gate script's sha256 and the sha256 of the sorted
+`<path>\t<sha256>` lines of the files checked — or `{from: "checkout", dir,
+sha256}`. The receipt's
 `locate` block counts `documents`, `by_mode`, `tasks`, `passages`, `verdicts`,
 `unresolved_documents`, `attempt_capped_documents` and `unresolved_passages` —
 UNRESOLVED on its own, never as not formalized. That re-gate writes no line to

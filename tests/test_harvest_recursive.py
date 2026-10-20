@@ -182,9 +182,10 @@ class TestTheLocateGateAtHarvest(unittest.TestCase):
             cf_main.main(["init", str(ws), "--no-git", "-q"])
         run_dir = ws / "runs" / "r-1"
         run_dir.mkdir(parents=True)
+        pins = tvl.stage_planned_run(run_dir, self.fx)
         (run_dir / "run.yaml").write_text(
-            "version: 1\nrun_id: r-1\nmode: locate\nlocate:\n  mode: locate\n", encoding="utf-8")
-        shutil.copy2(self.fx.root / "gate" / "gate.json", run_dir / "gate.local.json")
+            "version: 1\nrun_id: r-1\nmode: locate\nlocate:\n  mode: locate\n"
+            + tvl.gate_files_yaml(pins), encoding="utf-8")
         out = io.StringIO()
         with redirect_stdout(out), redirect_stderr(out):
             code = cf_main.main(["--workspace", str(ws), "harvest", "r-1", "--from", str(self.landed)])
@@ -306,12 +307,12 @@ class _HostHarvest(unittest.TestCase):
         ws.save()
         rd = self.ws / "runs" / "r-1"
         rd.mkdir(parents=True)
+        pins = tvl.stage_planned_run(rd, self.fx)
         (rd / "run.yaml").write_text(
             "version: 1\nrun_id: r-1\nmode: locate\n"
             f"host:\n  name: examplebox\n  kind: remote\n  remote_root: {self.remote}\n"
-            "locate:\n  mode: locate\n  campaign: c-1\n  sourceset:\n    id: ss-1\n",
-            encoding="utf-8")
-        shutil.copy2(root / "gate" / "gate.json", rd / "gate.local.json")
+            "locate:\n  mode: locate\n  campaign: c-1\n  sourceset:\n    id: ss-1\n"
+            + tvl.gate_files_yaml(pins), encoding="utf-8")
         host_gate = dict(self.fx.gate, log_dir=str(self.gate_log.parent))
         write(rd / "gate.json", host_gate)
         write_yaml(self.ws / "campaigns" / "c-1" / "campaign.yaml",

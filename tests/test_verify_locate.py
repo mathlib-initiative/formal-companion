@@ -182,6 +182,15 @@ class Fixture:
         (self.root / "candidates" / f"{SID}.json").write_text(json.dumps(self.candidates),
                                                              encoding="utf-8")
 
+    def repin_corpus(self) -> Path:
+        """Pin corpus.sqlite as it is now, as a re-plan does after the database changed.
+
+        The gate holds the database to gate.json's ``corpus_db.sha256``, so a test
+        that edits the fixture's database pins the new bytes before it runs the gate.
+        """
+        self.gate["corpus_db"]["sha256"] = _sha(self.db.read_bytes())
+        return self.write_gate()
+
     def manifest(self, task: str, document: dict) -> Path:
         path = self.tasks / f"{task}.json"
         path.write_text(json.dumps({"task_id": task, "mode": self.mode, "run_id": "r-1",
@@ -208,6 +217,56 @@ class Fixture:
 
     def run(self, *paths: Path, **kwargs) -> dict:
         return vl.run_gate(self.gate_cfg(), root=self.root, findings=list(paths), **kwargs)
+
+
+def stage_run_gate(run_dir: Path) -> dict[str, str]:
+    """A planned run's own gate copy in ``runs/<id>/tend-root/gate/``, as the planner stages it.
+
+    The files of ``locate.tend_root.GATE_FILES`` and both vendored packages,
+    copied from this checkout; returns their ``locate.gate_files`` pins, which
+    ``cf harvest`` checks the copy against before it re-gates with it.
+    """
+    from locate import tend_root
+
+    tend = Path(run_dir) / "tend-root"
+    gate = tend / "gate"
+    (gate / "vendor").mkdir(parents=True, exist_ok=True)
+    for rel, name in tend_root.GATE_FILES:
+        shutil.copy2(SKILL / rel, gate / name)
+    for pkg in tend_root.VENDORED:
+        shutil.copytree(SKILL / "vendor" / pkg, gate / "vendor" / pkg, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        shutil.copy2(SKILL / "vendor" / f"{pkg}.manifest.json",
+                     gate / "vendor" / f"{pkg}.manifest.json")
+    (tend / "bin").mkdir(exist_ok=True)
+    return tend_root.staged_shas(tend)
+
+
+def stage_planned_run(run_dir: Path, fx: "Fixture") -> dict[str, str]:
+    """A planned run as ``cf harvest`` re-gates it, from the fixture's gate.json and manifests.
+
+    The run's own gate copy (:func:`stage_run_gate`), the host ``gate.json`` the
+    planner stages beside it, ``gate.local.json`` (its local twin) and
+    ``planned.json``, the plan's own record of every task manifest; returns the
+    ``locate.gate_files`` pins, ``gate/gate.json`` among them.
+    """
+    from locate import tend_root
+
+    stage_run_gate(run_dir)
+    tend = Path(run_dir) / "tend-root"
+    shutil.copy2(fx.root / "gate" / "gate.json", tend / "gate" / "gate.json")
+    shutil.copy2(fx.root / "gate" / "gate.json", Path(run_dir) / "gate.local.json")
+    tasks = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(fx.tasks.glob("*.json"))]
+    (Path(run_dir) / "planned.json").write_text(json.dumps(
+        {"schema": "cf-locate-planned/1", "run_id": fx.gate["run_id"], "tasks": tasks}),
+        encoding="utf-8")
+    return tend_root.staged_shas(tend)
+
+
+def gate_files_yaml(pins: dict[str, str], indent: str = "  ") -> str:
+    """``gate_files:`` with ``pins`` under it, for a run.yaml ``locate:`` block written as text."""
+    return f"{indent}gate_files:\n" + "".join(f'{indent}  "{rel}": "{sha}"\n'
+                                              for rel, sha in sorted(pins.items()))
 
 
 def inventory_passage(item, words, span, *, finder, prominence, kind, scope="formal_math"):

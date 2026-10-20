@@ -522,14 +522,78 @@ def vendor_shas() -> dict[str, str]:
             for name in ("literature_links", "formal_companion_annotations")}
 
 
+#: the views beside ``layer.txt`` the gate opens, whose shas a source pin carries
+#: (``verify_locate.PINNED_VIEWS``; a test pins the two)
+GATE_VIEWS = ("formulas.json", "paragraphs.json")
+
+
+def source_views(paths: WorkspacePaths, manifest: Manifest,
+                 source_ids: Iterable[str]) -> dict[str, dict[str, str]]:
+    """``{source_id: {"formulas.json": sha256, "paragraphs.json": sha256}}`` for gate.json.
+
+    Copied from each source's ``render.json`` ``views`` (the record every
+    ``web-html/3`` rendering writes), and each held to its file on disk first:
+    a view rewritten since its render is refused here, by name, rather than as
+    every gate call's exit 3 on the host.  A source pin's ``views`` is what the
+    gate checks the two tables by, as it checks ``layer.txt`` by
+    ``layer_sha256`` (references/locate-documents.md section 9).
+    """
+    out: dict[str, dict[str, str]] = {}
+    for sid in sorted(set(source_ids)):
+        view = inputs.source_view(paths, manifest.sourceset_id, sid)
+        fix = f"re-render it: `cf sourceset render {manifest.sourceset_id} --source {sid}`"
+        record = view.json("render.json")
+        recorded = record.get("views") if isinstance(record, dict) else None
+        if not isinstance(recorded, dict) or not all(
+                isinstance(recorded.get(name), str) for name in GATE_VIEWS):
+            raise CfError(f"{sid}: render.json records no sha of "
+                          f"{' and '.join(GATE_VIEWS)}, which gate.json pins", hint=fix)
+        pins: dict[str, str] = {}
+        for name in GATE_VIEWS:
+            path = view.dir / name
+            if not path.is_file():
+                raise CfError(f"{sid}: {name} is missing from {view.dir}", hint=fix)
+            got = hashing.sha256_file(path)
+            if got != recorded[name]:
+                raise CfError(f"{sid}: {name} is {got[:12]}…, its render.json records "
+                              f"{recorded[name][:12]}…", hint=fix)
+            pins[name] = recorded[name]
+        out[sid] = pins
+    return out
+
+
+def candidates_shas(paths: WorkspacePaths, sourceset_id: str, universe_id: str, tools_db: dict,
+                    source_ids: Iterable[str]) -> dict[str, str]:
+    """``{source_id: sha256}`` of each candidates file a plan read: gate.json's ``candidates_sha256``.
+
+    The gate reads the curated hits from these files itself (rule 4), so it
+    holds each to the bytes the plan read (references/locate-documents.md
+    sections 5 and 9).
+    """
+    directory = inputs.candidates_dir(paths, sourceset_id, universe_id, tools_db)
+    return {sid: hashing.sha256_file(directory / f"{sid}.json")
+            for sid in sorted(set(source_ids))}
+
+
 def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict,
                 universe: inputs.Universe, corpus_db_sha256: str, tools_db: dict,
                 manifest: Manifest, source_ids: list[str], blind: bool,
-                inventory_run: str | None, challenged_runs: list[str]) -> dict:
-    """``gate.json`` of references/locate-documents.md section 9, for one layout."""
+                inventory_run: str | None, challenged_runs: list[str],
+                views: dict[str, dict[str, str]] | None = None,
+                candidates_sha256: dict[str, str] | None = None) -> dict:
+    """``gate.json`` of references/locate-documents.md section 9, for one layout.
+
+    ``views`` (:func:`source_views`) puts each source pin's ``views``;
+    ``candidates_sha256`` (:func:`candidates_shas`) pins the candidates files of
+    an inventory or locate plan, the only modes whose gate reads them.
+    """
     for sid in source_ids:                # another renderer's source is pinned nowhere
         inputs.check_renderer(manifest.entries[sid], manifest.sourceset_id)
+    extra: dict[str, Any] = {}
+    if candidates_sha256 is not None:
+        extra["candidates_sha256"] = dict(sorted(candidates_sha256.items()))
     return {
+        **extra,
         "schema": GATE_SCHEMA,
         "mode": preset_mode,
         "preset": preset_name,
@@ -543,7 +607,8 @@ def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict
         "sourceset": {**manifest.pin(), "sources_dir": layout["sources_dir"]},
         "sources": {sid: {"html_sha256": manifest.entries[sid]["html_sha256"],
                           "layer_sha256": manifest.entries[sid]["layer_sha256"],
-                          "renderer": manifest.entries[sid]["renderer"]}
+                          "renderer": manifest.entries[sid]["renderer"],
+                          **({"views": dict(views[sid])} if views and sid in views else {})}
                     for sid in sorted(source_ids)},
         "candidates_dir": layout["candidates_dir"],
         "blind": bool(blind),
