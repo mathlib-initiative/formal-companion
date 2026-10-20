@@ -23,8 +23,9 @@ the shipped producer, not a fixture of the next stage's format:
     L6         cf tally --locate, cf export literature-links (sealed, checked)
     bench      cf bench build / anchor / freeze / score over the same runs
     A/A        loc-2 planned exactly as loc-1, run, challenged as chl-1 was,
-               tallied and scored; cf bench compare --aa answers "aa ok"
-               (references/locate-bench.md section 9, rule 5)
+               tallied and scored; cf bench compare --aa answers "aa ok", with
+               agreement shown on every row (references/locate-bench.md
+               section 9, rule 5)
     A/A refusal  loc-3 planned as loc-1 but challenged at another
                --strong-sample-rate: cf bench compare --aa refuses it, naming
                the planning key
@@ -1010,11 +1011,19 @@ class Pipeline:
         check(self.AA_CLAIM in agree["metrics"] and "G1.fnf_rate" in agree["metrics"]
               and all(row["ok"] for row in agree["metrics"].values()) and agree["cost"]["ok"],
               f"the replicate's outcomes do not agree with the baseline's: {agree}")
+        # the worker answers loc-2 as it answered loc-1: agreement is SHOWN on every row
+        # (each interval inside the tolerance), not merely left unrefuted
+        check(agree["unresolved"] == [] and len(agree["within"]) == agree["compared"] > 2,
+              f"the A/A did not show agreement on every row it compared: within "
+              f"{agree['within']}, unresolved {agree['unresolved']}")
         check(doc["aa"]["accepted"] is False,
               "the acceptance rule accepted the replicate over its own baseline")
         code, text = self.cf(*self._aa_argv(base, replicate))
         check(text.splitlines()[0].startswith("aa ok"),
               f"cf bench compare --aa does not answer aa ok:\n{text}")
+        check(f"agreement within the tolerance shown for {agree['compared']} of "
+              f"{agree['compared']}" in text,
+              f"cf bench compare --aa does not say where it showed agreement:\n{text}")
 
     def aa_refusal(self) -> None:
         """One planning pin changed: loc-3's challenge samples strong records at another
