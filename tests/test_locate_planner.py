@@ -1738,6 +1738,32 @@ class TestChallenge(Campaign):
             if rec["prominence"] == "subject":
                 self.assertEqual(tasks[(rec["source_id"], rec["item"])], {rec["task_id"]})
 
+    def test_a_harvested_challenge_is_not_re_planned_into_another_plan(self):
+        """The B5 review: re-planning a harvested challenge in place under a planner that
+        requires more (every subject prominence) left those records owed, and the export
+        refused every subject passage with exit 0.  The same plan re-plans; another is
+        refused before anything is written, and plans under a new run id."""
+        self.challenge()
+        before = (self.paths.run_dir("chl-1") / "challenge-plan.json").read_bytes()
+        argv = ("plan-locate", "--preset", "locate-challenge", "--sourceset", F.SS,
+                "--universe", F.U, "--challenge-of", "loc-1")
+        code, out, err = ws(self.root, *argv, "--run-id", "chl-1")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual((self.paths.run_dir("chl-1") / "challenge-plan.json").read_bytes(),
+                         before)
+        code, out, err = ws(self.root, *argv, "--run-id", "chl-1", "--sample-rate", "1")
+        self.assertNotEqual(code, 0, out + err)
+        self.assertIn("challenge run chl-1 is harvested", out + err)
+        self.assertIn("newly required", out + err)
+        self.assertIn("a new --run-id", out + err)
+        self.assertEqual((self.paths.run_dir("chl-1") / "challenge-plan.json").read_bytes(),
+                         before)
+        code, out, err = ws(self.root, *argv, "--run-id", "chl-2", "--sample-rate", "1")
+        self.assertEqual(code, 0, out + err)
+        # a challenge planned but not harvested re-plans as it always did
+        code, out, err = ws(self.root, *argv, "--run-id", "chl-2", "--sample-rate", "0")
+        self.assertEqual(code, 0, out + err)
+
     def test_several_subject_passages_of_one_article_are_each_challenged(self):
         """Nothing limits an article to one subject passage: each one's label is judged."""
         rows = [{"source_id": F.W1, "item": item, "prominence": "subject",

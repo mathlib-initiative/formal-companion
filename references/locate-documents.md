@@ -438,7 +438,11 @@ A `claims` entry for a passage the task does not judge is refused.
   the task manifest's record carries that relation), `refute`; `absence` and `unresolved` — `uphold`,
   `overturn` (with `locations`, at least one whose relation counts); `scope` —
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
-  `uphold`, `overturn` (naming the new `prominence`); `coverage` — `confirm`
+  `uphold`, `overturn` (naming the new `prominence`, which differs from the
+  record's own; the task manifest's record carries that prominence, and an
+  overturn naming it is refused, rule 1, since it would change nothing yet mark
+  the passage `downgraded`);
+  `coverage` — `confirm`
   (the claim `survived`, and with it each part whose own record no verdict
   judged: a `not_required` or `sampled_out` part is `survived`, a judged one
   keeps its verdict, and a part a prominence overturn in the same run reopened
@@ -1592,8 +1596,14 @@ like a faithfulness run:
   `sampled_out`) is still planned, with no task: its `challenge-plan.json` is the
   result, and it needs no harvest. A re-plan checks everything before it writes
   anything, and refuses a run id that names a run it reads or a run of another
-  preset. The run's counts land in the sourceset's `state.json`, through
-  `Sourceset.record_state`, not in a companion's.
+  preset, and a harvested challenge run (one with a `RECEIPT.json`) whose
+  `challenge-plan.json` it would change: a record's planned value that differs,
+  or a record either plan lacks. Its verdicts answer the plan they were planned
+  under, so a record the new plan requires would be owed and its passage refused
+  at export, and a verdict on a record it no longer requires would be ignored. A
+  planner change that requires more (every `subject` prominence, §4) is planned
+  as a new challenge run. The run's counts land in the sourceset's `state.json`,
+  through `Sourceset.record_state`, not in a companion's.
 
   `cf run` refuses a locate run planned for `local` (or given `--local`) before
   it writes anything: a locate run runs on an allowlisted host through tend. It
@@ -1857,10 +1867,12 @@ verdict refuted or downgraded no longer holds: it upgrades nothing and the
 passage carries a `problem` until the claim is challenged again; a `downgrade` must name a strictly weaker relation (exact,
 then close, then broad, then narrow/hasPart, then related: §4's order,
 `cflib.vocab.RELATION_STRENGTH`); a prominence changes only
-by `overturn`; an `overturn` puts the challenger's locations first in their own
-order, then the kept `relatedMatch` ones, renumbered and capped at five; and a
-scope overturned with no location makes the passage `formal_math` with no
-outcome and a `problem`, which the export refuses. The counts' `unresolved`
+by an `overturn` to another prominence (one naming the passage's own is
+ignored, and the record is owed); an `overturn` puts the challenger's
+locations first in their own order, then the kept `relatedMatch` ones,
+renumbered and capped at five; and a scope overturned with no location makes
+the passage `formal_math` with no outcome and a `problem`, which the export
+refuses. The counts' `unresolved`
 is every answered passage with no status — the worker's and those a challenge
 left without a location that counts.
 The bench (`references/locate-bench.md` §8) joins runs to gold by the row's

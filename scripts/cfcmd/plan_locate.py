@@ -29,7 +29,9 @@ runs' workers searched (the same kind, and the same file for a planted one).
 
 Nothing here contacts a host or calls a model; planning is local and
 deterministic, and re-planning the same inputs rewrites the same tasks,
-manifests and gate configuration.
+manifests and gate configuration.  A harvested challenge run is never re-planned
+into a plan that changes a record's planned value: its verdicts answer the plan
+they were planned under (references/locate-documents.md section 9).
 """
 from __future__ import annotations
 
@@ -181,6 +183,36 @@ def _check_run_id(paths, args, run_id: str, preset) -> None:
                           hint="re-planning keeps a run's preset; use a new --run-id")
 
 
+def _check_harvested_challenge(paths, run_id: str, doc: dict) -> None:
+    """Refuse re-planning a harvested challenge run into a plan its verdicts did not answer.
+
+    The outcomes read a challenge run's verdicts against its ``challenge-plan.json``
+    (``locate.outcomes.challenge_values``): a record the new plan requires and no
+    harvested verdict judged would be owed, so the export refuses its passage, and a
+    verdict on a record it no longer requires would be ignored.  A planner change can
+    do that to a whole stratum -- every subject passage's prominence, once it became a
+    required record -- so a re-plan that keeps each record's planned value passes, and
+    one that changes any is refused before anything is written: the new plan is a new
+    challenge run.
+    """
+    old_path = paths.challenge_plan_json(run_id)
+    if not (paths.receipt_json(run_id).is_file() and old_path.is_file()):
+        return
+
+    def planned(plan: dict) -> dict:
+        return {r.get("key"): r.get("planned") for r in plan.get("records") or []
+                if isinstance(r, dict)}
+    before, after = planned(read_json(old_path)), planned(doc)
+    changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+    if changed:
+        newly = sum(after.get(k) == vocab.CHALLENGE_REQUIRED for k in changed)
+        raise CfError(f"challenge run {run_id} is harvested, and this plan changes the planned "
+                      f"value of {len(changed)} of its record(s), {newly} of them newly "
+                      f"required: its verdicts answer the plan they were planned under, so a "
+                      f"newly required record would be owed and its passage refused at export",
+                      hint="plan the new challenge under a new --run-id, and export with it")
+
+
 def _host(ws, host: str) -> dict:
     if host == lplan.LOCAL:
         return {"remote_root": "", "ssh": ""}
@@ -273,6 +305,8 @@ def run(args) -> int:
                         "no harvest")
     else:
         lplan.check_root_size(tasks, preset.mode)
+    if challenge_doc is not None:
+        _check_harvested_challenge(paths, run_id, challenge_doc)
     # every refusal is above this line: nothing of a refused re-plan is written
     lplan.check_task_dir(tasks, paths.tasks_dir(run_id))
 

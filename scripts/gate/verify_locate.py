@@ -2621,9 +2621,15 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                    "sentence of its witness, as the location's note)")
         if cfg.judgment_rules:
             check_verdict(cfg, ctx, problems, where, v, records[key], claims_of, source)
-        if action == "overturn" and target == "prominence" \
-                and not _one_of(v.get("prominence"), PROMINENCE):
-            problems.add(1, where, "a prominence overturn names the new prominence")
+        if action == "overturn" and target == "prominence":
+            new, old = v.get("prominence"), records[key].get("prominence")
+            if not _one_of(new, PROMINENCE):
+                problems.add(1, where, "a prominence overturn names the new prominence")
+            elif new == old:
+                # the outcomes would mark the passage downgraded and change nothing: a
+                # subject passage would keep its label and the article's QID
+                problems.add(1, where, f"a prominence overturn names a prominence other than "
+                                       f"the record's {old}; to keep {old}, uphold")
         if action == "overturn" and target in ("absence", "unresolved", "scope"):
             locations = _check_locations(cfg, ctx, problems, where, v.get("locations"))
             if locations is None:

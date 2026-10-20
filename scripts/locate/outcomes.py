@@ -50,11 +50,12 @@ commit, only when that file is absent) and refused when they are not the count
 A challenge run is applied only to the locate run it challenged (its plan's
 ``challenged_runs`` and each record's ``run_id``), only to the records its plan
 REQUIRED, and only while each record is what the plan saw (a location's
-relation, a passage's outcome): anything else is named in ``problems`` and left
-owed.  Every row carries the ``source_sha`` and ``layer_sha256`` of the
-document it came from, and a document whose pins are not the run's manifest's
-puts a ``problem`` on each of its rows -- the export refuses those, as it does a
-row whose location could not be joined.
+relation, a passage's outcome); a downgrade must name a weaker relation, and a
+prominence overturn a prominence other than the passage's: anything else is
+named in ``problems`` and left owed.  Every row carries the ``source_sha`` and
+``layer_sha256`` of the document it came from, and a document whose pins are not
+the run's manifest's puts a ``problem`` on each of its rows -- the export refuses
+those, as it does a row whose location could not be joined.
 """
 from __future__ import annotations
 
@@ -853,6 +854,14 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
             row["absence"] = None
             row["unresolved_by"] = None
         elif t == "prominence" and action == "overturn":
+            if verdict.get("prominence") == row["prominence"]:
+                # an overturn to the passage's own prominence overturns nothing (the gate
+                # refuses it): never a downgraded passage that kept its label and QID
+                row["prominence_challenge"] = None
+                _problem(row, problems, f"{sid} {item}: a prominence overturn to "
+                                        f"{row['prominence']!r}, the passage's own, changes "
+                                        "nothing; it is ignored and the record owed")
+                continue
             if verdict.get("prominence") in vocab.PROMINENCE:
                 row["prominence"] = verdict["prominence"]
             row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED

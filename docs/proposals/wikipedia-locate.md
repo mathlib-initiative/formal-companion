@@ -83,7 +83,7 @@ family: enwiki
 pageid: 28767
 revision: 1371234567                 # MediaWiki oldid
 title: Sylow theorems                # metadata only
-wikidata: Q207039                    # the article's own QID (pageprops); its subject passages' records carry it (§2.2)
+wikidata: <QID>                      # the article's own QID (pageprops); its subject passages' records carry it (§2.2)
 fetch: {api: action=parse, params_sha256: <sha of the fixed parameter set>}
 raw_sha256: <sha of the bytes as fetched>
 html_sha256: <sha of the canonical body>     # = source_sha
@@ -398,6 +398,7 @@ A location:
               "location": {"quote": {"exact": "…", "prefix": "…", "suffix": "…"}},
               "citation": {"type": "webpage", "title": "Sylow theorems", "container-title": "Wikipedia",
                            "URL": "https://en.wikipedia.org/w/index.php?title=Sylow_theorems&oldid=1371234567"},
+              "identifiers": {"wikidata": "<QID>"},
               "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "layer_sha256": "<hex>",
                                           "renderer": "web-html/3", "span": [10234, 10612],
                                           "span_sha256": "<hex>", "licence": "CC-BY-SA-4.0"}}}],
@@ -425,9 +426,9 @@ A location:
   layer, never text) and the `layer_sha256` it indexes, so a reader holding
   that layer highlights the passage, not only the capped quote.
 - A `subject` passage's subject end carries the article's QID as
-  `identifiers.wikidata` (`"identifiers": {"wikidata": "Q99999001"}` on the
-  tests' synthetic page 1001, beside `citation`), and no other passage's does,
-  nor a `challenge_pending` record's (§2.2).
+  `identifiers.wikidata`, beside `citation` (the example's `<QID>`; on the
+  tests' synthetic page 1001 it is `"identifiers": {"wikidata": "Q99999001"}`),
+  and no other passage's does, nor a `challenge_pending` record's (§2.2).
 - A `closeMatch` always names its convention difference in `note`, one a
   challenge downgraded to `closeMatch` too (the challenger's note, else the
   first sentence of its witness that quotes the source within the quote cap).
