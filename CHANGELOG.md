@@ -72,13 +72,31 @@ release has something to say.
     record per subject passage. Its `counts.required` rises by that number, and its task
     batches can regroup. Two config shas also change for runs planned after it:
     `config_shas.prompts` for the `locate-challenge` template, and `config_shas.gate_files` for
-    every locate preset, since `scripts/locate/records.py` is staged as `locate_records.py`.
-    So no run planned after this is an A/A replicate of one planned before it. A plan written
-    before it has no `prominence:subject` record, and its records export as they did, apart
-    from the `challenge_pending` rule.
+    every locate preset, since `scripts/locate/records.py` is staged as `locate_records.py` and
+    the gate itself changes (below). So no run planned after this is an A/A replicate of one
+    planned before it. A plan written before it has no `prominence:subject` record, and its
+    records export as they did, apart from the `challenge_pending` rule. Its subject
+    prominences are judged by a new challenge run, never by re-planning the old one in place.
+  - **A harvested challenge is not re-planned into another plan.** `cf plan-locate` refuses to
+    re-plan a challenge run that has a `RECEIPT.json` when the new `challenge-plan.json` would
+    change any record's planned value, and names the count newly required. Its verdicts answer
+    the plan they were planned under: re-planned in place under this planner (the review's
+    probe), a harvested challenge gained the `prominence:subject` records with no verdict, so
+    the export refused every subject passage, the ones carrying a QID, and still exited 0. A
+    re-plan that keeps every planned value passes as before (`references/locate-documents.md`
+    §9).
+  - **A prominence overturn names another prominence.** Now that every subject prominence is a
+    required record, an `overturn` naming the record's own prominence marked the passage
+    `downgraded` while its label and QID stayed. The gate refuses it (rule 1, against the task
+    manifest's `prominence`), and the outcomes leave such a record owed, so the export refuses
+    the passage. No verdict of smoke 2's or smoke 3's challenge harvests is one: their three
+    prominence overturns are `supporting` to `central`.
   - Tests pin `records.SUBJECT` and `records.CHALLENGE_PENDING` to `cflib.vocab`, and
-    `records._QID` to `sources.websource._QID`. The proposal's record example uses the synthetic
-    QID.
+    `records._QID` to `sources.websource._QID`. A source whose `wikidata` is no QID is refused
+    on a `challenge_pending` record of a subject passage too, so whether the passage exports
+    never turns on its challenge. The proposal's examples carry no real QID: the record
+    example's subject end now carries the QID that B5 gives a subject passage, as a
+    placeholder, and §2.1's sourceset row names it the same way.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.

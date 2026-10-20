@@ -597,6 +597,33 @@ class TestTheRecords(_Exported):
                 seen.add((key[0], ext["prominence"], ext["challenge"]))
         self.assertEqual(seen, {(F.W1, "central", "survived"), (F.W2, "supporting", "survived")})
 
+    def test_b5_an_overturn_to_the_passages_own_prominence_is_owed_not_downgraded(self):
+        """The B5 review: an overturn naming the prominence the record already has made
+        the passage downgraded while its label and QID stayed.  The gate refuses it; a
+        document that lands anyway leaves the record owed, so the passage is refused."""
+        def same(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "prominence" and rec["prominence"] == "subject":
+                v.update(action="overturn", prominence="subject")
+            return v
+        self.challenge(verdict=same)
+        subjects = self.planned_prominences("subject")
+        self.assertEqual(sorted(sid for sid, _item in subjects), [F.W1, F.W2])
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        for row in built["outcomes"]:
+            if (row["source_id"], row["item"]) in subjects:
+                with self.subTest(source=row["source_id"]):
+                    self.assertEqual(row["prominence"], "subject")
+                    self.assertIsNone(row["challenge"])
+                    self.assertIn("the passage's own, changes nothing", row["problem"])
+        self.export()
+        report = read_json(self.paths.export_report_json("set-1"))
+        self.assertTrue(subjects.keys() <= {(r["source_id"], r["item"])
+                                            for r in report["refused"]}, report["refused"])
+        for rec in _records(self.paths.export_dir("set-1")):
+            with self.subTest(record=rec["id"]):
+                self.assertNotIn("identifiers", rec["subject"][0])
+
     def test_m6_a_downgrade_to_close_match_keeps_a_note(self):
         witness = ("The declaration indexes gadgets from 0 where the passage counts from 1. "
                    "Otherwise it states the passage.")
@@ -1027,6 +1054,13 @@ class TestRecordUnits(unittest.TestCase):
                 self.LAYER, self.universe())
             with self.subTest(challenge=value):
                 self.assertEqual(rec["subject"][0]["identifiers"], {"wikidata": "Q99999001"})
+        # a source whose wikidata is no QID is refused on a pending record too: whether a
+        # subject passage exports never turns on its challenge value
+        bad = {**self.source(), "wikidata": "not-a-qid"}
+        for passage in (located, absent, unresolved, both):
+            with self.subTest(bad=passage["outcome"]), \
+                    self.assertRaisesRegex(records.RecordError, "is not a Wikidata QID"):
+                records.passage_records(bad, passage, self.LAYER, self.universe())
 
     def test_b5_the_builders_restated_values_are_the_vocabularys(self):
         """The record builder runs without cflib (the gate stages it), so it restates."""

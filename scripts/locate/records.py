@@ -226,9 +226,10 @@ def article_qid(source: Mapping[str, Any], passage: Mapping[str, Any], *,
     not check that the QID's enwiki sitelink is this article (no network in
     library code): its consumer does, before any concept-level edge.  A source
     with no QID gives None; one whose ``wikidata`` is no QID is refused, never
-    guessed.
+    guessed -- on every record of a subject passage, a ``challenge_pending`` one
+    too, so whether a subject passage exports never turns on its challenge.
     """
-    if passage.get("prominence") != SUBJECT or challenge == CHALLENGE_PENDING:
+    if passage.get("prominence") != SUBJECT:
         return None
     qid = source.get("wikidata")
     if qid is None:
@@ -236,7 +237,7 @@ def article_qid(source: Mapping[str, Any], passage: Mapping[str, Any], *,
     if not isinstance(qid, str) or not _QID.match(qid):
         raise RecordError(f"{source.get('source_id')}: wikidata {qid!r} is not a Wikidata QID, "
                           "and a subject passage's records carry it")
-    return qid
+    return None if challenge == CHALLENGE_PENDING else qid
 
 
 def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
