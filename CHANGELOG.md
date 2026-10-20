@@ -60,12 +60,25 @@ release has something to say.
   passes it to every watchdog (`_watchdog_flags`), and `cf campaign render` refuses a campaign
   with neither the flag nor a pilot rate, or with a rate that is not positive and finite. A
   campaign planned before this has no rate, so it is planned again before it is rendered.
+  A rate measured on the same pilot is kept when that pilot has no such envelope any more; a
+  pilot it was not measured on leaves it null. A kept rate is checked at every plan as the
+  flag is, so a hand edit that is not a positive, finite number is refused by name before
+  campaign.yaml is rewritten. The watchdog's ledger gains `usd_per_hour`, taken from the
+  unrounded rate, so a pilot's exact $20 an hour is recorded as 20.0, not 20.000002; that
+  changes the watchdog's file sha, so `config_shas.gate_files` differs for a run planned after
+  it.
+- The YAML writer spells a float with an exponent with a point in its mantissa (`1.0e-05`,
+  not `1e-05`): Python writes a float below 1e-4 or from 1e16 with no point, and YAML 1.1 and
+  the fallback reader both read that back as a string, so a campaign's `--unpriced-usd-per-hour
+  1e-5` was refused by its own render and crashed the next re-plan.
 - `references/runbook-server.md` §9: a kept run's sourceset (Tier A) is created new and filled
-  only by `adopt` from the consumer feed's first delivery, never by `cf sourceset create
-  --from wpm3`. A source adopted without the producer's `layer_sha256` never gets one (a
-  recorded `adopted_from` never changes, and `create --from` copies it), so a seeded source is
-  never held to the producer's layer. The code that lifts this is not built, and is due before
-  contributors or runs 2–10 (a TODO in the runbook): `adopt` filling a missing
+  only by `adopt` from the consumer feed's first delivery, never by `cf sourceset create --from
+  wpm3`. A source adopted without the producer's `layer_sha256` never gets one (a recorded
+  `adopted_from` never changes, and `create --from` copies it), so a seeded source is never held
+  to the producer's layer. Adopt's refusal of a layer another renderer recorded, and
+  `references/locate-documents.md` §7, still name the `create --from` migration for that case,
+  and now say what it cannot do and point to the runbook. The code that lifts this is not built,
+  and is due before contributors or runs 2–10 (a TODO in the runbook): `adopt` filling a missing
   `adopted_from.layer_sha256` once, in a new version, when the pin's bytes hash to the recorded
   `raw_sha256`; the delivering pins file's sha recorded beside it; and an immediate comparison
   into `parity_refusals` when a layer already exists.

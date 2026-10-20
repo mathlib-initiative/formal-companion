@@ -146,15 +146,26 @@ def _pilot(workspace, pilot: str) -> str:
     return pilot
 
 
-def check_rate(value, what: str) -> float:
-    """*value* as a positive, finite dollars-per-hour, else a refusal naming *what*."""
+def check_rate(value, what: str, hint: str | None = None) -> float:
+    """*value* as a positive, finite dollars-per-hour, else a refusal naming *what*.
+
+    *hint* says how to replace a recorded rate; without one the refusal is the
+    flag's, which the operator gives again.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)) \
             or not math.isfinite(value) or value <= 0:
         raise CfError(f"{what} is {value!r}, not a positive dollars-per-hour",
-                      hint="the watchdog prices each second of a call that left no priced "
+                      hint=(hint + "; " if hint else "") +
+                           "the watchdog prices each second of a call that left no priced "
                            "envelope at this rate until the shard has a priced envelope of "
                            "its own; a rate of 0 reads every such call as $0")
     return float(value)
+
+
+def _replan(campaign_id: str, host: str, what: str = "") -> str:
+    """The re-plan command a refusal names, in the form argparse accepts (with *what*)."""
+    return f"`cf campaign plan {campaign_id} --shard <run-id> … --host {host}" \
+           + (f" {what}`" if what else "`")
 
 
 def pilot_envelopes(workspace, pilot: str) -> Path:
@@ -173,32 +184,36 @@ def pilot_usd_per_hour(workspace, pilot: str) -> float | None:
     over the envelopes that carry both, positive.  None when none does (the
     pilot was never harvested, or no envelope of it has a duration).
     """
-    per_second = watchdog.ledger(pilot_envelopes(workspace, pilot))["usd_per_second"]
-    return None if per_second is None else round(per_second * 3600.0, 6)
+    return watchdog.ledger(pilot_envelopes(workspace, pilot))["usd_per_hour"]
 
 
-def _unpriced_rate(workspace, given: float | None, watch: dict,
-                   pilot: str | None) -> tuple[float | None, str | None]:
+def _unpriced_rate(workspace, given: float | None, watch: dict, pilot: str | None, *,
+                   replan: str) -> tuple[float | None, str | None]:
     """``(usd_per_hour, the pilot it was measured on, or None when the operator gave it)``.
 
     The flag wins and is kept on a re-plan.  Without it the rate is the
     campaign's pilot's (*pilot*: the one given, else the one kept), measured
     again at every plan; a rate measured on that same pilot before is kept
-    when its envelopes are no longer here, and a pilot with no envelope to
-    measure leaves no rate, which render refuses.
+    when its envelopes are no longer here (or none carries a duration), and
+    another pilot with no envelope to measure leaves no rate, which render
+    refuses.  A kept rate is checked as the flag is, before anything is
+    written: a hand-edited ``0`` or ``ten`` is refused by name (*replan* is
+    the command that replaces it), never carried forward.
     """
     if given is not None:
         return check_rate(given, "--unpriced-usd-per-hour"), None
     kept = watch.get("unpriced_usd_per_hour")
     kept_pilot = watch.get("unpriced_usd_per_hour_pilot")
+    what = "campaign.yaml watchdog.unpriced_usd_per_hour"
+    hint = f"give the rate again: {replan}"
     if kept is not None and not kept_pilot:
-        return kept, None
+        return check_rate(kept, what, hint), None
     if pilot:
         measured = pilot_usd_per_hour(workspace, pilot)
         if measured is not None:
             return measured, pilot
         if kept is not None and kept_pilot == pilot:
-            return kept, kept_pilot
+            return check_rate(kept, what, hint), kept_pilot
     return None, None
 
 
@@ -255,8 +270,9 @@ def plan(workspace, campaign_id: str, shards: list[str], *, host: str,
                       f"may only append to them", hint="plan a new campaign id for another order")
     if pilot:
         _pilot(workspace, pilot)
-    rate, rate_pilot = _unpriced_rate(workspace, unpriced_usd_per_hour, watch,
-                                      pilot or previous.get("pilot"))
+    rate, rate_pilot = _unpriced_rate(
+        workspace, unpriced_usd_per_hour, watch, pilot or previous.get("pilot"),
+        replan=_replan(campaign_id, host, "--unpriced-usd-per-hour <usd>"))
     doc = {
         "version": CAMPAIGN_VERSION,
         "id": campaign_id,
@@ -350,9 +366,12 @@ def render(workspace, campaign_id: str) -> dict:
                       hint="without one the watchdog reads every such call as $0 until a "
                            "shard's first priced envelope: harvest the pilot (`cf harvest "
                            f"{doc['pilot']} --execute`, which brings its agent envelopes "
-                           f"home) and re-run `cf campaign plan {campaign_id}`, or pass "
-                           "--unpriced-usd-per-hour <usd>")
-    check_rate(watch["unpriced_usd_per_hour"], "campaign.yaml watchdog.unpriced_usd_per_hour")
+                           f"home) and plan again with the same shards, "
+                           f"{_replan(campaign_id, doc['host'])}, or give the rate: "
+                           f"{_replan(campaign_id, doc['host'], '--unpriced-usd-per-hour <usd>')}")
+    check_rate(watch["unpriced_usd_per_hour"], "campaign.yaml watchdog.unpriced_usd_per_hour",
+               "give the rate again: " + _replan(campaign_id, str(doc["host"]),
+                                                 "--unpriced-usd-per-hour <usd>"))
     root = host["remote_root"]
     lines = []
     for shard in doc["shards"]:

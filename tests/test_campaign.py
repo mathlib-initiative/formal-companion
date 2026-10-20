@@ -655,6 +655,80 @@ class TestTheUnpricedRate(WorkspaceCase):
                 campaign_mod.render(self.ws, "c1")
             self.assertIn("campaign.yaml watchdog.unpriced_usd_per_hour", str(caught.exception))
 
+    def test_a_re_plan_refuses_a_kept_rate_that_is_no_rate_before_writing(self):
+        """Review: a re-plan carried a hand-edited 0 forward as valid, and crashed on a
+        string with a traceback after rewriting campaign.yaml.  A kept rate is checked as
+        the flag is, refused by name with the command that replaces it, and the file is
+        left as it was; the flag replaces it."""
+        from cflib.yamlio import read_yaml, write_yaml
+
+        path = self.ws_dir / "campaigns" / "c1" / "campaign.yaml"
+        for given, pilot in ((5.0, None), (None, self.pilot())):
+            for bad in (0, -2.0, "ten", True):
+                if path.exists():
+                    path.unlink()
+                self.plan(unpriced_usd_per_hour=given, pilot=pilot)
+                doc = read_yaml(path)
+                doc["watchdog"]["unpriced_usd_per_hour"] = bad
+                write_yaml(path, doc)
+                if pilot:   # the measured rate is kept only while its envelopes are gone
+                    shutil.rmtree(self.ws_dir / "runs" / pilot / "host")
+                before = path.read_bytes()
+                with self.subTest(given=given, kept=bad), self.assertRaises(CfError) as caught:
+                    self.plan()
+                self.assertIn("campaign.yaml watchdog.unpriced_usd_per_hour is",
+                              str(caught.exception))
+                self.assertIn("cf campaign plan c1 --shard <run-id> … --host examplebox "
+                              "--unpriced-usd-per-hour <usd>", caught.exception.hint)
+                self.assertEqual(path.read_bytes(), before)
+                if pilot:
+                    self.pilot_envelopes(pilot, ((3.0, 1_000_000),))
+        # through the CLI: one error line and exit 2, never a traceback
+        doc = read_yaml(path)
+        doc["watchdog"].update(unpriced_usd_per_hour="ten", unpriced_usd_per_hour_pilot=None)
+        write_yaml(path, doc)
+        argv = ["--workspace", str(self.ws_dir), "campaign", "plan", "c1", "--shard", "r-1",
+                "--host", "examplebox"]
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = cf_main.cli(argv)
+        self.assertEqual(code, 2, out.getvalue())
+        self.assertNotIn("Traceback", out.getvalue())
+        self.assertIn("'ten', not a positive dollars-per-hour", out.getvalue())
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(cf_main.main(argv + ["--unpriced-usd-per-hour", "7"]), 0)
+        self.assertEqual(self.rate(campaign_mod.load(self.ws, "c1")), (7.0, None))
+
+    def test_a_rate_python_spells_with_an_exponent_is_still_a_number(self):
+        """Review: ``1e-5`` was written as ``1e-05``, which both YAML readers read back as a
+        string, so render refused the campaign's own rate and a re-plan crashed on it."""
+        for given in (1e-5, 2e16):
+            with self.subTest(rate=given):
+                self.plan(pilot=self.pilot(f"p-{given}"), unpriced_usd_per_hour=given)
+                self.assertEqual(self.rate(self.plan()), (given, None))
+                self.assertIsInstance(
+                    campaign_mod.load(self.ws, "c1")["watchdog"]["unpriced_usd_per_hour"], float)
+                campaign_mod.render(self.ws, "c1")
+                shutil.rmtree(self.ws_dir / "campaigns" / "c1" / "host")
+
+    def test_a_measured_rate_is_the_pilots_own_not_rounded_twice(self):
+        """Review: the per-second rate was rounded to 9 places before an hour multiplied it,
+        so a pilot's exact $20 an hour was recorded as 20.000002."""
+        pilot = self.pilot(envelopes=((20.0, 3_600_000), (1.0, 7_200_000)))
+        self.assertEqual(campaign_mod.pilot_usd_per_hour(self.ws, pilot), 20.0)
+        self.assertEqual(self.rate(self.plan(pilot=pilot)), (20.0, "p-1"))
+
+    def test_the_render_refusal_names_a_re_plan_argparse_accepts(self):
+        """Review: the hint said `cf campaign plan c1`, which --shard and --host are required
+        for; it names both, as the pilot's refusal does."""
+        self.plan(pilot=self.pilot(envelopes=()))
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.render(self.ws, "c1")
+        self.assertIn("`cf campaign plan c1 --shard <run-id> … --host examplebox`",
+                      caught.exception.hint)
+        self.assertIn("`cf campaign plan c1 --shard <run-id> … --host examplebox "
+                      "--unpriced-usd-per-hour <usd>`", caught.exception.hint)
+
     def test_the_sequencers_watchdog_is_given_the_rate(self):
         """Through ``_watchdog_flags``: the rendered watchdog estimates a timed-out call at
         the campaign's rate before its root has a priced envelope."""
