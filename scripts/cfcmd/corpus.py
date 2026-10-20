@@ -80,7 +80,8 @@ def register(subparsers) -> None:
     add.add_argument("universe")
     add.add_argument("--library", required=True,
                      help="the universe-local id (a document's `library`): a lowercase letter, "
-                          "then lowercase letters, digits and ._-, at most 64")
+                          "then lowercase letters, digits and ._-, at most 64, and no YAML "
+                          "bool or null word (yes, no, true, false, on, off, null)")
     add.add_argument("--repo", help="https repository URL, spelled as the universe's other "
                                     "libraries of the same repository spell it")
     add.add_argument("--commit", help="the 40-hex commit")

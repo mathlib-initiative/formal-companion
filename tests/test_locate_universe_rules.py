@@ -14,8 +14,10 @@ docs/proposals/wikipedia-locate.md sections 2.3 and 11.3):
   whenever it was not a new row's (a frozen universe, a re-add, the id fallback):
   the export report names every one, a re-add's ``--brain-lib`` must be a token,
   and ``Mathlib`` and ``MATHLIB`` are one token, compared without case;
-* F5 -- a library id is a YAML scalar too: it starts with a letter, so none is a
-  number or date look-alike (the writer's half is ``tests/test_yamlio_lookalikes.py``).
+* F5 -- a library id is a YAML scalar too: it starts with a letter and is none of
+  YAML's bool and null words, so none reads as anything but itself even written bare,
+  and loading names an id a hand-written file let YAML type (the writer's half is
+  ``tests/test_yamlio_lookalikes.py``).
 
 Synthetic libraries and ``example.org`` / ``github.com`` spellings only.
 """
@@ -26,6 +28,8 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import random
+import re
 import shutil
 import sys
 import tempfile
@@ -42,14 +46,25 @@ import _locate_fixtures as F  # noqa: E402
 import test_locate_recordset_format as recordset  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.jsonio import read_json  # noqa: E402
+from cflib import yamlio  # noqa: E402
 from cflib.yamlio import load_yaml, load_yaml_minimal, read_yaml  # noqa: E402
-from corpus.universe import (LIBRARY_ID, Universe, repo_key,  # noqa: E402
+from corpus.universe import (LIBRARY_ID, YAML_WORD_IDS, Universe, repo_key,  # noqa: E402
                              written_brain_lib)
 from locate import export as export_mod, inputs, records  # noqa: E402
 
 TOOLCHAIN = "leanprover/lean4:v4.34.0"
 LEAN4 = "https://github.com/leanprover/lean4"
 CORE = "c" * 40
+DOCS = HERE.parent / "references" / "locate-documents.md"
+
+
+def _doc_section(number: int) -> str:
+    """Section ``number`` of references/locate-documents.md, heading to next heading."""
+    text = DOCS.read_text(encoding="utf-8")
+    start = re.search(rf"^## {number}\. ", text, re.M)
+    end = re.search(rf"^## {number + 1}\. ", text, re.M)
+    assert start and end, number
+    return text[start.start():end.start()]
 
 
 def _scratch(case) -> Path:
@@ -95,6 +110,19 @@ class TestTheRepositoryKey(unittest.TestCase):
         self.assertNotEqual(repo_key("https://example.org/Group/Beta"),
                             repo_key("https://example.org/group/beta"))
 
+    def test_a_trailing_git_is_dropped_in_any_case(self):
+        """``.GIT`` is the suffix ``.git`` spelled in capitals, on any host; only the case
+        of the owner and name stays significant off github.com."""
+        beta = "https://example.org/group/beta"
+        for suffix in (".git", ".GIT", ".Git", ".gIT"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(repo_key(beta + suffix), beta)
+                self.assertEqual(repo_key("https://github.com/o/r" + suffix),
+                                 "https://github.com/o/r")
+        self.assertNotEqual(repo_key("https://example.org/group/Beta.GIT"), beta)
+        self.assertNotEqual(repo_key(beta + "git"), beta)      # no dot, no suffix
+        self.assertNotEqual(repo_key(beta + ".gitx"), beta)
+
     def test_other_repositories_stay_apart(self):
         for other in ("https://github.com/leanprover/lean4-nightly",
                       "https://github.com/leanprover-community/lean4",
@@ -132,6 +160,19 @@ class TestOneSpellingPerRepository(unittest.TestCase):
                 universe.add_library(**_pin(f"core{i}", spelling, brain_lib="Std"))
             self.assertIn("is the repository library 'lean-core-init' spells",
                           str(caught.exception))
+
+    def test_a_capital_git_suffix_is_a_second_spelling_off_github(self):
+        universe = _universe(self)
+        beta = "https://example.org/group/beta"
+        universe.add_library(**_pin("beta", beta, brain_lib="Beta", roots=["Beta"]))
+        for spelling in (beta + ".GIT", beta + ".Git"):
+            with self.subTest(repo=spelling), self.assertRaises(CfError) as caught:
+                universe.add_library(**_pin("beta-extra", spelling, brain_lib="BetaExtra",
+                                            roots=["BetaExtra"]))
+            self.assertIn(f"is the repository library 'beta' spells '{beta}'",
+                          str(caught.exception))
+        universe.data["libraries"].append(_row("beta-extra", beta + ".GIT", "BetaExtra"))
+        self.assertEqual(len(universe.validate()), 1, universe.validate())
 
     def test_the_false_brain_lib_refusal_is_gone(self):
         """One token in one repository spelled two ways is the spelling's refusal, never
@@ -209,12 +250,21 @@ class TestBrainLibTokens(unittest.TestCase):
             self.assertIn(f"brain_lib {token!r} already names mathlib as 'Mathlib'",
                           str(caught.exception))
             self.assertIn("compared without case", caught.exception.hint)
+            self.assertIn("references/locate-documents.md section 8", caught.exception.hint)
+            self.assertNotIn("11.3", caught.exception.hint)
         with self.assertRaises(CfError) as caught:
             universe.add_library(**_pin("other", "https://example.org/other",
                                         brain_lib="Mathlib", roots=["Other"]))
         self.assertIn("brain_lib 'Mathlib' already names mathlib (https://example.org/mathlib4)",
                       str(caught.exception))
         self.assertEqual(universe.library_ids(), ["mathlib"])
+
+    def test_the_section_the_refusal_cites_states_the_case_rule(self):
+        """The case rule is the documents' (section 8), not the proposal's: its sections
+        2.3 and 11.3 say a token names one repository and say nothing of case."""
+        section = " ".join(_doc_section(8).split())
+        self.assertIn("**compared without case** (`Mathlib` and `MATHLIB` are one token)",
+                      section)
 
     def test_the_id_fallback_is_a_token_like_any_other(self):
         universe = _universe(self)
@@ -344,6 +394,82 @@ class TestALibraryIdStartsWithALetter(unittest.TestCase):
         problems = universe.validate()
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("id '1e3' is not [a-z][a-z0-9._-]*", problems[0])
+
+    def test_a_yaml_bool_or_null_word_is_no_id(self):
+        """``no`` reads as False and ``null`` as None wherever an id is written bare, so
+        neither is an id, at add, at an exclusion or as a universe's id."""
+        universe = _universe(self)
+        self.assertEqual(YAML_WORD_IDS, ("yes", "no", "true", "false", "on", "off", "null"))
+        for word in YAML_WORD_IDS:
+            with self.subTest(library_id=word), self.assertRaises(CfError) as caught:
+                universe.add_library(**_pin(word, f"https://example.org/{word}",
+                                            brain_lib="X"))
+            self.assertIn("no YAML bool or null word", str(caught.exception))
+            with self.subTest(excluded=word), self.assertRaises(CfError):
+                universe.exclude(word, "synthetic")
+            with self.subTest(universe_id=word), self.assertRaises(CfError):
+                Universe.create(_scratch(self) / "universe.yaml", word)
+        # an id that only contains or starts with one is an id
+        for good in ("nob", "only", "nullable", "offline", "yes2", "true-lib", "on.x", "n",
+                     "y", "nan", "inf", "noo"):
+            with self.subTest(library_id=good):
+                self.assertTrue(LIBRARY_ID.match(good))
+
+    def test_the_words_are_every_word_the_writer_quotes_that_could_be_an_id(self):
+        """Lockstep with ``cflib.yamlio``: each bool or null word its writer quotes, spelled
+        as an id could be, is one ``LIBRARY_ID`` refuses."""
+        shaped = re.compile(r"[a-z][a-z0-9._-]*\Z")
+        quoted = {w for w in yamlio._TYPED_WORDS if shaped.match(w)}
+        self.assertEqual(quoted, set(YAML_WORD_IDS))
+
+    def test_no_id_reads_as_anything_but_itself_written_bare(self):
+        """Every string ``LIBRARY_ID`` admits, written unquoted, is that string to both
+        readers: PyYAML's resolver words, then a seeded battery of number-, date- and
+        word-shaped ids."""
+        rng = random.Random(20261019)
+        candidates = set(YAML_WORD_IDS) | {"nan", "inf", "e1", "x10", "b1", "o7", "n", "y",
+                                           "a1e3", "t2026-10-17", "on_", "nulls", "off-by-one"}
+        alphabet = "abenoxyfltru0123456789._-"
+        for _ in range(4000):
+            candidates.add(rng.choice("abenoxyflt") + "".join(
+                rng.choice(alphabet) for _ in range(rng.randint(0, 9))))
+        readers = [load_yaml_minimal] + ([load_yaml] if yamlio.HAVE_PYYAML else [])
+        admitted = sorted(c for c in candidates if LIBRARY_ID.match(c))
+        self.assertGreater(len(admitted), 3000)
+        for reader in readers:
+            for lid in admitted:
+                value = reader(f"id: {lid}\n")["id"]
+                if value != lid:
+                    self.fail(f"{reader.__name__} read the id {lid!r} as {value!r}")
+
+    def test_a_hand_written_typed_id_is_named_on_load(self):
+        """A universe file someone wrote by hand with a bare ``no``: both readers type it,
+        and loading refuses it -- the universe's id, a library's or an exclusion's --
+        naming the type it was read as."""
+        lib = _row("alpha", "https://example.org/alpha", "Alpha")
+        text = (f"id: no\nfrozen: '2026-10-17'\nlibraries:\n- id: off\n"
+                f"  brain_lib: Alpha\n  repo: {lib['repo']}\n  commit: {CORE}\n"
+                f"  toolchain: {TOOLCHAIN}\n  roots: [Alpha]\n  licence: {{spdx: MIT}}\n"
+                f"excluded:\n- id: on\n  reason: did not build\n")
+        readers = [load_yaml_minimal] + ([load_yaml] if yamlio.HAVE_PYYAML else [])
+        for reader in readers:
+            with self.subTest(reader=reader.__name__):
+                data = reader(text)
+                problems = Universe(_scratch(self) / "universe.yaml", data).validate()
+                self.assertIn("id False was read as a YAML bool, not a string", problems[0])
+                self.assertTrue(any(p.startswith("library ") and
+                                    ": id False was read as a YAML bool" in p
+                                    for p in problems), problems)
+                self.assertTrue(any("an exclusion's id True was read as a YAML bool" in p
+                                    for p in problems), problems)
+        path = _scratch(self) / "universe.yaml"
+        path.write_text(text, encoding="utf-8")
+        with self.assertRaises(CfError) as caught:
+            Universe.load(path)
+        self.assertIn("was read as a YAML bool, not a string", str(caught.exception))
+        # quoted, the words are strings, and still no ids
+        quoted = Universe(path, load_yaml_minimal(text.replace("id: on", "id: 'on'")))
+        self.assertTrue(any("an exclusion's id 'on' is not" in p for p in quoted.validate()))
 
     def test_the_shipped_fixtures_ids_all_start_with_a_letter(self):
         for lid in F.LIBRARIES:

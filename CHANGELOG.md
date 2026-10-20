@@ -54,7 +54,7 @@ release has something to say.
   gate or the record set's format changes.
   - **One spelling per repository.** `cf corpus add` and loading a universe refuse a library
     whose repo is another library's repository spelled another way: the host's case, a
-    `www.`, a trailing `.git`, or on github.com the owner's or name's case
+    `www.`, a trailing `.git` in any case, or on github.com the owner's or name's case
     (`corpus.universe.repo_key`). The refusal names the spelling the universe uses.
     Everything downstream still compares a repo exactly as written, an absence's one end per
     `(repo, commit)` included, and the rule keeps that correct. A second spelling of lean4
@@ -74,8 +74,11 @@ release has something to say.
     load at all. A float is written as both readers read a float back (`1.0e-05`, `.inf`, where
     `str()` gave `1e-05` and `inf`, both strings to PyYAML), and the fallback reader reads
     `.inf` and `.nan`, and a sequence item whose first key is quoted. A library id and a
-    universe id now start with a letter (`corpus.universe.LIBRARY_ID`). No shipped id or
-    fixture id started with a digit, and neither does u1's.
+    universe id now start with a letter and are none of YAML's bool and null words (`yes`,
+    `no`, `true`, `false`, `on`, `off`, `null`), so no id reads as anything but itself
+    even written bare (`corpus.universe.LIBRARY_ID`). Loading a universe now checks an
+    exclusion's id too, and names an id YAML read as another type (a bare `no` as False).
+    No shipped id or fixture id breaks, and neither does u1's.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.
