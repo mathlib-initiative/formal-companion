@@ -357,13 +357,27 @@ class WorkspaceCase(unittest.TestCase):
             lines.append(f"budget:\n  currency: USD\n  max_cost: {cap}")
         (rd / "run.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def pilot(self, run_id: str = "p-1", *, verified: bool = True) -> str:
+    def pilot(self, run_id: str = "p-1", *, verified: bool = True,
+              envelopes: tuple = ((3.0, 1_000_000),)) -> str:
+        """A smoke-tested run, with the agent envelopes ``cf harvest`` brought home from it:
+        ``(total_cost_usd, duration_ms)`` each, by default one at $10.80 an hour."""
         rd = self.ws_dir / "runs" / run_id
         rd.mkdir(parents=True)
         (rd / "run.yaml").write_text(f"version: 1\nrun_id: {run_id}\nmode: locate\n"
                                      f"locate:\n  mode: locate\n"
                                      f"run:\n  smoke_verified: {str(verified).lower()}\n")
+        self.pilot_envelopes(run_id, envelopes)
         return run_id
+
+    def pilot_envelopes(self, run_id: str, envelopes) -> Path:
+        home = self.ws_dir / "runs" / run_id / "host" / "envelopes"
+        for i, (usd, millis) in enumerate(envelopes):
+            home.mkdir(parents=True, exist_ok=True)
+            data = {"subtype": "success", "total_cost_usd": usd}
+            if millis is not None:
+                data["duration_ms"] = millis
+            (home / f"t-{i}.worker.a.{i}.json").write_text(json.dumps(data))
+        return home
 
 
 class TestCampaignPlan(WorkspaceCase):
@@ -490,7 +504,9 @@ class TestCampaignPlan(WorkspaceCase):
         write_yaml(path, doc)
         _path, again = campaign_mod.plan(self.ws, "c1", ["r-1", "r-2"], host="examplebox")
         self.assertEqual(again["watchdog"], {"p90_cost_per_task": 4.0, "p90_gate_failure_rate": 0.1,
-                                             "multiple": 3, "min_tasks": 7})
+                                             "multiple": 3, "min_tasks": 7,
+                                             "unpriced_usd_per_hour": 10.8,
+                                             "unpriced_usd_per_hour_pilot": "p-1"})
         self.assertEqual(read_yaml(path)["locate"]["campaign"], "c1")
         campaign_mod.render(self.ws, "c1")
         text = (self.ws_dir / "campaigns" / "c1" / "host" / "sequencer.sh").read_text()
@@ -547,6 +563,140 @@ class TestCampaignPlan(WorkspaceCase):
         with redirect_stdout(io.StringIO()) as status, redirect_stderr(io.StringIO()):
             cf_main.main(["--workspace", str(self.ws_dir), "campaign", "status", "c1", "--json"])
         self.assertEqual(json.loads(status.getvalue())["totals"]["harvested"], 0)
+
+
+class TestTheUnpricedRate(WorkspaceCase):
+    """Port3 open item 3: the watchdog read a call that left no priced envelope as $0 until
+    its shard's first priced envelope.  campaign.yaml now carries the rate it is estimated
+    at before then (``watchdog.unpriced_usd_per_hour``): the operator's, kept on a re-plan,
+    else the pilot's highest priced dollars per hour; render refuses a campaign with neither."""
+
+    def setUp(self):
+        super().setUp()
+        self.shard("r-1")
+
+    def plan(self, **kwargs) -> dict:
+        return campaign_mod.plan(self.ws, "c1", ["r-1"], host="examplebox", **kwargs)[1]
+
+    def rate(self, doc: dict) -> tuple:
+        return (doc["watchdog"]["unpriced_usd_per_hour"],
+                doc["watchdog"]["unpriced_usd_per_hour_pilot"])
+
+    def test_the_default_is_the_pilots_highest_priced_rate_with_a_duration(self):
+        from run import agent_call
+
+        pilot = self.pilot(envelopes=((3.0, 1_000_000),     # $10.80 an hour
+                                      (1.0, 100_000),       # $36 an hour: the highest
+                                      (50.0, None),         # priced, but no duration
+                                      (0.0, 1)))            # a duration, but no dollars
+        home = self.ws_dir / "runs" / pilot / "host" / "envelopes"
+        # a call that left no envelope carries a duration and no price: no rate either
+        (home / "t-9.worker.c.9.json").write_text(json.dumps(agent_call.call_record(
+            outcome="timeout", role="worker", task_id="t-9", slot=1, seconds=10.0,
+            timeout=2700.0, code=124)))
+        self.assertEqual(campaign_mod.pilot_usd_per_hour(self.ws, pilot), 36.0)
+        self.assertEqual(self.rate(self.plan(pilot=pilot)), (36.0, "p-1"))
+        self.assertIsNone(campaign_mod.pilot_usd_per_hour(
+            self.ws, self.pilot("p-2", envelopes=((5.0, None),))))
+        self.assertIsNone(campaign_mod.pilot_usd_per_hour(self.ws, "never-harvested"))
+
+    def test_the_flag_wins_and_is_kept_on_a_re_plan(self):
+        self.assertEqual(self.rate(self.plan(pilot=self.pilot(), unpriced_usd_per_hour=25)),
+                         (25.0, None))
+        self.assertEqual(self.rate(self.plan()), (25.0, None))
+        # a pilot given later measures another rate, and the operator's is still kept
+        faster = self.pilot("p-2", envelopes=((1.0, 100_000),))
+        doc = self.plan(pilot=faster)
+        self.assertEqual((self.rate(doc), doc["pilot"]), ((25.0, None), "p-2"))
+        self.assertEqual(self.rate(self.plan(unpriced_usd_per_hour=30.5)), (30.5, None))
+
+    def test_a_measured_rate_follows_the_pilot(self):
+        self.assertEqual(self.rate(self.plan(pilot=self.pilot())), (10.8, "p-1"))
+        # a re-plan with no flag measures the kept pilot again
+        self.pilot_envelopes("p-1", ((3.0, 1_000_000), (2.0, 100_000)))
+        self.assertEqual(self.rate(self.plan()), (72.0, "p-1"))
+        self.assertEqual(self.rate(self.plan(pilot=self.pilot("p-2", envelopes=(
+            (1.0, 100_000),)))), (36.0, "p-2"))
+        # the same pilot's rate is kept when its envelopes are no longer here
+        shutil.rmtree(self.ws_dir / "runs" / "p-2" / "host")
+        self.assertEqual(self.rate(self.plan()), (36.0, "p-2"))
+        # another pilot with nothing to measure leaves no rate, never the last pilot's
+        self.assertEqual(self.rate(self.plan(pilot=self.pilot("p-3", envelopes=()))),
+                         (None, None))
+
+    def test_render_refuses_a_campaign_with_neither(self):
+        self.assertEqual(self.rate(self.plan(pilot=self.pilot(envelopes=()))), (None, None))
+        with self.assertRaises(CfError) as caught:
+            campaign_mod.render(self.ws, "c1")
+        self.assertIn("watchdog.unpriced_usd_per_hour", str(caught.exception))
+        self.assertIn("cf harvest p-1 --execute", caught.exception.hint)
+        self.assertIn("--unpriced-usd-per-hour", caught.exception.hint)
+        self.assertFalse((self.ws_dir / "campaigns" / "c1" / "host").exists())
+        # the pilot harvested, a re-plan with no flag measures it and render goes on
+        self.pilot_envelopes("p-1", ((3.0, 1_000_000),))
+        self.assertEqual(self.rate(self.plan()), (10.8, "p-1"))
+        campaign_mod.render(self.ws, "c1")
+
+    def test_a_rate_that_is_no_rate_is_refused(self):
+        from cflib.yamlio import read_yaml, write_yaml
+
+        pilot = self.pilot()
+        for bad in (0, -2.0, float("nan"), float("inf")):
+            with self.subTest(rate=bad), self.assertRaises(CfError) as caught:
+                self.plan(pilot=pilot, unpriced_usd_per_hour=bad)
+            self.assertIn("not a positive dollars-per-hour", str(caught.exception))
+        self.plan(pilot=pilot)
+        path = self.ws_dir / "campaigns" / "c1" / "campaign.yaml"
+        for bad in (0, "ten", True):
+            doc = read_yaml(path)
+            doc["watchdog"]["unpriced_usd_per_hour"] = bad
+            write_yaml(path, doc)
+            with self.subTest(edited=bad), self.assertRaises(CfError) as caught:
+                campaign_mod.render(self.ws, "c1")
+            self.assertIn("campaign.yaml watchdog.unpriced_usd_per_hour", str(caught.exception))
+
+    def test_the_sequencers_watchdog_is_given_the_rate(self):
+        """Through ``_watchdog_flags``: the rendered watchdog estimates a timed-out call at
+        the campaign's rate before its root has a priced envelope."""
+        from run import agent_call
+
+        self.plan(pilot=self.pilot())
+        campaign_mod.render(self.ws, "c1")
+        host = self.ws_dir / "campaigns" / "c1" / "host"
+        line = next(l for l in (host / "sequencer.sh").read_text().splitlines()
+                    if l.startswith("WATCHDOG_FLAGS=("))
+        flags = shlex.split(line[len("WATCHDOG_FLAGS=("):-1])
+        self.assertEqual(flags[flags.index("--unpriced-usd-per-hour") + 1], "10.8")
+        self.assertNotIn("p-1", flags)
+        root = self.tmp / "wd-root"
+        (root / "usage").mkdir(parents=True)
+        (root / "usage" / "t-9.worker.c.9.json").write_text(json.dumps(agent_call.call_record(
+            outcome="timeout", role="worker", task_id="t-9", slot=1, seconds=1800.0,
+            timeout=2700.0, code=124)))
+        proc = subprocess.run([sys.executable, str(host / "watchdog.py"), *flags, "--root",
+                               str(root), "--max-cost", "100", "--once", "--dry-run"],
+                              capture_output=True, text=True, env=clean_env())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        record = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertAlmostEqual(record["estimated_unpriced_usd"], 5.4)    # 1800 s at $10.80/h
+
+    def test_the_cli(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = cf_main.main(["--workspace", str(self.ws_dir), "campaign", "plan", "c1",
+                                 "--shard", "r-1", "--host", "examplebox",
+                                 "--pilot", self.pilot(envelopes=())])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("render refuses the campaign", out.getvalue())
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = cf_main.main(["--workspace", str(self.ws_dir), "campaign", "plan", "c1",
+                                 "--shard", "r-1", "--host", "examplebox",
+                                 "--unpriced-usd-per-hour", "12.5"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("$12.5/hour (--unpriced-usd-per-hour)", out.getvalue())
+        self.assertEqual(campaign_mod.load(self.ws, "c1")["watchdog"]["unpriced_usd_per_hour"],
+                         12.5)
 
 
 class TestTheSequencer(WorkspaceCase):

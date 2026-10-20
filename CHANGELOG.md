@@ -50,6 +50,25 @@ release has something to say.
   and `pre_merge_failed`, the bench's `gate_rejections.pre_merge: {calls, rejected, broken}`),
   and a line from an older gate, which has no `pre_merge`, reads as false. The field changes
   the gate's file sha, so `config_shas.gate_files` differs for a run planned after it.
+- A campaign's watchdog has a rate for unpriced calls from the first call. Before a shard's
+  first priced envelope with a duration, the watchdog had no rate to estimate a call that left
+  no priced envelope (a timeout, a signal) at, and read it as $0. `cf campaign plan` records
+  `watchdog.unpriced_usd_per_hour`: `--unpriced-usd-per-hour`, kept on a re-plan, else the
+  pilot's highest priced dollars per hour among its harvested envelopes that carry
+  `duration_ms` (`runs/<pilot>/host/envelopes/`, read by the watchdog's own ledger; measured
+  again at every plan, and named in `watchdog.unpriced_usd_per_hour_pilot`). The sequencer
+  passes it to every watchdog (`_watchdog_flags`), and `cf campaign render` refuses a campaign
+  with neither the flag nor a pilot rate, or with a rate that is not positive and finite. A
+  campaign planned before this has no rate, so it is planned again before it is rendered.
+- `references/runbook-server.md` §9: a kept run's sourceset (Tier A) is created new and filled
+  only by `adopt` from the consumer feed's first delivery, never by `cf sourceset create
+  --from wpm3`. A source adopted without the producer's `layer_sha256` never gets one (a
+  recorded `adopted_from` never changes, and `create --from` copies it), so a seeded source is
+  never held to the producer's layer. The code that lifts this is not built, and is due before
+  contributors or runs 2–10 (a TODO in the runbook): `adopt` filling a missing
+  `adopted_from.layer_sha256` once, in a new version, when the pin's bytes hash to the recorded
+  `raw_sha256`; the delivering pins file's sha recorded beside it; and an immediate comparison
+  into `parity_refusals` when a layer already exists.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.
