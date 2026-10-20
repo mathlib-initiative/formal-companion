@@ -122,7 +122,13 @@ is enough.
   document, so the end can be recomputed, and a second run of the tool places
   the same spans; an `until` that is not a string or is not on the layer after
   the start is refused. Two passages of one paragraph may overlap: each runs to
-  the paragraph's end unless its `until` ends it sooner.
+  the paragraph's end unless its `until` ends it sooner. The end check binds a
+  run whose `gate.json` names `span_end_rule` (§9) — every run `cf
+  plan-locate` plans now — and no other: the `passage_ids.py` of a run planned
+  before it placed an end by its `until` and then dropped the `until`, so the
+  end cannot be recomputed, and such an inventory is gated, also at a harvest's
+  re-gate by either gate, with its end held inside the layer and after its
+  quote, as it was when it ran.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
   deterministic passage of the task is dropped only with a skip whose span
@@ -1478,6 +1484,7 @@ like a faithfulness run:
    "tasks_dir": "<gate dir>/tasks", "log_dir": "<tend root>/gate-log",
    "orchestrator_db": "<tend root>/orchestrator.sqlite",
    "max_locations": 5, "min_absence_queries": 3, "judgment_rules": 1,
+   "span_end_rule": 1,
    "vendor": {"literature_links": "<manifest sha256>",
               "formal_companion_annotations": "<manifest sha256>"}}
   ```
@@ -1488,6 +1495,24 @@ like a faithfulness run:
   otherwise, so a run planned before the rules — its gate.json has no such key —
   is gated, also at harvest, by the rules it ran under. A version above the
   gate's own, or a value that is not a non-negative integer, is exit 3.
+
+  `span_end_rule` is, in the same way, the version of the span-end rule (rule
+  2's end check, §2; `cflib.vocab.SPAN_END_RULE`) the run was planned under. The
+  planner writes it into every gate.json, and the gate holds an inventory
+  passage's end to `locate_text.passage_end` when it is there and not otherwise:
+  an inventory run planned before it — written by the `passage_ids.py` that
+  dropped `until` — keeps the bound it was gated under (the end inside the
+  layer, after the quote), at `cf harvest`, at `cf harvest --checkout-gate` and
+  at any other re-gate of its corpus. What it binds is the documents of the run
+  whose gate.json names it. A `locate` or `locate-challenge` document carries no
+  span of its own — the gate reads each passage's span from the task manifest
+  (`passages`, `records`), and the planner copies those from the frozen
+  inventory or the challenged run — so in those modes the key binds nothing: a
+  locate run planned now over an inventory planned before the rule (`cf
+  plan-locate --inventory-run`, which reads the inventory's harvest receipt and
+  never re-gates it) plans and gates as before, its frozen passages keeping the
+  ends their own run's gate accepted. Exit 3 for a bad value, as for
+  `judgment_rules`.
 
   Three pins hold what the gate reads to the bytes the plan read; each is exit 3
   on a mismatch. `corpus_db.sha256`, the sha256 of the CHECK database when the

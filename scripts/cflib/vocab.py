@@ -566,6 +566,19 @@ MIN_ABSENCE_QUERIES = 3
 #: with this code; a ``gate.json`` without the key -- a run planned before them --
 #: is gated, harvested, tallied and exported as it always was.
 JUDGMENT_RULES = 1
+#: The span-end rule (gate rule 2's end check; references/locate-documents.md
+#: sections 2 and 9): the version a run's ``gate.json`` names as
+#: ``span_end_rule``.  Under it an inventory passage ends where ``passage_ids.py``
+#: ends it (``locate_text.passage_end``: its ``until``, else its paragraph, else
+#: its quote), and the gate refuses any other end.  ``cf plan-locate`` writes it
+#: into every gate.json it plans, as it does ``JUDGMENT_RULES``, so the check binds
+#: the inventory documents of a run planned with this code; a ``gate.json``
+#: without the key -- a run planned before it, whose ``passage_ids.py`` dropped
+#: ``until`` after placing the end -- is gated, also at a harvest's re-gate, with
+#: the end held only inside the layer and after the quote, as it always was.  A
+#: locate or challenge document carries no span of its own (the gate takes each
+#: passage's span from the task manifest), so in those modes the key binds nothing.
+SPAN_END_RULE = 1
 #: A passage's claim list (rule R4; the smoke-2 audit's FM1): before it judges any
 #: declaration, the worker writes the passage's formal clauses as short
 #: paraphrases, each with an id ``c1``, ``c2``, ... (``CLAIM_ID``), at most
