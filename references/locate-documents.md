@@ -958,7 +958,9 @@ held, refused when the row's `layer_sha256` contradicts the producer's sha
 recorded for them or the layer already rendered from them (a layer another
 renderer recorded is no measure of this one's parity, so that refusal names
 the `create --from` migration below, after which the delivery is adopted into
-the seeded sourceset); and bytes the
+the seeded sourceset — which records no producer sha for a source the old one
+adopted with none, so a kept run's sourceset is instead created new and filled
+by `adopt` alone, `references/runbook-server.md` §9); and bytes the
 sourceset fetched itself become the consumer's pin (`adopted_from` added, so
 `Manifest.preferred()` plans them). A recorded `adopted_from`, the producer's
 `layer_sha256` in it included, is never replaced (append-only): a source first
@@ -2023,7 +2025,9 @@ shards:                       # in the order they run
   - {index: 1, run_id: wpm-a-1, mode: locate, tasks: 480, max_cost: 120.0, workers: 6, reviewers: 4}
 tasks: 480
 max_cost: 120.0               # the sum of the shards' caps
-watchdog: {p90_cost_per_task: 4.1, p90_gate_failure_rate: 0.12, multiple: 2.0, min_tasks: 5}
+watchdog: {p90_cost_per_task: 4.1, p90_gate_failure_rate: 0.12, multiple: 2.0, min_tasks: 5,
+           unpriced_usd_per_hour: 36.0,         # what an hour of a call with no priced envelope costs
+           unpriced_usd_per_hour_pilot: wpm-pilot}  # the pilot it was measured on; null when given
 pilot: wpm-pilot              # a run whose run.yaml records run.smoke_verified: true
 transcript_dirs: <host dir>   # colon-separated, each absolute or ~/…; else hosts.<host>.transcript_dirs
 canaries: <host path>         # the bench's canaries.txt on the host (absolute or ~/…), or null
@@ -2036,12 +2040,30 @@ export seals it) and refuses a shard stamped with another campaign; once the
 campaign is rendered a re-plan may only append shards. A re-plan reads every
 shard's `run.yaml` again and keeps what it is not given: the watchdog's
 thresholds (`multiple` 2 and `min_tasks` 5 the first time), the pilot, the
-transcript directories and the canaries. A transcript directory or canaries
+transcript directories and the canaries. `watchdog.unpriced_usd_per_hour` is
+the rate the watchdog estimates a call that left no priced envelope at until
+its shard has a priced envelope with a duration of its own: `--unpriced-usd-per-hour`
+(a positive, finite dollars-per-hour), kept on a re-plan until the flag gives
+another, else the pilot's highest priced dollars per hour among its envelopes
+that carry `duration_ms` (`total_cost_usd` over `duration_ms`, both positive,
+read from `runs/<pilot>/host/envelopes/`, where `cf harvest` lands the pilot's
+`usage/`, by the watchdog's own `ledger`, which takes the hour from the
+unrounded rate). A measured rate is measured again at every plan, so it
+follows the pilot; `unpriced_usd_per_hour_pilot` names the pilot it came from
+(null for the flag's). When the pilot has no such envelope, a rate measured on
+that same pilot before is kept (its envelopes were pruned, say), and a pilot
+the rate was not measured on leaves it null, never the last pilot's. A kept
+rate is checked at every plan as the flag is: one that is not a positive,
+finite number (a hand edit) is refused by name before anything is written,
+and the flag replaces it. A transcript directory or canaries
 path is absolute or `~/…` (the host's home), since render quotes every path
 into the sequencer; anything else is refused, at `plan` for the flags and at
 `render` for `hosts.<host>.transcript_dirs`. `render` refuses a campaign whose
 `pilot` is missing or records no passed smoke test, since the sequencer
-launches each shard at full concurrency with no smoke test of its own, and a
+launches each shard at full concurrency with no smoke test of its own; one
+with no `watchdog.unpriced_usd_per_hour` (or one that is not a positive,
+finite number), since its watchdog would read every call that left no priced
+envelope as $0 until a shard's first priced envelope; and a
 shard whose `run.yaml` no longer matches its row (`max_cost`, `tasks`,
 `workers`, `reviewers`) or its `locate.campaign` stamp: a shard re-planned
 since is planned into the campaign again with `cf campaign plan`. Each shard
@@ -2102,8 +2124,9 @@ of the campaign, is ignored with a log line, and that shard runs. The watchdog (
 `tend-control drain` when the spend from `usage/` reaches the shard's cap — the
 priced envelopes' `total_cost_usd` plus, for each call that left no priced
 envelope, its elapsed seconds times the root's highest dollars-per-second
-(`--unpriced-usd-per-hour` before any priced envelope has a duration; the
-record says `estimated_unpriced_usd: null` when neither exists) —
+(before any priced envelope has a duration, `--unpriced-usd-per-hour`, which
+the sequencer passes from `watchdog.unpriced_usd_per_hour`; the record says
+`estimated_unpriced_usd: null` when neither exists) —
 or the gate-failure rate of tend's validation calls in `gate-log/gate.jsonl` (its
 `changed_files: true` lines without `pre_merge: true`, over at least 20 of them; the
 pre-merge calls are recorded apart, as `pre_merge_calls` and `pre_merge_failed`) or

@@ -107,15 +107,19 @@ def ledger(usage_dir: Path, *, fallback_usd_per_hour: float | None = None) -> di
     """What ``usage/`` says was spent: the priced floor and the estimate of the rest.
 
     ``{dollars, envelopes, unpriced_calls, unpriced_seconds, usd_per_second,
-    estimated_unpriced_usd}``.  An envelope with a ``total_cost_usd`` is priced;
-    one whose ``total_cost_usd`` is null and that records an elapsed time
-    (``agent_call``'s record of a call that left no envelope) is an unpriced
-    call, estimated at the highest dollars-per-second of the priced envelopes
-    that carry a ``duration_ms`` -- or ``fallback_usd_per_hour`` before any
-    does; ``estimated_unpriced_usd`` is None when neither exists.
+    usd_per_hour, estimated_unpriced_usd}``.  An envelope with a
+    ``total_cost_usd`` is priced; one whose ``total_cost_usd`` is null and that
+    records an elapsed time (``agent_call``'s record of a call that left no
+    envelope) is an unpriced call, estimated at the highest dollars-per-second
+    of the priced envelopes that carry a ``duration_ms`` -- or
+    ``fallback_usd_per_hour`` before any does; ``estimated_unpriced_usd`` is
+    None when neither exists.  ``usd_per_hour`` is that rate an hour, taken
+    from the unrounded rate: ``usd_per_second`` is rounded to 9 places, an
+    error an hour multiplies by 3600, and ``cf campaign plan`` records a
+    pilot's $20 an hour from this key as 20.0.
     """
     out = {"dollars": 0.0, "envelopes": 0, "unpriced_calls": 0, "unpriced_seconds": 0.0,
-           "usd_per_second": None, "estimated_unpriced_usd": 0.0}
+           "usd_per_second": None, "usd_per_hour": None, "estimated_unpriced_usd": 0.0}
     if not usage_dir.is_dir():
         return out
     rate = None
@@ -146,6 +150,7 @@ def ledger(usage_dir: Path, *, fallback_usd_per_hour: float | None = None) -> di
     if rate is None and fallback_usd_per_hour is not None:
         rate = float(fallback_usd_per_hour) / 3600.0
     out["usd_per_second"] = round(rate, 9) if rate is not None else None
+    out["usd_per_hour"] = round(rate * 3600.0, 6) if rate is not None else None
     if out["unpriced_calls"]:
         out["estimated_unpriced_usd"] = (round(out["unpriced_seconds"] * rate, 6)
                                          if rate is not None else None)

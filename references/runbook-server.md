@@ -298,17 +298,45 @@ root, bridge and harvest, with these differences:
   `cf run` transfers the tools database too when it is another file, and checks both shas at the
   verify stage. A P run of the bench is planned that way with the bench's planted database
   (`references/locate-bench.md` §7).
+- **A kept run's sourceset (Tier A).** The first kept run plans from a sourceset that is
+  created new and filled only by `adopt` from the consumer feed's first delivery, whose every
+  pin carries its bytes and the producer's `layer_sha256`:
+  `cf sourceset create <id>` (no `--from`), `cf sourceset adopt <id> --from <delivery>/pins.jsonl
+  --consumer <consumer>`, `cf sourceset render <id>`, then `cf sourceset status <id> --verify`.
+  It is **never** seeded with `cf sourceset create <id> --from wpm3` (the smoke runs' sourceset),
+  nor from any sourceset whose sources were adopted before, and the delivery is never adopted
+  into one that was. **Why:** a source adopted from a pin that carried no producer sha records
+  an `adopted_from` without one, a recorded `adopted_from` never changes, and `create --from`
+  copies it, so a seeded source can never be given the producer's `layer_sha256`:
+  adopting the delivery into it only lists each such pin under
+  `commands.adopt.layer_sha256_not_recorded`, and no render of it is ever held to the
+  producer's text layer. Adopted into a new sourceset, each pin's `layer_sha256` is recorded in
+  its `adopted_from`, `render` refuses by name a source whose layer is not that sha, and
+  `state.json`'s `parity_refusals` is the parity measurement on the run's real pages
+  (`references/locate-documents.md` §7).
+  TODO (due before contributors or runs 2–10; not built): `adopt` fills a missing
+  `adopted_from.layer_sha256` once, in a new sourceset version, and only when the pin's bytes
+  hash to the recorded `raw_sha256`; it records the delivering pins file's sha beside it (a new
+  optional `adopted_from` key, documented in `references/locate-documents.md` §7); and when a
+  layer already exists it compares at once and writes `parity_refusals`. Until then this
+  procedure is the only way a source is held to the producer's layer.
 - **Shards.** More than 500 tasks is a campaign:
   1. Run a **pilot** first: a small locate run taken to the smoke stage with `cf run <pilot>
      --host <alias> --i-have-consent --include-source-text --execute`, watched through worker →
      gate → reviewer → merge, then raised with `--stage raise --smoke-verified --execute`, which
-     records `run.smoke_verified`. Read its p90 cost per merged task and gate-failure rate from
-     its harvest.
+     records `run.smoke_verified`. Harvest it (`cf harvest <pilot> --execute`), which brings its
+     agent envelopes home to `runs/<pilot>/host/envelopes/`, and read its p90 cost per merged
+     task and gate-failure rate from the harvest.
   2. Plan each shard with `cf plan-locate` (each with its own `--max-cost`), then
      `cf campaign plan <id> --shard <r1> --shard <r2> … --host <alias> --pilot <pilot>` with the
-     pilot's p90s. `cf campaign plan` stamps `locate.campaign` into each shard's `run.yaml` and
+     pilot's p90s. The watchdog estimates a call that left no priced envelope (a timeout, a
+     signal) at `--unpriced-usd-per-hour <usd>` until its shard has a priced envelope of its
+     own; without the flag the plan measures the pilot's highest priced dollars per hour over
+     its harvested envelopes that carry a duration, and says which rate it took (or that it
+     has none). `cf campaign plan` stamps `locate.campaign` into each shard's `run.yaml` and
      refuses a shard stamped by another campaign; run again, it reads every shard's `run.yaml`
-     afresh and keeps the thresholds, pilot, transcript directories and canaries it is not given.
+     afresh and keeps the thresholds, the flag's rate, pilot, transcript directories and
+     canaries it is not given, and measures a pilot's rate again.
      Give `--transcript-dirs` (or set `hosts.<alias>.transcript_dirs` in `workspace.yaml`) to have
      each shard's transcripts exported and pruned, and `--canaries <host path>` to have them scanned
      for the bench's label canaries; each is an absolute host path or `~/…` (the host's home).
@@ -320,7 +348,9 @@ root, bridge and harvest, with these differences:
      per-user directory works; but nothing else of the run itself may write there.
   3. Take every shard through `cf run <shard> --host <alias> --i-have-consent
      --include-source-text --execute --stage verify`, which transfers and verifies it and launches
-     nothing. `cf campaign render <id>` refuses a campaign without a smoke-verified pilot, and a
+     nothing. `cf campaign render <id>` refuses a campaign without a smoke-verified pilot or
+     without a rate for unpriced calls (harvest the pilot and plan again, or give
+     `--unpriced-usd-per-hour`), and a
      shard whose `run.yaml` no longer matches the campaign's record of it (its cap, task count,
      limits or `locate.campaign` stamp): a shard re-planned since is planned into the campaign
      again with `cf campaign plan`, then rendered.
