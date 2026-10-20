@@ -178,7 +178,9 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
 1. `cf corpus init <u>`, `cf corpus add <u> --library … --commit <40 hex> --licence
    <SPDX id> --brain-lib <token>` (a record set refuses a library with no licence; a
    re-add records one; the token is the consumer's library name, `FF_AdicModules`, and
-   an id that is none, `lean-core`, needs it), then
+   an id that is none, `lean-core`, needs it; a token names one repository, compared
+   without case, and each repository is spelled one way, so `--repo` is the spelling
+   the universe already uses), then
    on the host the pipeline `cf corpus probe-command` prints (**cf never builds a
    library**), `cf corpus ingest` (refused until the toolchain's canary passed)
    and `cf corpus build-db <u>` (`--blind` too, for the G1-blind arm).

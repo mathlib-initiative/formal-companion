@@ -724,7 +724,11 @@ What every record carries beyond §2.7's example:
 `scripts/locate/records.py`) under `exports/<id>/` (or `--out DIR`) and what it
 refused, by passage, to `reports/export.<id>.json` (which also names the runs,
 `run_id`, `challenge_runs` and `inventory_run`, the `campaign` token and the
-`sourceset` with its manifest `version`), exiting 1 when it refused
+`sourceset` with its manifest `version`, and lists as `brain_lib_not_token`,
+`[{"library", "brain_lib", "from_id"}]` by library id, every library whose
+`brain_lib` as `universe.json` writes it — its own, else its id, `from_id` true, as
+for `lean-core` — is no library token of §8: those are exported, not refused, and
+the universe that replaces a frozen one carries tokens), exiting 1 when it refused
 anything: a passage whose challenge is owed, one whose outcome row carries a
 `problem` (§10: an outcome that could not be derived, a location that could not
 be joined, a document off the pinned rendering, a challenge that no longer fits
@@ -1110,11 +1114,24 @@ drivers' indexes is made, ingested, built and searched.
 
 `universe.yaml` is the proposal's §2.3 shape, written by `cf corpus`
 (`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
-a document names as `library`), `brain_lib`, `repo` (an https repository URL a
+a document names as `library`: a lowercase letter, then lowercase letters, digits
+and `._-`, at most 64, and none of YAML's bool and null words `yes`, `no`, `true`,
+`false`, `on`, `off` and `null` — `corpus.universe.LIBRARY_ID`, which a universe's
+own id and an exclusion's id follow too, on load as at `cf corpus add`; the letter
+comes first and the words are left out so that no id reads as anything but itself
+in YAML, quoted or bare: not a number or date, `1.5e-3` or `2026-10-17`, and not a
+bool or null, `no` or `null`), `brain_lib`, `repo` (an https repository URL a
 record set's consumer can link: a dotted host and one to four path segments of
 letters, digits and `._~-`, at most 100 each, none of them `.` or `..`, so no
 empty segment and no trailing slash — `corpus.universe.REPO`, refused at `cf corpus
-add` and on load; the repo is outside `universe_sha256`), a 40-hex `commit`,
+add` and on load; the repo is outside `universe_sha256`; and **one spelling per
+repository**: libraries that share a repository spell it alike, and one whose repo
+is another library's repository spelled differently — the host's case, a `www.`, a
+trailing `.git` in any case, and on github.com the owner's or name's case
+(`corpus.universe.repo_key`) — is refused at `cf corpus add` and on load, naming
+the spelling the universe uses, because everything downstream compares a repo
+exactly as written: an absence's one end per `(repo, commit)` (§6) and the
+consumer's `(repo, root)` rule), a 40-hex `commit`,
 `toolchain`, `roots`, `licence` (`{spdx}`: an SPDX id or expression; null while a
 library pinned without `--licence` has none, and a re-add with `--licence` records
 it, since the licence is outside `universe_sha256`; a re-add naming another
@@ -1140,9 +1157,14 @@ a letter, then letters, digits and `_`, at most 64 (`corpus.universe.BRAIN_LIB`,
 the grammar the consumer's Brain admits as a library's name: `Mathlib`,
 `FF_AdicModules`, never `FF.AdicModules`) — the `--brain-lib` given, else the id
 when it is one; any other is refused, naming `--brain-lib` and a spelling it
-admits. Only a new row is held to it: a universe written before (u1's
-`FF.<Root>` tokens) loads, re-adds and exports as it stands, since a frozen
-universe is never rewritten, and the next universe carries tokens;
+admits. Only a new row, and a re-add's `--brain-lib`, is held to it: a universe
+written before (u1's `FF.<Root>` tokens) loads, re-adds without `--brain-lib` and
+exports as it stands, since a frozen universe is never rewritten — the export
+report names each such name (§6) — and the next universe carries tokens. A token
+names one repository and is **compared without case** (`Mathlib` and `MATHLIB` are
+one token): a library whose token, its own or else its id, is another repository's
+is refused at `cf corpus add` and on load, while one repository may carry one
+token over several libraries, or several tokens;
 `excluded` lists `{id, reason}` (what a universe leaves out WITHIN a library is a
 choice of its `roots`, stated in the proposal's §2.3 for the default universe: Mathlib
 with its `Wanted` library of `proof_wanted` statements, Lean core without the `Lean`

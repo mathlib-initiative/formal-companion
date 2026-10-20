@@ -9,7 +9,9 @@ shape references/locate-documents.md section 8 fixes.  One file per universe,
   names as ``library``, ``brain_lib``, ``repo``, ``commit``, ``toolchain``,
   ``roots``, ``licence`` (``{spdx}``, or null until a re-add records it: the
   export refuses a library with none), ``conventions`` and, once ingested,
-  ``index: {path, sha256, declarations}``;
+  ``index: {path, sha256, declarations}``.  Two libraries may share a
+  repository, spelled one way (:func:`repo_key`), and a ``brain_lib`` token
+  names one repository, compared without case;
 * ``published_index`` on a library row -- the recorded acceptance of an index
   the library publishes itself, which the probe and its canary never checked;
 * ``host`` on a library row -- ``{kind, ref, options}``, the rest of the line the
@@ -43,8 +45,20 @@ from cflib.yamlio import read_yaml, write_yaml
 
 from . import universe_host
 
-#: the universe-local library id: what the host drivers' universe list accepts too
-LIBRARY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
+#: the YAML bool and null words a lowercase id could spell, which both readers type
+#: (``no`` reads as False, ``null`` as None) wherever such an id is written bare
+YAML_WORD_IDS = ("yes", "no", "true", "false", "on", "off", "null")
+#: the universe-local library id (and a universe's own id, and an exclusion's): a
+#: lowercase letter, then lowercase letters, digits and ``._-``, at most 64, and none
+#: of :data:`YAML_WORD_IDS`.  The letter first means no id is a YAML number or date
+#: look-alike (``1.5e-3``, ``0x10``, ``2026-10-17``), and without the words no id is a
+#: bool or null, so an id reads as itself wherever it is written, quoted or bare; the
+#: host drivers' universe list (``universe_host._ID``) also admits a leading digit and
+#: the words, a superset of what a universe may name
+LIBRARY_ID = re.compile(rf"(?!(?:{'|'.join(YAML_WORD_IDS)})\Z)[a-z][a-z0-9._-]{{0,63}}\Z")
+#: how a refusal states :data:`LIBRARY_ID`
+LIBRARY_ID_RULE = ("[a-z][a-z0-9._-]* (a lowercase letter first, at most 64, and no YAML "
+                   "bool or null word: " + ", ".join(YAML_WORD_IDS) + ")")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
@@ -53,6 +67,9 @@ _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 #: segments of letters, digits and ``._~-`` (at most 100 each), none of them ``.`` or
 #: ``..``, so no empty segment and no trailing slash
 REPO = re.compile(r"https://[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?:/[A-Za-z0-9_.~-]{1,100}){1,4}\Z")
+#: hosts whose repository owners and names are case-insensitive, so :func:`repo_key`
+#: casefolds the path there (and only there)
+CASE_INSENSITIVE_REPO_HOSTS = frozenset({"github.com"})
 #: an elan toolchain spelling (``leanprover/lean4:v4.34.0``,
 #: ``leanprover/lean4-nightly:nightly-2026-10-01``) or a bare version: nothing that
 #: needs quoting in the shell lines ``cf corpus probe-command`` prints
@@ -71,9 +88,12 @@ MAX_REASON_CHARS = 1000
 #: a library's ``brain_lib``, as a library added from now on carries it: the consumer's
 #: library token, a letter then letters, digits and ``_`` (at most 64 in all), the
 #: grammar the consumer's Brain admits as a library's area name (``FF_AdicModules``,
-#: never ``FF.AdicModules``).  Only :meth:`Universe.add_library` holds a NEW row to it;
-#: a universe written before it (u1's ``FF.<Root>``) still loads and exports, its
-#: tokens held to the length cap alone, since a frozen universe is never rewritten
+#: never ``FF.AdicModules``).  :meth:`Universe.add_library` holds a NEW row to it, and a
+#: re-add's ``--brain-lib`` too; a universe written before it (u1's ``FF.<Root>``) still
+#: loads and exports, its tokens held to the length cap alone, since a frozen universe
+#: is never rewritten -- and the export report names every written token outside it
+#: (``locate.export``'s ``brain_lib_not_token``), the id fallback included.  A token
+#: names one repository, compared without case (``Mathlib`` and ``MATHLIB`` are one)
 BRAIN_LIB = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
 #: an SPDX licence id or expression, as a row's ``licence: {spdx: ...}`` carries it
 #: (``Apache-2.0``, ``MIT OR Apache-2.0``, ``LicenseRef-x``): a record set names it
@@ -126,7 +146,7 @@ class Universe:
     def create(cls, path: Path, universe_id: str, frozen: str | None = None) -> "Universe":
         """A new, empty universe; refused when ``path`` already holds one."""
         if not LIBRARY_ID.match(str(universe_id or "")):
-            raise CfError(f"universe id {universe_id!r} is not [a-z0-9][a-z0-9._-]*",
+            raise CfError(f"universe id {universe_id!r} is not {LIBRARY_ID_RULE}",
                           hint="a short lowercase id such as u1")
         if Path(path).exists():
             raise CfError(f"{path} already exists",
@@ -272,7 +292,19 @@ class Universe:
 
         A new row's ``brain_lib`` -- the one given, else the id -- is a token of
         :data:`BRAIN_LIB`, or the row is refused naming ``--brain-lib``; a re-add
-        keeps the token its row records, which may predate the grammar.
+        without ``--brain-lib`` keeps the token its row records, which may predate the
+        grammar, and a re-add whose ``--brain-lib`` is no token is refused even when the
+        row records that very name.  A token names one repository: a new row whose
+        token is another repository's, compared without case, is refused.
+
+        One repository is spelled one way: a new row whose ``repo`` is another
+        library's repository spelled differently (:func:`repo_key`: another case of
+        the host, a ``www.``, a trailing ``.git`` in any case, or another case of the
+        owner or name on github.com) is refused, naming the spelling the universe
+        already uses.
+        Everything downstream compares a repo exactly as written -- an absence's one
+        end per ``(repo, commit)``, the consumer's ``(repo, root)`` rule -- and this rule
+        is what keeps that correct.
         """
         licence = str(licence).strip() if licence is not None else None
         row = {"id": library_id, "brain_lib": brain_lib or library_id, "repo": repo,
@@ -292,6 +324,13 @@ class Universe:
                 continue
             same = all(existing.get(k) == row[k] for k in ("repo", "commit", "toolchain"))
             if not same:
+                if (existing.get("repo") != repo
+                        and repo_key(existing.get("repo")) == repo_key(repo)
+                        and all(existing.get(k) == row[k] for k in ("commit", "toolchain"))):
+                    raise CfError(f"library {library_id!r} spells its repository "
+                                  f"{existing.get('repo')!r}, not {repo!r}",
+                                  hint=f"a universe spells one repository one way: re-add "
+                                       f"with --repo {existing.get('repo')}")
                 raise CfError(f"library {library_id!r} is already pinned at "
                               f"{str(existing.get('commit'))[:12]} ({existing.get('repo')})",
                               hint="a universe is frozen: make a new universe for a new pin")
@@ -300,6 +339,13 @@ class Universe:
                               f"{existing.get('brain_lib')!r}, not {brain_lib!r}",
                               hint="a brain_lib token names the library to its consumer; a "
                                    "universe is frozen, so make a new universe for a new one")
+            if brain_lib and not BRAIN_LIB.match(brain_lib):
+                raise CfError(f"library {library_id!r}: --brain-lib {brain_lib!r} is not a "
+                              f"library token: a letter, then letters, digits and _, at most 64",
+                              hint="leave --brain-lib out to keep the name the row records (a "
+                                   "universe written before the token grammar keeps its own); "
+                                   "the next universe carries tokens, e.g. --brain-lib "
+                                   f"{_token_hint(brain_lib)}")
             recorded = existing.get("licence")
             if row["licence"] is not None and recorded != row["licence"]:
                 if recorded:
@@ -312,24 +358,36 @@ class Universe:
             if host is not None:
                 existing["host"] = row["host"]
             return existing
+        for existing in self.libraries:
+            if existing.get("repo") != repo and repo_key(existing.get("repo")) == repo_key(repo):
+                raise CfError(f"library {library_id!r}: repo {repo!r} is the repository library "
+                              f"{existing.get('id')!r} spells {existing.get('repo')!r}",
+                              hint=f"a universe spells one repository one way (the record set "
+                                   f"and its consumer compare repos exactly as written): pass "
+                                   f"--repo {existing.get('repo')}")
         if not BRAIN_LIB.match(row["brain_lib"]):
             given = "brain_lib" if brain_lib else "brain_lib (the library id, as none was given)"
             raise CfError(f"library {library_id!r}: {given} {row['brain_lib']!r} is not a "
                           f"library token: a letter, then letters, digits and _, at most 64",
                           hint=f"name the consumer's token for it with --brain-lib, e.g. "
                                f"--brain-lib {_token_hint(row['brain_lib'])}")
-        if brain_lib:
-            for existing in self.libraries:
-                if existing.get("brain_lib") == brain_lib and existing.get("repo") != repo:
-                    raise CfError(f"brain_lib {brain_lib!r} already names {existing.get('id')}",
-                                  hint="a brain_lib token is unique per repository (section 11.3)")
+        token = row["brain_lib"]
+        for existing in self.libraries:
+            theirs = written_brain_lib(existing)
+            if theirs.casefold() == token.casefold() and existing.get("repo") != repo:
+                same = "" if theirs == token else f" as {theirs!r}"
+                raise CfError(f"brain_lib {token!r} already names {existing.get('id')}{same} "
+                              f"({existing.get('repo')})",
+                              hint="a brain_lib token names one repository, compared without "
+                                   "case (references/locate-documents.md section 8); pass "
+                                   "another --brain-lib")
         self.data.setdefault("libraries", []).append(row)
         return row
 
     def exclude(self, library_id: str, reason: str) -> dict:
         """Record that a library is not in the universe, and why; drops its row if present."""
         if not LIBRARY_ID.match(str(library_id or "")):
-            raise CfError(f"library id {library_id!r} is not [a-z0-9][a-z0-9._-]*")
+            raise CfError(f"library id {library_id!r} is not {LIBRARY_ID_RULE}")
         reason = " ".join(str(reason or "").split())
         if not reason:
             raise CfError("an exclusion needs a reason", hint="--exclude 'licence forbids ML use'")
@@ -392,8 +450,9 @@ class Universe:
     # -- checking and writing ----------------------------------------------
     def validate(self, *, require_indexes: bool = False) -> list[str]:
         problems: list[str] = []
-        if not LIBRARY_ID.match(self.id):
-            problems.append(f"id {self.id!r} is not [a-z0-9][a-z0-9._-]*")
+        problem = _id_problem(self.data.get("id"))
+        if problem:
+            problems.append(f"id {problem}")
         if self.frozen and not _DATE.match(self.frozen):
             problems.append(f"frozen {self.frozen!r} is not a YYYY-MM-DD date")
         seen: set[str] = set()
@@ -413,6 +472,9 @@ class Universe:
             elif require_indexes:
                 problems.append(f"library {lib_id!r} has no index; run `cf corpus ingest`")
         for row in self.excluded:
+            problem = _id_problem(row.get("id")) if isinstance(row, dict) else None
+            if problem:
+                problems.append(f"an exclusion's id {problem}")
             if not isinstance(row, dict) or not row.get("reason"):
                 problems.append(f"an exclusion carries no reason: {row!r}")
             elif len(str(row["reason"])) > MAX_REASON_CHARS:
@@ -431,13 +493,29 @@ class Universe:
             if host["kind"] in universe_host.WORKSPACE_KINDS and kinds.get(workspace, "build") != "build":
                 problems.append(f"library {lib.get('id')!r} is probed inside {workspace!r}, a "
                                 f"{kinds[workspace]} library; a workspace is a built one")
-        brain: dict[str, str] = {}
+        spelled: dict[str, tuple[str, str]] = {}      # repo_key -> (repo, first library)
         for lib in self.libraries:
-            token = lib.get("brain_lib")
-            if token and token in brain and brain[token] != lib.get("repo"):
-                problems.append(f"brain_lib {token!r} names two repositories")
-            if token:
-                brain[token] = str(lib.get("repo"))
+            if not isinstance(lib, dict) or not is_repo_url(lib.get("repo")):
+                continue
+            repo, lib_id = str(lib["repo"]), str(lib.get("id") or "")
+            first = spelled.setdefault(repo_key(repo), (repo, lib_id))
+            if first[0] != repo:
+                problems.append(f"library {lib_id!r}: repo {repo!r} is the repository library "
+                                f"{first[1]!r} spells {first[0]!r}; a universe spells one "
+                                f"repository one way")
+        brain: dict[str, tuple[str, str]] = {}        # casefolded token -> (token, repo_key)
+        for lib in self.libraries:
+            if not isinstance(lib, dict):
+                continue
+            token = written_brain_lib(lib)
+            if not token:
+                continue
+            key = repo_key(lib.get("repo"))
+            first = brain.setdefault(token.casefold(), (token, key))
+            if first[1] != key:
+                problems.append(f"brain_lib {token!r} names two repositories" if first[0] == token
+                                else f"brain_lib {token!r} and {first[0]!r} are one token "
+                                     f"(compared without case) and name two repositories")
         if require_indexes and not self.libraries:
             problems.append("the universe has no library")
         return problems
@@ -509,6 +587,52 @@ def _token_hint(name: str) -> str:
     return token[:64]
 
 
+def repo_key(repo) -> str:
+    """The repository a ``repo`` URL names, one key for each way of spelling it.
+
+    The host lowercased and without ``www.``, no trailing ``.git`` (in any case:
+    ``.GIT`` is the same suffix), and on a host of :data:`CASE_INSENSITIVE_REPO_HOSTS`
+    (github.com) the owner and name casefolded:
+    ``https://www.GitHub.com/LeanProver/Lean4.git`` and
+    ``https://github.com/leanprover/lean4`` are one key.  Only a universe's
+    one-spelling rule compares on it (:meth:`Universe.add_library`,
+    :meth:`Universe.validate`); every other comparison of a repo is exact, as
+    written, and that rule is what keeps them right.
+    """
+    text = str(repo or "")
+    scheme, sep, rest = text.partition("://")
+    if not sep:
+        return text
+    host, slash, path = rest.partition("/")
+    host = host.lower()
+    if host.startswith("www."):
+        host = host[len("www."):]
+    if host in CASE_INSENSITIVE_REPO_HOSTS:
+        path = path.casefold()
+    if path[-len(".git"):].lower() == ".git":
+        path = path[:-len(".git")]
+    return f"{scheme.lower()}://{host}{slash}{path}"
+
+
+def _id_problem(value) -> str | None:
+    """Why ``value``, as a universe file holds an id, is no :data:`LIBRARY_ID`; else None.
+
+    A value YAML typed -- a bare ``no`` read as False, ``1e3`` as 1000.0 by PyYAML --
+    is named as the type it was read as, since its own spelling is gone by then.
+    """
+    if isinstance(value, str):
+        return None if LIBRARY_ID.match(value) else f"{value!r} is not {LIBRARY_ID_RULE}"
+    if value is None:
+        return f"None is not {LIBRARY_ID_RULE}"
+    return (f"{value!r} was read as a YAML {type(value).__name__}, not a string: an id is "
+            f"{LIBRARY_ID_RULE}")
+
+
+def written_brain_lib(lib: dict) -> str:
+    """The ``brain_lib`` a record set writes for a library row: its own, else its id."""
+    return str(lib.get("brain_lib") or lib.get("id") or "")
+
+
 def is_repo_url(repo) -> bool:
     """Is ``repo`` a repository URL a record set may name (:data:`REPO`, no dot segment)?"""
     return (isinstance(repo, str) and REPO.match(repo) is not None
@@ -517,8 +641,9 @@ def is_repo_url(repo) -> bool:
 
 def _library_problems(lib: dict) -> list[str]:
     problems: list[str] = []
-    if not LIBRARY_ID.match(str(lib.get("id") or "")):
-        problems.append(f"id {lib.get('id')!r} is not [a-z0-9][a-z0-9._-]*")
+    problem = _id_problem(lib.get("id"))
+    if problem:
+        problems.append(f"id {problem}")
     if not is_repo_url(lib.get("repo")):
         problems.append(f"repo {lib.get('repo')!r} is not an https repository URL: a dotted "
                         f"host and one to four path segments of letters, digits and ._~- "

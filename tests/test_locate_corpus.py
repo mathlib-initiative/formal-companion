@@ -528,8 +528,12 @@ class TestBrainLibIsALibraryToken(unittest.TestCase):
                    toolchain=TOOLCHAIN, roots=["AdicModules"])
         self.assertEqual(again.add_library(**pin, licence="Apache-2.0")["licence"],
                          {"spdx": "Apache-2.0"})
-        self.assertEqual(again.add_library(**pin, brain_lib="FF.AdicModules")["brain_lib"],
-                         "FF.AdicModules")
+        self.assertEqual(again.add_library(**pin)["brain_lib"], "FF.AdicModules")
+        # F3: a re-add whose --brain-lib is no token is refused, even the name the row records
+        with self.assertRaises(CfError) as caught:
+            again.add_library(**pin, brain_lib="FF.AdicModules")
+        self.assertIn("--brain-lib 'FF.AdicModules' is not a library token", str(caught.exception))
+        self.assertIn("leave --brain-lib out", caught.exception.hint)
         again.save()
         self.assertEqual(Universe.load(universe.path).library("ff-adic")["brain_lib"],
                          "FF.AdicModules")
