@@ -4,20 +4,23 @@ New code, implementing docs/proposals/wikipedia-locate.md section 6 over
 references/locate-documents.md section 11; the logic is ``run/campaign.py``.
 
     cf campaign plan wpm-tier-a --shard wpm-a-1 --shard wpm-a-2 --host examplebox \\
-        --pilot wpm-pilot --p90-cost-per-task 4.1 --p90-gate-failure-rate 0.12 --multiple 2
+        --pilot wpm-pilot --p90-cost-per-task 4.1 --p90-gate-failure-rate 0.12 --multiple 2 \\
+        [--unpriced-usd-per-hour 20]
     cf campaign render wpm-tier-a      # campaigns/<id>/host/: sequencer.sh + its tools
     cf campaign status wpm-tier-a      # per shard: tasks, receipt, UNRESOLVED, cost
 
 ``plan`` orders shards that are already planned locate runs (each at most 500
 tasks with a spend cap in its own run.yaml), stamps ``locate.campaign`` into
-each, and records the watchdog's thresholds and the smoke-tested pilot (a
-re-plan reads the shards again and keeps what it is not given); ``render``
-refuses a shard whose run.yaml no longer matches that record, then writes the
-host-side sequencer, which starts shard k+1 when shard k ends, runs the
-model-free watchdog beside each shard, scans, exports and prunes the
-transcripts each shard wrote, and stops the campaign when a shard's last
-watchdog record gives a reason to drain; ``status`` reads the shards'
-receipts.  Nothing here contacts the host: ``render`` prints the transfer and
+each, and records the watchdog's thresholds, its rate for a call that left
+no priced envelope (``--unpriced-usd-per-hour``, else the pilot's highest
+priced dollars per hour) and the smoke-tested pilot (a re-plan reads the
+shards again and keeps what it is not given); ``render`` refuses a campaign
+with no such rate, and a shard whose run.yaml no longer matches that record,
+then writes the host-side sequencer, which starts shard k+1 when shard k
+ends, runs the model-free watchdog beside each shard, scans, exports and
+prunes the transcripts each shard wrote, and stops the campaign when a
+shard's last watchdog record gives a reason to drain; ``status`` reads the
+shards' receipts.  Nothing here contacts the host: ``render`` prints the transfer and
 start commands for the operator, after each shard went through ``cf run``'s
 transfer and verify stages and nothing more (a smoke-tested shard leaves its
 own tend run going outside the sequencer).
@@ -54,6 +57,12 @@ def register(subparsers) -> None:
     pl.add_argument("--pilot", default=None, metavar="RUN_ID",
                     help="the run whose smoke test (run.smoke_verified) stands for every "
                          "shard's; render refuses without one")
+    pl.add_argument("--unpriced-usd-per-hour", type=float, default=None, metavar="USD",
+                    help="what the watchdog estimates an hour of a call that left no priced "
+                         "envelope at, until the shard has a priced envelope of its own "
+                         "(default: the pilot's highest priced dollars per hour over its "
+                         "harvested envelopes that carry a duration; a re-plan keeps a given "
+                         "one; render refuses a campaign with neither)")
     pl.add_argument("--transcript-dirs", default=None, metavar="DIRS",
                     help="colon-separated host directories the agents' transcripts land in, "
                          "each absolute or ~/... (default: workspace.yaml "
@@ -77,9 +86,21 @@ def run(args) -> int:
             p90_cost_per_task=args.p90_cost_per_task,
             p90_gate_failure_rate=args.p90_gate_failure_rate, multiple=args.multiple,
             min_tasks=args.min_tasks, pilot=args.pilot, transcript_dirs=args.transcript_dirs,
-            canaries=args.canaries)
+            canaries=args.canaries, unpriced_usd_per_hour=args.unpriced_usd_per_hour)
         log.info(f"campaign {args.campaign_id}: {len(doc['shards'])} shard(s), {doc['tasks']} "
                  f"task(s), caps summing to ${doc['max_cost']:.2f} -> {path}")
+        watch = doc["watchdog"]
+        if watch["unpriced_usd_per_hour"] is None:
+            log.warn("no rate for a call that left no priced envelope: render refuses the "
+                     "campaign until the pilot's envelopes are harvested (`cf harvest <pilot> "
+                     "--execute`, then plan again) or --unpriced-usd-per-hour is given")
+        else:
+            measured = (f"the pilot {watch['unpriced_usd_per_hour_pilot']}'s highest priced "
+                        f"rate" if watch["unpriced_usd_per_hour_pilot"]
+                        else "--unpriced-usd-per-hour")
+            log.info(f"a call that left no priced envelope is estimated at "
+                     f"${watch['unpriced_usd_per_hour']:g}/hour ({measured}) until its shard "
+                     f"has a priced envelope of its own")
         if doc["watchdog"]["p90_cost_per_task"] is None or doc["watchdog"]["p90_gate_failure_rate"] is None:
             log.warn("no pilot p90 for the cost per task or the gate-failure rate: the watchdog "
                      "drains on the spend cap alone until the pilot measures them")
