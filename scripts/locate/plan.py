@@ -623,6 +623,13 @@ def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict
         # rule 9 binds the runs planned with this code; a gate.json without the key is
         # a run planned before the judgment rules, gated as it always was
         "judgment_rules": vocab.JUDGMENT_RULES,
+        # rule 2's end check binds the inventories of the runs planned with this code
+        # (their passage_ids.py keeps `until`); a gate.json without the key is a run
+        # planned before it, whose ends are held inside the layer and after the quote
+        # only.  A locate or challenge document has no span of its own to check: the
+        # gate reads each passage's span from the task manifest, so a locate run that
+        # reuses an older inventory plans and gates as before, whatever its ends are
+        "span_end_rule": vocab.SPAN_END_RULE,
         "vendor": vendor_shas(),
     }
 

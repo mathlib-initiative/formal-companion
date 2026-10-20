@@ -118,9 +118,12 @@ release has something to say.
     `1.5e-3` reloaded as 0.0015. It now quotes every plain scalar either reader would type,
     in a value or a mapping key: a number of any base or with an exponent, a bool or null
     word in any case, a date or timestamp, and PyYAML's `<<` and `=`, which PyYAML refuses to
-    load at all. A float is written as both readers read a float back (`1.0e-05`, `.inf`, where
-    `str()` gave `1e-05` and `inf`, both strings to PyYAML), and the fallback reader reads
-    `.inf` and `.nan`, and a sequence item whose first key is quoted. A library id and a
+    load at all. A float is written as both readers read a float back: a point in the mantissa
+    and a sign on the exponent (`1.0e-05`, `1.0e+16`), and `.inf`, `-.inf` and `.nan`.
+    `str()` gave `1e-05`, `1e+16` and `inf`, which PyYAML and the fallback reader both read
+    back as strings, so a campaign's `--unpriced-usd-per-hour 1e-5` was refused by its own
+    render. The fallback reader reads `.inf` and `.nan`, and a sequence item whose first key
+    is quoted. A library id and a
     universe id now start with a letter and are none of YAML's bool and null words (`yes`,
     `no`, `true`, `false`, `on`, `off`, `null`), so no id reads as anything but itself
     even written bare (`corpus.universe.LIBRARY_ID`). Loading a universe now checks an
@@ -134,7 +137,18 @@ release has something to say.
     into the next kept passage with no `until` that puts it there, or a UTF-16 count on a layer
     with astral-plane characters. `passage_ids.py` now keeps `until` in the document so the
     end can be recomputed (a second run places the same spans). The bench classes the refusal
-    as `rule_2:span_end`.
+    as `rule_2:span_end`. The check binds a run whose `gate.json` names `span_end_rule`
+    (`cflib.vocab.SPAN_END_RULE`, 1), which `cf plan-locate` writes into every gate.json as it
+    writes `judgment_rules`, and no other. The earlier `passage_ids.py` dropped `until` once it
+    had placed the end, so an inventory it wrote has no end to recompute: applied to every
+    inventory, the check refused 117 passages of a gated smoke inventory when the checkout's
+    gate re-gated it (`cf harvest --checkout-gate`), which is how a run planned before the
+    staged-gate pins is re-gated at all. A gate.json without the key keeps the bound it was
+    gated under (the end inside the layer, after the quote). A locate or challenge document
+    carries no span of its own (the gate reads each passage's span from the task manifest), so
+    the key binds nothing there, and a locate run planned now over an older inventory
+    (`--inventory-run`, which reads its harvest receipt and never re-gates it) plans and gates
+    as before.
   - **The label.** The gate's command line refuses, with exit 3 and no log line, `--findings`
     with `--changed-files`, `--pre-merge` without `--changed-files`, an abbreviated flag, a
     repeated `--gate-config` and, in a staged gate directory, any `--gate-config` but its own
@@ -165,7 +179,7 @@ release has something to say.
     the plan's file back, or a re-plan), and the harvest no longer blames the findings.
   - The staged `verify_locate.py`, `locate_text.py`, `passage_ids.py` and the bridge change, so
     `config_shas.gate_files` differs for a run planned after this: an A/A pair is planned on
-    one side of it.
+    one side of it. Its `gate.json` gains `span_end_rule`, which `config_shas` does not hash.
 - A campaign's watchdog has a rate for unpriced calls from the first call. Before a shard's
   first priced envelope with a duration, the watchdog had no rate to estimate a call that left
   no priced envelope (a timeout, a signal) at, and read it as $0. `cf campaign plan` records
@@ -183,10 +197,6 @@ release has something to say.
   unrounded rate, so a pilot's exact $20 an hour is recorded as 20.0, not 20.000002; that
   changes the watchdog's file sha, so `config_shas.gate_files` differs for a run planned after
   it.
-- The YAML writer spells a float with an exponent with a point in its mantissa (`1.0e-05`,
-  not `1e-05`): Python writes a float below 1e-4 or from 1e16 with no point, and YAML 1.1 and
-  the fallback reader both read that back as a string, so a campaign's `--unpriced-usd-per-hour
-  1e-5` was refused by its own render and crashed the next re-plan.
 - `references/runbook-server.md` §9: a kept run's sourceset (Tier A) is created new and filled
   only by `adopt` from the consumer feed's first delivery, never by `cf sourceset create --from
   wpm3`. A source adopted without the producer's `layer_sha256` never gets one (a recorded

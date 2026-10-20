@@ -6,7 +6,12 @@ docs/design/stage_map.md section 4.0:
 * **the span end** (gate rule 2): an inventory passage ends where
   ``passage_ids.py`` ends it (``locate_text.passage_end``), so an end edited by
   hand, moved into the next passage or counted in UTF-16 units is refused --
-  pinned on a layer of astral-plane characters, where a UTF-16 end differs;
+  pinned on a layer of astral-plane characters, where a UTF-16 end differs --
+  in a run whose ``gate.json`` names ``span_end_rule``, and no other: an
+  inventory in the old shape (its end placed by an ``until`` the earlier
+  ``passage_ids.py`` then dropped) still passes under a gate.json without the
+  key, also at a re-gate by the checkout's gate, and a locate run that reuses
+  it gates as before;
 * **the label**: the command line refuses ``--findings`` with
   ``--changed-files``, an abbreviation, a repeated ``--gate-config``,
   ``--pre-merge`` alone and, in a gate directory, any config but its own; the
@@ -61,7 +66,7 @@ import test_bridge_hardening as tbh  # noqa: E402
 import test_verify_locate as tvl  # noqa: E402
 from bench import metrics  # noqa: E402
 from cf import main as cf_main  # noqa: E402
-from cflib import hashing  # noqa: E402
+from cflib import hashing, vocab  # noqa: E402
 from cflib.jsonio import read_json  # noqa: E402
 from cflib.yamlio import read_yaml, write_yaml  # noqa: E402
 from gate import verify_locate as vl  # noqa: E402
@@ -92,6 +97,8 @@ class TestTheSpanEnd(tvl.GateTestCase):
 
     def setUp(self):
         self.fx = tvl.Fixture(self, "locate-inventory")
+        self.fx.gate["span_end_rule"] = vocab.SPAN_END_RULE      # a run planned now
+        self.fx.write_gate()
         self.fx.manifest(TASK, tvl.inventory_manifest_doc(self.fx))
 
     def run_body(self, body):
@@ -190,6 +197,7 @@ class TestTheAstralLayer(tvl.GateTestCase):
         (source / "paragraphs.json").write_text(json.dumps(self.paragraphs), encoding="utf-8")
         self.fx.layer_sha = _sha(self.layer.encode("utf-8"))
         self.fx.gate["sources"][SID]["layer_sha256"] = self.fx.layer_sha
+        self.fx.gate["span_end_rule"] = vocab.SPAN_END_RULE
         self.fx.write_gate()
         self.fx.manifest(TASK, dict(tvl.inventory_manifest_doc(self.fx), finders=[]))
         doc = {"passages": [{"quote": {"exact": self.QUOTE, "prefix": "", "suffix": ""}}]}
@@ -217,6 +225,118 @@ class TestTheAstralLayer(tvl.GateTestCase):
         self.assertIsNotNone(vl._span(wrong, len(self.layer)))      # what the old bound admitted
         self.assertRule(self.fx.run(self.fx.document(TASK, self.body(wrong))), 2,
                         "passage_ids.py ends it at 114")
+
+
+class TestTheSpanEndBindsTheRunsPlannedUnderIt(tvl.GateTestCase):
+    """Rule 2's end check binds a run whose gate.json names ``span_end_rule``, and no other.
+
+    The final review's probe: ``passage_ids.py`` before the rule placed an end by
+    the passage's ``until`` and then dropped the ``until``, so the end check,
+    applied to every inventory, refused 117 passages of a gated smoke inventory
+    at a re-gate by the checkout's gate.  The planner now writes the key, as it
+    writes ``judgment_rules``; a gate.json without it keeps the bound the run was
+    gated under (inside the layer, after the quote).
+    """
+
+    UNTIL = "Theorem."
+
+    def setUp(self):
+        self.fx = tvl.Fixture(self, "locate-inventory")
+        self.fx.manifest(TASK, tvl.inventory_manifest_doc(self.fx))
+
+    def rule(self, version) -> None:
+        if version is None:
+            self.fx.gate.pop("span_end_rule", None)
+        else:
+            self.fx.gate["span_end_rule"] = version
+        self.fx.write_gate()
+
+    def old_shape(self) -> dict:
+        """An inventory as the earlier passage_ids.py wrote it: placed by `until`, then without it."""
+        source = self.fx.root / "sourcesets" / "wpm" / "sources" / SID
+        layer = (source / "layer.txt").read_text(encoding="utf-8")
+        formulas = json.loads((source / "formulas.json").read_text(encoding="utf-8"))
+        paragraphs = json.loads((source / "paragraphs.json").read_text(encoding="utf-8"))
+        body = tvl.inventory_body()
+        for p in body["passages"]:
+            for key in ("item", "head_words", "span"):
+                p.pop(key)
+        body["passages"][0]["until"] = self.UNTIL
+        self.assertEqual(passage_ids.place(body, layer, formulas, paragraphs), [])
+        # the lead runs past its paragraph to the until's end, into the theorem box
+        self.assertEqual(body["passages"][0]["span"],
+                         [tvl.LEAD_SPAN[0], tvl.THEOREM_SPAN[0] + len(self.UNTIL)])
+        body["passages"][0].pop("until")
+        return body
+
+    def test_an_old_inventory_passes_without_the_key_and_fails_with_it(self):
+        body = self.old_shape()
+        self.rule(None)
+        self.assertEqual(self.fx.gate_cfg().span_end_rule, 0)
+        self.assertOk(self.fx.run(self.fx.document(TASK, body)))
+        self.rule(vocab.SPAN_END_RULE)
+        self.assertEqual(self.fx.gate_cfg().span_end_rule, vocab.SPAN_END_RULE)
+        self.assertRule(self.fx.run(self.fx.document(TASK, body)), 2,
+                        "the end of the paragraph it starts in")
+        # the shape passage_ids.py writes now, which keeps its until, passes under it
+        body["passages"][0]["until"] = self.UNTIL
+        self.assertOk(self.fx.run(self.fx.document(TASK, body)))
+
+    def test_without_the_key_the_old_bound_still_holds(self):
+        """An end before the quote's, or past the layer, was refused before the rule too."""
+        self.rule(None)
+        body = tvl.inventory_body()
+        a = body["passages"][0]["span"][0]
+        body["passages"][0]["span"] = [a, a + 3]
+        self.assertRule(self.fx.run(self.fx.document(TASK, body)), 2,
+                        "the quote starts the passage and lies inside it")
+        body["passages"][0]["span"] = [a, len(tvl.LAYER) + 1]
+        self.assertRule(self.fx.run(self.fx.document(TASK, body)), 2, "inside the layer")
+
+    def test_the_checkout_gate_re_gates_an_old_inventory_as_it_was_gated(self):
+        """`cf harvest --checkout-gate` of an inventory planned before the rule passes."""
+        landed = self.fx.root / "landed"
+        self.fx.document(TASK, self.old_shape(), directory=landed)
+        config = self.fx.root / "gate" / "gate.json"
+        for version, ok in ((None, True), (vocab.SPAN_END_RULE, False)):
+            with self.subTest(span_end_rule=version):
+                self.rule(version)
+                result = gate_corpus.gate_locate_corpus(landed, config)
+                self.assertEqual(result["gate_code"]["from"], "checkout")
+                self.assertEqual(result["ok"], ok, result["problems"])
+                self.assertEqual(any("passage_ids.py ends it" in p for p in result["problems"]),
+                                 not ok)
+
+    def test_a_locate_run_reusing_an_old_inventory_gates_under_the_key(self):
+        """A locate document has no span of its own: its passages' are the task manifest's.
+
+        The planner writes the key into a locate run's gate.json too, and the frozen
+        passage whose end an old inventory placed by a dropped `until` is read from
+        the manifest, never end-checked, so the run gates as it did.
+        """
+        fx = tvl.Fixture(self, "locate")
+        fx.gate["span_end_rule"] = vocab.SPAN_END_RULE
+        fx.write_gate()
+        manifest = tvl.locate_manifest_doc(fx)
+        manifest["passages"][0]["span"] = [tvl.LEAD_SPAN[0],
+                                           tvl.THEOREM_SPAN[0] + len(self.UNTIL)]
+        task = "t-loc-0001"
+        fx.manifest(task, manifest)
+        self.assertOk(fx.run(fx.document(task, tvl.locate_body())))
+
+    def test_a_gate_json_naming_a_newer_rule_cannot_run(self):
+        for value, needle in ((vocab.SPAN_END_RULE + 1, "this gate knows"),
+                              ("1", "not a version number"), (-1, "not a version number"),
+                              (True, "not a version number")):
+            self.rule(value)
+            with self.subTest(value=value), self.assertRaises(vl.GateBroken) as caught:
+                self.fx.gate_cfg()
+            self.assertIn(needle, str(caught.exception))
+            self.assertIn("span_end_rule" if needle != "this gate knows" else "span-end rule",
+                          str(caught.exception))
+
+    def test_the_gates_copy_is_cflibs(self):
+        self.assertEqual(vl.SPAN_END_RULE, vocab.SPAN_END_RULE)
 
 
 # --------------------------------------------------------------------------- #
@@ -637,6 +757,7 @@ class TestThePlannerPins(unittest.TestCase):
 
     def test_an_inventory_plan(self):
         for gate in self.gates("inv-1"):
+            self.assertEqual(gate["span_end_rule"], vocab.SPAN_END_RULE)
             self.assertEqual(sorted(gate["candidates_sha256"]), sorted(gate["sources"]))
             for sid, pin in gate["sources"].items():
                 self.assertEqual(pin["views"], self.views_of(sid))
@@ -645,6 +766,7 @@ class TestThePlannerPins(unittest.TestCase):
     def test_a_locate_plan_and_a_challenge_plan(self):
         F.plan_locate(self, self.root)
         for gate in self.gates("loc-1"):
+            self.assertEqual(gate["span_end_rule"], vocab.SPAN_END_RULE)
             self.assertTrue(gate["candidates_sha256"])
             for sid in gate["candidates_sha256"]:
                 self.assertEqual(gate["candidates_sha256"][sid], self.candidates_of(sid))
@@ -656,6 +778,7 @@ class TestThePlannerPins(unittest.TestCase):
                               "--challenge-of", "loc-1", "--run-id", "chl-1")
         self.assertEqual(code, 0, out + err)
         for gate in self.gates("chl-1"):
+            self.assertEqual(gate["span_end_rule"], vocab.SPAN_END_RULE)
             self.assertNotIn("candidates_sha256", gate)            # its gate reads none
             for sid, pin in gate["sources"].items():
                 self.assertEqual(pin["views"], self.views_of(sid))

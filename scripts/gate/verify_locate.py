@@ -46,14 +46,17 @@ references/locate-documents.md sections 2-4 and 9):
    least two of its ``hasPart`` locations, with a note in the worker's own
    words, and no challenge document confirms one while refuting a part;
 2. every quote matches exactly once on the source's layer, at its passage's
-   span start and inside the span, an inventory passage ends where
-   ``passage_ids.py``'s rule ends it (``locate_text.passage_end``: its
-   ``until``, else its paragraph, else its quote), and its ``In-text #<hex>`` is
-   the hash of that start's head (an inventory's ids recomputed over all its
-   passages; a locate document's passages are exactly the task's frozen ones);
-   the document's ``source_sha``, ``layer_sha256`` and ``renderer`` are the
-   pinned source's, ``layer.txt`` hashes to the pin, and so do ``formulas.json``
-   and ``paragraphs.json`` when the pin carries their ``views``;
+   span start and inside the span, and its ``In-text #<hex>`` is the hash of
+   that start's head (an inventory's ids recomputed over all its passages; a
+   locate document's passages are exactly the task's frozen ones); in a run
+   whose ``gate.json`` names ``span_end_rule``, an inventory passage also ends
+   where ``passage_ids.py``'s rule ends it (``locate_text.passage_end``: its
+   ``until``, else its paragraph, else its quote), while a run planned before
+   the key keeps the bound above (inside the layer, after the quote), since its
+   ``passage_ids.py`` dropped the ``until`` the end was placed by; the
+   document's ``source_sha``, ``layer_sha256`` and ``renderer`` are the pinned
+   source's, ``layer.txt`` hashes to the pin, and so do ``formulas.json`` and
+   ``paragraphs.json`` when the pin carries their ``views``;
 3. every declaration a document names as found exists in ``corpus.sqlite``'s
    exact table at that library and the universe's commit, the database being
    the bytes ``gate.json`` pins (``corpus_db.sha256``, compared when the gate
@@ -288,6 +291,11 @@ LOCATE_EXTENSION = "org.mathlib-initiative.formal-companion.locate"
 #: gate.json names the version its run was planned under as ``judgment_rules``,
 #: and one without the key (a run planned before them) is gated without rule 9
 JUDGMENT_RULES = 1
+#: the span-end rule this gate knows (rule 2's end check; cflib.vocab.SPAN_END_RULE):
+#: a gate.json names the version its run was planned under as ``span_end_rule``, and
+#: one without the key (a run planned before it, whose inventories ``passage_ids.py``
+#: wrote without ``until``) is gated without the end check
+SPAN_END_RULE = 1
 #: the relations that say a declaration states the whole passage
 #: (cflib.vocab.STRONG_RELATIONS)
 STRONG_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
@@ -502,6 +510,25 @@ def _sha_map(value: Any, key: str) -> dict[str, str] | None:
     return dict(value)
 
 
+def _rule_version(data: dict, key: str, what: str, known: int) -> int:
+    """The version of a gate rule a gate.json names under ``key``: 0 when it names none.
+
+    A rule the gate gained after a run was planned binds the run only when its
+    planner wrote the key (``judgment_rules`` for rule 9, ``span_end_rule`` for
+    rule 2's end check), so a re-gate judges an older run by the rules it ran
+    under.  A value that is not a non-negative integer, or a version above the
+    gate's own (a gate directory older than its planner), is a broken gate.json.
+    """
+    version = data.get(key)
+    version = 0 if version is None else version
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise GateBroken(f"gate.json {key} is {version!r}, not a version number")
+    if version > known:
+        raise GateBroken(f"gate.json asks for {what} {version}, and this gate knows "
+                         f"{known}: the gate directory is older than its planner")
+    return version
+
+
 def _safe_name(value: Any) -> bool:
     """An id that names one file inside a directory and nothing else."""
     return (isinstance(value, str) and bool(value.strip()) and "/" not in value
@@ -578,15 +605,12 @@ class GateConfig:
         self.max_context_chars = _positive_int(data, "max_context_chars", MAX_CONTEXT_CHARS)
         self.max_document_bytes = _positive_int(data, "max_document_bytes", MAX_DOCUMENT_BYTES)
         self.vendor = data.get("vendor") if isinstance(data.get("vendor"), dict) else {}
-        rules = data.get("judgment_rules")
-        rules = 0 if rules is None else rules
-        if isinstance(rules, bool) or not isinstance(rules, int) or rules < 0:
-            raise GateBroken(f"gate.json judgment_rules is {rules!r}, not a version number")
-        if rules > JUDGMENT_RULES:
-            raise GateBroken(f"gate.json asks for judgment rules {rules}, and this gate knows "
-                             f"{JUDGMENT_RULES}: the gate directory is older than its planner")
         #: rule 9 binds a run planned under the judgment rules, and no other
-        self.judgment_rules = rules
+        self.judgment_rules = _rule_version(data, "judgment_rules", "judgment rules",
+                                            JUDGMENT_RULES)
+        #: rule 2's end check binds a run planned under the span-end rule, and no other
+        self.span_end_rule = _rule_version(data, "span_end_rule", "span-end rule",
+                                           SPAN_END_RULE)
 
     @classmethod
     def load(cls, path: pathlib.Path) -> "GateConfig":
@@ -2225,10 +2249,13 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                    f"starts the passage and lies inside it")
             continue
         # The end is what a reader highlights: the one passage_ids.py writes.  The
-        # start is right here, so the passage still keys the others' ids below.
-        end_problem = _end_problem(layer, source.paragraphs(), span, exact, p.get("until"))
-        if end_problem:
-            problems.add(2, where, end_problem)
+        # start is right here, so the passage still keys the others' ids below.  A
+        # run planned before the span-end rule has no `until` to recompute it from
+        # (its passage_ids.py dropped it), and keeps the bound above.
+        if cfg.span_end_rule:
+            end_problem = _end_problem(layer, source.paragraphs(), span, exact, p.get("until"))
+            if end_problem:
+                problems.add(2, where, end_problem)
         try:
             head_start = source.map.to_head(span[0])
         except lt.HeadError as exc:

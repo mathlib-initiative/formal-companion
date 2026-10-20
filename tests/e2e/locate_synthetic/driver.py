@@ -565,6 +565,22 @@ class Pipeline:
                                    / good["task_id"] / f"{WIDGET}.json", doc)
             code, text = self.gate("inv-1", path)
             self.refused(code, text, rule.strip(), rule.strip())
+        # A run planned now names the span-end rule, so its staged gate holds an
+        # inventory passage's end to the one passage_ids.py wrote (rule 2); a
+        # gate.json without the key -- a run planned before it -- would not.
+        from cflib import vocab
+
+        local = self.read_json(self._run_dir("inv-1") / "gate.local.json")
+        check(local.get("span_end_rule") == vocab.SPAN_END_RULE,
+              f"inv-1's gate.local.json names span_end_rule {local.get('span_end_rule')!r}, "
+              f"not {vocab.SPAN_END_RULE}")
+        ended = json.loads(json.dumps(good))
+        ended["passages"][0]["span"][1] += 1     # an end moved by hand
+        path = self.write_json(bad_dir / "span-end" / good["task_id"] / f"{WIDGET}.json", ended)
+        code, text = self.gate("inv-1", path)
+        self.refused(code, text, "span end", "rule 2")
+        check("passage_ids.py ends it" in text,
+              f"the moved end was refused, but not by the span-end rule:\n{text}")
 
     # ------------------------------------------------------------------ L3b
     #: the claim lists this run's worker writes (the judgment rules: references/
