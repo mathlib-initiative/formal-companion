@@ -263,6 +263,15 @@ def _literature_links(args) -> int:
     log.info(f"record set {args.set_id}: {exported.get('records', 0)} record(s) of "
              f"{exported.get('passages', 0)} passage(s) in {exported.get('sources', 0)} "
              f"source(s) -> {report['path']} (SEAL {report['seal_sha256'][:12]})")
+    flagged = report.get("brain_lib_not_token") or []
+    if flagged:
+        log.warn(f"{len(flagged)} library(ies) carry a brain_lib that is no library token "
+                 f"(a letter, then letters, digits and _): "
+                 + ", ".join(f"{row['library']} ({row['brain_lib']}"
+                             + (", the id" if row["from_id"] else "") + ")"
+                             for row in flagged[:5])
+                 + (", ..." if len(flagged) > 5 else "")
+                 + f"; exported, and named in {ws.paths.export_report_json(args.set_id)}")
     if report["refused"]:
         log.warn(f"{len(report['refused'])} passage(s) or source(s) refused; each is named in "
                  f"{ws.paths.export_report_json(args.set_id)}")
