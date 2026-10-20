@@ -42,6 +42,17 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- Locate judgment rules: PD10's exception. A link that is itself what the passage asserts is no
+  encoding: when the lemma that links the two notions is the passage's own theorem, a
+  declaration stated with the notion whose definition already contains that theorem's claim
+  presupposes the passage, and it is `relatedMatch` (R5). Read without it, PD10 would make such
+  a declaration a formalization of the theorem it presupposes, and reverse the reading PD8's
+  named-lemma bridge gave it before PD10; the maintainer's example links two definitions the
+  passage takes as given, so it keeps its encoding. The rule line is word for word in the four
+  rule files (`references/vocabulary.md` §1.11, both locate prompts, the labeler), and the PD8
+  instructions that point at PD10 name the exception. It awaits the maintainer's confirmation.
+  As for PD10 itself: no gate check, `JUDGMENT_RULES` stays 2, the labeler stays
+  `locate-label/5` (it has still labelled no gold), and the two prompt templates' shas move.
 - Locate judgment rules: PD7's test for "trivial", and PD10 on encodings (the maintainer's later
   answers of 2026-10-20; `references/vocabulary.md` §1.11 has both, and his words on
   `riemannZeta` verbatim beside his earlier ones on PD7).

@@ -375,7 +375,10 @@ for that relabel:
   `Int.isCoprime_iff_gcd_eq_one`) differs from the passage by an `encoding` (R1: a `closeMatch`
   when nothing else differs), and the library lemma that links the two definitions is no PD8
   bridge. It sharpens R1's encoding and limits PD8, which governs bridges between statements,
-  not between two definitions of one notion.
+  not between two definitions of one notion. Its exception is a link that is itself what the
+  passage asserts: when the lemma that links the two notions is the passage's own theorem, a
+  declaration stated with the notion whose definition already contains that theorem's claim
+  presupposes the passage, and it is `relatedMatch` (R5).
 
 PD1 makes a definition passage stated over a specific object `partial` against a definition over
 a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); PD2 and
@@ -427,21 +430,30 @@ PD7's test for "trivial" are the maintainer's later answers that day):
   otherwise as recorded, and a weakening stays R2's. The maintainer named the difference, an
   encoding (R1); that it is a `closeMatch` when nothing else differs is the relation table's
   definition of `closeMatch`, the same up to a convention, not a further ruling of his.
+  Neither is PD10's exception, a link that is itself what the passage asserts. His example
+  links two definitions the passage takes as given (the passage is about something else that
+  holds of coprime numbers); when the link is the passage's own theorem, a declaration whose
+  notion contains that theorem's claim by definition states nothing of the passage that the
+  linking lemma does not, so reading PD10 there would make it a formalization of the theorem
+  it presupposes. That is R5's "the connection needs another theorem", which before PD10
+  PD8's named-lemma bridge gave as well; it is recorded as the exception so that PD10 does
+  not reverse it, and it awaits the maintainer's confirmation.
 
-**PD10 and PD7's test kept the labeler at `locate-label/5`.** An override bumps the labeler's
-version (the paragraph above); these two did not, because what a version decides in the bench is
-the judgment rules `bench.gold.LABELER_RULES` maps it to, which the score holds gold and runs to,
-and they add no gate check: `JUDGMENT_RULES` stays 2, so a `/6` would map to 2 too and the score
-would refuse nothing it does not refuse now. `/5` had labelled no gold when they joined it, and
-the labeler's file sha moved with them, so the transcriber refuses a result of args emitted from
-the earlier text and gold of `/5` is labelled by this one. Once gold has been labelled under a
-version, a change to the rules it carries bumps it. What neither version nor rules can hold is a
-run of judgment rules 2 planned from the earlier text, whose prompts lack PD10 and PD7's test:
-the score holds a run to its `judgment_rules`, and pins its prompts' shas
+**PD10 and PD7's test kept the labeler at `locate-label/5`**, and so did PD10's exception, which
+joined them later the same day. An override bumps the labeler's version (the paragraph above);
+these did not, because what a version decides in the bench is the judgment rules
+`bench.gold.LABELER_RULES` maps it to, which the score holds gold and runs to, and they add no
+gate check: `JUDGMENT_RULES` stays 2, so a `/6` would map to 2 too and the score would refuse
+nothing it does not refuse now. `/5` had labelled no gold when they joined it, and the labeler's
+file sha moved with them, so the transcriber refuses a result of args emitted from the earlier
+text and gold of `/5` is labelled by this one. Once gold has been labelled under a version, a
+change to the rules it carries bumps it. What neither version nor rules can hold is a run of
+judgment rules 2 planned from the earlier text, whose prompts lack PD10 and PD7's test (or PD10's
+exception): the score holds a run to its `judgment_rules`, and pins its prompts' shas
 (`config_shas.prompts`) in the measurement without comparing them with the gold's labeler, so it
-would score such a run against gold of this text, and a `/6` would not refuse it either. None
-had been planned when these rules joined; one planned from a checkout of the earlier text is
-planned again from this one before it is scored.
+would score such a run against gold of this text, and a `/6` would not refuse it either. None had
+been planned when these rules joined; one planned from a checkout of the earlier text is planned
+again from this one before it is scored.
 
 **PD7 in the maintainer's words** (2026-10-20), verbatim:
 
