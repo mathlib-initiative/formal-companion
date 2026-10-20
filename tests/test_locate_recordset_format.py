@@ -521,6 +521,109 @@ class TestTheRecords(_Exported):
                     self.assertNotIn("identifiers", end)
         self.assertGreater(carried, 0)
 
+    def qids(self) -> dict[str, str]:
+        out_dir = self.paths.export_dir("set-1")
+        return {row["source_id"]: row["wikidata"] for row in
+                map(json.loads, (out_dir / "sources.jsonl").read_text(encoding="utf-8")
+                    .splitlines())}
+
+    def planned_prominences(self, prominence: str) -> dict[tuple[str, str], dict]:
+        """The challenge plan's prominence records of one prominence, by (source, item)."""
+        plan = read_json(self.paths.run_dir("chl-1") / "challenge-plan.json")
+        return {(r["source_id"], r["item"]): r for r in plan["records"]
+                if r["target"] == "prominence" and r["prominence"] == prominence}
+
+    def test_b5_an_overturn_to_subject_adds_the_qid_to_every_record_a_challenger_judged(self):
+        """The B5 review's F1, one direction: a supporting passage a challenger
+        overturns to subject carries the QID on its judged records, and the record the
+        overturn reopened -- challenge_pending, which nobody judged under the subject
+        rule -- carries none."""
+        def to_subject(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "prominence" and rec["prominence"] == "supporting" \
+                    and rec.get("outcome") in ("located", "unresolved"):
+                v.update(action="overturn", prominence="subject")
+            return v
+        # every supporting prominence drawn, so both passages can be overturned
+        self.challenge("--sample-rate", "1", verdict=to_subject)
+        self.assertEqual(self.export()[0], 0)
+        overturned = {key for key, r in self.planned_prominences("supporting").items()
+                      if r["outcome"] in ("located", "unresolved")}
+        self.assertEqual(len(overturned), 2)
+        qids = self.qids()
+        moved: dict[str, list[dict]] = {}
+        for rec in _records(self.paths.export_dir("set-1")):
+            ext = rec["extensions"][EXT]
+            if (rec["id"].split("::")[0], ext["item"]) in overturned:
+                self.assertEqual(ext["prominence"], "subject")
+                moved.setdefault("located" if rec["object"] else "unresolved", []).append(rec)
+        # the located definition: both of its locations judged, so both records carry it
+        self.assertEqual(len(moved["located"]), 2)
+        for rec in moved["located"]:
+            with self.subTest(record=rec["id"], relation=rec["relation"]):
+                self.assertEqual(rec["extensions"][EXT]["challenge"], "survived")
+                self.assertEqual(rec["subject"][0]["identifiers"],
+                                 {"wikidata": qids[rec["id"].split("::")[0]]})
+        # the unresolved passage: its outcome was not_required under supporting
+        (pending,) = moved["unresolved"]
+        self.assertEqual(pending["extensions"][EXT]["challenge"], "challenge_pending")
+        self.assertNotIn("identifiers", pending["subject"][0])
+        self.assertEqual(records.check(pending), [])
+
+    def test_b5_an_overturn_away_from_subject_removes_it(self):
+        """The B5 review's F1, the other direction: the plan challenges every subject
+        prominence, and an overturn to central or supporting takes the QID away."""
+        def away(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "prominence" and rec["prominence"] == "subject":
+                # the widget lemma's definition becomes central, the gadget theorem supporting
+                v.update(action="overturn", prominence="central"
+                         if rec["passage_kind"] == "definition" else "supporting")
+            return v
+        self.challenge(verdict=away)
+        self.assertEqual(self.export()[0], 0)
+        subjects = self.planned_prominences("subject")
+        self.assertEqual(sorted(sid for sid, _item in subjects), [F.W1, F.W2])
+        self.assertTrue(all(r["planned"] == "required" for r in subjects.values()))
+        recs = _records(self.paths.export_dir("set-1"))
+        seen = set()
+        for rec in recs:
+            ext = rec["extensions"][EXT]
+            with self.subTest(record=rec["id"], relation=rec.get("relation")):
+                self.assertNotIn("identifiers", rec["subject"][0])
+                self.assertNotEqual(ext["prominence"], "subject")
+            key = (rec["id"].split("::")[0], ext["item"])
+            if key in subjects:
+                seen.add((key[0], ext["prominence"], ext["challenge"]))
+        self.assertEqual(seen, {(F.W1, "central", "survived"), (F.W2, "supporting", "survived")})
+
+    def test_b5_an_overturn_to_the_passages_own_prominence_is_owed_not_downgraded(self):
+        """The B5 review: an overturn naming the prominence the record already has made
+        the passage downgraded while its label and QID stayed.  The gate refuses it; a
+        document that lands anyway leaves the record owed, so the passage is refused."""
+        def same(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "prominence" and rec["prominence"] == "subject":
+                v.update(action="overturn", prominence="subject")
+            return v
+        self.challenge(verdict=same)
+        subjects = self.planned_prominences("subject")
+        self.assertEqual(sorted(sid for sid, _item in subjects), [F.W1, F.W2])
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        for row in built["outcomes"]:
+            if (row["source_id"], row["item"]) in subjects:
+                with self.subTest(source=row["source_id"]):
+                    self.assertEqual(row["prominence"], "subject")
+                    self.assertIsNone(row["challenge"])
+                    self.assertIn("the passage's own, changes nothing", row["problem"])
+        self.export()
+        report = read_json(self.paths.export_report_json("set-1"))
+        self.assertTrue(subjects.keys() <= {(r["source_id"], r["item"])
+                                            for r in report["refused"]}, report["refused"])
+        for rec in _records(self.paths.export_dir("set-1")):
+            with self.subTest(record=rec["id"]):
+                self.assertNotIn("identifiers", rec["subject"][0])
+
     def test_m6_a_downgrade_to_close_match_keeps_a_note(self):
         witness = ("The declaration indexes gadgets from 0 where the passage counts from 1. "
                    "Otherwise it states the passage.")
@@ -837,8 +940,8 @@ class TestRecordUnits(unittest.TestCase):
         self.assertIn("convention difference", str(caught.exception))
 
     def located(self, **kw):
-        return self.passage(outcome="located", status="formalized", locations=[self.location()],
-                            **kw)
+        kw.setdefault("locations", [self.location()])
+        return self.passage(outcome="located", status="formalized", **kw)
 
     def test_s5_every_shape_carries_the_span_and_the_layer_sha(self):
         absent = self.passage(outcome="absent", status="not_formalized", locations=[],
@@ -913,6 +1016,59 @@ class TestRecordUnits(unittest.TestCase):
                                         self.LAYER, self.universe())
             # a passage that carries no QID does not read it
             records.passage_records(source, self.located(), self.LAYER, self.universe())
+
+    def test_b5_a_record_nobody_judged_carries_none(self):
+        """The B5 review's F1: a challenge_pending record is one a prominence overturn to
+        subject reopened, and no challenger judged it under that rule."""
+        source = {**self.source(), "wikidata": "Q99999001"}
+        pending = vocab.CHALLENGE_PENDING
+        located = self.located(prominence="subject", challenge=pending,
+                               locations=[self.location(challenge=pending)])
+        absent = self.passage(outcome="absent", status="not_formalized", locations=[],
+                              prominence="subject", challenge=pending,
+                              absence={"receipt": {"queries": ["a", "b", "c"], "candidates": []},
+                                       "challenge": pending})
+        unresolved = self.passage(outcome="unresolved", locations=[], prominence="subject",
+                                  challenge=pending)
+        for passage in (located, absent, unresolved):
+            (rec,), _ = records.passage_records(source, passage, self.LAYER, self.universe())
+            with self.subTest(outcome=passage["outcome"]):
+                self.assertEqual(rec["extensions"][EXT]["challenge"], pending)
+                self.assertNotIn("identifiers", rec["subject"][0])
+                self.assertEqual(records.check(rec), [])
+        # the rule is per record: a location a verdict judged keeps the QID beside one
+        # the overturn reopened, on the same passage
+        both = self.located(prominence="subject", challenge=pending, locations=[
+            self.location(),
+            self.location(declaration="Widget.y", rank=2, location_key="4" * 64,
+                          relation="relatedMatch", challenge=pending)])
+        recs, _ = records.passage_records(source, both, self.LAYER, self.universe())
+        carried = {rec["object"][0]["location"]["declaration"]:
+                   rec["subject"][0].get("identifiers") for rec in recs}
+        self.assertEqual(carried, {"Widget.x": {"wikidata": "Q99999001"}, "Widget.y": None})
+        # and every judged or unrequired value keeps it
+        for value in sorted(vocab.CHALLENGE_VERDICTS - {pending}):
+            (rec,), _ = records.passage_records(
+                source, self.located(prominence="subject", challenge=value,
+                                     locations=[self.location(challenge=value)]),
+                self.LAYER, self.universe())
+            with self.subTest(challenge=value):
+                self.assertEqual(rec["subject"][0]["identifiers"], {"wikidata": "Q99999001"})
+        # a source whose wikidata is no QID is refused on a pending record too: whether a
+        # subject passage exports never turns on its challenge value
+        bad = {**self.source(), "wikidata": "not-a-qid"}
+        for passage in (located, absent, unresolved, both):
+            with self.subTest(bad=passage["outcome"]), \
+                    self.assertRaisesRegex(records.RecordError, "is not a Wikidata QID"):
+                records.passage_records(bad, passage, self.LAYER, self.universe())
+
+    def test_b5_the_builders_restated_values_are_the_vocabularys(self):
+        """The record builder runs without cflib (the gate stages it), so it restates."""
+        from sources import websource
+        self.assertEqual(records.SUBJECT, vocab.PROMINENCE_SUBJECT)
+        self.assertEqual(records.CHALLENGE_PENDING, vocab.CHALLENGE_PENDING)
+        self.assertEqual((records._QID.pattern, records._QID.flags),
+                         (websource._QID.pattern, websource._QID.flags))
 
     def test_split_one_repository_at_one_commit_is_one_absence_end(self):
         lean4, core = "https://github.com/leanprover/lean4", "4" * 40

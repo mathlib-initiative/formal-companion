@@ -14,6 +14,13 @@ passage outcomes of harvested locate runs (``locate.outcomes``):
   (``cflib.vocab.admits_missing_clause``) is refuted by default too, whatever
   its passage's prominence (the smoke-2 audit's FM1: three notes said so and
   the relation still counted);
+* every ``subject`` passage's **prominence** is refuted by default, stratum
+  ``prominence:subject`` (:data:`SUBJECT_STRATUM`), always and never sampled:
+  the article's QID rides on every record of a subject passage
+  (``locate.records.article_qid``), so a passage mislabelled ``subject`` would
+  keep it with no verdict that could take it away.  An overturn away from
+  ``subject`` removes it, an uphold keeps it, and several subject passages of
+  one article are each judged on their own;
 * on a ``supporting`` passage, every location that sets its derived status
   on its own -- its **bases** (:func:`bases`) -- is required whenever its
   relation is strong (``exactMatch``, ``closeMatch``, ``broadMatch``:
@@ -71,6 +78,11 @@ SAMPLE = vocab.CHALLENGE_RULE_SAMPLE
 NONE = vocab.CHALLENGE_RULE_NONE
 #: the stratum of the ``supporting`` passages' absences
 ABSENCE_STRATUM = f"outcome:{vocab.OUTCOME_ABSENT}"
+#: the stratum of the ``supporting`` passages' prominences, drawn at ``sample_rate``
+SUPPORTING_STRATUM = f"prominence:{vocab.PROMINENCE_SUPPORTING}"
+#: the stratum a ``subject`` passage's prominence record is named by: never drawn, since
+#: every one is refuted by default (the article's QID rides on the passage's records)
+SUBJECT_STRATUM = f"prominence:{vocab.PROMINENCE_SUBJECT}"
 #: the plan's three sampling rates, as ``run.yaml`` and ``challenge-plan.json`` name them
 RATE_KEYS = ("sample_rate", "strong_sample_rate", "absence_sample_rate")
 
@@ -197,7 +209,12 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
             out.append(rec)
         if row.get("prominence") == vocab.PROMINENCE_SUPPORTING:
             rec = _record(row, "prominence", run_id=run_id)
-            rec.update(rule=SAMPLE, stratum="prominence:supporting")
+            rec.update(rule=SAMPLE, stratum=SUPPORTING_STRATUM)
+            out.append(rec)
+        elif row.get("prominence") == vocab.PROMINENCE_SUBJECT:
+            # the QID its records carry rests on this label: required, whatever the rates
+            rec = _record(row, "prominence", run_id=run_id)
+            rec.update(rule=REFUTE, stratum=SUBJECT_STRATUM)
             out.append(rec)
     return out
 

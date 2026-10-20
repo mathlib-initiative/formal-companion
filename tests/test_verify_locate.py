@@ -641,6 +641,37 @@ class TestChallenge(GateTestCase):
         body["verdicts"][0]["action"] = "downgrade"
         self.assertRule(self.fx.run(self.fx.document(self.TASK, body)), 1, "weaker relation")
 
+    def test_a_prominence_overturn_names_another_prominence_than_the_records(self):
+        """The B5 review: every subject prominence is refuted by default, and an overturn
+        naming the record's own prominence marked the passage downgraded while it kept
+        its label and the article's QID."""
+        doc = json.loads((self.fx.tasks / f"{self.TASK}.json").read_text())["documents"][0]
+        doc["records"].append({"item": THM_ITEM, "target": "prominence", "span": THEOREM_SPAN,
+                               "passage_kind": "theorem", "prominence": "subject"})
+        self.fx.manifest(self.TASK, doc)
+        for action, prominence, ok in (("overturn", "subject", False),
+                                       ("overturn", "central", True),
+                                       ("overturn", "supporting", True),
+                                       ("uphold", None, True)):
+            body = self.body()
+            verdict = {"item": THM_ITEM, "target": "prominence", "action": action,
+                       "witness": "the lead names the article's subject"}
+            if prominence:
+                verdict["prominence"] = prominence
+            body["verdicts"].append(verdict)
+            result = self.fx.run(self.fx.document(self.TASK, body))
+            with self.subTest(action=action, prominence=prominence):
+                if ok:
+                    self.assertOk(result)
+                else:
+                    self.assertRule(result, 1, "other than the record's subject; to keep "
+                                               "subject, uphold")
+        body = self.body()
+        body["verdicts"].append({"item": THM_ITEM, "target": "prominence", "action": "overturn",
+                                 "witness": "w"})
+        self.assertRule(self.fx.run(self.fx.document(self.TASK, body)), 1,
+                        "names the new prominence")
+
     def test_a_downgrade_names_a_weaker_relation_than_the_records(self):
         """Review #59: the record is a broadMatch; exactMatch or broadMatch is no downgrade."""
         for relation, ok in (("exactMatch", False), ("broadMatch", False),
