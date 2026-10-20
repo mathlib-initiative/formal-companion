@@ -405,7 +405,9 @@ planning needs a re-plan), each candidates file the plan read by
 `candidates_sha256`, each source's layer by `layer_sha256` and the two tables
 beside it by the pin's `views`; the gate compares each and stops (exit 3) on a
 mismatch, and the harvest re-gates with the run's own gate copy, checked against
-`run.yaml` `locate.gate_files` (`references/locate-documents.md` §9 and §10). A run names two databases: the full `corpus.sqlite`
+`run.yaml` `locate.gate_files` and run from its sources only, with a
+`gate.local.json` that is the staged `gate/gate.json` but for the layout's paths
+and the task manifests `runs/<run>/planned.json` records (`references/locate-documents.md` §9 and §10). A run names two databases: the full `corpus.sqlite`
 that the gate, the outcomes, the export and the bench check, and the tools
 database its workers search (`gate.json` `tools_corpus_db`, recorded in
 `run.yaml` `locate.universe.tools_corpus_db`: the full one, the blind build or

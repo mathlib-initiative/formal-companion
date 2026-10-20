@@ -80,6 +80,13 @@ release has something to say.
     gate (`runs/<id>/tend-root/gate/`, each file checked against `run.yaml`
     `locate.gate_files`) rather than whatever gate the checkout holds, and the receipt's gate
     block names it by hash (`gate_code`); `--checkout-gate` uses the checkout's, and says so.
+    The copy runs from its pinned sources only (a `.pyc` planted in its `__pycache__/` never
+    runs), and the modules it sets aside are read off its directory. The re-gate also holds
+    `gate.local.json` to the staged `gate/gate.json` in every field but the layout's paths,
+    its `corpus_db.sha256` to `run.yaml` `locate.universe.corpus_db_sha256`, and every task
+    manifest to `runs/<id>/planned.json`, so a repinned config or an emptied `curated` list
+    no longer passes. A gate that could not run says what settles it (`--checkout-gate`, or
+    the plan's file back, or a re-plan), and the harvest no longer blames the findings.
   - The staged `verify_locate.py`, `locate_text.py`, `passage_ids.py` and the bridge change, so
     `config_shas.gate_files` differs for a run planned after this: an A/A pair is planned on
     one side of it.

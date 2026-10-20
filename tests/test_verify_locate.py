@@ -242,6 +242,27 @@ def stage_run_gate(run_dir: Path) -> dict[str, str]:
     return tend_root.staged_shas(tend)
 
 
+def stage_planned_run(run_dir: Path, fx: "Fixture") -> dict[str, str]:
+    """A planned run as ``cf harvest`` re-gates it, from the fixture's gate.json and manifests.
+
+    The run's own gate copy (:func:`stage_run_gate`), the host ``gate.json`` the
+    planner stages beside it, ``gate.local.json`` (its local twin) and
+    ``planned.json``, the plan's own record of every task manifest; returns the
+    ``locate.gate_files`` pins, ``gate/gate.json`` among them.
+    """
+    from locate import tend_root
+
+    stage_run_gate(run_dir)
+    tend = Path(run_dir) / "tend-root"
+    shutil.copy2(fx.root / "gate" / "gate.json", tend / "gate" / "gate.json")
+    shutil.copy2(fx.root / "gate" / "gate.json", Path(run_dir) / "gate.local.json")
+    tasks = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(fx.tasks.glob("*.json"))]
+    (Path(run_dir) / "planned.json").write_text(json.dumps(
+        {"schema": "cf-locate-planned/1", "run_id": fx.gate["run_id"], "tasks": tasks}),
+        encoding="utf-8")
+    return tend_root.staged_shas(tend)
+
+
 def gate_files_yaml(pins: dict[str, str], indent: str = "  ") -> str:
     """``gate_files:`` with ``pins`` under it, for a run.yaml ``locate:`` block written as text."""
     return f"{indent}gate_files:\n" + "".join(f'{indent}  "{rel}": "{sha}"\n'
