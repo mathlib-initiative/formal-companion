@@ -396,6 +396,7 @@ def sign(fx, name: str, signature: str | None) -> None:
     con.execute("UPDATE decls SET signature = ? WHERE name = ?", (signature, name))
     con.commit()
     con.close()
+    fx.repin_corpus()                 # the gate holds the database to gate.json's sha
 
 
 class TestTheInstantiationLine(JudgedLocate):

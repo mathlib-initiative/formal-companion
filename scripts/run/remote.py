@@ -222,8 +222,9 @@ def _tend_version_step(host: dict, tend: str) -> str:
 #: argument at about 960 sources, and an article-tier shard holds up to 4,000
 #: (8 sources a task, 500 tasks a root).  Beside each layer it opens the two tables the
 #: gate's ``SourceView`` reads there and fails closed without (``formulas.json`` and
-#: ``paragraphs.json``, which gate.json does not pin): each must be a JSON list of
-#: objects.  Whether the formulas fit the layer, and the gate's stricter JSON reader,
+#: ``paragraphs.json``): each must be a JSON list of objects and, when the source's pin
+#: carries ``views`` (a run planned since the gate pins them), the sha256 the pin
+#: names.  Whether the formulas fit the layer, and the gate's stricter JSON reader,
 #: stay the gate's own checks.  A failure is printed as ``sha256sum -c`` prints one
 #: (``<path>: FAILED``, ``FAILED open or read``), on stdout, which run.yaml keeps;
 #: argv[3] is how many failure lines are named before the rest are counted.
@@ -274,17 +275,20 @@ def layer_failure(path, pin):
     return None if digest.hexdigest() == pin else "%s: FAILED" % path
 
 
-def table_failure(path):
+def table_failure(path, pin=None):
     """The failure line for a table the gate opens beside the layer, or None."""
     try:
         with open(path, "rb") as fh:
-            data = json.loads(fh.read().decode("utf-8"))
+            raw = fh.read()
+        data = json.loads(raw.decode("utf-8"))
     except OSError:
         return "%s: FAILED open or read" % path
     except ValueError:
         return "%s: FAILED (not JSON)" % path
     if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
         return "%s: FAILED (not a JSON list of objects)" % path
+    if pin is not None and hashlib.sha256(raw).hexdigest() != pin:
+        return "%s: FAILED" % path
     return None
 
 
@@ -293,7 +297,9 @@ for sid in sorted(sources):
     pins = sources[sid] if isinstance(sources[sid], dict) else {}
     base = "%s/%s/" % (sources_dir, sid)
     failed = [layer_failure(base + "layer.txt", str(pins.get("layer_sha256") or ""))]
-    failed += [table_failure(base + name) for name in TABLES]
+    views = pins.get("views") if isinstance(pins.get("views"), dict) else None
+    failed += [table_failure(base + name, None if views is None else str(views.get(name) or ""))
+               for name in TABLES]
     failed = [line for line in failed if line]
     lines += failed
     bad += 1 if failed else 0
@@ -303,8 +309,8 @@ if len(lines) > named:
     print("... and %d more" % (len(lines) - named))
 if bad:
     refuse("%d of %d source(s) of this run are not in %s on the host as the gate reads them "
-           "(a layer.txt missing or not the rendering gate.json pins, or a %s missing or "
-           "unreadable; the lines above name them); send them with "
+           "(a layer.txt missing or not the rendering gate.json pins, or a %s missing, "
+           "unreadable or not its pinned view; the lines above name them); send them with "
            "`cf run --include-source-text`" % (bad, len(sources), sources_dir, " or ".join(TABLES)))
 print("source layers: %d pinned sha256 verified, each with its %s"
       % (len(sources), " and ".join(TABLES)))
@@ -319,8 +325,8 @@ def layer_check(gate_config: str, want_sha256: str = "") -> str:
 
     The gate reads ``<sources_dir>/<id>/layer.txt`` and fails closed (exit 3)
     when it is missing or is not gate.json's ``layer_sha256``, and so it does
-    when the ``formulas.json`` or ``paragraphs.json`` beside it is missing or
-    unreadable; a run whose layers were neither sent (``--include-source-text``)
+    when the ``formulas.json`` or ``paragraphs.json`` beside it is missing,
+    unreadable or not the pin's ``views`` sha; a run whose layers were neither sent (``--include-source-text``)
     nor already on the host would pass the other checks and fail every task,
     after the agents' cost was spent.  So each one is checked here, from the host's
     ``gate_config`` -- refused unless
@@ -491,9 +497,10 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                        f"&& echo 'gate present (out of tree)'"), safe=True)
     corpus = (locate or {}).get("corpus_db") or {}
     if corpus.get("path") and corpus.get("sha256"):
-        # Verified ONCE, here, not on every gate call: hashing a universe's
-        # corpus.sqlite per task is what made the old gate O(N); the gate opens it
-        # mode=ro&immutable=1 and trusts this check (proposal section 2.4).
+        # Verified here, before any agent starts, so a wrong database stops the run at
+        # verify rather than at every task's first gate call; the gate itself also
+        # compares it when it first opens it (mode=ro&immutable=1), since a gate run
+        # anywhere else -- a contributor's machine, a harvest -- has no verify stage.
         line = shlex.quote(f"{corpus['sha256']}  {corpus['path']}")
         add("verify", "corpus.sqlite is the pinned database (sha256, once per run)",
             _ssh(host, f"echo {line} | sha256sum -c --status - && echo 'corpus.sqlite: pinned "

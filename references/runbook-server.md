@@ -279,13 +279,16 @@ root, bridge and harvest, with these differences:
   agent call's JSON envelope, a cost cross-check), `attempts/<task-id>.json` (genuine reviewer
   rejections only; the third makes the worker bridge write `UNRESOLVED` documents with
   `unresolved.by: attempt_cap`, which the reviewer bridge approves mechanically), `gate-log/gate.jsonl`
-  (one line per gate call, by rule, with its `ownership` line, `task_id_from` and `changed_files`;
-  the watchdog's gate-failure rate and the bench's rejection rates count only the
-  `changed_files: true` lines, tend's own calls, never an agent's `--findings` check).
+  (one line per gate call, by rule, with its `ownership` line, `task_id_from`, `caller` and
+  `changed_files`; the watchdog's gate-failure rate and the bench's rejection rates count only the
+  `changed_files: true` lines that are not `pre_merge`, tend's validation calls
+  (`caller: validation`), never an agent's `--findings` check).
 - **The worker's tools.** The worker allowlist adds the two corpus host tools by absolute path,
   pinned to the run's database (`CF_EXTRA_TOOLS`), and an inventory worker's passage-id tool.
 - **Bringing it home.** `cf harvest <run-id>` lands `corpus/<run-id>/<task-id>/<source-id>.json`,
-  re-gates the whole corpus out of tree with `gate.local.json`, counts `UNRESOLVED` documents and
+  re-gates the whole corpus with the run's own staged gate (`runs/<run-id>/tend-root/gate/`,
+  checked against `run.yaml` `locate.gate_files`, named by hash in the receipt) and
+  `gate.local.json`, counts `UNRESOLVED` documents and
   attempt-capped ones separately in the receipt, and also brings the host's gate log (and, for a
   campaign shard, its usage export and canary scan) to `runs/<run-id>/host/`. Then
   `cf tally --locate --run <run-id>`.

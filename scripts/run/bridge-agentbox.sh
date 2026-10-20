@@ -23,7 +23,9 @@
 #                          plus the CF_GATE_CMD program itself -- the worker prompt
 #                          tells the worker to run the gate before it commits, and an
 #                          allowlist that denied that would cost a rework turn per
-#                          task. Nothing wider: python3 in general is NOT allowlisted.)
+#                          task; for the locate gate the whole CF_GATE_CMD with
+#                          --findings, so an agent cannot run tend's --changed-files
+#                          call. Nothing wider: python3 in general is NOT allowlisted.)
 #   CF_REVIEWER_TOOLS      reviewer allowlist         (default: Read,Glob,Grep,Bash(git:*)
 #                          plus the same CF_GATE_CMD entry: both reviewer prompts tell
 #                          the reviewer to run the gate, and claude -p denies an
@@ -155,12 +157,20 @@ fi
 # check or requests changes because it cannot run it (field defect P1).
 #
 # CF_GATE_CMD is what the generated wrapper actually stages (CF_GATE_DIR is not),
-# so the allowlist entry is derived from it: the program, without its --flags --
-# exactly the prefix of every gate invocation the prompts render.
+# so the allowlist entry is derived from it, and it depends on the gate:
+# - the findings gate (verify_findings.py, the faithfulness pipeline): the program
+#   without its --flags, since its prompts render the bare {{gate_command}};
+# - the locate gate (verify_locate.py): the whole command with --findings, the
+#   prefix of every call the locate prompts render.  Its log line's label is
+#   the command line, and the readers count only tend's --changed-files calls as
+#   attempts, so an agent may run the --findings check and nothing else: the
+#   gate refuses --changed-files beside --findings, a second --gate-config and
+#   an abbreviated flag (exit 3), so nothing appended to this prefix fakes one.
 GATE_TOOL=""
 case "${CF_GATE_CMD:-}" in
   "" | *,*) ;;    # unset, or a path an --allowedTools list cannot carry anyway
-  *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;
+  *"/verify_locate.py --"*) GATE_TOOL=",Bash(${CF_GATE_CMD} --findings:*)" ;;
+  *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;   # verify_findings.py: unchanged
 esac
 if [ "$ROLE" = reviewer ]; then
   # The gate entry above: the gate reads, and its one write is the append-only

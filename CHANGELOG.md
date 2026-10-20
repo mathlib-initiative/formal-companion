@@ -50,6 +50,39 @@ release has something to say.
   and `pre_merge_failed`, the bench's `gate_rejections.pre_merge: {calls, rejected, broken}`),
   and a line from an older gate, which has no `pre_merge`, reads as false. The field changes
   the gate's file sha, so `config_shas.gate_files` differs for a run planned after it.
+- The locate gate before Tier A: what it reads is pinned, its end check is the tool's, and its
+  log line's label cannot be faked by an agent.
+  - **The span end.** Gate rule 2 recomputes an inventory passage's end with the rule
+    `passage_ids.py` writes (`locate_text.passage_end`: its `until`, else its paragraph, else
+    its quote) and refuses any other: an offset edited by hand, an end past the paragraph or
+    into the next kept passage with no `until` that puts it there, or a UTF-16 count on a layer
+    with astral-plane characters. `passage_ids.py` now keeps `until` in the document so the
+    end can be recomputed (a second run places the same spans). The bench classes the refusal
+    as `rule_2:span_end`.
+  - **The label.** The gate's command line refuses, with exit 3 and no log line, `--findings`
+    with `--changed-files`, `--pre-merge` without `--changed-files`, an abbreviated flag, a
+    repeated `--gate-config` and, in a staged gate directory, any `--gate-config` but its own
+    `gate.json` (a hand check of a staged copy runs with that file; the checkout's
+    `scripts/gate/` takes any). The bridge's gate entry depends on the gate: a locate agent,
+    worker or reviewer (`CF_REVIEWER_TOOLS` too), may run only
+    `<gate command> --findings`, never tend's `--changed-files` call; a faithfulness worker
+    keeps the bare `verify_findings.py`. Each log line names its `caller` (`validation`,
+    `pre_merge`, `findings_check`, `directory`); `pre_merge` and the readers are unchanged.
+  - **The pins.** The gate compares `corpus.sqlite` with `gate.json` `corpus_db.sha256` when it
+    first opens it, so a doctored database no longer passes a phantom declaration (it stored
+    the sha and never compared it); a database rebuilt after planning now needs a re-plan. An
+    inventory or locate plan pins each candidates file it read (`candidates_sha256`), and each
+    source pin carries `views`, the shas of `formulas.json` and `paragraphs.json` copied from
+    `render.json`; the gate and `cf run`'s verify stage hold the files to them. A gate.json
+    without the new keys is gated as before (still `cf-gate-locate/1`); `--self-check` compares
+    the database and the pinned candidates files.
+  - **The harvest's gate.** `cf harvest` re-gates a locate corpus with the run's own staged
+    gate (`runs/<id>/tend-root/gate/`, each file checked against `run.yaml`
+    `locate.gate_files`) rather than whatever gate the checkout holds, and the receipt's gate
+    block names it by hash (`gate_code`); `--checkout-gate` uses the checkout's, and says so.
+  - The staged `verify_locate.py`, `locate_text.py`, `passage_ids.py` and the bridge change, so
+    `config_shas.gate_files` differs for a run planned after this: an A/A pair is planned on
+    one side of it.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.
