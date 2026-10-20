@@ -560,12 +560,20 @@ COVERAGE_RECORD_KEYS = frozenset({"complete", "parts", "challenge"})
 #: an absence's receipt lists at least this many distinct queries (gate rule 5)
 MIN_ABSENCE_QUERIES = 3
 #: The judgment rules (gate rule 9; references/vocabulary.md section 1.11, rules
-#: R1-R7, and references/locate-documents.md sections 3 and 4): the version a
-#: run's ``gate.json`` names as ``judgment_rules``.  ``cf plan-locate`` writes it
-#: for every locate and challenge run it plans, so the rules bind the runs planned
-#: with this code; a ``gate.json`` without the key -- a run planned before them --
-#: is gated, harvested, tallied and exported as it always was.
-JUDGMENT_RULES = 1
+#: R1-R7 and the policy defaults, and references/locate-documents.md sections 3
+#: and 4): the version a run's ``gate.json`` names as ``judgment_rules``.  ``cf
+#: plan-locate`` writes it for every run it plans, so the rules bind the runs
+#: planned with this code; a ``gate.json`` without the key -- a run planned before
+#: them -- is gated, harvested, tallied and exported as it always was, and one
+#: naming an older version is gated by that version.  Version 1 is R1-R7 (the
+#: smoke-2 audit); version 2 (``RULES_PD5_PD9``) adds the maintainer's PD5-PD9 of
+#: 2026-10-20, whose mechanical part is two checks: a coverage claim one of whose
+#: parts alone names every claim of the passage is refused (PD6), and a junk value
+#: is no ``closeMatch`` convention (PD7: ``CONVENTION_JUNK_VALUE`` leaves
+#: ``CLOSE_MATCH_CONVENTIONS``).
+JUDGMENT_RULES = 2
+#: the first judgment rules version that holds PD5-PD9 (see ``JUDGMENT_RULES``)
+RULES_PD5_PD9 = 2
 #: The span-end rule (gate rule 2's end check; references/locate-documents.md
 #: sections 2 and 9): the version a run's ``gate.json`` names as
 #: ``span_end_rule``.  Under it an inventory passage ends where ``passage_ids.py``
@@ -616,7 +624,11 @@ STEP_RELATIONS = frozenset({HAS_PART, NARROW_MATCH})
 #: The conventions a ``closeMatch`` may differ from its passage by (rule R1; the
 #: smoke-2 audit's FM4: closeMatch for a strict derivative, a Banach codomain, a
 #: weaker statement): the location names one as its ``convention`` and says how in
-#: its ``note``.  A strengthening, a generalisation or a weakening is none of them.
+#: its ``note``.  A strengthening, a generalisation or a weakening is none of them,
+#: and since PD7 (judgment rules 2) neither is a junk value: a declaration that
+#: agrees with the passage on the passage's domain is an ``exactMatch`` when every
+#: case outside it is trivial and a ``broadMatch`` when one has real content, and a
+#: ``closeMatch`` differs where both sides are defined.
 CONVENTION_NOTATION = "notation"
 CONVENTION_ENCODING = "encoding"
 CONVENTION_JUNK_VALUE = "junk_value"
@@ -625,9 +637,13 @@ CONVENTION_RENAMING = "renaming"
 CONVENTION_UNFOLDING = "unfolding"
 CONVENTION_BUNDLING = "bundling"
 CLOSE_MATCH_CONVENTIONS = frozenset({CONVENTION_NOTATION, CONVENTION_ENCODING,
-                                     CONVENTION_JUNK_VALUE, CONVENTION_NORMALISATION,
-                                     CONVENTION_RENAMING, CONVENTION_UNFOLDING,
-                                     CONVENTION_BUNDLING})
+                                     CONVENTION_NORMALISATION, CONVENTION_RENAMING,
+                                     CONVENTION_UNFOLDING, CONVENTION_BUNDLING})
+#: the conventions under judgment rules 1, ``junk_value`` among them: a run planned
+#: under them is gated by this list, and a challenger's confirm that keeps such a
+#: record's own ``junk_value`` stands (a challenge never raises a relation, and PD7
+#: would make that record an ``exactMatch``)
+LEGACY_CLOSE_MATCH_CONVENTIONS = CLOSE_MATCH_CONVENTIONS | {CONVENTION_JUNK_VALUE}
 #: The words an ``exactMatch`` or ``closeMatch`` note may not say: each describes
 #: generality or strength, which is ``broadMatch`` (R2), ``narrowMatch`` (R3) or a
 #: weakening (R5), never a convention (R1) and never an exact match

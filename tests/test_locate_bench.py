@@ -112,7 +112,8 @@ def index_of(source_id: str) -> int:
     return int(source_id.split("-")[1]) - 1001
 
 
-def frozen(case, *, label_decl="Widget.conj_three", plant=False) -> fx.World:
+def labelled(case, *, label_decl="Widget.conj_three") -> fx.World:
+    """G1 anchored and G3 labelled by this checkout's labeler, not yet frozen."""
     world = anchored(case)
     transcribe(world, "anchor", lambda t: {"task_id": t["task_id"],
                                            "quote": world.quote(index_of(t["source_id"]), 0, 6),
@@ -122,6 +123,11 @@ def frozen(case, *, label_decl="Widget.conj_three", plant=False) -> fx.World:
         "task_id": t["task_id"], "scope": "formal_math", "passage_kind": "theorem",
         "declarations": [{"library": "mathlib", "declaration": label_decl,
                           "relation": "exactMatch"}], "evidence": "e", "hunters": []})
+    return world
+
+
+def frozen(case, *, label_decl="Widget.conj_three", plant=False) -> fx.World:
+    world = labelled(case, label_decl=label_decl)
     cf(world, "bench", "freeze", "b1", *(["--plant"] if plant else []))
     return world
 
@@ -1620,6 +1626,127 @@ class TestScore(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # compare
 # ---------------------------------------------------------------------------
+
+def restamp(world: fx.World, tier: str, **fields) -> None:
+    """Rewrite every row of a tier's label file with ``fields`` (``None`` drops a key)."""
+    lay = layout_of(world)
+    rows = gold_mod.read_labels(lay, tier)
+    for row in rows:
+        for key, value in fields.items():
+            if value is None:
+                row.pop(key, None)
+            else:
+                row[key] = value
+    lay.label_file(tier).write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+class TestAPolicyChangeRelabelsTheGold(unittest.TestCase):
+    """PD5-PD9 (2026-10-20): gold labelled under locate-label/4 never scores a run judged
+    under them, nor locate-label/5's gold a run planned before them.
+
+    The gold's labeler version is read from its rows at freeze (every row names the
+    version its args were emitted for), never from the checkout's constant, so gold
+    labelled before a policy change cannot be frozen as if labelled after it.
+    """
+
+    def frozen_under(self, version: str) -> fx.World:
+        """Gold whose rows a locate-label of ``version`` wrote (another labeler's sha)."""
+        world = labelled(self)
+        for tier in ("G1", "G3"):
+            restamp(world, tier, labeler_version=version, labeler_sha256="e" * 64)
+        cf(world, "bench", "freeze", "b1")
+        return world
+
+    def test_every_row_names_its_labeler_version_and_freeze_reads_it(self):
+        world = frozen(self)
+        for tier in ("G1", "G3"):
+            rows = gold_mod.read_labels(layout_of(world), tier)
+            self.assertEqual({r["labeler_version"] for r in rows}, {gold_mod.LABELER_VERSION})
+        self.assertEqual(manifest_of(world)["labeler"]["version"], "locate-label/5")
+        world = self.frozen_under("locate-label/4")
+        self.assertEqual(manifest_of(world)["labeler"]["version"], "locate-label/4")
+
+    def test_label_4_gold_never_scores_a_run_judged_under_pd5_to_pd9(self):
+        world = self.frozen_under("locate-label/4")
+        eval_run(world)                                  # planned now: judgment rules 2
+        with self.assertRaises(CfError) as ctx:
+            score(world)
+        message = str(ctx.exception)
+        self.assertIn("gold is labelled by locate-label/4 (judgment rules 1)", message)
+        self.assertIn("inv1 was judged under rules 2", message)
+        self.assertIn("loc1 was judged under rules 2", message)
+        self.assertIn("relabel the gold under locate-label/5", ctx.exception.hint or "")
+        self.assertIn("--supersede", ctx.exception.hint or "")
+        # a run of the rules the gold was labelled by is scored, and so is one planned before
+        # the rules (0 and 1 were compared before this check, and still are)
+        for rid, rules in (("loc2", 1), ("loc3", None)):
+            with self.subTest(rules=rules):
+                eval_run(world, run_id=rid, inventory_run=f"inv-{rid}", judgment_rules=rules,
+                         inventory_rules=rules)
+                self.assertEqual(score(world, rid)["run"], rid)
+
+    def test_label_5_gold_never_scores_a_run_planned_before_them(self):
+        world = frozen(self)
+        for rid, rules, inventory_rules, names in (
+                ("loc1", 1, 1, ("inv1", "loc1")), ("loc2", 2, 1, ("inv-loc2",)),
+                ("loc3", None, None, ("inv-loc3", "loc3"))):
+            eval_run(world, run_id=rid, inventory_run="inv1" if rid == "loc1" else f"inv-{rid}",
+                     judgment_rules=rules, inventory_rules=inventory_rules)
+            with self.subTest(run=rid), self.assertRaises(CfError) as ctx:
+                score(world, rid)
+            for name in names:
+                self.assertIn(f"{name} was judged under rules", str(ctx.exception))
+            self.assertIn("score runs planned under judgment rules 2", ctx.exception.hint or "")
+        eval_run(world, run_id="loc4", inventory_run="inv-loc4")
+        self.assertEqual(score(world, "loc4")["run"], "loc4")
+
+    def test_a_challenge_is_held_to_the_gold_unless_it_judged_nothing(self):
+        world = frozen(self)
+        eval_run(world)
+        world.challenge_run("chl0", of="loc1", required=0, judgment_rules=1)
+        self.assertEqual(score(world)["run"], "loc1")
+        world.challenge_run("chl1", of="loc1", required=1, judgment_rules=1)
+        with self.assertRaises(CfError) as ctx:
+            score(world)
+        self.assertIn("chl1 was judged under rules 1", str(ctx.exception))
+        self.assertNotIn("chl0", str(ctx.exception))
+
+    def test_freeze_refuses_rows_from_before_the_field_it_cannot_place(self):
+        world = labelled(self)
+        for tier in ("G1", "G3"):
+            restamp(world, tier, labeler_version=None, labeler_sha256="e" * 64)
+        with self.assertRaises(CfError) as ctx:
+            cf(world, "bench", "freeze", "b1")
+        self.assertIn("they were labelled before locate-label/5", str(ctx.exception))
+        self.assertIn("a policy change relabels the gold", ctx.exception.hint or "")
+
+    def test_rows_from_before_the_field_keep_the_version_their_manifest_froze(self):
+        world = self.frozen_under("locate-label/4")
+        for tier in ("G1", "G3"):
+            restamp(world, tier, labeler_version=None)
+        cf(world, "bench", "freeze", "b1", "--supersede")
+        version, manifest = gold_mod.latest_manifest(layout_of(world))
+        self.assertEqual((version, manifest["labeler"]["version"]), (2, "locate-label/4"))
+        # rows this checkout's labeler wrote before the field take its version
+        world = labelled(self)
+        for tier in ("G1", "G3"):
+            restamp(world, tier, labeler_version=None)
+        cf(world, "bench", "freeze", "b1")
+        self.assertEqual(manifest_of(world)["labeler"]["version"], gold_mod.LABELER_VERSION)
+
+    def test_one_gold_one_labeler_version(self):
+        world = labelled(self)
+        restamp(world, "G1", labeler_version="locate-label/4", labeler_sha256="e" * 64)
+        with self.assertRaises(CfError) as ctx:
+            cf(world, "bench", "freeze", "b1")
+        self.assertIn("anchor locate-label/4, label locate-label/5", str(ctx.exception))
+        self.assertIn("one gold, one labeler version", str(ctx.exception))
+        # a hand-edited version is refused by name, never a traceback
+        restamp(world, "G1", labeler_version=["locate-label/5"])
+        with self.assertRaises(CfError) as ctx:
+            cf(world, "bench", "freeze", "b1")
+        self.assertIn("no version string", str(ctx.exception))
+
 
 class TestX6APreRegisteredSubsetScore(unittest.TestCase):
     """Field defect X6: the second smoke covered 4 of the eval split's 36 articles, and

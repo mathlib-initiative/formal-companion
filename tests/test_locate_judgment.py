@@ -12,6 +12,9 @@ reasoning slip (FM7).  The gate's artifacts are test_verify_locate's synthetic o
 query below is made up.  Rule 9 binds a run whose ``gate.json`` names
 ``judgment_rules`` and no other, so every document a run planned before the
 rules wrote is gated as it was: each test that refuses a document checks that.
+Version 2 of the rules (the maintainer's PD5-PD9 of 2026-10-20) adds two checks,
+PD6's whole part and PD7's junk value, and each of their tests gates the same
+document under version 1 too.
 """
 from __future__ import annotations
 
@@ -593,8 +596,8 @@ class TestACloseMatchNamesItsConvention(JudgedLocate):
         self.assertRefusedOnlyUnderTheRules(self.body(note=note), "names the convention it "
                                                                    "differs by")
         self.assertRule(self.run_body(self.body(note=note, convention="generality")), 9,
-                        "bundling, encoding, junk_value, normalisation, notation, renaming, "
-                        "unfolding")
+                        "bundling, encoding, normalisation, notation, renaming, unfolding "
+                        "(convention")
         for convention in sorted(vocab.CLOSE_MATCH_CONVENTIONS):
             with self.subTest(convention=convention):
                 self.assertOk(self.run_body(self.body(note=note, convention=convention)))
@@ -667,10 +670,15 @@ class TestACloseMatchNamesItsConvention(JudgedLocate):
 
     def test_the_closed_lists_are_cflibs(self):
         self.assertEqual(vl.CLOSE_MATCH_CONVENTIONS, vocab.CLOSE_MATCH_CONVENTIONS)
+        self.assertEqual(vl.LEGACY_CLOSE_MATCH_CONVENTIONS, vocab.LEGACY_CLOSE_MATCH_CONVENTIONS)
+        self.assertEqual(vl.CONVENTION_JUNK_VALUE, vocab.CONVENTION_JUNK_VALUE)
         self.assertEqual(vl.CLOSE_MATCH_GENERALITY_PHRASES, vocab.CLOSE_MATCH_GENERALITY_PHRASES)
+        # PD7 (2026-10-20) took junk values off R1's list; rules 1 keep them
         self.assertEqual(vocab.CLOSE_MATCH_CONVENTIONS,
-                         {"notation", "encoding", "junk_value", "normalisation", "renaming",
-                          "unfolding", "bundling"})
+                         {"notation", "encoding", "normalisation", "renaming", "unfolding",
+                          "bundling"})
+        self.assertEqual(vocab.LEGACY_CLOSE_MATCH_CONVENTIONS,
+                         vocab.CLOSE_MATCH_CONVENTIONS | {"junk_value"})
         for note, phrase in self.GENERAL:
             self.assertEqual((vocab.says_generality(note), vl.says_generality(note)),
                              (phrase, phrase))
@@ -760,6 +768,174 @@ class TestAChallengersCloseMatchNamesItsConvention(G.GateTestCase):
         self.assertRule(self.run_verdict(action="confirm", clauses=["c1", "c2"],
                                          instantiation="the widget\nand its gadget here"), 9,
                         "one line")
+
+
+# --------------------------------------------------------------------------- #
+# PD5-PD9 (judgment rules 2): PD6's whole part and PD7's junk value
+# --------------------------------------------------------------------------- #
+
+class TestTheRulesOfPD5ToPD9(JudgedLocate):
+    """The mechanical part of PD5-PD9 binds a run planned under judgment rules 2.
+
+    The same document is gated under rules 1 (a run planned before 2026-10-20) and
+    under none (a run planned before the rules): neither refuses it.
+    """
+
+    def under(self, version, body: dict) -> dict:
+        if version is None:
+            self.fx.gate.pop("judgment_rules", None)
+        else:
+            self.fx.gate["judgment_rules"] = version
+        self.fx.write_gate()
+        try:
+            return self.run_body(body)
+        finally:
+            self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+            self.fx.write_gate()
+
+    def assertRefusedOnlyUnderPD(self, body: dict, needle: str):
+        self.assertRule(self.run_body(body), 9, needle)
+        self.assertOk(self.under(1, body))
+        self.assertOk(self.under(None, body))
+
+    def covered(self, first=("c1", "c2")) -> dict:
+        body = judged_body()
+        thm = body["passages"][0]
+        thm["locations"] = [judged(G.location(relation="hasPart"), list(first), step=STEP),
+                            judged(G.location(decl="Widget.Spanning", relation="hasPart",
+                                              rank=2), ["c2"], step="the spanning property of "
+                                                                   "the gadget")]
+        thm["coverage"] = {"complete": True, "parts": [1, 2],
+                           "note": "the two lemmas together give the theorem"}
+        return body
+
+    def test_the_version_is_cflibs(self):
+        self.assertEqual((vocab.JUDGMENT_RULES, vocab.RULES_PD5_PD9), (2, 2))
+        self.assertEqual(vl.RULES_PD5_PD9, vocab.RULES_PD5_PD9)
+        self.assertEqual(self.fx.gate_cfg().judgment_rules, 2)
+
+    def test_pd6_a_coverage_part_that_states_every_clause_is_no_part(self):
+        body = self.covered()
+        self.assertRefusedOnlyUnderPD(body, "a part that alone states every clause is no part "
+                                            "(PD6)")
+        self.assertRule(self.run_body(body), 9, "part rank 1 names every claim (c1, c2)")
+        self.assertRule(self.run_body(body), 9, "give it its relation")
+        # parts that each state some of the clauses are a claim
+        self.assertOk(self.run_body(self.covered(first=("c1",))))
+        # the part's own record is not refused for naming them all: only the claim is
+        body = self.covered()
+        del body["passages"][0]["coverage"]
+        self.assertOk(self.run_body(body))
+
+    def test_pd7_a_junk_value_is_no_convention(self):
+        def close(convention: str) -> dict:
+            body = judged_body()
+            body["passages"][0]["locations"][0].update(
+                relation="closeMatch", convention=convention,
+                note="Lean returns 0 where the passage leaves the value undefined")
+            return body
+
+        self.assertRefusedOnlyUnderPD(close("junk_value"), "a junk value is no convention (PD7)")
+        self.assertRule(self.run_body(close("junk_value")), 9,
+                        "exactMatch when every case outside it is trivial")
+        # rules 1 gate by the list they had, junk_value on it
+        self.assertRule(self.under(1, close("generality")), 9,
+                        "bundling, encoding, junk_value, normalisation, notation, renaming, "
+                        "unfolding")
+        # the exactMatch PD7 makes of it passes, its note saying why the case is trivial
+        body = judged_body()
+        body["passages"][0]["locations"][0]["note"] = ("Lean also returns 0 at n = 0, which the "
+                                                       "passage leaves undefined")
+        self.assertOk(self.run_body(body))
+
+    def test_pd8_and_pd9_are_judgment_not_gate_rules(self):
+        """A broadMatch whose instantiation names a declaration, and a claim list without a
+        stated reason, are left to the challenge: the gate cannot tell a bridge lemma from
+        the instances an instantiation names by right."""
+        body = judged_body()
+        body["passages"][0]["locations"][0].update(
+            relation="broadMatch", instantiation="Widget.mul_mod at the passage's widget W")
+        self.assertOk(self.run_body(body))
+
+
+class TestAChallengerUnderPD5ToPD9(G.GateTestCase):
+    """The challenge side of PD6 and PD7, under judgment rules 2 and not under 1."""
+
+    TASK = "t-chl-0001"
+    KEY = "9" * 64
+    OTHER = "8" * 64
+
+    def setUp(self):
+        self.fx = G.Fixture(self, "locate-challenge")
+        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.write_gate()
+
+    def under(self, version: int, body: dict) -> dict:
+        self.fx.gate["judgment_rules"] = version
+        self.fx.write_gate()
+        try:
+            return self.fx.run(self.fx.document(self.TASK, body))
+        finally:
+            self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+            self.fx.write_gate()
+
+    def records(self, *records: dict) -> None:
+        doc = G.locate_manifest_doc(self.fx)
+        doc.pop("passages")
+        doc["records"] = list(records)
+        self.fx.manifest(self.TASK, doc)
+
+    def location(self, relation: str, **extra) -> dict:
+        return {"item": G.THM_ITEM, "target": "location", "location_key": self.KEY,
+                "span": G.THEOREM_SPAN, "passage_kind": "theorem", "relation": relation, **extra}
+
+    def verdict(self, **verdict) -> dict:
+        return {"verdicts": [{"item": G.THM_ITEM, "target": "location",
+                              "location_key": self.KEY, "witness": "Read at the pin.",
+                              **verdict}],
+                "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
+
+    def test_pd7_a_confirm_keeps_a_records_own_junk_value(self):
+        """A record judged under rules 1 may say junk_value; PD7 would make it an
+        exactMatch, which no challenge can raise it to, so the confirm keeps it."""
+        self.records(self.location("closeMatch", note="Lean returns 0 at n = 0",
+                                   convention="junk_value"))
+        body = self.verdict(action="confirm", clauses=["c1", "c2"])
+        self.assertOk(self.under(2, body))
+        self.assertOk(self.under(1, body))
+        # a convention the challenger names itself is held to the list of its rules
+        self.records(self.location("closeMatch", note="Lean returns 0 at n = 0"))
+        body = self.verdict(action="confirm", clauses=["c1", "c2"], convention="junk_value")
+        self.assertRule(self.under(2, body), 9, "a junk value is no convention (PD7)")
+        self.assertOk(self.under(1, body))
+
+    def test_pd7_a_downgrade_names_no_junk_value(self):
+        self.records(self.location("exactMatch"))
+        body = self.verdict(action="downgrade", relation="closeMatch", clauses=["c1", "c2"],
+                            convention="junk_value", note="Lean returns 0 at n = 0")
+        self.assertRule(self.under(2, body), 9, "a junk value is no convention (PD7)")
+        self.assertOk(self.under(1, body))
+
+    def test_pd6_a_coverage_confirm_rests_on_no_whole_part(self):
+        self.records({"item": G.THM_ITEM, "target": "coverage", "span": G.THEOREM_SPAN,
+                      "passage_kind": "theorem",
+                      "parts": [{"location_key": self.KEY, "relation": "hasPart"},
+                                {"location_key": self.OTHER, "relation": "hasPart"}]})
+        verdict = {"item": G.THM_ITEM, "target": "coverage", "action": "confirm",
+                   "part_clauses": {self.KEY: ["c1", "c2"], self.OTHER: ["c2"]},
+                   "witness": "the first states both clauses, the second divisibility"}
+        body = {"verdicts": [verdict], "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
+        result = self.under(2, body)
+        self.assertRule(result, 9, "part_clauses[999999999999] names every claim of your list")
+        self.assertRule(result, 9, "a part that alone states every clause is no part (PD6)")
+        self.assertOk(self.under(1, body))
+        verdict["part_clauses"] = {self.KEY: ["c1"], self.OTHER: ["c2"]}
+        self.assertOk(self.under(2, body))
+        # the refute PD6 asks for passes
+        body = {"verdicts": [{"item": G.THM_ITEM, "target": "coverage", "action": "refute",
+                              "witness": "its first part states every clause alone"}],
+                "claims": {G.THM_ITEM: copy.deepcopy(THM_CLAIMS)}}
+        self.assertOk(self.under(2, body))
 
 
 class TestAdmitsAMissingClause(unittest.TestCase):
@@ -1267,7 +1443,7 @@ class TestThePrompts(unittest.TestCase):
         db = {"path": str(paths.corpus_db(F.U)), "sha256": "1" * 64, "kind": "full"}
         layout = lplan.host_layout(paths, host="examplebox", run_id="r1", sourceset_id=F.SS,
                                    universe_id=F.U, tools_db=db, remote_root="/srv/cf")["host"]
-        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE, vocab.LOCATE_INVENTORY):
             preset = lp.get(mode)
             ctx = lprompts.build_context(preset, run_id="r1", host=layout,
                                          universe=inputs.load_universe(paths, F.U), per_task=8)
@@ -1383,9 +1559,9 @@ class TestThePrompts(unittest.TestCase):
 
     def test_fm4_a_close_match_names_a_listed_convention(self):
         worker = self.worker()
-        self.assertIn("`closeMatch` — the same up to a convention (R1): name it in `convention`, "
-                      "one of `notation`, `encoding`, `junk_value`, `normalisation`, `renaming`, "
-                      "`unfolding` or `bundling`", worker)
+        self.assertIn("`closeMatch` — the same up to a convention (R1), the two differing where "
+                      "both are defined: name it in `convention`, one of `notation`, `encoding`, "
+                      "`normalisation`, `renaming`, `unfolding` or `bundling`", worker)
         self.assertIn("describe the declaration, not what the passage leaves out", worker)
         challenger = self.worker(vocab.LOCATE_CHALLENGE)
         self.assertIn("A downgrade to `closeMatch` also gives `convention`", challenger)
@@ -1442,18 +1618,18 @@ class TestThePrompts(unittest.TestCase):
 
     @staticmethod
     def rule_lines() -> dict[str, str]:
-        """R1-R7, PD1-PD4 and FM7 as references/vocabulary.md section 1.11 writes them."""
+        """R1-R7, PD1-PD9 and FM7 as references/vocabulary.md section 1.11 writes them."""
         text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
         start = text.index("**How a relation is judged: rules R1\u2013R7**")
         block = text[start:text.index("**The derived status**", start)]
         return {m.group(1): "- **%s** \u2014 %s" % (m.group(1), " ".join(m.group(2).split()))
-                for m in re.finditer(r"^- \*\*(R[1-7]|PD[1-4]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
+                for m in re.finditer(r"^- \*\*(R[1-7]|PD[1-9]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
                                      block, re.M | re.S)}
 
     def test_the_rules_and_the_policy_defaults_are_the_vocabularys_word_for_word(self):
         lines = self.rule_lines()
         self.assertEqual(sorted(lines), sorted([f"R{i}" for i in range(1, 8)]
-                                               + ["PD1", "PD2", "PD3", "PD4", "FM7"]))
+                                               + [f"PD{i}" for i in range(1, 10)] + ["FM7"]))
         for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
             worker = " ".join(self.worker(mode).split())
             for name, line in lines.items():
@@ -1475,7 +1651,18 @@ class TestThePrompts(unittest.TestCase):
             with self.subTest(rule=name):
                 self.assertIn(line, rules)
         self.assertIn(f"const LABELER_VERSION = '{gold_mod.LABELER_VERSION}'", text)
-        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/4")
+        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/5")
+        self.assertEqual(gold_mod.LABELER_RULES[gold_mod.LABELER_VERSION], vocab.JUDGMENT_RULES)
+        self.assertEqual(gold_mod.labeler_rules("locate-label/4"), 1)
+        self.assertEqual(gold_mod.labeler_rules(None), 0)
+        # PD7: the labeler's closeMatch line lists no junk value either
+        self.assertNotIn("junk_value", text)
+        self.assertIn("normalisation, renaming, unfolding, bundling (a junk value is none: R1's "
+                      "three-way test, PD7)", " ".join(text.split()))
+        # PD5 in the scope it gives and in the inventory it enumerates; PD9 on its claim list
+        self.assertIn("proof narration and commentary among it, PD5", " ".join(rules.split()))
+        self.assertIn("each statement inside a proof is its own passage", " ".join(text.split()))
+        self.assertIn("a stated reason only by PD9", rules)
 
     def test_the_policy_defaults_say_they_can_be_overridden(self):
         lines = self.rule_lines()
@@ -1485,6 +1672,27 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("is `narrowMatch`, never vacuous", lines["PD3"])
         self.assertIn("under stronger hypotheses that some of the passage's own cases meet", lines["PD4"])
         self.assertIn("is `narrowMatch` (R3)", lines["PD4"])
+        # PD5-PD9, the maintainer's of 2026-10-20
+        self.assertIn("Proof narration and commentary (what a proof uses, how it goes) is no "
+                      "passage: it is `expository`, never located, and has no status", lines["PD5"])
+        self.assertIn("Inside a proof, each definition, theorem, equation or declarative "
+                      "statement is a passage of its own", lines["PD5"])
+        self.assertIn("a part of a coverage claim that alone states every clause is no part: it "
+                      "is one location with its own relation", lines["PD6"])
+        self.assertIn("is a judgment: an `exactMatch` or `broadMatch` that rests on it says why "
+                      "in its `note`", lines["PD7"])
+        self.assertIn("closes by decidable arithmetic (`omega`, `norm_num`, `decide`)", lines["PD8"])
+        self.assertIn("makes it `relatedMatch` (R5)", lines["PD8"])
+        self.assertIn("a declarative mathematical statement that no neighbouring passage already "
+                      "states", lines["PD9"])
+        # R1: PD7's three-way test replaced its junk values
+        self.assertNotIn("junk values", lines["R1"])
+        for needle in ("neither is a junk value (PD7)", "x/0 = 0, `riemannZeta` at its pole",
+                       "IsSquare 0 ↔ IsSquare 0) — it is `exactMatch`",
+                       "some case outside X has real mathematical content, it is `broadMatch` "
+                       "(R2), a generalisation",
+                       "if f′(x) ≠ f(x) at some x where both are defined, it is `closeMatch`"):
+            self.assertIn(needle, lines["R1"])
         vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
                               .read_text(encoding="utf-8").split())
         self.assertIn("Each is a default, not a law of the format: it can be overridden",
@@ -1492,7 +1700,66 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("and to the bench's labeler (`workflows/locate-label.workflow.js`, whose "
                       "`LABELER_VERSION` it bumps), in one commit", vocabulary)
         self.assertIn("followed by a relabel of the bench's gold", vocabulary)
+        self.assertIn("the bench's score refuses gold labelled under other judgment rules than "
+                      "the runs it scores", vocabulary)
+        # the maintainer's own words on PD7, attributed and verbatim, with his examples
+        self.assertIn("**PD7 in the maintainer's words** (2026-10-20), verbatim:", vocabulary)
+        self.assertIn("> A junk value means that X is exactly the same as Y, but the Lean case is "
+                      "just defined over", vocabulary)
+        self.assertIn("> generalization not a junk value.", vocabulary)
+        # which earlier rule or example each one replaces or sharpens
+        for needle in ("PD5 sharpens the inventory's `expository` scope",
+                       "PD6 sharpens R4 and the coverage claim of decision D1",
+                       "PD7 replaces R1's \"junk values\"",
+                       "PD8 sharpens R2's \"instantiation\" and R5's",
+                       "PD9 sharpens the claim list (R4, FM1)"):
+            self.assertIn(needle, vocabulary)
         self.assertIn("(each overridable, never by you)", self.worker())
+
+    def test_pd5_to_pd9_reach_every_prompt_that_acts_on_them(self):
+        """Beside the rule lines word for word: each prompt's own instructions."""
+        worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)
+        system = self.rendered[vocab.LOCATE]["worker-system.md"]
+        inventory = self.rendered[vocab.LOCATE_INVENTORY]["worker.md"]
+        # PD5: commentary is expository, a statement inside a proof is a passage of its own
+        self.assertIn("**Only definitions, theorems, equations and declarative statements about "
+                      "mathematical objects are passages** (the maintainer's PD5)", inventory)
+        self.assertIn("**Proof narration and commentary is no passage**", inventory)
+        self.assertIn("write it as a passage scoped `expository`, which is never located and "
+                      "gets no status", inventory)
+        self.assertIn("**Inside a proof, each definition, theorem, equation or declarative "
+                      "statement is a passage of its own**", inventory)
+        self.assertIn("and proof narration and commentary (PD5)", inventory)
+        self.assertIn("neither is proof narration — what a proof uses, how it goes (PD5)", worker)
+        self.assertIn("proof narration or commentary, which is no passage, PD5", worker)
+        self.assertIn("never proof narration (PD5)", challenger)
+        # PD6: a part that alone states every clause is no part
+        self.assertIn("**A part that alone states every clause is no part** (PD6)", worker)
+        self.assertIn("**Refute a claim one of whose parts alone states every clause of your "
+                      "claim list** (PD6)", challenger)
+        self.assertIn("or one of whose parts names every claim alone (PD6", system)
+        self.assertIn("or whose `part_clauses` give one part every claim", system)
+        # PD7: junk values left closeMatch's list; the closeMatch example is no junk value
+        self.assertNotIn("`junk_value`", worker)
+        self.assertNotIn('"Lean returns 0 at n = 0"', worker + challenger)
+        self.assertIn("its `note` says why each such case is trivial", worker)
+        self.assertIn("A junk value is no convention (PD7)", worker)
+        self.assertIn("a junk value is none (PD7)", challenger)
+        self.assertIn("(a junk value is none: PD7)", system)
+        self.assertIn('"convention": "normalisation"', challenger)
+        self.assertNotIn('"convention": "junk_value"', challenger)
+        # a record of the earlier rules: a challenge never raises it, so it is confirmed
+        self.assertIn("A record whose `convention` is `junk_value` was judged before PD7", challenger)
+        self.assertIn("so confirm it as it stands", challenger)
+        # PD8: the bridge after instantiating is decidable arithmetic, or relatedMatch
+        self.assertIn("makes it `relatedMatch`, not `broadMatch` (PD8)", worker)
+        self.assertIn("a bridge through a named lemma makes it `relatedMatch` (PD8)", challenger)
+        # PD9: a stated reason is a claim only when no neighbouring passage states it
+        self.assertIn("makes X a claim only when X is a declarative mathematical statement that "
+                      "no neighbouring passage already states (PD9)", worker)
+        self.assertIn("no neighbouring passage already states (PD9)", challenger)
+        for text in (worker, challenger, inventory):
+            self.assertNotRegex(text, r"\{\{")
 
     def test_every_failure_mode_label_resolves_in_the_tree(self):
         """FM1-FM9 are cited by code, tests and the changelog: section 1.11 defines each."""

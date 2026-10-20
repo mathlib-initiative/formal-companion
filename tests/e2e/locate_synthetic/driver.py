@@ -732,6 +732,23 @@ class Pipeline:
             doc["passages"][located]["locations"][0]["relation"] = "closeMatch"
         def no_claims(doc):
             del doc["passages"][located]["claims"]
+        def junk_value(doc):
+            # PD7 (judgment rules 2, which this plan's gate.json names): no convention
+            doc["passages"][located]["locations"][0].update(
+                relation="closeMatch", convention="junk_value",
+                note="Lean returns 0 where the passage leaves the value undefined")
+        def whole_part(doc):
+            # PD6: a coverage part that names every claim alone is one location, no part
+            p = doc["passages"][located]
+            ids = [c["id"] for c in p["claims"]]
+            step = "the whole widget statement, as the declaration states it"
+            p["locations"] = [
+                dict(self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 1,
+                                    clauses=ids), step=step),
+                dict(self._location("alpha", "Widget.card_dvd", "hasPart", 2,
+                                    clauses=ids[:1]), step=step)]
+            p["coverage"] = {"complete": True, "parts": [1, 2],
+                             "note": "the two lemmas together give the widget statement"}
         def strong_missing_a_clause(doc):
             p = doc["passages"][located]
             p["claims"] = p["claims"] + [{"id": "c2", "text": "a second synthetic clause"}]
@@ -756,6 +773,8 @@ class Pipeline:
                  "rule 9 queries": untagged_absence, "rule 9 instantiation": uninstantiated,
                  "rule 9 step": stepless, "rule 9 convention": close_without_convention,
                  "rule 9 generality": close_and_general,
+                 # PD5-PD9's mechanical part, rule 9 version 2
+                 "rule 9 junk value": junk_value, "rule 9 whole part": whole_part,
                  # the export's verbatim-source cap, applied by the gate (rule 1)
                  "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
         check(any(loc.get("instantiation") for p in good["passages"] for loc in p["locations"]),
@@ -768,6 +787,10 @@ class Pipeline:
             code, text = self.gate("loc-1", path)
             self.refused(code, text, name,
                          " ".join(name.split()[:2]) if name.startswith("rule ") else None)
+            for case, label in (("rule 9 junk value", "(PD7)"), ("rule 9 whole part", "(PD6)")):
+                if name == case:
+                    check(label in text, f"the {name} violation was refused, but not by {label}:"
+                                         f"\n{text}")
 
     def _ownership(self) -> None:
         """Rule 7 through a real change set: a tend-like worktree with main and a task branch."""

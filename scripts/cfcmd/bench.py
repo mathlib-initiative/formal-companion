@@ -661,14 +661,57 @@ def _check_calibration(layout: BenchLayout) -> dict | None:
     return calibration
 
 
-def _labeler(layout: BenchLayout, calibration: dict | None) -> dict:
-    """The labeler of each mode, from the rows it wrote (never from args on disk)."""
+def _row_version(mode: str, rows: list[dict], sha: str, last: dict | None) -> str:
+    """The labeler version one mode's rows were labelled by.
+
+    A row transcribed from locate-label/5 on names it (``labeler_version``, the
+    version its args were emitted for).  Rows from before the field name none:
+    they take this checkout's version only when they came from this checkout's
+    labeler (the workflow's sha), the last frozen manifest's when that manifest
+    froze the same labeler for the mode (so re-freezing unchanged gold changes
+    nothing), and are refused otherwise -- gold labelled before a policy change
+    is relabelled, never frozen as if labelled after it.
+    """
+    raw = [r.get("labeler_version") for r in rows]
+    if any(v is not None and not isinstance(v, str) for v in raw):
+        raise CfError(f"the {mode} labels name a labeler version that is no version string",
+                      hint="label rows are the transcriber's: re-run that mode on every task "
+                           "and transcribe the full result")
+    named = set(raw)
+    if named == {None}:
+        if sha == gold_mod.workflow_sha256():
+            return gold_mod.LABELER_VERSION
+        frozen = (last or {}).get("labeler") or {}
+        if (frozen.get("workflow_sha256") or {}).get(mode) == sha and frozen.get("version"):
+            return str(frozen["version"])
+        raise CfError(f"the {mode} labels name no labeler version, and their labeler "
+                      f"({str(sha)[:12]}…) is neither this checkout's nor one a frozen manifest "
+                      f"records: they were labelled before {gold_mod.LABELER_VERSION}",
+                      hint=f"a policy change relabels the gold: re-emit the {mode} args, run the "
+                           f"labeler on every task and transcribe the full result")
+    if None in named or len(named) != 1:
+        raise CfError(f"the {mode} labels name {len(named - {None})} labeler version(s)"
+                      + (" and some name none" if None in named else ""),
+                      hint="one tier, one labeler: re-run that mode on every task and "
+                           "transcribe the full result")
+    return named.pop()
+
+
+def _labeler(layout: BenchLayout, calibration: dict | None, last: dict | None = None) -> dict:
+    """The labeler of each mode, from the rows it wrote (never from args on disk).
+
+    Its version too (:func:`_row_version`): every mode's rows name one, and the
+    gold's version is the one they share -- a tier labelled under another version
+    than the rest is refused, since the score holds the gold to the judgment rules
+    its version labels by (references/locate-bench.md sections 7 and 8).
+    """
     by_mode = {"anchor": gold_mod.read_labels(layout, "G1", required=False),
                "label": gold_mod.read_labels(layout, "G3", required=False),
                "inventory": gold_mod.read_labels(layout, "GX", required=False),
                "calibrate": (calibration or {}).get("rows") or []}
     labeler = {"version": gold_mod.LABELER_VERSION, "skill_commit": {}, "workflow_sha256": {},
                "prompt_sha256": {}}
+    versions: dict[str, str] = {}
     for mode, rows in sorted(by_mode.items()):
         if not rows:
             continue
@@ -679,11 +722,20 @@ def _labeler(layout: BenchLayout, calibration: dict | None) -> dict:
                           hint="one tier, one labeler: re-run that mode on every task and "
                                "transcribe the full result")
         sha = shas.pop()
+        versions[mode] = _row_version(mode, rows, sha, last)
         labeler["workflow_sha256"][mode] = sha
         # the prompts are inline in the workflow, so its sha is theirs
         labeler["prompt_sha256"][mode] = sha
         labeler["skill_commit"][mode] = ",".join(sorted({str(r.get("labeler_commit") or
                                                              score_mod.UNRECORDED) for r in rows}))
+    if len(set(versions.values())) > 1:
+        raise CfError("the gold's tiers were labelled by "
+                      + ", ".join(f"{mode} {v}" for mode, v in sorted(versions.items()))
+                      + ": one gold, one labeler version",
+                      hint=f"a policy change relabels every tier: re-run the labeler "
+                           f"({gold_mod.LABELER_VERSION}) on each mode, transcribe, then freeze")
+    if versions:
+        labeler["version"] = next(iter(versions.values()))
     return labeler
 
 
@@ -703,7 +755,9 @@ def _freeze(ws, args) -> int:
     gold_mod.check_canaries(layout, bench["canary"])
     _check_g1(layout)
     calibration = _check_calibration(layout)
-    labeler = _labeler(layout, calibration)
+    manifests = layout.gold_manifests()
+    last_version, last = gold_mod.latest_manifest(layout) if manifests else (0, None)
+    labeler = _labeler(layout, calibration, last)
     clusters = _recluster(paths, layout, bench)
     articles_split = clusters["articles"]
     tiers = {}
@@ -730,8 +784,6 @@ def _freeze(ws, args) -> int:
                 dev_decls |= keys(row)
     seen = sorted(row["gold_id"] for rows in rows_by_tier.values() for row in rows
                   if articles_split.get(row["source_id"]) in ("eval", "test") and keys(row) & dev_decls)
-    manifests = layout.gold_manifests()
-    last_version, last = gold_mod.latest_manifest(layout) if manifests else (0, None)
     staging = layout.planted_dir.with_name("planted.staging")
     shutil.rmtree(staging, ignore_errors=True)
     try:

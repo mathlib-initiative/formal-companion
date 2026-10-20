@@ -18,7 +18,9 @@ lower bound (a call that left no priced envelope, a model priced nowhere) unless
 needs no receipt: it is pinned by its plan); outcome rows the locate tally built
 from other receipts than the ones on disk (a run harvested again since); gold
 whose files changed after freeze; a run of another universe (or another state of it) than gold was
-labelled at; runs of mixed arms; a subject-only (article-tier) run; an inventory
+labelled at; gold labelled under other judgment rules than a run of the score was judged by,
+from the rules of PD5-PD9 on (:func:`check_rules`: a policy change relabels the gold); runs of
+mixed arms; a subject-only (article-tier) run; an inventory
 that did not plan, or read another rendering of, an article of the split; a
 ``formal_math`` passage of the split the locate run has no outcome row for (it
 was never planned: a ``--source`` or shard run is scored on the articles it
@@ -265,6 +267,49 @@ def check_universe(run_locate: dict, manifest: dict) -> dict:
                       hint="score runs of the universe gold was labelled at, or re-anchor the "
                            "bench at the new one (cf bench anchor --supersede, then freeze)")
     return run_u
+
+
+def run_rules(paths, run_id: str) -> int:
+    """The judgment rules a run was judged under: its gate.json's ``judgment_rules`` (0 if none)."""
+    path = paths.gate_json(run_id)
+    data = read_json(path) if path.is_file() else {}
+    rules = data.get("judgment_rules") if isinstance(data, dict) else None
+    return rules if isinstance(rules, int) and not isinstance(rules, bool) and rules > 0 else 0
+
+
+def check_rules(paths, manifest: dict, run_ids: list[str], judged_nothing: set[str]) -> None:
+    """Refuse gold labelled under other judgment rules than a run of the score was judged by.
+
+    A policy change relabels the gold (references/vocabulary.md section 1.11): the
+    labeler version the gold manifest records (``labeler.version``) labels by the
+    rules ``bench.gold.LABELER_RULES`` names, and every run of the score -- its
+    inventory, the locate run, each challenge -- is judged under the
+    ``judgment_rules`` its gate.json names.  From ``cflib.vocab.RULES_PD5_PD9`` on,
+    on either side, the two are one version: gold labelled by locate-label/4 never
+    scores a run planned under PD5-PD9, nor gold of locate-label/5 one planned
+    before them.  Below it (rules 0 and 1, labelers up to /4) runs and gold were
+    compared whatever their rules before this check, and still are.  A challenge
+    whose plan required nothing (``judged_nothing``) judged nothing.
+    """
+    version = (manifest.get("labeler") or {}).get("version")
+    gold_rules = gold_mod.labeler_rules(version)
+    off: dict[str, int] = {}
+    for rid in sorted(set(run_ids) - judged_nothing):
+        rules = run_rules(paths, rid)
+        if rules != gold_rules and max(rules, gold_rules) >= vocab.RULES_PD5_PD9:
+            off[rid] = rules
+    if not off:
+        return
+    newer = max(off.values()) > gold_rules
+    raise CfError(f"gold is labelled by {version or UNRECORDED} (judgment rules {gold_rules}), "
+                  f"and {', '.join(f'{rid} was judged under rules {n}' for rid, n in off.items())}: "
+                  f"a policy change relabels the gold, and gold never scores a run judged under "
+                  f"other rules",
+                  hint=(f"relabel the gold under {gold_mod.LABELER_VERSION} (cf bench anchor "
+                        f"<id> --emit-args <mode> for each tier, run the labeler, --transcribe), "
+                        f"freeze it with --supersede, then score" if newer else
+                        f"score runs planned under judgment rules {gold_rules} (cf plan-locate "
+                        f"with this checkout), inventory and challenge included"))
 
 
 def tools_db(run_universe: dict) -> dict:
@@ -803,6 +848,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
     yamls, receipts, receipt_shas = load_runs(paths, all_runs, unharvested,
                                               lower_bound_ok=article_costs_path is not None)
     check_tally(tally, run_id, receipt_shas)
+    check_rules(paths, manifest, all_runs, set(unharvested))
     run_arm = check_arms(yamls, run_id)
     if arm is not None and arm != run_arm:
         raise CfError(f"run {run_id} is the {run_arm} arm, not {arm}",

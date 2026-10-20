@@ -240,10 +240,13 @@ A locate task carries at most eight passages of one frozen inventory.
   status only once a challenger confirms it (§4), so a passage without one is
   `partial` however many parts it has.
 
-**The judgment rules** (gate rule 9; `references/vocabulary.md` §1.11, R1–R7)
-bind a run whose `gate.json` names `judgment_rules` (§9) — every run `cf
-plan-locate` plans now — and no other: a document of a run planned before them
-is gated, harvested, tallied and exported as it always was. Under them:
+**The judgment rules** (gate rule 9; `references/vocabulary.md` §1.11, R1–R7
+and the policy defaults PD1–PD9) bind a run whose `gate.json` names
+`judgment_rules` (§9) — every run `cf plan-locate` plans now — and no other: a
+document of a run planned before them is gated, harvested, tallied and exported
+as it always was. A run is held to the version its `gate.json` names: version 1
+is everything below but the two checks marked **(rules 2)**, which version 2
+(PD5–PD9, 2026-10-20) adds. Under them:
 
 - **The claim list.** A `located` or `absent` passage carries `claims` (optional
   on an `unresolved` one): `[{"id": "c1", "text": "<one clause>"}, …]`, every
@@ -274,7 +277,13 @@ is gated, harvested, tallied and exported as it always was. Under them:
   claim (R4: a declaration that states some clauses is `hasPart`, with a coverage
   claim when its parts together state them all), and a `relatedMatch` names none
   (an absent or empty `clauses`). A coverage claim's parts' `clauses` together
-  name every claim.
+  name every claim. **(rules 2)** No part of a coverage claim names every claim
+  alone: such a part is one location with its own relation (PD6: `exactMatch`,
+  `closeMatch` or `broadMatch` by R1–R2, `narrowMatch` by R3), and the claim is
+  refused until it names only parts that each state some of the clauses. A
+  `hasPart` that names every claim outside a coverage claim is not refused: it
+  may be a weakening credited with its clause or a claim list too coarse to show
+  the part, which the challenge judges.
 - **Queries per clause.** A receipt may carry `query_clauses`, `{"<query>":
   ["c1", …]}`: each key one of its `queries` exactly as written, each value the
   non-empty, distinct ids of the claims that query targets, or `general`
@@ -320,10 +329,15 @@ is gated, harvested, tallied and exported as it always was. Under them:
   wherever it does.
 - **A closeMatch names its convention, and only a closeMatch.** A `closeMatch`
   location carries `convention`, one of `cflib.vocab.CLOSE_MATCH_CONVENTIONS` —
-  `notation`, `encoding`, `junk_value`, `normalisation`, `renaming`,
-  `unfolding`, `bundling` (R1) — beside the `note` that says what the
-  declaration does by it; a `convention` on any other relation is refused (it
-  contradicts the relation). An `exactMatch` or `closeMatch` note says none of
+  `notation`, `encoding`, `normalisation`, `renaming`, `unfolding`, `bundling`
+  (R1) — beside the `note` that says what the declaration does by it; a
+  `convention` on any other relation is refused (it contradicts the relation).
+  Under version 1 the list is `LEGACY_CLOSE_MATCH_CONVENTIONS`, which holds
+  `junk_value` too; **(rules 2)** a junk value is no convention (PD7: a
+  declaration that agrees with the passage on the passage's domain is an
+  `exactMatch` when every case outside it is trivial, its note saying why, and a
+  `broadMatch` when one has real mathematical content), and `junk_value` is
+  refused with that rule in the message. An `exactMatch` or `closeMatch` note says none of
   `CLOSE_MATCH_GENERALITY_PHRASES` ("stronger", "strengthen…", "weaker",
   "weaken…", "more general…", "generali…", "special case", "particular case",
   "broader", "narrower", "strict derivative…", "strict differentiab…", "strictly
@@ -333,7 +347,10 @@ is gated, harvested, tallied and exported as it always was. Under them:
   `broadMatch` (R2), a special case `narrowMatch` (R3), a weakening `hasPart` or
   `relatedMatch` (R5). The prompts render the list from that tuple. A challenge
   verdict that leaves a `closeMatch` names its convention too — a downgrade's
-  own, a confirm's when the record names none — and the challenger's own note
+  own, a confirm's when the record names none, held to its run's list; a confirm
+  that keeps the record's own convention keeps a `junk_value` a run of version 1
+  wrote, since a challenge never raises a relation to the `exactMatch` PD7 would
+  make it — and the challenger's own note
   (the one `locate_records.downgrade_note` takes from the verdict when the
   record has none) is held to the same words; the record's own note, the
   worker's, is not.
@@ -436,6 +453,9 @@ a confirm — written before it judges (the FM7 rule, `references/vocabulary.md`
   the record and no other, each a non-empty list of distinct ids, together
   naming every claim (decision D1's verdict, which raises the passage's status,
   is checked against the challenger's own clauses as a location's is).
+  **(rules 2)** No part's list names every claim of the challenger's own: by
+  its own clauses such a part is one location, not a part (PD6), and the claim
+  is refuted, its part's record judged on its own.
 - An `uphold` of an absence or an unresolved outcome lists the challenger's own
   search: `queries` (at least `min_absence_queries` distinct, in its own words)
   and `query_clauses`, every query tagged and each claim — with `general` for an
@@ -1483,7 +1503,7 @@ like a faithfulness run:
    "inventory": {"run_id": "r-…"}, "challenged_runs": [], "findings_dir": "findings",
    "tasks_dir": "<gate dir>/tasks", "log_dir": "<tend root>/gate-log",
    "orchestrator_db": "<tend root>/orchestrator.sqlite",
-   "max_locations": 5, "min_absence_queries": 3, "judgment_rules": 1,
+   "max_locations": 5, "min_absence_queries": 3, "judgment_rules": 2,
    "span_end_rule": 1,
    "vendor": {"literature_links": "<manifest sha256>",
               "formal_companion_annotations": "<manifest sha256>"}}
@@ -1493,8 +1513,12 @@ like a faithfulness run:
   `cflib.vocab.JUDGMENT_RULES`) the run was planned under: the planner writes it
   into every gate.json, and the gate applies rule 9 when it is there and not
   otherwise, so a run planned before the rules — its gate.json has no such key —
-  is gated, also at harvest, by the rules it ran under. A version above the
-  gate's own, or a value that is not a non-negative integer, is exit 3.
+  is gated, also at harvest, by the rules it ran under. Version 1 is R1–R7;
+  version 2, written since the maintainer's PD5–PD9 (2026-10-20), adds PD6's
+  whole part and PD7's junk value (§3, §4), so a run that names 1 is gated, also
+  by the checkout's gate, without them. The bench holds its gold to the same
+  version (`references/locate-bench.md` §8). A version above the gate's own, or a
+  value that is not a non-negative integer, is exit 3.
 
   `span_end_rule` is, in the same way, the version of the span-end rule (rule
   2's end check, §2; `cflib.vocab.SPAN_END_RULE`) the run was planned under. The

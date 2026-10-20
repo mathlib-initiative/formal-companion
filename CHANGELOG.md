@@ -42,6 +42,53 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- Locate judgment rules PD5–PD9 (the maintainer's policy calls of 2026-10-20, after the smoke-3
+  audit; `references/vocabulary.md` §1.11 has each rule, what it replaces or sharpens, and his
+  words on PD7 verbatim). Gate rule 9 is now version 2 (`cflib.vocab.JUDGMENT_RULES`,
+  `RULES_PD5_PD9`), and `cf plan-locate` writes `judgment_rules: 2` into every gate.json it
+  plans; a run that names 1, or none, is gated as before, at harvest and by the checkout's gate.
+  - **PD5**: only definitions, theorems, equations and declarative statements about mathematical
+    objects are passages. Proof narration and commentary is `expository`, never located, with
+    no status; inside a proof each statement is a passage of its own. The inventory prompt says
+    so, and the locate and challenge prompts keep narration off the claim list. Term links are a
+    later feature.
+  - **PD6**: a coverage part that alone states every clause is one location with its own
+    relation, not a part. Under rules 2 the gate refuses a coverage claim one of whose parts
+    names every claim (from the `clauses` rule 9 already reads), and a challenger's coverage
+    confirm whose `part_clauses` give one part every claim of its own list.
+  - **PD7** replaces R1's junk values. A declaration that agrees with the passage on the
+    passage's domain is `exactMatch` when every case outside it is mathematically trivial (a junk
+    or default value, x/0 = 0, `riemannZeta` at its pole; an extra case that reduces to a
+    tautology), `broadMatch` when one has real content (a generalisation), and `closeMatch` only
+    for a difference where both sides are defined. "Trivial" is a judgment, so the record's note
+    says why. `junk_value` leaves `CLOSE_MATCH_CONVENTIONS`; `LEGACY_CLOSE_MATCH_CONVENTIONS`
+    keeps it for runs of rules 1. Under rules 2 the gate refuses it, except on a challenger's
+    confirm that keeps a record's own `junk_value`, since a challenge cannot raise that record
+    to the `exactMatch` PD7 would make it. The prompts' closeMatch example ("Lean returns 0 at
+    n = 0") is now an exactMatch's note.
+  - **PD8**: `broadMatch` by instantiation only when what is left closes by decidable arithmetic
+    (`omega`, `norm_num`, `decide`); a bridge through a named lemma is `relatedMatch`.
+  - **PD9**: in "it holds because X", X is a claim only when it is a declarative mathematical
+    statement no neighbouring passage already states.
+  - Not made mechanical, because each could misfire: PD8 (a bridge lemma named in a
+    `broadMatch`'s `instantiation` cannot be told from the instances and hypotheses that line
+    names by right), PD9, PD5 and PD7's "trivial", and a `hasPart` naming every claim outside a
+    coverage claim (a weakening credited with its clause, or a coarse claim list).
+  - **Config shas move.** The prompt templates (`locate.md.tmpl`, `locate-challenge.md.tmpl`,
+    `locate-inventory.md.tmpl`, `locate-worker-system.md.tmpl`) and the staged gate
+    (`verify_locate.py`) changed, so `run.yaml` `locate.config_shas.prompts` and
+    `config_shas.gate_files` differ for every run planned after this change: such a run is no
+    A/A replicate of one planned before it.
+  - **The bench gold needs a relabel.** The labeler is now `locate-label/5` (the new rules word
+    for word). Each transcribed row records its `labeler_version`, and `cf bench freeze` takes
+    the gold's version from the rows, not from the checkout's constant. Rows from before the
+    field keep the version their frozen manifest recorded, take this checkout's version when its
+    labeler wrote them, and are otherwise refused. A gold whose tiers name two versions is
+    refused. `cf bench score` refuses gold whose labeler labels by other judgment rules than
+    any run of the score (inventory, locate, a challenge that judged something), from rules 2
+    on, on either side; rules 0 and 1 are compared as before. **Bench v0's gold must be labelled
+    again under `locate-label/5`** before it scores any run planned after this change: gold of
+    `locate-label/4` or earlier is refused against such a run.
 - The locate gate-log line gains `pre_merge`, true for tend's `--pre-merge` call. Both of the
   log's readers, the watchdog's gate-failure rate and the bench's `gate_rejections`, count the
   validation lines alone (`changed_files: true`, `pre_merge` not true): a contribution that tend

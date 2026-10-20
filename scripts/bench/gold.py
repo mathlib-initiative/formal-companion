@@ -57,9 +57,16 @@ from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GO
 #: the labeler, frozen by its file's sha (its prompts are inline in it)
 LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: bumped whenever the labeler's contract (args or result shape) or the rules it
-#: labels by change (/4: PD4, a stronger-hypotheses special case is narrowMatch; /3: the judgment rules R1-R7 and the policy defaults PD1-PD3 of
-#: references/vocabulary.md section 1.11, word for word)
-LABELER_VERSION = "locate-label/4"
+#: labels by change (/5: PD5-PD9, and R1's junk values replaced by PD7's test; /4:
+#: PD4, a stronger-hypotheses special case is narrowMatch; /3: the judgment rules
+#: R1-R7 and the policy defaults PD1-PD3 of references/vocabulary.md section 1.11,
+#: word for word)
+LABELER_VERSION = "locate-label/5"
+#: the judgment rules (``cflib.vocab.JUDGMENT_RULES``) each labeler version labels by:
+#: the score holds gold and the runs it scores to one version from
+#: ``cflib.vocab.RULES_PD5_PD9`` on (references/locate-bench.md section 8), and a
+#: version not listed here (/1, /2, or none recorded) labelled by none of them
+LABELER_RULES = {"locate-label/3": 1, "locate-label/4": 1, LABELER_VERSION: vocab.JUDGMENT_RULES}
 #: G4: at most this many maintainer spot checks per release (section 8.1)
 G4_MAX_NEGATIVES = 30
 G4_MAX_POSITIVES = 20
@@ -616,11 +623,23 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
     return kept, dropped
 
 
+def labeler_rules(version: Any) -> int:
+    """The judgment rules a labeler version labels by (:data:`LABELER_RULES`; 0 if none)."""
+    return LABELER_RULES.get(version, 0) if isinstance(version, str) else 0
+
+
 def provenance(args: dict) -> dict:
-    """What every transcribed row carries of the labeler that made it (section 6, frozen)."""
+    """What every transcribed row carries of the labeler that made it (section 6, frozen).
+
+    ``labeler_version`` (from locate-label/5 on) is the version the args were
+    emitted for, which the result echoed: freeze reads the gold's version from
+    the rows, never from this checkout's constant, so gold labelled before a
+    policy change cannot be frozen as if labelled after it.
+    """
     labeler = args.get("labeler") or {}
     return {"labeler_sha256": labeler.get("workflow_sha256"), "args_digest": args.get("digest"),
-            "labeler_commit": labeler.get("skill_commit")}
+            "labeler_commit": labeler.get("skill_commit"),
+            "labeler_version": labeler.get("version")}
 
 
 def _keep_earlier(old: list[dict], fresh: set[str], keep: set[str], sha: str | None,

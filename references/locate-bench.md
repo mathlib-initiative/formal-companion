@@ -276,13 +276,14 @@ service, and every hit counts only once found in the pinned checkout.
 
 **Frozen.** The args stamp `labeler: {version, workflow_sha256, skill_commit}` (the checkout
 they were emitted from) and a `digest` over themselves;
-the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/4`: the rules R1–R7 and PD1–PD4 of `references/vocabulary.md` §1.11; /3 added R1–R7 and PD1–PD3, /4 added PD4). The
+the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/5`: the rules R1–R7 and PD1–PD9 of `references/vocabulary.md` §1.11; /3 added R1–R7 and PD1–PD3, /4 added PD4, /5 added PD5–PD9 and replaced R1's junk values with PD7's test). The
 transcriber refuses a result for other args, from another labeler version, or when the workflow
 file's sha changed since emission, and refuses a label for a task the args never named or
 labelled twice (the workflow also forces each answer's `task_id` to its task's). An unlabelled
 task stays unlabelled -- it writes no row -- and a transcription merges into the tier by gold
 id: a resumed or partial run keeps the earlier labels of the tasks it did not answer. Every row
-carries the labeler that wrote it (`labeler_sha256`, `args_digest`, `labeler_commit`), and a
+carries the labeler that wrote it (`labeler_sha256`, `args_digest`, `labeler_commit`, and from
+`locate-label/5` on `labeler_version`, the version its args were emitted for), and a
 tier never mixes two: a partial run of another labeler is refused, so it is re-run on every task. `--transcripts <dir>` prices the labeler's sessions into `spend.json`
 (`cf-bench-spend/1`: the runs, their `cost` blocks, the total), the bench's own receipt, never
 a run's.
@@ -308,7 +309,7 @@ a run's.
            "P": {"ablation_sha256": "<hex>", "corpus_sha256": "<hex>",
                  "removed_declarations": 812, "modules": 14}},
  "seen": ["g3-…"], "h": {"found": 15, "total": 17, "h": 0.88, "tag_blind": true},
- "labeler": {"version": "locate-label/4", "skill_commit": {"label": "<40 hex>"},
+ "labeler": {"version": "locate-label/5", "skill_commit": {"label": "<40 hex>"},
              "workflow_sha256": {"label": "<hex>"}, "prompt_sha256": {"label": "<hex>"}},
  "canary_sha256": "<hex>", "created": "…", "manifest_sha256": "<hex>"}
 ```
@@ -323,7 +324,12 @@ a run's.
 - `labeler` is read from the rows each mode wrote (G1 for `anchor`, G3 for `label`, GX for
   `inventory`, `calibration.json` for `calibrate`), never from args on disk, so re-freezing
   unchanged gold from a later checkout changes nothing; a tier whose rows name two labelers, or
-  none, is refused.
+  none, is refused. Its `version` is the rows' too, never this checkout's constant: each row
+  names its `labeler_version`; a row from before that field takes this checkout's version only
+  when this checkout's labeler wrote it (the workflow's sha), the last frozen manifest's when
+  that manifest froze the same labeler for the mode, and is refused otherwise (it was labelled
+  before `locate-label/5`: relabel it). Every mode names one version: gold whose tiers were
+  labelled under two is refused, since a policy change relabels every tier.
 - Freeze also refuses a G1 tier that does not label exactly the resolved entries, and an *h*
   that is not over every anchored G1 passage.
 - `seen` lists the eval and test gold rows whose accept set (or counting declarations) meets a
@@ -397,6 +403,21 @@ sha (`pins.challenge_plans`), costs nothing and has no transcript to scan. A run
 `run.yaml` without a locate block is refused (`locate.outcomes.run_yaml`); and every run's
 `locate.arm` must be the locate run's -- a G1-blind score rests on a blind inventory and blind
 challenges.
+
+**The rules gold is labelled by.** A policy change to the judgment rules relabels the gold
+(`references/vocabulary.md` §1.11), and the score holds the two together: the gold manifest's
+`labeler.version` labels by the judgment rules `bench.gold.LABELER_RULES` names
+(`locate-label/3` and `/4`: 1; `/5`: 2; any other: 0), and every run of the score -- its
+inventory, the locate run and each challenge -- is judged under the `judgment_rules` its
+`runs/<run>/gate.json` names (0 when it names none). From `cflib.vocab.RULES_PD5_PD9` (2) on,
+on either side, they must be one version: gold of `locate-label/4` never scores a run planned
+under PD5–PD9, nor gold of `locate-label/5` a run planned before them (a locate run of rules 2
+over an inventory of rules 1 included, since PD5 changed what an inventory makes a passage).
+Below it -- rules 0 and 1, labelers up to `/4` -- runs and gold were compared whatever their
+rules before the check, and still are. A challenge whose plan required nothing judged nothing
+and is not held. **So gold labelled before PD5–PD9 scores no run planned after them until it is
+relabelled under `/5`** (`cf bench anchor <id> --emit-args <mode>` for each tier, the labeler,
+`--transcribe`, then `cf bench freeze <id> --supersede`).
 
 **The tally is the harvest's.** The outcome rows are the locate tally's, and `cf tally --locate`
 records the sha of every receipt it read (`reports/locate-tally.<run>.json`
