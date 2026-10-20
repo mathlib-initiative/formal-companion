@@ -83,7 +83,7 @@ family: enwiki
 pageid: 28767
 revision: 1371234567                 # MediaWiki oldid
 title: Sylow theorems                # metadata only
-wikidata: Q207039                    # the article's own QID (pageprops); its subject passages' records carry it (§2.2)
+wikidata: <QID>                      # the article's own QID (pageprops); its subject passages' records carry it (§2.2)
 fetch: {api: action=parse, params_sha256: <sha of the fixed parameter set>}
 raw_sha256: <sha of the bytes as fetched>
 html_sha256: <sha of the canonical body>     # = source_sha
@@ -178,11 +178,15 @@ Links record (§2.7) carries the passage kind as its `kind`.
   `identifiers.wikidata` on every record of a passage whose prominence after
   the challenge is `subject`, and on no other passage's, since the article's
   QID on every passage welds the wrong concepts (a theorem the article only
-  mentions would join the article's concept). A source with no QID gives its
-  records none, and one whose `wikidata` is no QID is refused. The skill does
-  not check that the QID's enwiki sitelink is this article, since library code
-  has no network (`CLAUDE.md` §3): the consumer does, before any concept-level
-  edge (§11.3).
+  mentions would join the article's concept). The label it rests on is
+  challenged: every `subject` prominence is refuted by default (§5), and a
+  record a prominence overturn to `subject` reopened (`challenge_pending`,
+  judged by nobody under that rule) carries none, while the passage's judged
+  records do. An article may have several subject passages. A source with no
+  QID gives its records none, and one whose `wikidata` is no QID is refused.
+  The skill does not check that the QID's enwiki sitelink is this article,
+  since library code has no network (`CLAUDE.md` §3): the consumer does, before
+  any concept-level edge (§11.3).
 
 ### 2.3 Universes
 
@@ -394,6 +398,7 @@ A location:
               "location": {"quote": {"exact": "…", "prefix": "…", "suffix": "…"}},
               "citation": {"type": "webpage", "title": "Sylow theorems", "container-title": "Wikipedia",
                            "URL": "https://en.wikipedia.org/w/index.php?title=Sylow_theorems&oldid=1371234567"},
+              "identifiers": {"wikidata": "<QID>"},
               "extensions": {"‹locate›": {"pageid": 28767, "html_sha256": "<hex>", "layer_sha256": "<hex>",
                                           "renderer": "web-html/3", "span": [10234, 10612],
                                           "span_sha256": "<hex>", "licence": "CC-BY-SA-4.0"}}}],
@@ -421,8 +426,9 @@ A location:
   layer, never text) and the `layer_sha256` it indexes, so a reader holding
   that layer highlights the passage, not only the capped quote.
 - A `subject` passage's subject end carries the article's QID as
-  `identifiers.wikidata` (`"identifiers": {"wikidata": "Q207039"}`, beside
-  `citation`), and no other passage's does (§2.2).
+  `identifiers.wikidata`, beside `citation` (the example's `<QID>`; on the
+  tests' synthetic page 1001 it is `"identifiers": {"wikidata": "Q99999001"}`),
+  and no other passage's does, nor a `challenge_pending` record's (§2.2).
 - A `closeMatch` always names its convention difference in `note`, one a
   challenge downgraded to `closeMatch` too (the challenger's note, else the
   first sentence of its witness that quotes the source within the quote cap).
@@ -553,6 +559,11 @@ re-runs forty-nine others:
   by default: the challenger matches each clause of the passage to a part and
   checks that no part adds a hypothesis, then confirms the claim or refutes it
   (the parts stay `hasPart`);
+- every `subject` passage's prominence is refuted by default, never sampled
+  (stratum `prominence:subject`): its records carry the article's QID (§2.2),
+  so the challenger upholds the label only when the passage states what the
+  article is about, and an overturn to `central` or `supporting` removes the
+  QID;
 - on a `supporting` passage, every location that sets its derived status on
   its own (its bases) is refuted like a central one whenever its relation is
   strong (`exactMatch`, `closeMatch`, `broadMatch`): the passage keeps its
@@ -831,8 +842,11 @@ Locate output therefore reaches the Brain only (a) through
 `brain/proposals/*.jsonl` and the offline fold, or (b) after the maintainer
 chooses a gate mode for content changes. Concept-level edges come only from
 `subject` passages, through the article's QID their records carry as
-`identifiers.wikidata` (§2.2). That QID is the producer's claim, not yet a
-validated one: the consumer validates it by checking its enwiki sitelink
+`identifiers.wikidata` (§2.2). The QID names the subject end's article, not
+the record's declaration, and a subject passage's records carry every relation
+(`hasPart`, `relatedMatch` and `noMatch` among them), so the fold reads a
+record's relation before it draws an edge. That QID is the producer's claim,
+not yet a validated one: the consumer validates it by checking its enwiki sitelink
 against the article in a sealed Wikidata bundle (WikiLean's sealed entity
 bundle, or the offline fold's QID and label checks), and a record whose QID
 fails the check gives no concept-level edge. A record of any other passage

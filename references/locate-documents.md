@@ -438,7 +438,11 @@ A `claims` entry for a passage the task does not judge is refused.
   the task manifest's record carries that relation), `refute`; `absence` and `unresolved` — `uphold`,
   `overturn` (with `locations`, at least one whose relation counts); `scope` —
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
-  `uphold`, `overturn` (naming the new `prominence`); `coverage` — `confirm`
+  `uphold`, `overturn` (naming the new `prominence`, which differs from the
+  record's own; the task manifest's record carries that prominence, and an
+  overturn naming it is refused, rule 1, since it would change nothing yet mark
+  the passage `downgraded`);
+  `coverage` — `confirm`
   (the claim `survived`, and with it each part whose own record no verdict
   judged: a `not_required` or `sampled_out` part is `survived`, a judged one
   keeps its verdict, and a part a prominence overturn in the same run reopened
@@ -452,6 +456,11 @@ A `claims` entry for a passage the task does not judge is refused.
   rank}` for each — and the claim's `note`. A document that confirms a claim
   and refutes or downgrades one of the parts it names is refused (rule 1): the
   claim would name a location that is no longer a `hasPart` one.
+- Every `subject` passage's prominence is a record of the challenge, refuted by
+  default, since its records carry the article's QID (§6): `uphold` keeps the
+  label, and `overturn` to `central` or `supporting` takes the QID off every
+  record of the passage. A `supporting` passage's prominence is sampled, and an
+  overturn of it to `subject` gives the QID to the passage's judged records.
 - A `downgrade` to `closeMatch` may give `note`, the convention difference the
   record will carry; without one, a sentence of its `witness` (at most 300
   characters) becomes the note, since an exported `closeMatch` always names one
@@ -658,10 +667,21 @@ What every record carries beyond §2.7's example:
   locate extension), and no other passage's records do: the prominence is the
   one the record's extension carries, after the challenge, so a prominence
   overturn to `subject` adds it and one away removes it (the maintainer's
-  decision B5, proposal §2.2; `records.article_qid`). A source with no QID
-  gives none, and one whose `wikidata` is no QID (`Q[1-9][0-9]*`) is refused
-  per passage. The QID is the producer's claim: the consumer checks its enwiki
-  sitelink against the article before it draws a concept-level edge
+  decision B5, proposal §2.2; `records.article_qid`). The challenge plan
+  refutes every `subject` prominence by default (§9), so under a plan written
+  since that rule each QID rests on a label a challenger judged; an article may
+  have several subject passages, each judged on its own. A record whose
+  `challenge` is `challenge_pending` carries none: an overturn to `subject`
+  reopened it and no challenger judged it under that rule (§10), while the
+  passage's judged records carry the QID. The QID
+  names the subject end's article, not the record's declaration: the record
+  says only that its declaration stands in its `relation` to a passage about
+  that article's subject (the second smoke run's 31 QID records spanned seven
+  relations, `hasPart`, `relatedMatch` and `noMatch` among them), so a consumer
+  that folds a QID into a concept-level edge reads the relation first. A source
+  with no QID gives none, and one whose `wikidata` is no QID (`Q[1-9][0-9]*`)
+  is refused per passage. The QID is the producer's claim: the consumer checks
+  its enwiki sitelink against the article before it draws a concept-level edge
   (proposal §11.3). The gate's rule-1 preview writes none (its passages carry
   no prominence after a challenge, and the checker admits either form).
 - `extensions[‹locate›].section` — the passage's heading path (a list of
@@ -1362,17 +1382,23 @@ like a faithfulness run:
   item, location_key, library, declaration, relation, run_id, prominence, scope,
   outcome, rule, stratum, planned, task_id}]}` (a coverage record adds `parts`, its
   parts' location keys). `rule` is `refute_by_default`, `hunt`, `basis`,
-  `sample` or `none` — every coverage claim is `refute_by_default`, and each of a
+  `sample` or `none` — every coverage claim is `refute_by_default`, and so is
+  every `subject` passage's prominence (stratum `prominence:subject`, a name
+  only: it is required whatever the rates, as its records carry the article's
+  QID, §6), and each of a
   `supporting` passage's bases (every location whose own derived status is the
   passage's: the passage keeps that status while any one of them stands) is
-  `basis` when its relation is `exactMatch`, `closeMatch` or `broadMatch`; `stratum` is `relation:<relation>`, `scope:<scope>`,
+  `basis` when its relation is `exactMatch`, `closeMatch` or `broadMatch`; a
+  sampled record's `stratum` is `relation:<relation>`, `scope:<scope>`,
   `prominence:supporting` or `outcome:absent` (a `supporting` passage's absence),
   each drawn at its rate — a strong relation's at `strong_sample_rate`, the
   absences' at `absence_sample_rate`, every other at `sample_rate` — at least one
   record of a non-empty stratum whose rate is above zero; `planned` is
   `required`, `sampled_out` or `not_required`. A plan written before the two later
   rates carries `sample_rate` alone and no `basis` rule: it drew strong
-  relations and supporting absences at none.
+  relations and supporting absences at none. A plan written before the subject
+  prominence rule has no `prominence:subject` record: its subject passages keep
+  their prominence unchallenged, and their records the QID.
   A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
   for an absence, unresolved outcome, scope, prominence or coverage claim. The outcomes read it
   back: a required record no verdict judged is owed (`challenge: null`). The gate
@@ -1570,8 +1596,14 @@ like a faithfulness run:
   `sampled_out`) is still planned, with no task: its `challenge-plan.json` is the
   result, and it needs no harvest. A re-plan checks everything before it writes
   anything, and refuses a run id that names a run it reads or a run of another
-  preset. The run's counts land in the sourceset's `state.json`, through
-  `Sourceset.record_state`, not in a companion's.
+  preset, and a harvested challenge run (one with a `RECEIPT.json`) whose
+  `challenge-plan.json` it would change: a record's planned value that differs,
+  or a record either plan lacks. Its verdicts answer the plan they were planned
+  under, so a record the new plan requires would be owed and its passage refused
+  at export, and a verdict on a record it no longer requires would be ignored. A
+  planner change that requires more (every `subject` prominence, §4) is planned
+  as a new challenge run. The run's counts land in the sourceset's `state.json`,
+  through `Sourceset.record_state`, not in a companion's.
 
   `cf run` refuses a locate run planned for `local` (or given `--local`) before
   it writes anything: a locate run runs on an allowlisted host through tend. It
@@ -1818,7 +1850,8 @@ changed, else `survived` when any was judged, else `sampled_out` or
 passage: §5 refutes such a passage's locations and hunts its absence, so each
 of its records no verdict judged (planned `not_required` or `sampled_out` under
 `supporting`) becomes `challenge_pending` — exported as it is, read by a
-consumer as unchallenged, never as "no rule applied". The reopen wins over a
+consumer as unchallenged, never as "no rule applied", and with no QID on its
+subject end (§6). The reopen wins over a
 coverage claim confirmed in the same run: it is applied before the claim
 confirms its parts, so a part it reopened stays `challenge_pending`, owed its
 own verdict under the stricter rule, while the claim stays `survived`.
@@ -1834,10 +1867,12 @@ verdict refuted or downgraded no longer holds: it upgrades nothing and the
 passage carries a `problem` until the claim is challenged again; a `downgrade` must name a strictly weaker relation (exact,
 then close, then broad, then narrow/hasPart, then related: §4's order,
 `cflib.vocab.RELATION_STRENGTH`); a prominence changes only
-by `overturn`; an `overturn` puts the challenger's locations first in their own
-order, then the kept `relatedMatch` ones, renumbered and capped at five; and a
-scope overturned with no location makes the passage `formal_math` with no
-outcome and a `problem`, which the export refuses. The counts' `unresolved`
+by an `overturn` to another prominence (one naming the passage's own is
+ignored, and the record is owed); an `overturn` puts the challenger's
+locations first in their own order, then the kept `relatedMatch` ones,
+renumbered and capped at five; and a scope overturned with no location makes
+the passage `formal_math` with no outcome and a `problem`, which the export
+refuses. The counts' `unresolved`
 is every answered passage with no status — the worker's and those a challenge
 left without a location that counts.
 The bench (`references/locate-bench.md` §8) joins runs to gold by the row's
