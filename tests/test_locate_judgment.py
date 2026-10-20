@@ -1671,18 +1671,18 @@ class TestThePrompts(unittest.TestCase):
 
     @staticmethod
     def rule_lines() -> dict[str, str]:
-        """R1-R7, PD1-PD9 and FM7 as references/vocabulary.md section 1.11 writes them."""
+        """R1-R7, PD1-PD10 and FM7 as references/vocabulary.md section 1.11 writes them."""
         text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
         start = text.index("**How a relation is judged: rules R1\u2013R7**")
         block = text[start:text.index("**The derived status**", start)]
         return {m.group(1): "- **%s** \u2014 %s" % (m.group(1), " ".join(m.group(2).split()))
-                for m in re.finditer(r"^- \*\*(R[1-7]|PD[1-9]|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
+                for m in re.finditer(r"^- \*\*(R[1-7]|PD(?:10|[1-9])|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
                                      block, re.M | re.S)}
 
     def test_the_rules_and_the_policy_defaults_are_the_vocabularys_word_for_word(self):
         lines = self.rule_lines()
         self.assertEqual(sorted(lines), sorted([f"R{i}" for i in range(1, 8)]
-                                               + [f"PD{i}" for i in range(1, 10)] + ["FM7"]))
+                                               + [f"PD{i}" for i in range(1, 11)] + ["FM7"]))
         for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
             worker = " ".join(self.worker(mode).split())
             for name, line in lines.items():
@@ -1760,21 +1760,43 @@ class TestThePrompts(unittest.TestCase):
                       "statement is a passage of its own", lines["PD5"])
         self.assertIn("a part of a coverage claim that alone states every clause is no part: it "
                       "is one location with its own relation", lines["PD6"])
-        self.assertIn("is a judgment: an `exactMatch` or `broadMatch` that rests on it says why "
-                      "in its `note`", lines["PD7"])
+        self.assertIn("is still a judgment: an `exactMatch` or `broadMatch` that rests on it "
+                      "says why in its `note`", lines["PD7"])
         self.assertIn("closes by decidable arithmetic (`omega`, `norm_num`, `decide`)", lines["PD8"])
         self.assertIn("makes it `relatedMatch` (R5)", lines["PD8"])
         self.assertIn("a declarative mathematical statement that no neighbouring passage already "
                       "states", lines["PD9"])
         # R1: PD7's three-way test replaced its junk values
         self.assertNotIn("junk values", lines["R1"])
-        # riemannZeta at its pole is a borderline case the record's note argues, not R1's example
-        self.assertNotIn("riemannZeta", lines["R1"])
+        # PD7's test for "trivial" (the maintainer's, 2026-10-20): the passage's mathematics does
+        # not depend on the value outside its domain, so riemannZeta at its pole is R1's
+        # junk-value example again (40f364d had taken it out as the record's call)
+        self.assertIn("the passage's mathematics does not depend on f′'s value there, as with a "
+                      "junk or default value (x/0 = 0, `riemannZeta` at its pole s = 1)", lines["R1"])
+        self.assertIn("a case outside the passage's domain is trivial (R1) when the passage's "
+                      "mathematics does not depend on the declaration's value there", lines["PD7"])
+        self.assertIn("in the maintainer's words, \"it shouldn't matter what the value of "
+                      "riemannZeta 1 is\" — so `riemannZeta` at s = 1 is a junk value",
+                      lines["PD7"])
+        # a case outside the domain with real content is still a generalisation
+        self.assertIn("a case with real mathematical content makes a generalisation, never a "
+                      "junk value", lines["PD7"])
+        # PD10: one notion in two encodings is R1's encoding, no PD8 bridge
+        for needle in ("one notion in two encodings is no bridge",
+                       "(`IsCoprime m n` where the passage says m and n have no common factor "
+                       "other than 1, linked by `Int.isCoprime_iff_gcd_eq_one`)",
+                       "differs from the passage by an `encoding` (R1: a `closeMatch` when "
+                       "nothing else differs)",
+                       "is no PD8 bridge",
+                       "It sharpens R1's encoding and limits PD8, which governs bridges between "
+                       "statements, not between two definitions of one notion."):
+            self.assertIn(needle, lines["PD10"])
         # PD8 is about instantiation: R2's weakenings stay R2's
         self.assertIn("R2's weakenings (a strict derivative for a plain one, an iff for an if) are "
                       "no instantiation: PD8 leaves them to R2", lines["PD8"])
         self.assertIn("a strict derivative for a plain one", lines["R2"])
-        for needle in ("neither is a junk value (PD7)", "a junk or default value (x/0 = 0) or",
+        for needle in ("neither is a junk value (PD7)",
+                       "a junk or default value (x/0 = 0, `riemannZeta` at its pole s = 1) or",
                        "IsSquare 0 ↔ IsSquare 0) — it is `exactMatch`",
                        "some case outside X has real mathematical content, it is `broadMatch` "
                        "(R2), a generalisation",
@@ -1794,12 +1816,19 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("> A junk value means that X is exactly the same as Y, but the Lean case is "
                       "just defined over", vocabulary)
         self.assertIn("> generalization not a junk value.", vocabulary)
+        self.assertIn("and, later the same day, of `riemannZeta` at s = 1: > RiemannZeta is hard "
+                      "but I'd still classify it as a junk value personally since the mathematics "
+                      "> here doesn't actually depend on the value of riemannZeta 1.", vocabulary)
+        self.assertIn("> matter what the value of riemannZeta 1 is, and that is still the case.",
+                      vocabulary)
+        self.assertNotIn("is a judgment the note argues, not a settled example", vocabulary)
         # which earlier rule or example each one replaces or sharpens
         for needle in ("PD5 sharpens the inventory's `expository` scope",
                        "PD6 sharpens R4 and the coverage claim of decision D1",
                        "PD7 replaces R1's \"junk values\"",
                        "PD8 sharpens R2's \"instantiation\" and R5's",
-                       "PD9 sharpens the claim list (R4, FM1)"):
+                       "PD9 sharpens the claim list (R4, FM1)",
+                       "PD10 sharpens R1's `encoding` and limits PD8"):
             self.assertIn(needle, vocabulary)
         self.assertIn("(each overridable, never by you)", self.worker())
 
@@ -1870,6 +1899,49 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("no neighbouring passage already states (PD9)", challenger)
         for text in (worker, challenger, inventory):
             self.assertNotRegex(text, r"\{\{")
+
+    def test_pd7s_test_and_pd10_reach_every_prompt_that_acts_on_them(self):
+        """The maintainer's answers of 2026-10-20 beside the rule lines: riemannZeta at s = 1
+        is a junk value (exactMatch), and a lemma linking two definitions of one notion is an
+        encoding (R1), not a PD8 bridge."""
+        from bench import gold as gold_mod
+        worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)
+        worker, challenger = " ".join(worker.split()), " ".join(challenger.split())
+        labeler = (HERE.parent / "workflows" / "locate-label.workflow.js").read_text(encoding="utf-8")
+        labeler = " ".join(labeler[labeler.index("const RULES = `"):labeler.index("const huntTools")]
+                           .replace("\\`", "`").split())
+        # PD7: the exactMatch instructions carry the test and the example
+        self.assertIn("(Lean's x/0 = 0, `riemannZeta` at s = 1) still states it when it agrees "
+                      "with the passage on the passage's domain and every case outside it is "
+                      "trivial — the passage's mathematics does not depend on the value there",
+                      worker)
+        self.assertIn("(Lean's x/0 = 0, `riemannZeta` at s = 1) is judged by R1's three-way test "
+                      "(PD7): an `exactMatch` when it agrees on the passage's domain and every "
+                      "case outside it is trivial (the passage's mathematics does not depend on "
+                      "the value there)", challenger)
+        self.assertIn("why each case outside the passage's domain is trivial (the passage's "
+                      "mathematics does not depend on the value there), or which one has content "
+                      "(PD7)", labeler)
+        # PD10 where each acts on PD8's bridge, PD8's own wording kept
+        self.assertIn("makes it `relatedMatch`, not `broadMatch` (PD8). A lemma that only links "
+                      "two definitions of one notion (`Int.isCoprime_iff_gcd_eq_one`, between "
+                      "`IsCoprime` and \"no common factor other than 1\") is no such bridge: the "
+                      "two differ by an `encoding` (PD10).", worker)
+        self.assertIn("a bridge through a named lemma makes it `relatedMatch` (PD8), and a lemma "
+                      "that only links two definitions of one notion is no bridge: the two differ "
+                      "by an `encoding` (PD10).", challenger)
+        self.assertIn("(PD8; R2's weakenings are no instantiation, and a lemma that only links two "
+                      "definitions of one notion is no bridge but an encoding, PD10)", labeler)
+        # PD10 is judgment: it adds no gate check, so the rules stay version 2 and the labeler
+        # /5 (a /6 would label by the same judgment rules, LABELER_RULES)
+        self.assertEqual(vocab.JUDGMENT_RULES, 2)
+        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/5")
+        self.assertEqual(gold_mod.labeler_rules(gold_mod.LABELER_VERSION), vocab.JUDGMENT_RULES)
+        vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
+                              .read_text(encoding="utf-8").split())
+        self.assertIn("**PD10 and PD7's test kept the labeler at `locate-label/5`.**", vocabulary)
+        self.assertIn("PD9's stated reasons and PD10's encodings are not checked mechanically",
+                      vocabulary)
 
     def test_every_failure_mode_label_resolves_in_the_tree(self):
         """FM1-FM9 are cited by code, tests and the changelog: section 1.11 defines each."""

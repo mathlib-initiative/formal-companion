@@ -241,7 +241,7 @@ A locate task carries at most eight passages of one frozen inventory.
   `partial` however many parts it has.
 
 **The judgment rules** (gate rule 9; `references/vocabulary.md` §1.11, R1–R7
-and the policy defaults PD1–PD9) bind a run whose `gate.json` names
+and the policy defaults PD1–PD10) bind a run whose `gate.json` names
 `judgment_rules` (§9) — every run `cf plan-locate` plans now — and no other: a
 document of a run planned before them is gated, harvested, tallied and exported
 as it always was. A run is held to the version its `gate.json` names: version 1

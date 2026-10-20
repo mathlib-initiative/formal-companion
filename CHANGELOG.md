@@ -42,6 +42,37 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- Locate judgment rules: PD7's test for "trivial", and PD10 on encodings (the maintainer's later
+  answers of 2026-10-20; `references/vocabulary.md` §1.11 has both, and his words on
+  `riemannZeta` verbatim beside his earlier ones on PD7).
+  - **PD7**: a case outside the passage's domain is trivial when the passage's mathematics does
+    not depend on the declaration's value there; in the maintainer's words, "it shouldn't matter
+    what the value of riemannZeta 1 is". So `riemannZeta` at its pole s = 1 is again R1's example
+    of a junk value (`exactMatch`), beside x/0 = 0 and quadratic reciprocity's p = q, though
+    Mathlib proves a closed form there (`riemannZeta_one`). This reverses the earlier text that
+    left it to the record's note, and the test that held it out of R1. A case outside the domain
+    with real mathematical content is still a generalisation (`broadMatch`). The exactMatch
+    instructions of both prompts and the labeler's evidence line state the test.
+  - **PD10, encodings**: a library lemma that links Mathlib's standard notion to the passage's
+    notion of the same thing (`IsCoprime` and "no common factor other than 1", through
+    `Int.isCoprime_iff_gcd_eq_one`) is an encoding difference (R1: a `closeMatch` by `encoding`
+    when nothing else differs), not a PD8 bridge. PD8 governs bridges between statements, not
+    between two definitions of one notion, so PD10 sharpens R1 and limits PD8. The prompts' and
+    the labeler's PD8 instructions say so; PD8 is otherwise as encoded, and a weakening stays
+    R2's.
+  - Neither is checked mechanically. No gate check changes, `JUDGMENT_RULES` stays 2 and
+    `verify_locate.py` is unchanged, so `config_shas.gate_files` does not move. The prompt
+    templates `locate.md.tmpl` and `locate-challenge.md.tmpl` changed, so
+    `locate.config_shas.prompts` differs for a run planned after this change: such a run is no
+    A/A replicate of one planned before it.
+  - **The labeler stays `locate-label/5`.** Its text changed and its sha moved, but a version
+    matters to the bench through the judgment rules `bench.gold.LABELER_RULES` maps it to, which
+    the score holds gold and runs to, and through one version per gold, which freeze holds. With
+    no gate check added the runs stay at rules 2, and a `/6` would map to 2 as well: the score
+    would refuse nothing it does not refuse now. `/5` had labelled no gold yet (bench v0's
+    relabel under it is still to come), and the transcriber refuses a result whose args were
+    emitted from another labeler sha, so gold of `/5` is labelled by this text. Once gold has
+    been labelled under a version, a change to its rules bumps it.
 - Locate judgment rules PD5–PD9 (the maintainer's policy calls of 2026-10-20, after the smoke-3
   audit; `references/vocabulary.md` §1.11 has each rule, what it replaces or sharpens, and his
   words on PD7 verbatim). Gate rule 9 is now version 2 (`cflib.vocab.JUDGMENT_RULES`,
@@ -68,8 +99,8 @@ release has something to say.
     or default value, x/0 = 0; an extra case that reduces to a tautology), `broadMatch` when one
     has real content (a generalisation), and `closeMatch` only for a difference where both sides
     are defined. "Trivial" is a judgment, so the record's note says why; `riemannZeta` at its
-    pole, a value Mathlib ascribes and proves a closed form for, is left to it rather than given
-    as an example of either side. `junk_value` leaves `CLOSE_MATCH_CONVENTIONS`;
+    pole is junk by the maintainer's test for "trivial" (the entry above).
+    `junk_value` leaves `CLOSE_MATCH_CONVENTIONS`;
     `LEGACY_CLOSE_MATCH_CONVENTIONS` keeps it for runs of rules 1. Under rules 2 the gate
     refuses it, except on a challenger's confirm that keeps a record's own `junk_value` (naming
     no convention, or naming it again), since a challenge cannot raise that record to the
