@@ -198,6 +198,27 @@ release has something to say.
   `adopted_from.layer_sha256` once, in a new version, when the pin's bytes hash to the recorded
   `raw_sha256`; the delivering pins file's sha recorded beside it; and an immediate comparison
   into `parity_refusals` when a layer already exists.
+- The A/A check (the locate bench's acceptance rule, condition 5) also requires that the two
+  runs' outcomes are not shown to disagree. The rule alone is one-sided: it only asks that it
+  would not accept the replicate over its baseline, so a replicate that came out clearly
+  worse, or one that differed on a metric the claim does not name, passed. Now every metric of
+  every tier both scores hold is paired cluster by cluster, and the runs disagree when the
+  whole 95% interval of the difference lies beyond 0.03, or the cost per article's beyond 20%
+  of the baseline's (`conditions.aa.agreement`); a comparison whose replicate disagrees is
+  rejected. The burden of proof is on the difference, so this is no equivalence test: each row
+  carries a `verdict` (`differs`, `within` when the whole interval lies inside the tolerance,
+  or `unresolved`, the new `BENCH_AA_VERDICTS`), and the agreement names the rows `within` and
+  `unresolved` and its `reach`, the largest difference the intervals leave possible, which on
+  an A/A of a few dozen articles is far past 0.03. A planning refusal names the key, its
+  stage, its `cf plan-locate` flag and both values, where it said only `planning differ`.
+  `cf bench compare <id> <baseline> --aa <replicate> --claim …`, with no candidate, is the
+  check alone: it answers `aa ok` (exit 0) or `aa FAILS` (exit 1), spends no alpha and writes
+  nothing (`--json` prints a `cf-bench-aa/1` document); it prints every row with its verdict,
+  difference and interval. The challenge seed stays recorded and compared by nothing. The
+  synthetic e2e gains the A/A stage: `loc-2`, planned exactly as `loc-1`, answers `aa ok`, and
+  `loc-3`, challenged at another `--strong-sample-rate`, is refused naming it.
+  `scripts/bench/*.py` changed, so the scorer sha did too: re-score both sides before
+  comparing scores written before this.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.

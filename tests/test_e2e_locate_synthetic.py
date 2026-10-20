@@ -6,8 +6,11 @@ tests/e2e/locate_synthetic/driver.py, which also runs on its own; here it
 runs every stage in a temporary directory -- the universe, the sourceset
 adopted from a producer's delivery (references/locate-documents.md section 7),
 L2, the three presets with the staged out-of-tree gate over good and bad
-documents, the harvests, the tally, the sealed export and the bench score --
-and each stage's own checks read the artifacts it wrote.
+documents, the harvests, the tally, the sealed export, the bench score, and the
+A/A stage (a replicate planned exactly as the baseline answers ``aa ok``; one
+planned with another ``--strong-sample-rate`` is refused by name,
+references/locate-bench.md section 9, rule 5) -- and each stage's own checks
+read the artifacts it wrote.
 
 One small test keeps ``cf sourceset enumerate-wikiproject`` and ``fetch``
 honest offline for as long as the skill keeps its own fetcher: over the
@@ -58,7 +61,8 @@ class TestTheSyntheticLocateCampaign(unittest.TestCase):
         for needle in ("corpus build-db", "sourceset adopt", "sourceset render",
                        "locate candidates",
                        "--preset locate-inventory", "--preset locate ", "--preset locate-challenge",
-                       "tally --locate", "export literature-links", "bench score"):
+                       "tally --locate", "export literature-links", "bench score",
+                       "--run-id loc-2", "bench compare"):
             with self.subTest(stage=needle):
                 self.assertIn(needle, commands)
 
@@ -93,6 +97,27 @@ class TestTheSyntheticLocateCampaign(unittest.TestCase):
         self.assertRegex(score["measurement_id"], r"^[0-9a-f]{64}$")
         self.assertEqual(score["tiers"]["G1"]["metrics"]["fnf_rate"]["value"], 0)
         self.assertEqual(score["split"], "eval")
+
+    def test_the_aa_replicate_repeats_the_baseline_and_a_changed_plan_is_refused(self):
+        doc = self.pipe.aa_result
+        self.assertEqual((doc["answer"], doc["failed"]), ("aa ok", []))
+        self.assertEqual(doc["replicate"], self.pipe.aa_replicate["measurement_id"])
+        self.assertEqual(self.pipe.aa_replicate["runs"]["locate"], ["loc-2"])
+        # each side's challenge run and its seed, as recorded: whatever the seed is (it
+        # comes from the run id once the planner derives it), the A/A compares none
+        seeds = doc["recorded"]["challenge_seed"]
+        self.assertEqual({side: sorted(runs) for side, runs in seeds.items()},
+                         {"baseline": ["chl-1"], "replicate": ["chl-2"]})
+        self.assertTrue(all(isinstance(seed, int) for runs in seeds.values()
+                            for seed in runs.values()), seeds)
+        # the synthetic worker answers both runs alike, so agreement is SHOWN on every row,
+        # not merely left unrefuted
+        agree = doc["aa"]["agreement"]
+        self.assertEqual((agree["unresolved"], agree["reach"]), ([], 0.0))
+        self.assertEqual(len(agree["within"]), agree["compared"])
+        self.assertGreater(agree["compared"], 2)
+        self.assertIn("strong_sample_rate (--strong-sample-rate): 0.5 in the baseline, 1.0 in "
+                      "the replicate", self.pipe.aa_refusal_text)
 
 
 class TestTheFetchPathStillWorksOffline(unittest.TestCase):
