@@ -455,6 +455,10 @@ class TestAdoptingAProducersPins(_SourcesetCase):
                       f"checkout's {rh.RENDERER}", out)
         self.assertIn("cf sourceset create <new id> --from wpm", out)
         self.assertNotIn("parity failure", out)
+        # and what the step cannot do, which the runbook's Tier A procedure avoids: a
+        # source adopted with no producer sha keeps none (asserted just below)
+        self.assertIn("adopted with no producer sha keeps none", out)
+        self.assertIn("references/runbook-server.md section 9", out)
         # the step it names: seeded with the bytes and no layers, the delivery is adopted
         # (its sha named as not recorded: adopted_from never changes) and rendered under
         # this renderer

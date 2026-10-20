@@ -794,7 +794,11 @@ def _check_held_layer(where: str, sid: str, current: dict, producer: str | None,
                            f"--from {sourceset_id}` seeds this sourceset's bytes with no layers "
                            f"-- then adopt this delivery into the new sourceset and render it "
                            f"there, where the render holds each layer to the producer's sha its "
-                           f"entry records (adopt names any it cannot record)")
+                           f"entry records (adopt names any it cannot record: a source this "
+                           f"sourceset adopted with no producer sha keeps none, since `create "
+                           f"--from` copies its adopted_from; a kept run's sourceset is created "
+                           f"new instead, with no --from, and filled by adopt alone, "
+                           f"references/runbook-server.md section 9)")
     if layer and layer != producer:
         raise CfError(f"{where}: the layer rendered from {sid}'s bytes is {layer[:12]}... "
                       f"under {current.get('renderer')}, the producer's is "

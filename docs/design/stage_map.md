@@ -389,7 +389,7 @@ its stages share the run, gate, bridge, harvest and cost machinery above
 | L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json`; `--blind` or `--tools-corpus-db` write their own `<kind>/` directory under it (a planted one names no hit its database lacks) |
 | L3a/L3b/L5 | `cf plan-locate --preset locate-inventory / locate / locate-challenge` | `runs/<id>/{run.yaml (a locate block), tasks/, prompts/, gate.json, gate.local.json, challenge-plan.json, tend-root/}` |
 | L4 gate | `scripts/gate/verify_locate.py`, out of tree (tend's validation `--changed-files`, its pre-merge `--changed-files --pre-merge`; an agent may run only the `--findings` check, and a command line that could fake the label is exit 3) | nothing but its own log line, which names its `caller`; exit 0 / 1 / 3 |
-| — | `cf run`, `cf campaign plan / render / status` | `run.yaml`'s records; `campaigns/<id>/` |
+| — | `cf run`, `cf campaign plan / render / status` | `run.yaml`'s records; `campaigns/<id>/` (`campaign.yaml` holds the watchdog's thresholds and `unpriced_usd_per_hour`, the flag's or the pilot's highest priced rate, checked again at every `plan`; `render` refuses a campaign without that rate or a smoke-tested pilot) |
 | L6 | `cf harvest` (re-gated by the run's own staged gate), `cf tally --locate`, `cf export literature-links` | `corpus/<run>/<task>/<source>.json` + `RECEIPT.json` (its gate block's `gate_code` names the gate by hash), `reports/locate-{outcomes,tally}.<run>.*`, `exports/<set>/` |
 | bench | `cf bench build / anchor / freeze / score / compare` | `benches/<id>/` |
 
