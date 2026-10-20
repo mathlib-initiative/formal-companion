@@ -1249,6 +1249,9 @@ class TestTheHostLayout(unittest.TestCase):
         self.assertNotIn("checkouts", worker)
         self.assertIn("**overturn** it: a scope with the locations of the passage it hid, a "
                       "prominence with the right `prominence`", worker)       # seam #33
+        # every subject prominence is a record of the plan (F1): the challenger is told
+        # how to judge one, which is no demotion
+        self.assertIn("A `subject` prominence is refuted by default", worker)
         self.assertNotIn("downgraded", worker)
 
 
@@ -1700,11 +1703,61 @@ class TestChallenge(Campaign):
         self.assertIn(("scope", "sample"), by)
         self.assertEqual(sorted(by[("prominence", "sample")]),
                          ["required", "sampled_out", "sampled_out"])
+        # every subject prominence is refuted by default: the QID rides on it (F1)
+        self.assertEqual(by[("prominence", "refute_by_default")], ["required"] * 2)
         required = [r for r in plan["records"] if r["planned"] == "required"]
         self.assertTrue(all(r["task_id"] == "chl-0001" for r in required))
         manifest = read_json(self.paths.tend_root("chl-1") / "gate" / "tasks" / "chl-0001.json")
         self.assertEqual(sum(len(d["records"]) for d in manifest["documents"]), len(required))
         self.assertEqual(read_json(self.paths.gate_json("chl-1"))["challenged_runs"], ["loc-1"])
+
+    def test_every_subject_prominence_is_challenged_whatever_the_rates(self):
+        """The B5 review's F1: the article's QID rides on every record of a subject
+        passage, and only supporting prominences were challenged, so a passage
+        mislabelled subject kept its QID with no verdict that could take it away."""
+        self.challenge("--sample-rate", "0", "--strong-sample-rate", "0",
+                       "--absence-sample-rate", "0")
+        plan = self.plan()
+        prominence = [r for r in plan["records"] if r["target"] == "prominence"]
+        subject = sorted((r["source_id"], r["rule"], r["stratum"], r["planned"])
+                         for r in prominence if r["prominence"] == "subject")
+        self.assertEqual(subject, [(F.W1, "refute_by_default", "prominence:subject", "required"),
+                                   (F.W2, "refute_by_default", "prominence:subject", "required")])
+        # the supporting ones are still the sample's, and at rate 0 none is drawn
+        self.assertEqual({(r["rule"], r["stratum"], r["planned"]) for r in prominence
+                          if r["prominence"] == "supporting"},
+                         {("sample", "prominence:supporting", "sampled_out")})
+        # each is in the task that judges its passage's locations
+        tasks = {}
+        for task_id, manifest_path in ((p.stem, p) for p in sorted(
+                (self.paths.tend_root("chl-1") / "gate" / "tasks").glob("*.json"))):
+            for d in read_json(manifest_path)["documents"]:
+                for rec in d["records"]:
+                    tasks.setdefault((d["source_id"], rec["item"]), set()).add(task_id)
+        for rec in prominence:
+            if rec["prominence"] == "subject":
+                self.assertEqual(tasks[(rec["source_id"], rec["item"])], {rec["task_id"]})
+
+    def test_several_subject_passages_of_one_article_are_each_challenged(self):
+        """Nothing limits an article to one subject passage: each one's label is judged."""
+        rows = [{"source_id": F.W1, "item": item, "prominence": "subject",
+                 "outcome": "located", "scope": "formal_math", "passage_kind": "definition",
+                 "locations": [{"library": "alpha", "declaration": f"Widget.{n}",
+                                "relation": "exactMatch", "rank": 1,
+                                "location_key": str(n) * 64}]}
+                for n, item in ((1, "In-text #3fa91c07"), (2, "In-text #77e01b2c"))]
+        recs = challenge_plan.draw(challenge_plan.classify(rows, run_id="loc-1"), seed=0,
+                                   sample_rate=0, strong_sample_rate=0, absence_sample_rate=0)
+        self.assertEqual(sorted((r["item"], r["rule"], r["stratum"], r["planned"])
+                                for r in recs if r["target"] == "prominence"),
+                         [("In-text #3fa91c07", "refute_by_default", "prominence:subject",
+                           "required"),
+                          ("In-text #77e01b2c", "refute_by_default", "prominence:subject",
+                           "required")])
+        # a central passage's prominence is no record of the plan, as before
+        central = challenge_plan.classify([{**rows[0], "prominence": "central"}],
+                                          run_id="loc-1")
+        self.assertEqual([r["target"] for r in central], ["location"])
 
     def test_the_sample_is_a_function_of_the_seed(self):
         built = outcomes.build(self.paths, "loc-1", require_gate=True)
@@ -1768,8 +1821,8 @@ class TestChallenge(Campaign):
             return judge
         self.challenge(verdict=verdict("overturn"))
         plan = self.plan()
-        (item,) = [r["item"] for r in plan["records"]
-                   if r["target"] == "prominence" and r["planned"] == "required"]
+        (item,) = [r["item"] for r in plan["records"] if r["target"] == "prominence"
+                   and r["prominence"] == "supporting" and r["planned"] == "required"]
         built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
         self.assertEqual(next(r for r in built["outcomes"] if r["item"] == item)["prominence"],
                          "central")

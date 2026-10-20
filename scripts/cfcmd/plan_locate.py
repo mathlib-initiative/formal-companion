@@ -90,8 +90,9 @@ def register(subparsers) -> None:
     p.add_argument("--seed", type=int, default=0,
                    help="locate-challenge: the stratified sample's seed (default 0)")
     p.add_argument("--sample-rate", type=float, default=vocab.CHALLENGE_SAMPLE_RATE,
-                   help="locate-challenge: the fraction of each scope, prominence and weak-"
-                        f"relation stratum re-judged (default {vocab.CHALLENGE_SAMPLE_RATE})")
+                   help="locate-challenge: the fraction of each scope, supporting-prominence "
+                        "and weak-relation stratum re-judged; a subject passage's prominence "
+                        f"is always challenged (default {vocab.CHALLENGE_SAMPLE_RATE})")
     p.add_argument("--strong-sample-rate", type=float, default=vocab.CHALLENGE_STRONG_SAMPLE_RATE,
                    help="locate-challenge: the fraction of a supporting passage's exactMatch, "
                         "closeMatch and broadMatch locations re-judged, per relation, beside "

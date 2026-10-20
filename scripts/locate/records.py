@@ -27,8 +27,9 @@ end -- the capped quote, and in its locate extension the passage's whole
 ``span`` (half-open code-point offsets on the layer, never its text) beside the
 ``layer_sha256`` they index and the ``span_sha256`` of those characters, so a
 consumer holding that layer highlights the passage, not only its quote, and on
-a ``subject`` passage the article's QID as ``identifiers.wikidata``
-(:func:`article_qid`) -- and the passage's ``section`` (its heading path) and
+a ``subject`` passage the article's QID as ``identifiers.wikidata``, except on a
+record nobody judged under that prominence (``challenge_pending``:
+:func:`article_qid`) -- and the passage's ``section`` (its heading path) and
 ``prominence`` in the locate extension when the passage row carries them --
 :func:`passage_records`, the export's entry, requires both -- and, for a
 passage with a coverage claim (the maintainer's decision D1), ``coverage:
@@ -89,21 +90,24 @@ MAX_LOCATIONS = 5
 NO_MATCH = "noMatch"
 NOT_FORMALIZED = "not_formalized"
 #: ``cflib.vocab.CLOSE_MATCH``, ``HAS_PART``, ``MIN_COVERAGE_PARTS``,
-#: ``COVERAGE_RECORD_KEYS``, ``CHALLENGE_VERDICTS`` and ``PROMINENCE``
+#: ``COVERAGE_RECORD_KEYS``, ``CHALLENGE_PENDING``, ``CHALLENGE_VERDICTS`` and
+#: ``PROMINENCE``
 CLOSE_MATCH = "closeMatch"
 HAS_PART = "hasPart"
 MIN_COVERAGE_PARTS = 2
 COVERAGE_KEYS = frozenset({"complete", "parts", "challenge"})
+CHALLENGE_PENDING = "challenge_pending"
 CHALLENGES = frozenset({"survived", "downgraded", "not_required", "sampled_out",
-                        "challenge_pending"})
+                        CHALLENGE_PENDING})
 PROMINENCES = frozenset({"subject", "central", "supporting"})
 #: the keys of a receipt candidate (references/locate-documents.md section 3), the only
 #: ones its sidecar carries
 RECEIPT_CANDIDATE_KEYS = ("library", "declaration", "verdict", "reason")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+#: ``sources.websource._QID``: the grammar of a source's ``wikidata``
 _QID = re.compile(r"Q[1-9][0-9]*\Z")
-#: ``cflib.vocab.PROMINENCE``'s subject: the one prominence whose records carry the
+#: ``cflib.vocab.PROMINENCE_SUBJECT``: the one prominence whose records carry the
 #: article's QID
 SUBJECT = "subject"
 _SPACE = re.compile(r"\s")
@@ -204,19 +208,27 @@ def passage_span(passage: Mapping[str, Any]) -> list[int]:
     return [start, end]
 
 
-def article_qid(source: Mapping[str, Any], passage: Mapping[str, Any]) -> str | None:
-    """The article's QID a passage's records carry, or None.
+def article_qid(source: Mapping[str, Any], passage: Mapping[str, Any], *,
+                challenge: str | None) -> str | None:
+    """The article's QID one record of a passage carries, or None.
 
     The maintainer's decision B5 (docs/proposals/wikipedia-locate.md sections 2.2
     and 11.3): only a ``subject`` passage -- its prominence after the challenge --
     carries its source's ``wikidata``, the page's own QID, as the subject end's
     ``identifiers.wikidata``; no other passage does, since the article's QID on
-    every passage welds the wrong concepts.  The skill does not check that the
-    QID's enwiki sitelink is this article (no network in library code): its
-    consumer does, before any concept-level edge.  A source with no QID gives
-    None; one whose ``wikidata`` is no QID is refused, never guessed.
+    every passage welds the wrong concepts.  ``challenge`` is the record's own
+    value, the one its extension carries: a ``challenge_pending`` record carries
+    none.  It is a record a prominence overturn to ``subject`` reopened, which no
+    challenger judged under that prominence's rule, so the QID would rest on a
+    location (or an absence) nobody checked (the B5 review's F1); the
+    passage's other records carry it, so the rule is per record, never per
+    passage.  An article may have several subject passages.  The skill does
+    not check that the QID's enwiki sitelink is this article (no network in
+    library code): its consumer does, before any concept-level edge.  A source
+    with no QID gives None; one whose ``wikidata`` is no QID is refused, never
+    guessed.
     """
-    if passage.get("prominence") != SUBJECT:
+    if passage.get("prominence") != SUBJECT or challenge == CHALLENGE_PENDING:
         return None
     qid = source.get("wikidata")
     if qid is None:
@@ -257,12 +269,12 @@ def subject_end(source: Mapping[str, Any], quote: Mapping[str, str], *,
            "layer_sha256": layer_sha, "renderer": str(source["renderer"]),
            "span": [int(start), int(end)], "span_sha256": span_sha256,
            "licence": str(source.get("licence") or "")}
-    end = {"type": "html", "uri": uri, "version": revision,
-           "location": {"quote": quote_out}, "citation": citation,
-           "extensions": {EXTENSION: ext}}
+    html_end = {"type": "html", "uri": uri, "version": revision,
+                "location": {"quote": quote_out}, "citation": citation,
+                "extensions": {EXTENSION: ext}}
     if wikidata is not None:
-        end["identifiers"] = {"wikidata": wikidata}
-    return end
+        html_end["identifiers"] = {"wikidata": wikidata}
+    return html_end
 
 
 def _commit(library: Mapping[str, Any]) -> str:
@@ -425,7 +437,8 @@ def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
         "id": record_id(str(source["source_id"]), str(passage["item"])),
         "subject": [subject_end(source, quote, span_sha256=span_sha256,
                                 span=passage_span(passage),
-                                wikidata=article_qid(source, passage))],
+                                wikidata=article_qid(source, passage,
+                                                     challenge=str(challenge)))],
         "object": [lean_end(library, location)],
         "relation": str(location["relation"]),
         "kind": str(passage["passage_kind"]),
@@ -471,19 +484,20 @@ def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
         raise RecordError("an absence names the universe's libraries, and it has none")
     absence = passage.get("absence") or {}
     challenge = absence.get("challenge") or passage.get("challenge")
+    if not challenge:
+        raise RecordError(f"{passage.get('item')}: the absence has no challenge value")
     record = {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
         "subject": [subject_end(source, quote, span_sha256=span_sha256,
                                 span=passage_span(passage),
-                                wikidata=article_qid(source, passage))],
+                                wikidata=article_qid(source, passage,
+                                                     challenge=str(challenge)))],
         "object": ends,
         "relation": NO_MATCH,
         "status": NOT_FORMALIZED,
         "kind": str(passage["passage_kind"]),
         "extensions": {EXTENSION: _record_ext(passage, universe, receipt=dict(receipt))},
     }
-    if not challenge:
-        raise RecordError(f"{passage.get('item')}: the absence has no challenge value")
     record["extensions"][EXTENSION]["challenge"] = str(challenge)
     return record
 
@@ -496,7 +510,8 @@ def unresolved_record(source: Mapping[str, Any], passage: Mapping[str, Any],
         "id": record_id(str(source["source_id"]), str(passage["item"])),
         "subject": [subject_end(source, quote, span_sha256=span_sha256,
                                 span=passage_span(passage),
-                                wikidata=article_qid(source, passage))],
+                                wikidata=article_qid(source, passage,
+                                                     challenge=passage_challenge(passage)))],
         "object": [],
         "kind": str(passage["passage_kind"]),
         "extensions": {EXTENSION: _record_ext(passage, universe)},
