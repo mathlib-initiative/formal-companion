@@ -50,6 +50,21 @@ release has something to say.
   and `pre_merge_failed`, the bench's `gate_rejections.pre_merge: {calls, rejected, broken}`),
   and a line from an older gate, which has no `pre_merge`, reads as false. The field changes
   the gate's file sha, so `config_shas.gate_files` differs for a run planned after it.
+- The A/A check (the locate bench's acceptance rule, condition 5) also requires the two runs'
+  outcomes to agree. The rule alone is one-sided: it only asks that it would not accept the
+  replicate over its baseline, so a replicate that came out clearly worse, or one that differed
+  on a metric the claim does not name, passed. Now every metric of every tier both scores hold
+  is paired cluster by cluster, and the runs disagree when the whole 95% interval of the
+  difference lies beyond 0.03, or the cost per article's beyond 20% of the baseline's
+  (`conditions.aa.agreement`); a comparison whose replicate disagrees is rejected. A planning
+  refusal names the key, its stage, its `cf plan-locate` flag and both values, where it said
+  only `planning differ`. `cf bench compare <id> <baseline> --aa <replicate> --claim …`, with
+  no candidate, is the check alone: it answers `aa ok` (exit 0) or `aa FAILS` (exit 1), spends
+  no alpha and writes nothing (`--json` prints a `cf-bench-aa/1` document). The challenge seed
+  stays recorded and compared by nothing. The synthetic e2e gains the A/A stage: `loc-2`, planned
+  exactly as `loc-1`, answers `aa ok`, and `loc-3`, challenged at another
+  `--strong-sample-rate`, is refused naming it. `scripts/bench/*.py` changed, so the scorer sha
+  did too: re-score both sides before comparing scores written before this.
 - Locate judgment, after three reviews of the rules above (gate, prompts and
   plan). Still nothing changes for a run planned before the rules, and the
   record set's format is unchanged.

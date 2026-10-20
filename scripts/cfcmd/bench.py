@@ -14,6 +14,7 @@ measurement and is untouched.
     cf bench score <id> --run <locate-run> --split eval --transcripts <dir>
     cf bench compare <id> <baseline-score> <candidate-score> --claim G3.fnf_rate --aa <replicate>
     cf bench compare <id> <baseline> <candidate> --claim G3.fnf_rate --aa <r> --replication b0:loop-…
+    cf bench compare <id> <baseline-score> --aa <replicate> --claim G3.fnf_rate   # the A/A alone
 
 Labels never leave this machine: ``benches/<id>/host/`` is the only part a run
 host may be given (the article lists of each split and the canary strings).
@@ -155,10 +156,13 @@ def register(subparsers) -> None:
                         "refuses it")
     s.add_argument("--json", action="store_true", dest="as_json")
 
-    c = sub.add_parser("compare", help="the section 9 acceptance rule over two score documents")
+    c = sub.add_parser("compare", help="the section 9 acceptance rule over two score documents; "
+                                        "with --aa and no candidate, the A/A check alone")
     c.add_argument("bench_id")
     c.add_argument("baseline", type=Path)
-    c.add_argument("candidate", type=Path)
+    c.add_argument("candidate", type=Path, nargs="?", default=None,
+                   help="the candidate's score (left out: the A/A check of the baseline and "
+                        "--aa alone, which answers aa ok or aa FAILS and writes nothing)")
     c.add_argument("--claim", required=True, help="the pre-registered metric, e.g. G3.fnf_rate")
     c.add_argument("--aa", type=Path, default=None,
                    help="the score of a distinct replicate run of the baseline's configuration")
@@ -845,10 +849,58 @@ def _score(ws, args) -> int:
     return 0
 
 
+def _aa_only(layout: BenchLayout, args) -> int:
+    """``cf bench compare <id> <baseline> --aa <replicate>``: rule 5's condition alone."""
+    if args.aa is None:
+        raise CfError("cf bench compare needs a candidate score, or --aa for the A/A check alone",
+                      hint="cf bench compare <id> <baseline> <candidate> --claim <tier.metric> "
+                           "--aa <replicate>, or cf bench compare <id> <baseline> --aa "
+                           "<replicate> --claim <tier.metric>")
+    if args.replication:
+        raise CfError("--replication names the claim a comparison replicates; the A/A check "
+                      "claims nothing", hint="give the candidate's score, or leave out --replication")
+    doc = compare_mod.aa_check(layout, args.baseline, args.aa, claim=args.claim, alpha=args.alpha,
+                               replicates=args.bootstrap, seed=args.seed)
+    if args.as_json:
+        print(json.dumps(doc, indent=1, sort_keys=True))
+        return 0 if doc["ok"] else 1
+    cond = doc["aa"]
+    agree = cond["agreement"]
+    print(f"{doc['answer']}: replicate {doc['replicate'][:16]} of baseline "
+          f"{doc['baseline'][:16]} ({doc['claim']}, alpha {doc['alpha']:.4g}; nothing written)")
+    print(f"  configuration ok    {', '.join(doc['configuration']['compared'])}: the same")
+    lower = cond["claim_improvement_lower"]
+    print(f"  rule          {'FAILS' if cond['accepted'] else 'ok   '} the acceptance rule "
+          f"{'accepts' if cond['accepted'] else 'does not accept'} the replicate (claim lower "
+          f"bound {'?' if lower is None else f'{lower:.4g}'})")
+    print(f"  agreement     {'ok   ' if agree['ok'] else 'FAILS'} {len(agree['metrics'])} "
+          f"metric(s) within {agree['tolerance']:g} and cost within "
+          f"{agree['cost_tolerance']:.0%} on {agree['level']:.0%} paired intervals")
+    def num(value) -> str:
+        return "?" if value is None else f"{value:.4g}"
+
+    for name in agree["disagree"]:
+        row = agree["cost"] if name == "cost" else agree["metrics"][name]
+        lo, hi = row.get("lo"), row.get("hi")
+        span = "" if lo is None else f", difference in [{num(lo)}, {num(hi)}]"
+        print(f"    disagrees: {name} {num(row.get('baseline'))} -> {num(row.get('replicate'))}"
+              f"{span}" + (f" ({row['why']})" if row.get("why") else ""))
+    seeds = doc["recorded"]["challenge_seed"]
+    said = {side: ", ".join(f"{run} {seed}" for run, seed in seeds[side].items()) or "none"
+            for side in ("baseline", "replicate")}
+    print(f"  recorded      challenge seeds: {said['baseline']} (baseline), {said['replicate']} "
+          f"(replicate); compared by nothing")
+    for note in doc["differences"]:
+        print(f"  note: {note}")
+    return 0 if doc["ok"] else 1
+
+
 def _compare(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
     _bench(layout)
+    if args.candidate is None:
+        return _aa_only(layout, args)
     replication = None
     if args.replication:
         other, sep, entry_id = args.replication.partition(":")
@@ -866,6 +918,9 @@ def _compare(ws, args) -> int:
     print(f"{args.claim}: {verdict} at alpha {entry['alpha_j']:.4g}; ledger entry {entry['entry_id']}")
     for name, cond in sorted(entry["conditions"].items()):
         print(f"  {name:<13} {'ok' if cond.get('ok') else 'FAILS'}")
+    disagree = ((entry["conditions"].get("aa") or {}).get("agreement") or {}).get("disagree")
+    if disagree:
+        print(f"  aa: the replicate disagrees with the baseline on {', '.join(disagree)}")
     if not entry["claimed"]:
         print(f"  {entry['claim_basis']}")
     for note in entry["differences"]:
