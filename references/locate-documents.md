@@ -914,7 +914,9 @@ held, refused when the row's `layer_sha256` contradicts the producer's sha
 recorded for them or the layer already rendered from them (a layer another
 renderer recorded is no measure of this one's parity, so that refusal names
 the `create --from` migration below, after which the delivery is adopted into
-the seeded sourceset); and bytes the
+the seeded sourceset — which records no producer sha for a source the old one
+adopted with none, so a kept run's sourceset is instead created new and filled
+by `adopt` alone, `references/runbook-server.md` §9); and bytes the
 sourceset fetched itself become the consumer's pin (`adopted_from` added, so
 `Manifest.preferred()` plans them). A recorded `adopted_from`, the producer's
 `layer_sha256` in it included, is never replaced (append-only): a source first
@@ -1882,10 +1884,15 @@ its shard has a priced envelope with a duration of its own: `--unpriced-usd-per-
 another, else the pilot's highest priced dollars per hour among its envelopes
 that carry `duration_ms` (`total_cost_usd` over `duration_ms`, both positive,
 read from `runs/<pilot>/host/envelopes/`, where `cf harvest` lands the pilot's
-`usage/`, by the watchdog's own `ledger`). A measured rate is measured again at
-every plan, so it follows the pilot; `unpriced_usd_per_hour_pilot` names the
-pilot it came from (null for the flag's), and a pilot with no such envelope
-leaves the rate null. A transcript directory or canaries
+`usage/`, by the watchdog's own `ledger`, which takes the hour from the
+unrounded rate). A measured rate is measured again at every plan, so it
+follows the pilot; `unpriced_usd_per_hour_pilot` names the pilot it came from
+(null for the flag's). When the pilot has no such envelope, a rate measured on
+that same pilot before is kept (its envelopes were pruned, say), and a pilot
+the rate was not measured on leaves it null, never the last pilot's. A kept
+rate is checked at every plan as the flag is: one that is not a positive,
+finite number (a hand edit) is refused by name before anything is written,
+and the flag replaces it. A transcript directory or canaries
 path is absolute or `~/…` (the host's home), since render quotes every path
 into the sequencer; anything else is refused, at `plan` for the flags and at
 `render` for `hosts.<host>.transcript_dirs`. `render` refuses a campaign whose

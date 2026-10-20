@@ -460,12 +460,31 @@ def _double_quoted(s: str) -> str:
     return '"' + _CONTROL_RE.sub(_escape_control, escaped) + '"'
 
 
+def _fmt_float(v: float) -> str:
+    """A float both readers read back as that float.
+
+    Python spells a float below 1e-4 or from 1e16 with an exponent and no
+    point (``1e-05``), which YAML 1.1 (PyYAML) and the fallback reader both
+    hand back as a STRING: a campaign rate given as ``1e-5`` came back as
+    ``'1e-05'``, which render refused and a re-plan crashed on.  The mantissa
+    gains its ``.0``; Python's exponent always carries the sign YAML 1.1
+    requires.
+    """
+    s = repr(v)
+    mantissa, e, exponent = s.partition("e")
+    if e and "." not in mantissa:
+        return f"{mantissa}.0e{exponent}"
+    return s
+
+
 def _fmt_scalar(v: Any) -> str:
     if v is None:
         return "null"
     if isinstance(v, bool):
         return "true" if v else "false"
-    if isinstance(v, (int, float)):
+    if isinstance(v, float):
+        return _fmt_float(v)
+    if isinstance(v, int):
         return str(v)
     if isinstance(v, (list, dict)):
         return "[]" if isinstance(v, list) else "{}"

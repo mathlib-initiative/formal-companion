@@ -302,9 +302,9 @@ root, bridge and harvest, with these differences:
   --consumer <consumer>`, `cf sourceset render <id>`, then `cf sourceset status <id> --verify`.
   It is **never** seeded with `cf sourceset create <id> --from wpm3` (the smoke runs' sourceset),
   nor from any sourceset whose sources were adopted before, and the delivery is never adopted
-  into one that was. **Why:** every source wpm3 holds from the consumer's pins records an
-  `adopted_from` with no producer sha, a recorded `adopted_from` never changes, and `create
-  --from` copies it, so a seeded source can never be given the producer's `layer_sha256`:
+  into one that was. **Why:** a source adopted from a pin that carried no producer sha records
+  an `adopted_from` without one, a recorded `adopted_from` never changes, and `create --from`
+  copies it, so a seeded source can never be given the producer's `layer_sha256`:
   adopting the delivery into it only lists each such pin under
   `commands.adopt.layer_sha256_not_recorded`, and no render of it is ever held to the
   producer's text layer. Adopted into a new sourceset, each pin's `layer_sha256` is recorded in
