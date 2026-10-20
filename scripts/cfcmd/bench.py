@@ -14,6 +14,7 @@ measurement and is untouched.
     cf bench score <id> --run <locate-run> --split eval --transcripts <dir>
     cf bench compare <id> <baseline-score> <candidate-score> --claim G3.fnf_rate --aa <replicate>
     cf bench compare <id> <baseline> <candidate> --claim G3.fnf_rate --aa <r> --replication b0:loop-…
+    cf bench compare <id> <baseline-score> --aa <replicate> --claim G3.fnf_rate   # the A/A alone
 
 Labels never leave this machine: ``benches/<id>/host/`` is the only part a run
 host may be given (the article lists of each split and the canary strings).
@@ -50,12 +51,37 @@ from sources import render_html
 NAME = "bench"
 
 
+class _BenchParser(argparse.ArgumentParser):
+    """The parser of a ``cf bench`` subcommand: it takes back an optional positional that
+    came after an option.
+
+    Python 3.11's argparse (the floor, CLAUDE.md section 3) matches an optional positional
+    (``nargs="?"``) with the first run of positionals, empty when that run is short, so
+    ``compare <id> <baseline> --claim X <candidate>`` left ``<candidate>`` unrecognised
+    there -- an order that parsed while the candidate was required, and that 3.12 parses
+    still.  A subcommand that names its optional positional in ``late_positional`` (a
+    ``(dest, type)`` pair) gets one leftover non-option string back as that positional
+    while it is unset; any other leftover stays unrecognised, as argparse reports it.
+    """
+
+    late_positional: tuple[str, type] | None = None
+
+    def parse_known_args(self, args=None, namespace=None):
+        parsed, extras = super().parse_known_args(args, namespace)
+        if self.late_positional is not None:
+            dest, kind = self.late_positional
+            if (getattr(parsed, dest, None) is None and len(extras) == 1
+                    and not extras[0].startswith("-")):
+                setattr(parsed, dest, kind(extras.pop()))
+        return parsed, extras
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser(NAME, help="build, label, freeze and score the locate benchmark; "
                                           "compare two runs by the acceptance rule",
                               description=__doc__,
                               formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = p.add_subparsers(dest="bench_command", metavar="<subcommand>")
+    sub = p.add_subparsers(dest="bench_command", metavar="<subcommand>", parser_class=_BenchParser)
 
     b = sub.add_parser("build", help="the frame, the seeded draws, clusters, splits and the G3 "
                                      "span sample; label-free host manifests")
@@ -155,10 +181,14 @@ def register(subparsers) -> None:
                         "refuses it")
     s.add_argument("--json", action="store_true", dest="as_json")
 
-    c = sub.add_parser("compare", help="the section 9 acceptance rule over two score documents")
+    c = sub.add_parser("compare", help="the section 9 acceptance rule over two score documents; "
+                                        "with --aa and no candidate, the A/A check alone")
     c.add_argument("bench_id")
     c.add_argument("baseline", type=Path)
-    c.add_argument("candidate", type=Path)
+    c.add_argument("candidate", type=Path, nargs="?", default=None,
+                   help="the candidate's score (left out: the A/A check of the baseline and "
+                        "--aa alone, which answers aa ok or aa FAILS and writes nothing)")
+    c.late_positional = ("candidate", Path)
     c.add_argument("--claim", required=True, help="the pre-registered metric, e.g. G3.fnf_rate")
     c.add_argument("--aa", type=Path, default=None,
                    help="the score of a distinct replicate run of the baseline's configuration")
@@ -845,10 +875,102 @@ def _score(ws, args) -> int:
     return 0
 
 
+def _agreement_lines(agree: dict) -> list[str]:
+    """The A/A's agreement as ``cf bench compare --aa`` prints it: what it showed, then
+    every row it holds with its verdict and interval (vocab.BENCH_AA_VERDICTS).
+
+    No equivalence test: ``ok`` says no row was SHOWN to differ past its tolerance, and
+    the second line says for how many rows agreement within it was shown and how large
+    a difference the intervals leave possible, so a small A/A cannot read as a tight one.
+    """
+    tol, ctol, level = agree["tolerance"], agree["cost_tolerance"], agree["level"]
+    if agree["ok"]:
+        head = (f"no metric shown to differ by more than {tol:g}, nor the cost per article "
+                f"by more than {ctol:.0%}")
+    else:
+        head = (f"shown to differ: {', '.join(agree['disagree'])} (a metric past {tol:g}, "
+                f"the cost per article past {ctol:.0%})")
+    lines = [f"  agreement     {'ok   ' if agree['ok'] else 'FAILS'} {head} "
+             f"({level:.0%} paired intervals, {agree['compared']} compared)"]
+    reach = agree.get("reach")
+    lines.append(f"                      agreement within the tolerance shown for "
+                 f"{len(agree['within'])} of {agree['compared']}"
+                 + (f", unresolved for {len(agree['unresolved'])}" if agree["unresolved"] else "")
+                 + ("" if reach is None else
+                    f"; the intervals leave a difference of up to {reach:.3g} possible"))
+
+    def num(value, *, sign=False, share=False) -> str:
+        if value is None:
+            return "?"
+        return f"{value:+.1%}" if share else (f"{value:+.4g}" if sign else f"{value:.4g}")
+
+    rows = [(name, row, False) for name, row in agree["metrics"].items()]
+    rows.append((f"cost ({agree['cost'].get('cells')})", agree["cost"], True))
+
+    def rank(row: dict) -> int:
+        """What failed first, then what is unresolved, what agrees, and what was not compared."""
+        if not row["ok"]:
+            return 0
+        return {vocab.BENCH_AA_UNRESOLVED: 1, vocab.BENCH_AA_WITHIN: 2}.get(row.get("verdict"), 3)
+
+    width = max(len(name) for name, _row, _cost in rows)
+    for name, row, cost in sorted(rows, key=lambda r: (rank(r[1]), r[0])):
+        verdict = row.get("verdict") or ("FAILS" if not row["ok"] else "not compared")
+        relative = cost and "relative_lo" in row
+        lo = row.get("relative_lo" if relative else "lo")
+        hi = row.get("relative_hi" if relative else "hi")
+        diff = row.get("relative_difference" if relative else "difference")
+        said = (f"{num(row.get('baseline'))} -> {num(row.get('replicate'))}"
+                + ("" if diff is None else f", difference {num(diff, sign=True, share=relative)}")
+                + ("" if lo is None else f" in [{num(lo, sign=True, share=relative)}, "
+                                         f"{num(hi, sign=True, share=relative)}]"))
+        why = f" ({row['why']})" if row.get("why") else ""
+        lines.append(f"    {verdict:<12} {name:<{width}}  {said}{why}")
+    return lines
+
+
+def _aa_only(layout: BenchLayout, args) -> int:
+    """``cf bench compare <id> <baseline> --aa <replicate>``: rule 5's condition alone."""
+    if args.aa is None:
+        raise CfError("cf bench compare needs a candidate score, or --aa for the A/A check alone",
+                      hint="cf bench compare <id> <baseline> <candidate> --claim <tier.metric> "
+                           "--aa <replicate>, or cf bench compare <id> <baseline> --aa "
+                           "<replicate> --claim <tier.metric>")
+    if args.replication:
+        raise CfError("--replication names the claim a comparison replicates; the A/A check "
+                      "claims nothing", hint="give the candidate's score, or leave out --replication")
+    doc = compare_mod.aa_check(layout, args.baseline, args.aa, claim=args.claim, alpha=args.alpha,
+                               replicates=args.bootstrap, seed=args.seed)
+    if args.as_json:
+        print(json.dumps(doc, indent=1, sort_keys=True))
+        return 0 if doc["ok"] else 1
+    cond = doc["aa"]
+    agree = cond["agreement"]
+    print(f"{doc['answer']}: replicate {doc['replicate'][:16]} of baseline "
+          f"{doc['baseline'][:16]} ({doc['claim']}, alpha {doc['alpha']:.4g}; nothing written)")
+    print(f"  configuration ok    {', '.join(doc['configuration']['compared'])}: the same")
+    lower = cond["claim_improvement_lower"]
+    print(f"  rule          {'FAILS' if cond['accepted'] else 'ok   '} the acceptance rule "
+          f"{'accepts' if cond['accepted'] else 'does not accept'} the replicate (claim lower "
+          f"bound {'?' if lower is None else f'{lower:.4g}'})")
+    for line in _agreement_lines(agree):
+        print(line)
+    seeds = doc["recorded"]["challenge_seed"]
+    said = {side: ", ".join(f"{run} {seed}" for run, seed in seeds[side].items()) or "none"
+            for side in ("baseline", "replicate")}
+    print(f"  recorded      challenge seeds: {said['baseline']} (baseline), {said['replicate']} "
+          f"(replicate); compared by nothing")
+    for note in doc["differences"]:
+        print(f"  note: {note}")
+    return 0 if doc["ok"] else 1
+
+
 def _compare(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
     _bench(layout)
+    if args.candidate is None:
+        return _aa_only(layout, args)
     replication = None
     if args.replication:
         other, sep, entry_id = args.replication.partition(":")
@@ -866,6 +988,9 @@ def _compare(ws, args) -> int:
     print(f"{args.claim}: {verdict} at alpha {entry['alpha_j']:.4g}; ledger entry {entry['entry_id']}")
     for name, cond in sorted(entry["conditions"].items()):
         print(f"  {name:<13} {'ok' if cond.get('ok') else 'FAILS'}")
+    disagree = ((entry["conditions"].get("aa") or {}).get("agreement") or {}).get("disagree")
+    if disagree:
+        print(f"  aa: the replicate disagrees with the baseline on {', '.join(disagree)}")
     if not entry["claimed"]:
         print(f"  {entry['claim_basis']}")
     for note in entry["differences"]:

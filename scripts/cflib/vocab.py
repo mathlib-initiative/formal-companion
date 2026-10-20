@@ -775,6 +775,15 @@ BENCH_ARM_ASSISTED = "assisted"
 BENCH_ARM_BLIND = "blind"
 BENCH_ARMS = frozenset({BENCH_ARM_ASSISTED, BENCH_ARM_BLIND})
 BENCH_SPLITS = frozenset({"dev", "eval", "test"})
+#: what the A/A's agreement says of one metric, on the paired interval of (replicate -
+#: baseline) against its tolerance (references/locate-bench.md section 9, rule 5): the
+#: whole interval lies past it (``differs``, the runs disagree), inside it (``within``,
+#: agreement shown), or reaches past it without lying wholly beyond (``unresolved``: no
+#: difference shown, and no agreement either -- the burden of proof is on the difference)
+BENCH_AA_DIFFERS = "differs"
+BENCH_AA_WITHIN = "within"
+BENCH_AA_UNRESOLVED = "unresolved"
+BENCH_AA_VERDICTS = frozenset({BENCH_AA_DIFFERS, BENCH_AA_WITHIN, BENCH_AA_UNRESOLVED})
 #: why a gold-formalized passage did not end ``formalized`` (the safety metric's
 #: cause breakdown, section 8.2); unresolved and gate-failed are misses
 FNF_CAUSES = frozenset({"inventory_miss", "scope_demotion", "absence", "weak_relation",
