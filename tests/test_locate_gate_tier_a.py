@@ -17,7 +17,10 @@ docs/design/stage_map.md section 4.0:
 * **the two holes**: the gate compares ``corpus.sqlite`` with its pinned sha
   (a doctored database no longer passes a phantom declaration) and each
   candidates file with ``candidates_sha256``; ``cf harvest`` re-gates with the
-  run's own gate copy and records its hash.
+  run's own gate copy and records its hash -- from its sources only (a planted
+  ``.pyc`` never runs), with a config that is the staged ``gate.json`` but for
+  its paths and the task manifests ``planned.json`` records, and a refusal that
+  names what settles it.
 
 Every page, library and declaration is made up (the "Widget lemma", page id
 1001; libraries ``alpha`` and ``beta``).
@@ -30,14 +33,18 @@ except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
 import copy
+import importlib.machinery
 import io
 import json
 import os
+import py_compile
 import shutil
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -661,6 +668,45 @@ class TestThePlannerPins(unittest.TestCase):
         self.assertIn("paragraphs.json", str(caught.exception))
         self.assertIn("render.json records", str(caught.exception))
 
+    def test_a_real_plan_passes_the_harvests_checks_of_its_own_records(self):
+        """The run's gate copy, the staged gate.json, gate.local.json and planned.json agree."""
+        F.plan_locate(self, self.root)
+        for run in ("inv-1", "loc-1"):
+            rd = self.paths.run_dir(run)
+            doc = read_yaml(rd / "run.yaml")
+            pins = doc["locate"]["gate_files"]
+            gate_dir = Path(self.paths.tend_root(run)) / "gate"
+            self.assertIn("gate/gate.json", pins)
+            self.assertTrue((rd / "planned.json").is_file())
+            self.assertEqual(gate_corpus.run_gate_code(gate_dir, pins)[1], [], run)
+            self.assertEqual(gate_corpus.run_config_problems(
+                rd / "gate.local.json", run_doc=doc, planned=rd / "planned.json",
+                gate_dir=gate_dir, gate_files=pins), [], run)
+
+    def test_the_layout_fields_are_every_path_a_layout_gives_gate_json(self):
+        """What the cross-check lets differ is exactly what ``gate_config`` takes from a layout."""
+
+        class Layout(dict):
+            def __init__(self, tag: str):
+                super().__init__()
+                self.tag = tag
+
+            def __missing__(self, key):
+                return f"/{self.tag}/{key}"
+
+        manifest = lplan.inputs.manifest(self.paths, F.SS)
+        universe = lplan.inputs.load_universe(self.paths, F.U)
+        a, b = (lplan.gate_config(
+            preset_mode="locate", preset_name="locate-default", run_id="r-x", layout=Layout(tag),
+            universe=universe, corpus_db_sha256="0" * 64,
+            tools_db={"path": "/t", "sha256": "1" * 64, "kind": "full"}, manifest=manifest,
+            source_ids=[F.W1], blind=False, inventory_run=None, challenged_runs=[])
+            for tag in ("one", "two"))
+        self.assertEqual(set(gate_corpus._differing(a, b)),
+                         {".".join(field) for field in gate_corpus.LAYOUT_FIELDS})
+        self.assertEqual(gate_corpus._differing(gate_corpus._without_layout(a),
+                                                gate_corpus._without_layout(b)), [])
+
 
 # --------------------------------------------------------------------------- #
 # the harvest re-gates with the run's own gate
@@ -679,11 +725,10 @@ class TestTheHarvestUsesTheRunsOwnGate(unittest.TestCase):
             cf_main(["init", str(self.ws), "--no-git", "-q"])
         self.run_dir = self.ws / "runs" / "r-1"
         self.run_dir.mkdir(parents=True)
-        self.pins = tvl.stage_run_gate(self.run_dir)
+        self.pins = tvl.stage_planned_run(self.run_dir, self.fx)
         write_yaml(self.run_dir / "run.yaml", {"version": 1, "run_id": "r-1", "mode": "locate",
                                                "locate": {"mode": "locate",
                                                           "gate_files": self.pins}})
-        shutil.copy2(self.fx.root / "gate" / "gate.json", self.run_dir / "gate.local.json")
         self.gate_dir = self.run_dir / "tend-root" / "gate"
 
     def harvest(self, *extra: str) -> tuple[int, dict, str]:
@@ -737,9 +782,11 @@ class TestTheHarvestUsesTheRunsOwnGate(unittest.TestCase):
                       " ".join(receipt["gate"]["problems"]))
 
     def test_the_import_leaves_no_bytecode_in_the_run(self):
+        prefix = sys.pycache_prefix
         code, receipt, out = self.harvest()
         self.assertEqual(code, 0, out)
         self.assertEqual(list(self.gate_dir.rglob("__pycache__")), [])
+        self.assertEqual(sys.pycache_prefix, prefix)
 
     def test_the_copy_that_runs_is_the_runs(self):
         """A run whose gate differs from the checkout's is judged by its own."""
@@ -748,14 +795,15 @@ class TestTheHarvestUsesTheRunsOwnGate(unittest.TestCase):
             'GATE_SCHEMA = "cf-gate-locate/1"', 'GATE_SCHEMA = "cf-gate-locate/0"'),
             encoding="utf-8")
         self.repin("gate/verify_locate.py")
-        before = {n: m for n, m in sys.modules.items() if gate_corpus._is_gate_module(n)}
+        names = gate_corpus.gate_module_names(self.gate_dir)
+        before = {n: m for n, m in sys.modules.items() if gate_corpus._is_gate_module(n, names)}
         path_before = list(sys.path)
         code, receipt, out = self.harvest()
         self.assertNotEqual(code, 0)
         self.assertIn("not 'cf-gate-locate/0'", " ".join(receipt["gate"]["problems"]))
         self.assertEqual(receipt["gate"]["gate_code"]["sha256"], hashing.sha256_file(path))
         # the checkout's modules and path are back as they were
-        after = {n: m for n, m in sys.modules.items() if gate_corpus._is_gate_module(n)}
+        after = {n: m for n, m in sys.modules.items() if gate_corpus._is_gate_module(n, names)}
         self.assertEqual(after, before)
         self.assertEqual(sys.path, path_before)
         self.assertEqual(vl.GATE_SCHEMA, "cf-gate-locate/1")
@@ -766,6 +814,14 @@ class TestTheHarvestUsesTheRunsOwnGate(unittest.TestCase):
         code, receipt, out = self.harvest()
         self.assertNotEqual(code, 0)
         self.assertIn("records no locate.gate_files", " ".join(receipt["gate"]["problems"]))
+        # the refusal names the flag that settles it, and blames no finding
+        self.assertIn("--checkout-gate", receipt["gate"]["hint"])
+        self.assertIn("hint: `cf harvest <run-id> --checkout-gate`", out)
+        self.assertIn("could not judge the findings", out)
+        self.assertIn("`cf harvest r-1 --checkout-gate` re-gates", out)
+        self.assertNotIn("do not validate", out)
+        code, receipt, out = self.harvest("--checkout-gate")
+        self.assertEqual(code, 0, out)
 
     def test_a_doctored_corpus_fails_the_harvest(self):
         """The contributor's own gate: a phantom declaration in its database no longer passes."""
@@ -780,6 +836,171 @@ class TestTheHarvestUsesTheRunsOwnGate(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("not the database this run was planned with",
                       " ".join(receipt["gate"]["broken"]))
+
+
+    # -- review fixes: bytecode, the plan's records, the hint, the module names --
+    def phantom_document(self) -> None:
+        """A document locating a declaration only a doctored database holds."""
+        body = tvl.locate_body()
+        body["passages"][0]["locations"] = [tvl.location(decl="Widget.phantom_lemma")]
+        body["passages"][0]["receipt"]["candidates"] = [
+            {"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+             "verdict": "rejected", "reason": "a synthetic rejection"}]
+        self.fx.document("t-loc-0001", body, directory=self.landed)
+
+    def edit_json(self, path: Path, change) -> None:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        change(doc)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+
+    def test_a_planted_bytecode_never_runs_in_place_of_its_source(self):
+        """A .pyc in the run's __pycache__/ whose header claims the pinned source's mtime and size."""
+        self.phantom_document()
+        src = self.gate_dir / "verify_locate.py"
+        text = src.read_text(encoding="utf-8")
+        needle = "            self._exists[key] = row is not None"
+        self.assertIn(needle, text)
+        doctored = self.fx.root / "doctored" / "verify_locate.py"
+        doctored.parent.mkdir()
+        doctored.write_text(text.replace(needle, "            self._exists[key] = True"),
+                            encoding="utf-8")
+        cache = self.gate_dir / "__pycache__" / f"verify_locate.{sys.implementation.cache_tag}.pyc"
+        cache.parent.mkdir()
+        py_compile.compile(str(doctored), cfile=str(cache), dfile=str(src), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        stat = src.stat()
+        data = bytearray(cache.read_bytes())
+        data[8:12] = struct.pack("<I", int(stat.st_mtime) & 0xFFFFFFFF)
+        data[12:16] = struct.pack("<I", stat.st_size & 0xFFFFFFFF)
+        cache.write_bytes(bytes(data))
+        # the plant is a good one: a plain import of the source would run the doctored code
+        prefix, sys.pycache_prefix = sys.pycache_prefix, None
+        try:
+            loaded = importlib.machinery.SourceFileLoader("verify_locate", str(src)).get_code(
+                "verify_locate")
+        finally:
+            sys.pycache_prefix = prefix
+        self.assertNotEqual(loaded, compile(text, str(src), "exec"))
+        code, receipt, out = self.harvest()
+        self.assertNotEqual(code, 0)
+        self.assertIn("a phantom declaration", " ".join(receipt["gate"]["problems"]))
+        self.assertEqual(receipt["gate"]["gate_code"]["sha256"], self.pins["gate/verify_locate.py"])
+
+    def test_a_local_config_repinned_to_a_doctored_database_is_refused(self):
+        """gate.local.json is the staged gate.json but for its paths: its pins are the plan's."""
+        self.phantom_document()
+        add_phantom(self.fx.db)
+        self.edit_json(self.run_dir / "gate.local.json",
+                       lambda d: d["corpus_db"].update(sha256=_sha(self.fx.db.read_bytes())))
+        code, receipt, out = self.harvest()
+        self.assertNotEqual(code, 0)
+        self.assertFalse(receipt["gate"]["ok"])
+        self.assertIn("gate.local.json is not the gate/gate.json its plan staged but for the "
+                      "layout's paths: corpus_db.sha256 differ", " ".join(receipt["gate"]["broken"]))
+        self.assertIn("re-plan the run", receipt["gate"]["hint"])
+        self.assertNotIn("--checkout-gate", receipt["gate"]["hint"])
+        self.assertIn("could not judge the findings", out)
+
+    def test_run_yaml_holds_the_corpus_pin_with_the_checkout_gate_too(self):
+        doc = read_yaml(self.run_dir / "run.yaml")
+        doc["locate"]["universe"] = {"corpus_db_sha256": self.fx.gate["corpus_db"]["sha256"]}
+        write_yaml(self.run_dir / "run.yaml", doc)
+        code, receipt, out = self.harvest("--checkout-gate")
+        self.assertEqual(code, 0, out)
+        self.phantom_document()
+        add_phantom(self.fx.db)
+        self.edit_json(self.run_dir / "gate.local.json",
+                       lambda d: d["corpus_db"].update(sha256=_sha(self.fx.db.read_bytes())))
+        code, receipt, out = self.harvest("--checkout-gate")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(receipt["gate"]["gate_code"]["from"], "checkout")
+        self.assertIn("run.yaml locate.universe.corpus_db_sha256",
+                      " ".join(receipt["gate"]["broken"]))
+
+    def test_a_task_manifest_edited_since_the_plan_is_refused(self):
+        """An emptied `curated` list would hand the task no curated hit, and turn rule 4 off."""
+        body = tvl.locate_body()
+        body["passages"][0]["locations"] = [tvl.location(decl="Widget.Spanning")]
+        body["passages"][0]["receipt"]["candidates"] = []
+        self.fx.document("t-loc-0001", body, directory=self.landed)
+        code, receipt, out = self.harvest()
+        self.assertNotEqual(code, 0)
+        self.assertIn("[rule 4]", " ".join(receipt["gate"]["problems"]))
+        self.edit_json(self.fx.tasks / "t-loc-0001.json",
+                       lambda d: d["documents"][0].update(curated=[]))
+        for extra in ((), ("--checkout-gate",)):
+            code, receipt, out = self.harvest(*extra)
+            self.assertNotEqual(code, 0, extra)
+            self.assertIn("t-loc-0001 in", " ".join(receipt["gate"]["broken"]))
+            self.assertIn("are not the ones planned.json records", " ".join(receipt["gate"]["broken"]))
+
+    def test_a_task_manifest_the_plan_never_wrote_is_refused(self):
+        self.fx.manifest("t-loc-9999", tvl.locate_manifest_doc(self.fx))
+        code, receipt, out = self.harvest()
+        self.assertNotEqual(code, 0)
+        self.assertIn("holds task manifest(s) t-loc-9999 that planned.json does not record",
+                      " ".join(receipt["gate"]["broken"]))
+
+    def test_a_run_without_planned_json_is_refused_by_its_own_gate(self):
+        (self.run_dir / "planned.json").unlink()
+        code, receipt, out = self.harvest()
+        self.assertNotEqual(code, 0)
+        self.assertIn("planned.json is missing", " ".join(receipt["gate"]["broken"]))
+        # the checkout's gate reads the manifests as found, and the receipt says whose gate ran
+        code, receipt, out = self.harvest("--checkout-gate")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(receipt["gate"]["gate_code"]["from"], "checkout")
+
+    def test_the_staged_gate_json_is_held_to_its_pin(self):
+        staged = self.gate_dir / "gate.json"
+        staged.write_text(staged.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        code, receipt, out = self.harvest()
+        self.assertNotEqual(code, 0)
+        self.assertIn("the run's gate/gate.json is not the bytes its plan staged",
+                      " ".join(receipt["gate"]["broken"]))
+        doc = read_yaml(self.run_dir / "run.yaml")
+        del doc["locate"]["gate_files"]["gate/gate.json"]
+        write_yaml(self.run_dir / "run.yaml", doc)
+        code, receipt, out = self.harvest()
+        self.assertNotEqual(code, 0)
+        self.assertIn("pins no gate/gate.json", " ".join(receipt["gate"]["broken"]))
+
+    def test_the_layout_paths_may_differ(self):
+        """gate.local.json names this machine's paths: those are the only fields it may change."""
+        tasks = self.fx.root / "local-tasks"
+        shutil.copytree(self.fx.tasks, tasks)
+
+        def local(d):
+            d.update(log_dir=str(self.fx.root / "elsewhere-log"), tasks_dir=str(tasks),
+                     orchestrator_db=str(self.fx.root / "elsewhere.sqlite"))
+        self.edit_json(self.run_dir / "gate.local.json", local)
+        code, receipt, out = self.harvest()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(receipt["gate"]["ok"], receipt["gate"]["problems"])
+
+    def test_the_gate_modules_are_read_off_the_directory(self):
+        modules, packages = gate_corpus.gate_module_names(self.gate_dir)
+        self.assertEqual(modules, {Path(name).stem for _rel, name in ltr.GATE_FILES})
+        self.assertLessEqual({"verify_locate", *(Path(m).stem for m in vl.GATE_MODULES)}, modules)
+        self.assertEqual(packages, set(ltr.VENDORED))
+        self.assertEqual(packages, set(vl.VENDORED_PACKAGES))
+
+    def test_a_sibling_the_checkout_holds_is_the_runs_while_the_gate_runs(self):
+        """No list to keep in step: any staged sibling is set aside, not only the ones named."""
+        stale = types.ModuleType("passage_ids")
+        saved = sys.modules.get("passage_ids", None)
+        sys.modules["passage_ids"] = stale
+        try:
+            with gate_corpus._isolated_gate(self.gate_dir):
+                import passage_ids as seen  # noqa: PLC0415 - the run's copy, by name
+                self.assertEqual(Path(seen.__file__).resolve(),
+                                 (self.gate_dir / "passage_ids.py").resolve())
+            self.assertIs(sys.modules["passage_ids"], stale)
+        finally:
+            if saved is None:
+                sys.modules.pop("passage_ids", None)
+            else:
+                sys.modules["passage_ids"] = saved
 
 
 if __name__ == "__main__":

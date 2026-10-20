@@ -1752,8 +1752,31 @@ judges the corpus its workers were judged by. A copy whose file is missing or
 not the planned bytes, one that holds a Python module its plan did not stage
 (the directory comes first on the import path, as on the host), or a run whose
 `run.yaml` records no `gate_files`, fails the gate without running (the
-receipt is not complete), and the import writes no bytecode there; `cf harvest
---checkout-gate` re-gates with this checkout's gate instead. The receipt's
+receipt is not complete). The copy runs from its pinned sources only: the
+import writes no bytecode into the run's directory and reads none from it
+(bytecode is looked up under an empty directory of its own), so a `.pyc`
+planted in its `__pycache__/` never runs in place of the source it claims to
+be. The modules set aside while it runs are read off the directory (each
+`<name>.py` beside the gate and each package under `vendor/`), not kept in a
+second list. Nor does the re-gate take the plan's pins from the config alone:
+`gate.local.json` must be the `gate/gate.json` the plan staged (itself the
+bytes `gate_files` pins) in every field but the ones that name the layout's
+paths (`corpus_db.path`, `tools_corpus_db.path`, `sourceset.sources_dir`,
+`candidates_dir`, `tasks_dir`, `log_dir`, `orchestrator_db`), so its
+`corpus_db.sha256`, `candidates_sha256` and source pins are the plan's; its
+`corpus_db.sha256` must be `run.yaml` `locate.universe.corpus_db_sha256`; and
+every task manifest in its `tasks_dir` must be the one `runs/<run-id>/planned.json`
+records, with none missing and none added, so an emptied `curated` list (which
+would hand a task no curated hit and turn rule 4 off) or a manifest for a task
+the plan never had is refused. Any of these fails the gate without running,
+and the refusal says what settles it: `cf harvest --checkout-gate`, which
+re-gates with this checkout's gate instead, for a gate copy that cannot be told
+from an edited one; putting back the plan's file, or a re-plan, for a config or
+manifest that is not the plan's. With `--checkout-gate` the run's own copy and
+its staged `gate.json` are not consulted, the `run.yaml` corpus pin still is,
+and the manifests are held to `planned.json` when the run has one (a run
+planned before `planned.json` reads them as found). `cf harvest` then says the
+gate could not judge the findings, never that they failed it. The receipt's
 `gate` block records which gate ran as `gate_code`: `{from: "run", dir, sha256,
 files, files_sha256}` — the gate script's sha256 and the sha256 of the sorted
 `<path>\t<sha256>` lines of the files checked — or `{from: "checkout", dir,

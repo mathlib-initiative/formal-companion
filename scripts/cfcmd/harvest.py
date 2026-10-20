@@ -73,8 +73,9 @@ def register(subparsers) -> None:
     p.add_argument("--checkout-gate", action="store_true",
                    help="a locate run: re-gate with this checkout's gate instead of the run's "
                         "own copy (runs/<id>/tend-root/gate/, checked against run.yaml "
-                        "locate.gate_files), e.g. for a run whose tend root is gone; the "
-                        "receipt's gate_code records which gate judged the corpus")
+                        "locate.gate_files), e.g. for a run planned before run.yaml recorded "
+                        "gate_files; the receipt's gate_code records which gate judged the "
+                        "corpus")
     p.add_argument("--allow-edition-mismatch", action="store_true",
                    help="accept findings judged against another edition (they are refused by default)")
     # NOT `--source`: that dest already belongs to `--from` above, and argparse
@@ -131,9 +132,18 @@ def run(args) -> int:
                  f"{', '.join(receipt['host_artifacts_missing'])} did not come home (the reason "
                  f"is on the host: line above), so the run's record of its gate calls is not "
                  f"here. Fix the transfer and run `cf harvest {args.run_id}` again.")
-    if not ((receipt.get("gate") or {"ok": True}).get("ok", True)):
+    gated = receipt.get("gate") or {"ok": True}
+    if not gated.get("ok", True) and gated.get("broken"):
+        # the gate did not judge the findings, so nothing above is a verdict on them
+        log.warn("harvest REFUSED the gate: it could not judge the findings (the reason is "
+                 "above), which says nothing against them. "
+                 + (str(gated.get("hint") or "Fix what it names and run the harvest again")
+                    .replace("<run-id>", args.run_id).rstrip("."))
+                 + ". The receipt is not complete.")
+    elif not gated.get("ok", True):
         log.warn("harvest REFUSED the gate: the findings above do not validate against "
-                 "gate.local.json. Fix or re-run them; the receipt is not complete.")
+                 f"{Path(str(gated.get('config') or 'gate.local.json')).name}. Fix or re-run "
+                 "them; the receipt is not complete.")
     if not receipt.get("gate"):
         # the trust boundary, said out loud: nothing downstream re-checks a quote
         log.warn(f"UNGATED run {args.run_id}: RECEIPT.json carries no gate block, so no quote "
@@ -371,10 +381,14 @@ def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None,
         own = None if getattr(args, "checkout_gate", False) else (
             Path(workspace.paths.tend_root(args.run_id)) / "gate")
         pins = ((run_doc or {}).get("locate") or {}).get("gate_files")
+        # the plan's own record of every task manifest, beside run.yaml (locate/outcomes.py
+        # reads the planned passages from it): the manifests the re-gate reads must be its
+        planned_tasks = Path(workspace.paths.run_dir(args.run_id)) / "planned.json"
 
         def _run_locate_gate(dest: Path) -> dict:
             result = gate_mod.gate_locate_corpus(
-                dest, config, gate_dir=own, gate_files=pins if isinstance(pins, dict) else None)
+                dest, config, gate_dir=own, gate_files=pins if isinstance(pins, dict) else None,
+                run_doc=run_doc, planned=planned_tasks)
             log.info(gate_mod.render(result))
             return result
 
