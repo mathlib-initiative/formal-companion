@@ -52,6 +52,9 @@ REASON_SUBCLASSES = (
     ("absence_receipt", re.compile(r"distinct quer|\breceipt\b", re.I)),
     ("ranks", re.compile(r"\branks?\b|per passage", re.I)),
     ("note", re.compile(r"\bnote\b", re.I)),
+    # rule 2's end check (verify_locate._end_problem): before "pin" and "quote",
+    # whose words its message also holds
+    ("span_end", re.compile(r"passage_ids\.py ends it|`until`", re.I)),
     ("pin", re.compile(r"source_sha|layer_sha256|renderer|pinned", re.I)),
     ("quote", re.compile(r"\bquote\b|\bprefix\b|\bsuffix\b|matches the layer", re.I)),
     ("passage_id", re.compile(r"head_words|passage id|\bhash|cannot be keyed|cannot start"

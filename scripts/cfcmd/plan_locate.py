@@ -14,7 +14,10 @@ universe and its two databases, the arm, the skill commit, the sha of every
 file staged for the gate and the bridge, and ``config_shas``, the same
 configuration free of the run's own id and paths), ``tasks/*.yaml``,
 ``prompts/``, ``gate.json`` (the run host's paths) and ``gate.local.json``
-(this machine's), a challenge run's ``challenge-plan.json``, and a tend root
+(this machine's) -- each pinning by sha the CHECK database, every candidates
+file an inventory or locate plan read (``candidates_sha256``) and each source's
+two views beside its layer (``views``, from its ``render.json``) --, a challenge
+run's ``challenge-plan.json``, and a tend root
 whose ``gate/`` holds the task manifests, the gate and its helpers and the
 vendored packages.  The counts land in the sourceset's own ``state.json``,
 through its one writer.
@@ -243,6 +246,9 @@ def run(args) -> int:
 
     skipped: dict[str, str] = {}
     challenge_doc = None
+    #: the candidates files the plan read (gate.json candidates_sha256): an inventory or
+    #: locate plan's; a challenge's gate reads none, and its gate.json carries no pin
+    candidate_pins: dict[str, str] | None = None
     if preset.mode == vocab.LOCATE_INVENTORY:
         refused = inputs.parity_refusals(paths, args.sourceset, manifest)
         source_ids, unrendered, flagged = lplan.select_sources(
@@ -262,7 +268,10 @@ def run(args) -> int:
                             f"biography among them is planned as a concept article: `cf "
                             f"sourceset flag-biographies {args.sourceset} --execute` asks "
                             f"Wikidata, then re-plan")
-        candidates(paths, args.sourceset, universe, tools_db, source_ids, blind=args.blind)
+        read = candidates(paths, args.sourceset, universe, tools_db, source_ids,
+                          blind=args.blind)
+        candidate_pins = lplan.candidates_shas(paths, args.sourceset, universe.id, tools_db,
+                                               read)
         tasks = lplan.inventory_tasks(paths, manifest, source_ids)
     elif preset.mode == vocab.LOCATE:
         inv_run = outcomes_pin_check(paths, args.inventory_run, manifest, universe, arm)
@@ -276,6 +285,8 @@ def run(args) -> int:
         source_ids = sorted(dict.fromkeys(wanted))
         docs = candidates(paths, args.sourceset, universe, tools_db,
                           [s for s in source_ids if frozen.get(s)], blind=args.blind)
+        candidate_pins = lplan.candidates_shas(paths, args.sourceset, universe.id, tools_db,
+                                               docs)
         curated = {sid: list(doc.get("curated") or []) for sid, doc in docs.items()}
         tasks, more = lplan.locate_tasks(manifest, frozen, source_ids, per_task=args.per_task,
                                          subject_only=args.subject_only, curated=curated)
@@ -314,11 +325,13 @@ def run(args) -> int:
     limits = lp.concurrency(preset, ws, workers=args.workers, reviewers=args.reviewers)
     warnings.extend(limits["warnings"])
     rd = paths.run_dir(run_id)
+    views = lplan.source_views(paths, manifest, source_ids)
     gate_remote, gate_local = (lplan.gate_config(
         preset_mode=preset.mode, preset_name=preset.name, run_id=run_id,
         layout=layouts[side], universe=universe, corpus_db_sha256=db_sha, tools_db=tools_db,
         manifest=manifest, source_ids=source_ids, blind=args.blind,
-        inventory_run=args.inventory_run, challenged_runs=list(args.challenge_of))
+        inventory_run=args.inventory_run, challenged_runs=list(args.challenge_of),
+        views=views, candidates_sha256=candidate_pins)
         for side in ("host", "local"))
     rd.mkdir(parents=True, exist_ok=True)
     write_json(paths.gate_json(run_id), gate_remote, sort_keys=True)

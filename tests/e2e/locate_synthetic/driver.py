@@ -416,11 +416,15 @@ class Pipeline:
         below runs from this copy with ``python3 -I``, a bare environment and a
         scratch working directory, so a module the directory lacks fails here as it
         would on the host (field defect P2: a staged gate that could not import ran
-        fine from ``scripts/gate/``, where its missing sibling sat beside it).
+        fine from ``scripts/gate/``, where its missing sibling sat beside it).  The
+        "host" is this machine, so its ``gate.json`` is the run's ``gate.local.json``,
+        and the gate runs with the config beside it, the only one a gate directory
+        accepts.
         """
         copy = self.made / "host" / f"{run_id}-gate"
         if not copy.is_dir():
             shutil.copytree(cf_main_paths(self.ws).tend_root(run_id) / "gate", copy)
+            shutil.copy2(self._run_dir(run_id) / "gate.local.json", copy / "gate.json")
         return copy
 
     def isolated(self, run_id: str, script: str, *argv: str,
@@ -436,7 +440,7 @@ class Pipeline:
     def gate(self, run_id: str, *documents: Path, changed: Path | None = None,
              task_id: str | None = None) -> tuple[int, str]:
         """The STAGED gate (this machine's paths: ``gate.local.json``), run as on the host."""
-        argv = ["--gate-config", str(self._run_dir(run_id) / "gate.local.json")]
+        argv = ["--gate-config", str(self.host_gate(run_id) / "gate.json")]
         if changed is not None:
             argv += ["--root", str(changed), "--changed-files", "--base", "main"]
             if task_id:

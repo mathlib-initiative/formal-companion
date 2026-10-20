@@ -709,6 +709,16 @@ LOCATE_ATTEMPT_CAP = 3
 SESSION_SLOTS = 15
 #: every agent call runs under ``timeout`` this long; expiry is infrastructure
 AGENT_TIMEOUT = "45m"
+#: which call a locate gate log line was (its ``caller``): tend's validation command
+#: (``--changed-files``, the only call the log's readers count as an attempt), its
+#: pre-merge command (``--changed-files --pre-merge``), an agent's or the bridge's own
+#: ``--findings`` check, and a directory of documents (a harvest, a hand check)
+GATE_CALLER_VALIDATION = "validation"
+GATE_CALLER_PRE_MERGE = "pre_merge"
+GATE_CALLER_FINDINGS = "findings_check"
+GATE_CALLER_DIRECTORY = "directory"
+GATE_CALLERS = (GATE_CALLER_VALIDATION, GATE_CALLER_PRE_MERGE, GATE_CALLER_FINDINGS,
+                GATE_CALLER_DIRECTORY)
 
 # --- the challenge plan (section 5): why a record is in a challenge task, and
 # what the plan says it is owed

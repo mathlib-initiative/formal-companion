@@ -23,6 +23,10 @@ file into the gate directory together with the vendored packages:
    A gate accepts exactly one.  Matching is on the layer's own characters -- no
    normalisation at all -- because the layer is the one view quotes are cut
    from.
+4. **The end** of a passage: :func:`passage_end`, the rule ``passage_ids.py``
+   fills a span with and gate rule 2 re-computes (references/locate-documents.md
+   section 2), so the extent a reader highlights is the tool's and never a
+   hand-counted offset.
 
 The vendored ``formal_companion_annotations.ids`` is imported from
 ``vendor/`` of the skill checkout, or from ``vendor/`` beside this file in a
@@ -295,3 +299,49 @@ def find_quote(layer: str, exact: str, prefix: str = "", suffix: str = "") -> li
         found.append(at + len(prefix))
         at = layer.find(needle, at + 1)
     return found
+
+
+# --------------------------------------------------------------------------
+# where a passage ends
+# --------------------------------------------------------------------------
+
+def paragraph_end(paragraphs: Sequence[dict], start: int) -> int | None:
+    """The end of the first ``paragraphs.json`` block that holds the offset ``start``.
+
+    The table is sorted by start with an outer block before the blocks it holds
+    (``sources.render_html``), so the first block holding ``start`` is the
+    outermost one: a passage that opens a theorem box ends where the box does.
+    An entry without a readable span is passed over.
+    """
+    for para in paragraphs or ():
+        try:
+            a, b = (int(x) for x in para["span"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if a <= start < b:
+            return b
+    return None
+
+
+def passage_end(layer: str, paragraphs: Sequence[dict], start: int, exact: str,
+                until: object = None) -> int:
+    """The layer offset a passage that starts at ``start`` with quote ``exact`` ends at.
+
+    The one rule ``passage_ids.py`` writes and gate rule 2 re-computes: with an
+    ``until`` (the passage's last words), the end of the first occurrence of it
+    at or after the start; else the end of the paragraph the passage starts in;
+    else the end of the quote -- and never before the end of the quote.  An
+    empty or null ``until`` is none; one that is not a string, or is not on the
+    layer after the start, is a :class:`HeadError`.  Offsets are code points of
+    the layer, like every span (a UTF-16 count of an astral character is not
+    one).
+    """
+    end = start + len(exact)
+    if until is None or until == "":
+        return max(end, paragraph_end(paragraphs, start) or end)
+    if not isinstance(until, str):
+        raise HeadError(f"`until` is a {type(until).__name__}, not the passage's last words")
+    at = layer.find(until, start)
+    if at < 0:
+        raise HeadError(f"`until` {until[:40]!r} is not on the layer after the passage's start")
+    return max(end, at + len(until))

@@ -303,7 +303,9 @@ pre_merge_validation_commands
 The two argvs differ by `--pre-merge`, the only call that admits several tasks in one change set
 (a batched merge's new documents); without it a change set of several tasks is refused. The
 wrappers add `CF_EXTRA_TOOLS` (worker only: the corpus tools, and the passage-id tool in an
-inventory run), `CF_REVIEWER_TOOLS` (reviewer only: the read-only tools and the gate),
+inventory run), `CF_REVIEWER_TOOLS` (reviewer only: the read-only tools and the gate's
+`--findings` check; like the worker's entry, the whole gate command with `--findings`, so no
+agent runs tend's `--changed-files` call),
 `CF_TASK_MANIFESTS`, `CF_ATTEMPT_CAP=3`, `CF_MERGE_TARGET` (the merge target branch, both roles)
 and `CF_FINDINGS_GLOB`. The tend reviewer
 of a locate run checks form and the gate's output only; judgment lives in the challenge.

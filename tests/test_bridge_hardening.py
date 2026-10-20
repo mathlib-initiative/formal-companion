@@ -307,7 +307,7 @@ class TestTheBridge(BridgeCase):
         self.bridge("reviewer", CF_GATE_CMD=gate, CF_EXTRA_TOOLS=extra)
         argv = (self.tmp / "argv").read_text().splitlines()
         self.assertEqual(argv[argv.index("--allowedTools") + 1],
-                         "Read,Glob,Grep,Bash(git:*),Bash(python3 /srv/cf/r-gate/verify_locate.py:*)")
+                         f"Read,Glob,Grep,Bash(git:*),Bash({gate} --findings:*)")
         # an explicit list still wins, as for the worker
         self.bridge("reviewer", CF_GATE_CMD=gate, CF_REVIEWER_TOOLS="Read")
         argv = (self.tmp / "argv").read_text().splitlines()
@@ -607,6 +607,7 @@ class TestTheReviewerMayRunTheGate(BridgeCase):
                                             f"{gate}/gate.json")
         argv = (self.tmp / "argv").read_text().splitlines()
         tools = argv[argv.index("--allowedTools") + 1].split(",")
-        self.assertIn(f"Bash(python3 {gate}/verify_locate.py:*)", tools)
+        self.assertIn(f"Bash(python3 {gate}/verify_locate.py --gate-config {gate}/gate.json "
+                      f"--findings:*)", tools)
         self.assertNotIn("Write", tools)
         self.assertNotIn("Edit", tools)
