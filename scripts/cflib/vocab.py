@@ -831,6 +831,18 @@ CARRY_CHANGED = "changed"
 CARRY_FATES = frozenset({CARRY_UNCHANGED, CARRY_END_MOVED, CARRY_SPLIT, CARRY_MERGED,
                          CARRY_RESHAPED, CARRY_REMOVED, CARRY_CHANGED})
 CARRY_NEW = "new"
+#: What a re-cut does to one frozen gold row (``cf bench carry``, the proposal's
+#: section 4.4, over the carry-over map, the old cut on the layer the gold is
+#: labelled on): ``carried`` -- the new cut is on that layer too and the passages over
+#: the row's span are the old ones, unchanged and at the same spans, so its labels
+#: stand as they are; ``reanchor`` -- the same holds on another layer (a new revision
+#: or rendering, the text over the span unchanged), so its labels stand and only its
+#: span moves, to the report's ``anchor``; ``relabel`` -- anything else, and every row
+#: across a labeler bump.  A gold row without a span is counted apart.
+GOLD_CARRIED = "carried"
+GOLD_REANCHOR = "reanchor"
+GOLD_RELABEL = "relabel"
+GOLD_CARRY_STATES = frozenset({GOLD_CARRIED, GOLD_REANCHOR, GOLD_RELABEL})
 #: a locate task carries at most this many formal_math passages (section 3, L3b)
 MAX_PASSAGES_PER_LOCATE_TASK = 8
 #: a challenge task judges about this many records (section 5)

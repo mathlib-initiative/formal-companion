@@ -199,7 +199,7 @@ class TestTheMap(unittest.TestCase):
             self.assertIsNone(entry["conjuncts_changed"])
 
     def test_overlapping_occurrences_are_two(self):
-        self.assertEqual(carry._occurrences("aaa", "aa"), [0, 1])
+        self.assertEqual(carry.occurrences("aaa", "aa"), [0, 1])
 
     def test_two_passages_of_one_text_refuse_the_page(self):
         layer = "Gadgets are conjugate. Widgets are tame. Gadgets are conjugate."
@@ -218,7 +218,7 @@ class TestTheMap(unittest.TestCase):
         with self.assertRaises(carry.CarryRefused):
             carry.map_page(old, self.new())
 
-    def test_scope_and_conjunct_changes_are_flagged_and_do_not_carry(self):
+    def test_scope_and_conjunct_changes_are_flagged_and_carry_by_the_proposals_tests(self):
         layer = "A widget is finite exactly when its gadget is. Gadgets are conjugate."
         conj = [{"id": "c1", "text": "a finite widget has a finite gadget"},
                 {"id": "c2", "text": "a widget with a finite gadget is finite"}]
@@ -234,12 +234,24 @@ class TestTheMap(unittest.TestCase):
                           by["In-text #00001001"]["conjuncts_changed"]), (False, True))
         self.assertEqual((by["In-text #00001002"]["scope_changed"],
                           by["In-text #00001002"]["conjuncts_changed"]), (True, False))
-        self.assertFalse(any(carry.carries(e) for e in page["passages"]))
+        # section 4.4: the passage unchanged, the NEW passage formal_math, and -- for what
+        # read the conjuncts -- the same conjuncts; the old scope is no test
+        self.assertEqual([carry.carries(e) for e in page["passages"]], [False, True])
+        self.assertEqual([carry.carries(e, reads_conjuncts=False) for e in page["passages"]],
+                         [True, True])
+        self.assertEqual(by["In-text #00001002"]["into"][0]["scope"], "formal_math")
         self.assertEqual([carry.carries(e) for e in carry.map_page(new, new)["passages"]],
                          [True, True])
-        # an expository passage carries no pair verdict, unchanged or not
+        # a passage the new cut scopes expository carries nothing, unchanged or not
         self.assertEqual([carry.carries(e) for e in carry.map_page(old, old)["passages"]],
                          [True, False])
+        self.assertEqual([carry.carries(e) for e in carry.map_page(new, old)["passages"]],
+                         [False, False])
+        self.assertEqual([carry.carries(e, reads_conjuncts=False)
+                          for e in carry.map_page(new, old)["passages"]], [True, False])
+        # only an unchanged passage carries, whatever else holds
+        self.assertFalse(carry.carries({"fate": "end_moved", "into": [
+            {"scope": "formal_math"}], "conjuncts_changed": False}, reads_conjuncts=False))
 
     def test_the_conjunct_digest_reads_the_list_as_written(self):
         self.assertEqual(carry.conjuncts_sha256({}), hashing.sha256_json([]))
@@ -305,7 +317,10 @@ class TestTheParityTable(unittest.TestCase):
                         if flag in want:
                             self.assertEqual(got[flag], want[flag], (want["item"], flag))
                     if "carries" in want:
-                        self.assertEqual(carry.carries(got), want["carries"])
+                        self.assertEqual(carry.carries(got), want["carries"], want["item"])
+                    if "carries_unread" in want:
+                        self.assertEqual(carry.carries(got, reads_conjuncts=False),
+                                         want["carries_unread"], want["item"])
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +562,105 @@ class TestCfLocateCarry(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("go together", err)
 
+    def test_rows_holding_unicode_line_breaks_are_read_and_written_back(self):
+        """JSON keeps U+2028, U+2029 and U+0085 raw inside a string: no line ends there."""
+        w = self.world
+        layer = w.articles[self.s0]["layer"]
+        key = hashing.passage_key(1001, hashing.span_sha256(layer, w.articles[self.s0]["spans"][0]))
+        row = {"passage_key": key, "statement": "one\u2028two\u2029three\x85four"}
+        src = w.write("inputs/breaks.jsonl", json.dumps(row, ensure_ascii=False) + "\r\n")
+        out = w.root / "inputs" / "breaks.carried.jsonl"
+        rc, _, err = cf(w, "locate", "carry", "--from", "inv-a", "--to", "inv-b",
+                        "--rows", src, "--rows-out", out)
+        self.assertEqual(rc, 0, err)
+        text = out.read_text(encoding="utf-8")
+        self.assertIn("\u2028", text)
+        self.assertEqual(text.count("\n"), 1)
+        got = carry.read_rows(out)
+        self.assertEqual([(r["statement"], r["carried"]) for r in got],
+                         [(row["statement"], True)])
+        again = w.root / "inputs" / "breaks.carried.2.jsonl"
+        rc, _, err = cf(w, "locate", "carry", "--from", "inv-a", "--to", "inv-b",
+                        "--rows", out, "--rows-out", again)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(again.read_bytes(), out.read_bytes())
+        bad = w.root / "inputs" / "latin1.jsonl"
+        bad.write_bytes(b'{"passage_key": "\xff"}\n')
+        with self.assertRaises(CfError):
+            carry.read_rows(bad)
+
+    def test_a_row_that_read_no_conjunct_carries_across_new_conjuncts(self):
+        """Section 4.4's "for anything that read the conjuncts", said by the row."""
+        w = self.world
+        conj = [{"id": "c1", "text": "a widget has a gadget"},
+                {"id": "c2", "text": "the gadget is unique"}]
+        rows = paragraphs_cut(w, self.s0, 0)
+        rows[0] = {**rows[0], "conjuncts": conj, "shape": "existence_uniqueness"}
+        inventory(w, "inv-c", {self.s0: rows})
+        layer = w.articles[self.s0]["layer"]
+        key = hashing.passage_key(1001, hashing.span_sha256(layer, w.articles[self.s0]["spans"][0]))
+        known = [{"passage_key": key, "declaration": "Widget.a"},
+                 {"passage_key": key, "declaration": "Widget.b", "reads_conjuncts": True},
+                 {"passage_key": key, "declaration": "Widget.c", "reads_conjuncts": False}]
+        src = w.write("inputs/known.jsonl", "".join(json.dumps(r) + "\n" for r in known))
+        out = w.root / "inputs" / "known.carried.jsonl"
+        rc, _, err = cf(w, "locate", "carry", "--from", "inv-a", "--to", "inv-c",
+                        "--rows", src, "--rows-out", out)
+        self.assertEqual(rc, 0, err)
+        got = carry.read_rows(out)
+        self.assertEqual([r["carried"] for r in got], [False, False, True])
+        self.assertTrue(all(r["carry"]["conjuncts_changed"] for r in got))
+        self.assertEqual(got[2]["reads_conjuncts"], False)
+        bad = w.write("inputs/bad.jsonl", json.dumps({"passage_key": key,
+                                                      "reads_conjuncts": "no"}) + "\n")
+        rc, _, err = cf(w, "locate", "carry", "--from", "inv-a", "--to", "inv-c",
+                        "--rows", bad, "--rows-out", w.root / "inputs" / "bad.out.jsonl")
+        self.assertEqual(rc, 2)
+        self.assertIn("reads_conjuncts", err)
+
+    def test_a_rows_out_that_cannot_be_a_file_is_refused_before_any_write(self):
+        w = self.world
+        good = w.write("inputs/good.jsonl", json.dumps({"passage_key": "0" * 64}) + "\n")
+        report = w.paths.locate_carry_json("inv-a", "inv-b")
+        directory = w.root / "inputs" / "adir"
+        directory.mkdir()
+        for target, said in ((directory, "not a file"),
+                             (good / "under", "not a directory"),
+                             (good / "deeper" / "under.jsonl", "not a directory")):
+            with self.subTest(target=target):
+                rc, _, err = cf(w, "locate", "carry", "--from", "inv-a", "--to", "inv-b",
+                                "--rows", good, "--rows-out", target)
+                self.assertEqual(rc, 2, err)
+                self.assertIn(said, err)
+                self.assertFalse(report.exists())
+        self.assertEqual(list(directory.iterdir()), [])
+
+    def test_an_unreadable_layer_refuses_its_page_and_names_no_path(self):
+        w = self.world
+        sdir = w.paths.sourceset_source_dir(fx.SOURCESET, self.s0)
+        cases = (("layer.txt", None, "is missing a rendered view"),
+                 ("formulas.json", b"{not json", "cannot be read (JSONDecodeError)"),
+                 ("layer.txt", b"\xff\xfe", "cannot be read (UnicodeDecodeError)"))
+        for name, content, said in cases:
+            with self.subTest(name=name, said=said):
+                kept = (sdir / name).read_bytes()
+                try:
+                    if content is None:
+                        (sdir / name).unlink()
+                    else:
+                        (sdir / name).write_bytes(content)
+                    rc, _, err = cf(w, "locate", "carry", "--from", "inv-a", "--to", "inv-b")
+                    self.assertEqual(rc, 0, err)
+                    text = self.world.paths.locate_carry_json("inv-a", "inv-b").read_text(
+                        encoding="utf-8")
+                    doc = json.loads(text)
+                    self.assertEqual([r["pageid"] for r in doc["refused"]], [1001])
+                    self.assertIn(said, doc["refused"][0]["reason"])
+                    self.assertNotIn(str(w.root), text)
+                    self.assertNotIn(str(Path(w.root).resolve()), text)
+                finally:
+                    (sdir / name).write_bytes(kept)
+
     def test_the_report_path(self):
         paths = WorkspacePaths(Path("/w"))
         self.assertEqual(paths.locate_carry_json("inv-a", "inv-b"),
@@ -633,20 +747,22 @@ class TestBenchCarry(unittest.TestCase):
                  and r["span"][0] < b and a < r["span"][1]]
         self.assertIn(self.g1_row["gold_id"], {r["gold_id"] for r in moved})
         for row in moved:
-            self.assertFalse(row["carried"])
+            self.assertEqual(row["state"], vocab.GOLD_RELABEL)
+            self.assertIsNone(row["anchor"])
             self.assertEqual([p["fate"] for p in row["passages"]], ["split"])
             self.assertIn("split", row["reason"])
         rest = [r for r in doc["rows"] if r not in moved]
         self.assertTrue(rest)
         for row in rest:
-            self.assertTrue(row["carried"], row)
+            self.assertEqual(row["state"], vocab.GOLD_CARRIED, row)
+            self.assertIsNone(row["anchor"])
             self.assertIsNone(row["reason"])
             self.assertEqual({p["fate"] for p in row["passages"]}, {"unchanged"})
             self.assertEqual([n["passage_key"] for n in row["into"]],
                              [p["passage_key"] for p in row["passages"]])
         total = doc["counts"]["total"]
-        self.assertEqual((total["rows"], total["relabel"], total["carried"]),
-                         (len(doc["rows"]), len(moved), len(rest)))
+        self.assertEqual((total["rows"], total["relabel"], total["carried"], total["reanchor"]),
+                         (len(doc["rows"]), len(moved), len(rest), 0))
         self.assertEqual(total["no_span"], sum(1 for r in self.g1 if not r.get("span")))
 
     def test_an_unmoved_recut_carries_every_row_and_writes_the_same_bytes(self):
@@ -660,14 +776,14 @@ class TestBenchCarry(unittest.TestCase):
         old = self.with_g3(self.paragraphs(), self.g3_halves())
         doc = self.carry(old, self.with_g3(self.paragraphs(), self.g3_halves()))
         row = self.row(doc, self.g3_row)
-        self.assertTrue(row["carried"])
+        self.assertEqual(row["state"], vocab.GOLD_CARRIED)
         self.assertEqual(len(row["passages"]), 2)
 
     def test_a_span_over_several_passages_is_relabelled_when_one_moved(self):
         old = self.with_g3(self.paragraphs(), self.g3_halves())
         doc = self.carry(old, self.with_g3(self.paragraphs(), self.g3_halves(shorten=True)))
         row = self.row(doc, self.g3_row)
-        self.assertFalse(row["carried"])
+        self.assertEqual(row["state"], vocab.GOLD_RELABEL)
         self.assertEqual([p["fate"] for p in row["passages"]], ["unchanged", "end_moved"])
         self.assertIn("In-text #0000aa02 over it is end_moved", row["reason"])
 
@@ -675,13 +791,29 @@ class TestBenchCarry(unittest.TestCase):
         doc = self.carry(self.with_g3(self.paragraphs(), None),
                          self.with_g3(self.paragraphs(), None))
         row = self.row(doc, self.g3_row)
-        self.assertTrue(row["carried"])
+        self.assertEqual(row["state"], vocab.GOLD_CARRIED)
         self.assertEqual((row["passages"], row["into"]), ([], []))
         doc = self.carry(self.with_g3(self.paragraphs(), None),
                          self.with_g3(self.paragraphs(), self.g3_halves()))
         row = self.row(doc, self.g3_row)
-        self.assertFalse(row["carried"])
+        self.assertEqual(row["state"], vocab.GOLD_RELABEL)
         self.assertIn("not one of the old cut's", row["reason"])
+
+    def test_a_passage_nested_in_the_unchanged_one_relabels_the_row(self):
+        """Stricter than the proposal's letter, on purpose: the score would join the label
+        against another set of passages, though the one it lies in is unchanged."""
+        w, row = self.world, self.g3_row
+        a, b = row["span"]
+        layer = w.articles[row["source_id"]]["layer"]
+        mid = layer.index(" ", (a + b) // 2)
+        new = self.paragraphs()
+        new[row["source_id"]] = new[row["source_id"]] + [
+            passage(w, row["source_id"], "In-text #0000ee01", [a, mid])]
+        doc = self.carry(self.paragraphs(), new)
+        got = self.row(doc, row)
+        self.assertEqual([p["fate"] for p in got["passages"]], ["unchanged"])
+        self.assertEqual(got["state"], vocab.GOLD_RELABEL)
+        self.assertIn("In-text #0000ee01 over it is not one of the old cut's", got["reason"])
 
     def test_across_a_labeler_bump_every_row_is_relabelled(self):
         inventory(self.world, "inv-a", self.paragraphs())
@@ -692,25 +824,76 @@ class TestBenchCarry(unittest.TestCase):
         self.assertIn("every row is relabelled", out)
         self.assertTrue(doc["labeler"]["bumped"])
         self.assertIn("every row is relabelled", doc["note"])
-        self.assertEqual(doc["counts"]["total"]["carried"], 0)
+        self.assertEqual((doc["counts"]["total"]["carried"], doc["counts"]["total"]["reanchor"]),
+                         (0, 0))
         for row in doc["rows"]:
-            self.assertFalse(row["carried"])
+            self.assertEqual(row["state"], vocab.GOLD_RELABEL)
+            self.assertIsNone(row["anchor"])
             self.assertIn("locate-label/99", row["reason"])
 
-    def test_a_new_revision_of_a_gold_article_is_anchored_again_not_carried(self):
+    def revised(self, edit=None) -> tuple[str, dict]:
+        """A new revision of the G3 row's article: a sentence before it, ``edit`` applied to
+        its paragraphs; the new cut is one passage per paragraph of the revision."""
         w, sid = self.world, self.g3_row["source_id"]
         i = w.articles[sid]["index"]
-        paras = fx.article_paragraphs(i)
-        rev = new_revision(w, i, 4000 + i, ["A sentence opens this revision."] + paras)
+        paras = list(fx.article_paragraphs(i))
+        rev = new_revision(w, i, 4000 + i, ["A sentence opens this revision."]
+                           + (edit(paras) if edit else paras))
         new = self.paragraphs()
         del new[sid]
         new[rev] = paragraphs_cut(w, rev, 9)
+        return rev, new
+
+    def test_a_new_revision_with_the_text_unchanged_reanchors_the_labels(self):
+        """Answer 8: gold carries wherever its text is unchanged; on a new layer its span moves."""
+        w, sid = self.world, self.g3_row["source_id"]
+        rev, new = self.revised()
         doc = self.carry(self.paragraphs(), new)
         rows = [r for r in doc["rows"] if r["source_id"] == sid]
         self.assertTrue(rows)
+        old_layer, new_layer = w.articles[sid]["layer"], w.articles[rev]["layer"]
         for row in rows:
-            self.assertFalse(row["carried"])
-            self.assertIn("anchored again, not carried", row["reason"])
+            self.assertEqual(row["state"], vocab.GOLD_REANCHOR, row)
+            anchor = row["anchor"]
+            self.assertEqual((anchor["source_id"], anchor["layer_sha256"]),
+                             (rev, w.articles[rev]["entry"]["layer_sha256"]))
+            a, b = row["span"]
+            self.assertEqual(new_layer[anchor["span"][0]:anchor["span"][1]], old_layer[a:b])
+            self.assertGreater(anchor["span"][0], a)
+            self.assertEqual({p["fate"] for p in row["passages"]}, {"unchanged"})
+            self.assertEqual([n["passage_key"] for n in row["into"]],
+                             [p["passage_key"] for p in row["passages"]])
+            self.assertIn("the labels stand", row["reason"])
+        total = doc["counts"]["total"]
+        self.assertEqual(total["reanchor"], len(rows))
+        self.assertEqual(total["relabel"], 0)
+        self.assertEqual(total["carried"] + total["reanchor"], total["rows"])
+
+    def test_a_new_revision_that_edits_the_text_relabels_it(self):
+        sid = self.g3_row["source_id"]
+        a, b = self.g3_row["span"]
+        layer = self.world.articles[sid]["layer"]
+        k = self.world.articles[sid]["spans"].index([a, b])
+        text = layer[a:b]
+        word = max(text.split(), key=len).strip(".,;:")
+        rev, new = self.revised(lambda ps: [p.replace(word, word + "s", 1) if n == k else p
+                                            for n, p in enumerate(ps)])
+        doc = self.carry(self.paragraphs(), new)
+        row = self.row(doc, self.g3_row)
+        self.assertEqual(row["state"], vocab.GOLD_RELABEL)
+        self.assertIsNone(row["anchor"])
+        self.assertEqual([p["fate"] for p in row["passages"]], ["changed"])
+        self.assertIn("is changed", row["reason"])
+
+    def test_an_old_cut_on_another_layer_than_the_gold_relabels(self):
+        sid = self.g3_row["source_id"]
+        rev, new = self.revised()
+        doc = self.carry(new, new)
+        rows = [r for r in doc["rows"] if r["source_id"] == sid]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["state"], vocab.GOLD_RELABEL)
+            self.assertIn("the map says nothing of the passages", row["reason"])
 
     def test_gold_changed_after_freeze_is_refused(self):
         inventory(self.world, "inv-a", self.paragraphs())
@@ -727,6 +910,137 @@ class TestBenchCarry(unittest.TestCase):
         rc, _, err = cf(world, "bench", "carry", "b1", "--from", "inv-a", "--to", "inv-a")
         self.assertEqual(rc, 2)
         self.assertIn("not frozen", err)
+
+
+class TestGoldPlacement(unittest.TestCase):
+    """``bench.carry``'s judgment of one gold span over one mapped page, on synthetic cuts."""
+
+    def judge(self, old: carry.Cut, new: carry.Cut, span: list[int],
+              gold_layer: str | None = None):
+        from bench import carry as bench_carry
+
+        page = carry.map_page(old, new)
+        carried = carry.Carry({"old": {"inventory_run": "inv-a"},
+                               "new": {"inventory_run": "inv-b"}, "pages": [page],
+                               "refused": [], "unpaired": {"old": [], "new": []}},
+                              {old.pageid: (old, new)})
+        article = {"pageid": old.pageid, "layer_sha256": sha(gold_layer or old.layer)}
+        return bench_carry._Pages(carried).judge({"source_id": old.source_id, "span": span},
+                                                 article)
+
+    def test_the_unchanged_texts_twin_elsewhere_relabels(self):
+        layer = "Gadgets are conjugate. Widgets are tame. Gadgets are conjugate."
+        old = cut(layer, [("In-text #1", "Gadgets are conjugate.")])
+        new = cut(layer, [("In-text #1", "Gadgets are conjugate.", "formal_math", {"nth": 1})])
+        state, olds, news, anchor, why = self.judge(old, new, at(layer, "Gadgets are conjugate."))
+        self.assertEqual([o["fate"] for o in olds], ["unchanged"])
+        self.assertEqual((state, news, anchor), (vocab.GOLD_RELABEL, [], None))
+        self.assertIn("elsewhere in the new cut", why)
+
+    def test_a_nested_new_passage_relabels(self):
+        layer = "Gadgets are conjugate. Widgets are tame."
+        old = cut(layer, [("In-text #1", layer)])
+        new = cut(layer, [("In-text #1", layer), ("In-text #2", "Gadgets are conjugate.")])
+        state, _, news, _, why = self.judge(old, new, [0, len(layer)])
+        self.assertEqual(state, vocab.GOLD_RELABEL)
+        self.assertEqual([n["item"] for n in news], ["In-text #2", "In-text #1"])  # by span
+        self.assertIn("In-text #2 over it is not one of the old cut's", why)
+
+    def test_a_moved_text_reanchors_by_its_passages_offset(self):
+        a = "Gadgets are conjugate. Widgets are tame."
+        b = "A lead is new here. " + a
+        old = cut(a, [("In-text #1", "Gadgets are conjugate."), ("In-text #2", "Widgets are tame.")])
+        new = cut(b, [("In-text #1", "Gadgets are conjugate."), ("In-text #2", "Widgets are tame."),
+                      ("In-text #3", "A lead is new here.")], sid="enwiki-1001-2003")
+        for span in ([4, 15], [0, len(a)]):
+            with self.subTest(span=span):
+                state, olds, news, anchor, _ = self.judge(old, new, span)
+                self.assertEqual(state, vocab.GOLD_REANCHOR)
+                self.assertEqual(anchor, {"source_id": "enwiki-1001-2003",
+                                          "layer_sha256": sha(b),
+                                          "span": [span[0] + 20, span[1] + 20]})
+                self.assertEqual(b[anchor["span"][0]:anchor["span"][1]], a[span[0]:span[1]])
+                self.assertEqual(len(news), len(olds))
+
+    def test_a_span_over_no_passage_on_a_new_layer_is_placed_by_its_one_occurrence(self):
+        a = "Gadgets are conjugate. Widgets are tame."
+        old = cut(a, [("In-text #1", "Gadgets are conjugate.")])
+        span = at(a, "Widgets are tame.")
+        b = "Lead. " + a
+        state, olds, news, anchor, _ = self.judge(old, cut(b, [("In-text #1",
+                                                                 "Gadgets are conjugate.")]), span)
+        self.assertEqual((state, olds, news), (vocab.GOLD_REANCHOR, [], []))
+        self.assertEqual(anchor["span"], [span[0] + 6, span[1] + 6])
+        twice = "Widgets are tame. " + a
+        state, _, _, anchor, why = self.judge(old, cut(twice, [("In-text #1",
+                                                                 "Gadgets are conjugate.")]), span)
+        self.assertEqual((state, anchor), (vocab.GOLD_RELABEL, None))
+        self.assertIn("more than once", why)
+        state, _, _, _, why = self.judge(old, cut("Gadgets are conjugate.", [
+            ("In-text #1", "Gadgets are conjugate.")]), span)
+        self.assertEqual(state, vocab.GOLD_RELABEL)
+        self.assertIn("nowhere", why)
+
+    def test_passages_that_moved_apart_or_an_edited_gap_relabel(self):
+        a = "Gadgets are conjugate. Odd. Widgets are tame."
+        old = cut(a, [("In-text #1", "Gadgets are conjugate."), ("In-text #2", "Widgets are tame.")])
+        apart = "Gadgets are conjugate. Odd, said once more. Widgets are tame."
+        state, _, news, _, why = self.judge(old, cut(apart, [
+            ("In-text #1", "Gadgets are conjugate."), ("In-text #2", "Widgets are tame.")]),
+            [0, len(a)])
+        self.assertEqual(state, vocab.GOLD_RELABEL)
+        self.assertIn("moved apart", why)
+        self.assertEqual([n["item"] for n in news], ["In-text #1", "In-text #2"])
+        gap = "Gadgets are conjugate. Eve. Widgets are tame."
+        state, _, _, _, why = self.judge(old, cut(gap, [
+            ("In-text #1", "Gadgets are conjugate."), ("In-text #2", "Widgets are tame.")]),
+            [0, len(a)])
+        self.assertEqual(state, vocab.GOLD_RELABEL)
+        self.assertIn("does not hold its text", why)
+
+    def test_an_old_cut_on_another_layer_relabels(self):
+        a = "Gadgets are conjugate."
+        old = cut(a, [("In-text #1", a)])
+        state, _, _, _, why = self.judge(old, old, [0, len(a)], gold_layer="Another layer.")
+        self.assertEqual(state, vocab.GOLD_RELABEL)
+        self.assertIn("the map says nothing", why)
+
+
+class TestTheScorerLeavesCarryOut(unittest.TestCase):
+    """``bench.score.scorer()`` hashes the code that scores: an edit to bench carry is none."""
+
+    def test_an_edit_to_carry_changes_no_scorer(self):
+        from bench import score as score_mod
+
+        self.assertIn("carry.py", score_mod.NOT_SCORING)
+        root = tlb.scratch(self)
+        bench_dir = root / "scripts" / "bench"
+        bench_dir.mkdir(parents=True)
+        (bench_dir / "score.py").write_text("x = 1\n", encoding="utf-8")
+        (bench_dir / "carry.py").write_text("y = 1\n", encoding="utf-8")
+        with mock.patch.object(score_mod, "skill_root", return_value=root):
+            first = score_mod.scorer()
+            (bench_dir / "carry.py").write_text("y = 2\n", encoding="utf-8")
+            self.assertEqual(score_mod.scorer(), first)
+            (bench_dir / "score.py").write_text("x = 2\n", encoding="utf-8")
+            self.assertNotEqual(score_mod.scorer(), first)
+        self.assertEqual(first["files"], 1)
+        real = score_mod.scorer()
+        here = sorted(p.name for p in (skill_root() / "scripts" / "bench").glob("*.py"))
+        self.assertEqual(real["files"], len(here) - 1)
+
+
+class TestTheStatesAreDocumented(unittest.TestCase):
+    """CLAUDE.md section 4: a new value is a change to vocab.py AND references/vocabulary.md."""
+
+    def test_every_state(self):
+        vocabulary = (skill_root() / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        bench_md = (skill_root() / "references" / "locate-bench.md").read_text(encoding="utf-8")
+        self.assertEqual(vocab.GOLD_CARRY_STATES, {"carried", "reanchor", "relabel"})
+        for state in sorted(vocab.GOLD_CARRY_STATES):
+            with self.subTest(state=state):
+                self.assertIn(f"`{state}`", vocabulary)
+                self.assertIn(f"`{state}`", bench_md)
 
 
 if __name__ == "__main__":

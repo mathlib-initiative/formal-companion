@@ -27,12 +27,15 @@ one revision or two:
 
 :func:`map_page` is that function over two :class:`Cut` values and is all a
 consumer's port needs (``tests/data/locate/carry-parity.json`` holds the shared
-cases); :func:`build` reads two harvested inventory runs through their owners
+cases); :func:`load` reads two harvested inventory runs through their owners
 (``locate.inputs``: the gated documents, the pinned sourceset, each source's
-layer, whose sha must be the one the document was made against) and writes
-nothing; :func:`write` puts the document at ``reports/locate-carry/<from>/<to>.json``;
-:func:`carry_rows` gives each row of a JSON-lines file keyed by ``passage_key`` its
-fate.  The document holds no time and no path, so a re-run writes the same bytes.
+layer, whose sha must be the one the document was made against), writes nothing,
+and returns the document with the cuts it was computed from (``cf bench carry``
+places gold spans on them); :func:`build` is its document alone; :func:`write` puts
+the document at ``reports/locate-carry/<from>/<to>.json``; :func:`carry_rows` gives
+each row of a JSON-lines file keyed by ``passage_key`` its fate, and :func:`carries`
+says whether what was judged on an old passage carries (section 4.4).  The document
+holds no time and no path, so a re-run writes the same bytes.
 """
 from __future__ import annotations
 
@@ -81,7 +84,9 @@ class _Keyed:
     conjuncts: str
 
     def ref(self) -> dict:
-        return {"passage_key": self.key, "item": self.item, "span": list(self.span)}
+        """A new passage as an entry's ``into`` names it, with the scope the new cut gave it."""
+        return {"passage_key": self.key, "item": self.item, "span": list(self.span),
+                "scope": self.scope}
 
 
 def conjuncts_sha256(passage: dict) -> str:
@@ -120,7 +125,7 @@ def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] < b[1] and b[0] < a[1]
 
 
-def _occurrences(layer: str, text: str, limit: int = 2) -> list[int]:
+def occurrences(layer: str, text: str, limit: int = 2) -> list[int]:
     """Where ``text`` starts in ``layer``, overlapping matches counted, up to ``limit``."""
     found: list[int] = []
     at = layer.find(text)
@@ -175,7 +180,7 @@ def map_page(old: Cut, new: Cut) -> dict:
                 placed: tuple[int, int] | None = o.span
             else:
                 text = old.layer[o.span[0]:o.span[1]]
-                hits = _occurrences(new.layer, text)
+                hits = occurrences(new.layer, text)
                 placed = (hits[0], hits[0] + len(text)) if len(hits) == 1 else None
             if placed is None:
                 fate, into = vocab.CARRY_CHANGED, []
@@ -189,8 +194,7 @@ def map_page(old: Cut, new: Cut) -> dict:
             # nothing went in: nothing to compare (a removed or changed passage)
             "scope_changed": any(n.scope != o.scope for n in into) if into else None,
             "conjuncts_changed": any(n.conjuncts != o.conjuncts for n in into) if into else None})
-    fresh = [{**n.ref(), "scope": n.scope, "fate": vocab.CARRY_NEW}
-             for n in news if n.key not in entered]
+    fresh = [{**n.ref(), "fate": vocab.CARRY_NEW} for n in news if n.key not in entered]
     return {
         "pageid": old.pageid,
         "old": {"source_id": old.source_id, "layer_sha256": old.layer_sha256,
@@ -277,8 +281,16 @@ def _cut(paths: WorkspacePaths, side: _Side, pageid: int, which: str) -> Cut:
                            f"({doc['unresolved'].get('reason', '')})")
     try:
         layer = side.layer(paths, sid)
-    except CfError as exc:
-        raise CarryRefused(f"the {which} layer of {sid} cannot be read: {exc}") from None
+    except CfError:
+        # the owner's message names its directory, and the map holds no path
+        raise CarryRefused(f"the {which} inventory's sourceset ({side.manifest.sourceset_id}) "
+                           f"is missing a rendered view of {sid} (layer.txt or formulas.json)"
+                           ) from None
+    except (OSError, ValueError) as exc:
+        # an undecodable layer, a formulas.json that is not JSON, an unreadable file
+        raise CarryRefused(f"the {which} inventory's sourceset ({side.manifest.sourceset_id}) "
+                           f"holds a rendered view of {sid} that cannot be read "
+                           f"({type(exc).__name__})") from None
     sha = hashing.sha256_text(layer)
     if doc.get("layer_sha256") != sha:
         # stamp the source: spans are offsets into ONE layer, so a document made
@@ -302,9 +314,18 @@ def _pages_of(sides: tuple[_Side, _Side], source_ids: Iterable[str]) -> set[int]
     return wanted
 
 
-def build(paths: WorkspacePaths, from_run: str, to_run: str, *,
-          source_ids: Iterable[str] = ()) -> dict:
-    """The ``cf-locate-carry/1`` document between two inventory runs; writes nothing.
+@dataclass
+class Carry:
+    """A ``cf-locate-carry/1`` document and the two cuts of each page it mapped."""
+
+    doc: dict
+    #: ``{pageid: (old cut, new cut)}`` of every page in ``doc["pages"]``
+    cuts: dict[int, tuple[Cut, Cut]]
+
+
+def load(paths: WorkspacePaths, from_run: str, to_run: str, *,
+         source_ids: Iterable[str] = ()) -> Carry:
+    """The map between two inventory runs, with the cuts it was computed from; writes nothing.
 
     Every page both runs hold a document for, or only the pages of ``source_ids``;
     a page only one run holds is listed in ``unpaired``, and a page the map cannot
@@ -314,25 +335,34 @@ def build(paths: WorkspacePaths, from_run: str, to_run: str, *,
     named = sorted(set(source_ids))
     considered = (_pages_of((old, new), named) if named
                   else set(old.pages) | set(new.pages))
-    pages, refused = [], []
+    pages, refused, cuts = [], [], {}
     totals: dict[str, int] = {}
     for pageid in sorted(considered & set(old.pages) & set(new.pages)):
         try:
-            page = map_page(_cut(paths, old, pageid, "old"), _cut(paths, new, pageid, "new"))
+            pair = (_cut(paths, old, pageid, "old"), _cut(paths, new, pageid, "new"))
+            page = map_page(*pair)
         except CarryRefused as exc:
             refused.append({"pageid": pageid, "reason": str(exc)})
             continue
         pages.append(page)
+        cuts[pageid] = pair
         for fate, n in page["counts"].items():
             totals[fate] = totals.get(fate, 0) + n
-    return {"schema": CARRY_SCHEMA,
-            "old": {"inventory_run": from_run, **old.rules},
-            "new": {"inventory_run": to_run, **new.rules},
-            "sources": named or None,
-            "pages": pages, "refused": refused,
-            "unpaired": {"old": sorted(considered & set(old.pages) - set(new.pages)),
-                         "new": sorted(considered & set(new.pages) - set(old.pages))},
-            "counts": {"pages": len(pages), **dict(sorted(totals.items()))}}
+    return Carry({"schema": CARRY_SCHEMA,
+                  "old": {"inventory_run": from_run, **old.rules},
+                  "new": {"inventory_run": to_run, **new.rules},
+                  "sources": named or None,
+                  "pages": pages, "refused": refused,
+                  "unpaired": {"old": sorted(considered & set(old.pages) - set(new.pages)),
+                               "new": sorted(considered & set(new.pages) - set(old.pages))},
+                  "counts": {"pages": len(pages), **dict(sorted(totals.items()))}},
+                 cuts)
+
+
+def build(paths: WorkspacePaths, from_run: str, to_run: str, *,
+          source_ids: Iterable[str] = ()) -> dict:
+    """The ``cf-locate-carry/1`` document between two inventory runs (:func:`load`)."""
+    return load(paths, from_run, to_run, source_ids=source_ids).doc
 
 
 def write(paths: WorkspacePaths, doc: dict) -> Path:
@@ -345,16 +375,21 @@ def write(paths: WorkspacePaths, doc: dict) -> Path:
 # rows keyed by passage_key: known answers, a verdict export
 # --------------------------------------------------------------------------
 
-def carries(entry: dict) -> bool:
+def carries(entry: dict, *, reads_conjuncts: bool = True) -> bool:
     """Does a pair verdict, label or known answer on this old passage carry (section 4.4)?
 
-    Its passage is ``unchanged``, it was and still is ``formal_math``, and its
-    conjuncts are the same: the conservative reading of "for anything that read the
-    conjuncts", since a row does not say whether it read them.
+    The proposal's three tests, on one entry of the map: its passage is
+    ``unchanged``, the new passage (its one ``into``) is ``formal_math``, and -- for
+    anything that read the conjuncts, which is what ``reads_conjuncts`` says --
+    ``conjuncts_changed`` is false.  The old passage's scope is not a test: the same
+    text scoped ``formal_math`` by the new cut carries what was said of it.  A bundle
+    verdict read the conjuncts, and so did each of its parts' pair verdicts; a
+    caller that cannot say passes the default.
     """
-    return (entry.get("fate") == vocab.CARRY_UNCHANGED
-            and entry.get("scope") == vocab.SCOPE_FORMAL_MATH
-            and entry.get("scope_changed") is False and entry.get("conjuncts_changed") is False)
+    into = entry.get("into") or []
+    return (entry.get("fate") == vocab.CARRY_UNCHANGED and len(into) == 1
+            and into[0].get("scope") == vocab.SCOPE_FORMAL_MATH
+            and (not reads_conjuncts or entry.get("conjuncts_changed") is False))
 
 
 def by_passage_key(doc: dict) -> dict[str, dict]:
@@ -363,13 +398,19 @@ def by_passage_key(doc: dict) -> dict[str, dict]:
 
 
 def read_rows(path: Path) -> list[dict]:
-    """A JSON-lines file of objects, each with a 64-hex ``passage_key``; refuse by line."""
+    """A JSON-lines file of objects, each with a 64-hex ``passage_key``; refuse by line.
+
+    Lines end at ``\n`` only (a ``\r`` before it is JSON whitespace): JSON holds a
+    U+2028, U+2029 or other Unicode line break unescaped inside a string, which
+    ``str.splitlines`` would cut, and :func:`write_rows` writes them so.  A row's
+    ``reads_conjuncts``, when it has one, is a boolean (:func:`carries`).
+    """
     rows = []
     try:
         text = Path(path).read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise CfError(f"cannot read --rows {path}: {exc}") from None
-    for number, line in enumerate(text.splitlines(), 1):
+    for number, line in enumerate(text.split("\n"), 1):
         if not line.strip():
             continue
         try:
@@ -382,6 +423,11 @@ def read_rows(path: Path) -> list[dict]:
             raise CfError(f"{path} line {number} has no passage_key (a 64-hex sha256)",
                           hint="--rows carries rows keyed by cflib.hashing.passage_key; the "
                                "map's passages list each old passage's key beside its item")
+        if "reads_conjuncts" in row and not isinstance(row["reads_conjuncts"], bool):
+            raise CfError(f"{path} line {number}: reads_conjuncts is "
+                          f"{row['reads_conjuncts']!r}, not true or false",
+                          hint="false says the row read no conjunct, so a change of conjuncts "
+                               "does not ask it again; leave it out to apply the conjunct test")
         rows.append(row)
     return rows
 
@@ -397,7 +443,7 @@ def carry_rows(doc: dict, rows: list[dict]) -> tuple[list[dict], dict[str, int]]
             counts["unmatched"] += 1
         else:
             carry = {k: entry[k] for k in ("fate", "into", "scope_changed", "conjuncts_changed")}
-            carried = carries(entry)
+            carried = carries(entry, reads_conjuncts=row.get("reads_conjuncts") is not False)
         counts["rows"] += 1
         counts["carried" if carried else "asked_again"] += 1
         out.append({**row, "carry": carry, "carried": carried})
@@ -405,7 +451,11 @@ def carry_rows(doc: dict, rows: list[dict]) -> tuple[list[dict], dict[str, int]]
 
 
 def check_rows_out(path: Path, *, source: Path) -> Path:
-    """Where the carried rows may go: never into this checkout, never over ``--rows``."""
+    """Where the carried rows may go: a file, never into this checkout, never over ``--rows``.
+
+    Checked before anything is written, so a ``--rows-out`` that could not be
+    written is refused before the map is.
+    """
     target = Path(path).resolve()
     root = skill_root().resolve()
     if target == root or root in target.parents:
@@ -415,6 +465,15 @@ def check_rows_out(path: Path, *, source: Path) -> Path:
     if Path(source).resolve() == target:
         raise CfError("--rows-out names the --rows file itself",
                       hint="the rows are copied, never rewritten in place: name another file")
+    if target.exists() and not target.is_file():
+        raise CfError(f"--rows-out {path} is not a file (a directory?)",
+                      hint="name the file the carried rows are written to")
+    parent = target.parent
+    while not parent.exists():
+        parent = parent.parent
+    if not parent.is_dir():
+        raise CfError(f"--rows-out {path} cannot be created: {parent} is not a directory",
+                      hint="name a file under a directory")
     return target
 
 

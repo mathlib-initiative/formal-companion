@@ -205,8 +205,9 @@ def register(subparsers) -> None:
     c.add_argument("--note", default="")
     c.add_argument("--json", action="store_true", dest="as_json")
 
-    k = sub.add_parser("carry", help="which frozen gold rows a re-cut carries and which it "
-                                     "relabels, over the carry-over map of two inventory runs")
+    k = sub.add_parser("carry", help="which frozen gold rows a re-cut carries, which move to a "
+                                     "new layer and which it relabels, over the carry-over map "
+                                     "of two inventory runs")
     k.add_argument("bench_id")
     k.add_argument("--from", dest="from_run", required=True, metavar="RUN",
                    help="the inventory run of the old cut, the one the runs the gold scores "
@@ -1066,18 +1067,20 @@ def _carry(ws, args) -> int:
     """``gold/carry-<n>.json``: the newest frozen gold over the map of two inventory runs."""
     layout = BenchLayout.of(ws.paths, args.bench_id)
     bench = _bench(layout)
-    doc = locate_carry.build(ws.paths, args.from_run, args.to_run)
-    report = carry_mod.carry_gold(layout, bench, doc)
+    carried = locate_carry.load(ws.paths, args.from_run, args.to_run)
+    report = carry_mod.carry_gold(layout, bench, carried)
     path = carry_mod.write(layout, report)
     total = report["counts"]["total"]
     print(f"bench {args.bench_id} gold version {report['gold']['version']} across "
           f"{args.from_run} -> {args.to_run}: {total['carried']} of {total['rows']} row(s) "
-          f"carried, {total['relabel']} to relabel ({total['no_span']} without a span, which no "
-          f"cut moves); {path}")
+          f"carried, {total['reanchor']} to re-anchor on a new layer (labels kept, span moved), "
+          f"{total['relabel']} to relabel ({total['no_span']} without a span, which no cut "
+          f"moves); {path}")
     if report["labeler"]["bumped"]:
         print(f"  {report['note']}")
     print("  no label file was edited: a relabel is a new gold version (cf bench anchor, then "
-          "cf bench freeze --supersede)")
+          "cf bench freeze --supersede); a re-anchor needs a frame on the new layer, which no "
+          "tool writes yet")
     return 0
 
 

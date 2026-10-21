@@ -1,8 +1,9 @@
 # Statement cut: one passage per statement, bundles, and a versioned cut
 
-**Status: specification, 2026-10-21. Built: only the shared names of §6.1 (constants, keys,
-prompt slots and the tests that pin them). Everything else here is the contract four packages
-build against; commands and paths written in *italics* are not implemented.**
+**Status: specification, 2026-10-21. Built: the shared names of §6.1 (constants, keys, prompt
+slots and the tests that pin them), and the carry package of §6.2 but for its
+`scripts/bench/gold.py` share (§9). Everything else here is the contract four packages build
+against; commands and paths written in *italics* are not implemented.**
 
 This document turns the maintainer's answers of 2026-10-21 on statement-level extraction into
 rules precise enough that four builders working in parallel agree on every name. It extends
@@ -487,33 +488,42 @@ conjunct list differs), which a consumer reads before it carries anything.
  "counts": {"pages": 1, "unchanged": 1, "split": 1, "new": 1}}
 ```
 
-*cf locate carry --from <inventory run> --to <inventory run> [--source ID]… [--rows FILE
---rows-out FILE]* (a new subcommand of `cf locate`, the deterministic steps that call no model)
+`cf locate carry --from <run> --to <run> [--source ID]… [--rows FILE --rows-out FILE]`, over
+two inventory runs (a new subcommand of `cf locate`, the deterministic steps that call no model),
 writes it to `reports/locate-carry/<from>/<to>.json` for every page both runs inventoried (or the
 named sources' pages), and with `--rows` copies a JSONL file of rows keyed by `passage_key`
 (known answers, a verdict export) adding each row's `carry: {fate, into}` and `carried`. It reads
 the two runs' gated inventory documents and their layers, writes nothing else, and is
-deterministic. The code is *scripts/locate/carry.py*; the shared cases a consumer's port runs are
-*tests/data/locate/carry-parity.json* (old spans, new spans, layers, expected fates), written by
-hand like the status parity table.
+deterministic. The code is `scripts/locate/carry.py`; the shared cases a consumer's port runs are
+`tests/data/locate/carry-parity.json` (old spans, new spans, layers, expected fates), written by
+hand like the status parity table. As built (`references/locate-documents.md` §12), the document
+also names the `--source` ids (`sources`) and the pages one run alone holds (`unpaired`), each
+`into` entry names the scope the new cut gave its passage (which §4.4 reads), and a row's `carry`
+also holds `scope_changed` and `conjuncts_changed`.
 
 ### 4.4 What carries, and what is asked again
 
 - A **pair** verdict, label or known answer keyed by passage key (and repository and
   declaration) carries when its passage is `unchanged`, the new passage is `formal_math`, and —
-  for anything that read the conjuncts — `conjuncts_changed` is false. With `pair_key` as the key
-  this is automatic: an unchanged text keeps its pair keys.
+  for anything that read the conjuncts — `conjuncts_changed` is false. An unchanged text keeps its
+  pair keys, so with `pair_key` as the key the first test is automatic; no key holds the
+  conjuncts, so the last is not.
 - A **bundle** verdict carries when its passage is `unchanged` with its conjuncts, and each part's
   pair carries.
 - Everything else is asked again; the old verdict is shown as one on an earlier cut. A status is
   never carried: it is derived again.
-- **Bench gold** (`scripts/bench/`): *cf bench carry BENCH --from <inventory run> --to <inventory
-  run>* writes the report *gold/carry-<n>.json* (`cf-bench-carry/1`), one row per gold row of
-  every tier whose `span` lies in one passage of the old cut: `carried` when that passage is
-  `unchanged`, else `relabel` with its fate. It edits no label file (a gold change is a new
+- **Bench gold** (`scripts/bench/`): `cf bench carry BENCH --from <run> --to <run>`, over two
+  inventory runs, writes the report `gold/carry-<n>.json` (`cf-bench-carry/1`), one row per gold
+  row of every tier whose `span` lies in one passage of the old cut: `carried` when that passage
+  is `unchanged`, else `relabel` with its fate. It edits no label file (a gold change is a new
   manifest version), and a carried row keeps its labels only while the labeler version is the
   same: across a labeler bump every row is `relabel`, and the report says so. The flip's bump to
   `locate-label/6` is one, so this round relabels all gold; the tool is for the re-cuts after it.
+  As built (`references/locate-bench.md` §7), each row's `state` is one of `GOLD_CARRY_STATES`:
+  `carried`, `reanchor` (its text unchanged on a new layer: its labels stand and its span moves to
+  the row's `anchor`) or `relabel`; a span, in one passage, in several or in none, carries only
+  while every old passage over it is `unchanged` and the new passages over it are those, at their
+  spans. §9 gives both readings.
 - **Known answers** are the operator's list, outside this tree: `--rows` gives each its fate.
 
 ## 5. The failure-mode fixes
@@ -637,16 +647,17 @@ record set.
 
 **carry** — the keys' consumers, the carry-over map and the bench.
 
-- *scripts/locate/carry.py* and its subcommand in `scripts/cfcmd/locate.py`; the report path in
+- `scripts/locate/carry.py` and its subcommand in `scripts/cfcmd/locate.py`; the report path in
   `scripts/cflib/paths.py` (`WorkspacePaths`).
-- `scripts/bench/` (*scripts/bench/carry.py*, `scripts/cfcmd/bench.py`'s *carry* subcommand,
+- `scripts/bench/` (`scripts/bench/carry.py`, `scripts/cfcmd/bench.py`'s `carry` subcommand,
   and `scripts/bench/gold.py`: the label rows' `conjunct_relation`, gold bundles derived under
-  status rule 2).
-- *tests/data/locate/carry-parity.json*.
+  status rule 2). The `gold.py` share is not built: it calls the fixes package's
+  `derive_status(…, status_rule=2)`, so it lands after fixes merges and no later than the flip.
+- `tests/data/locate/carry-parity.json`.
 - docs: a new §12 "Carry-over maps" in `references/locate-documents.md`; the keys and fates rows
   of the statement-cut paragraph in `references/vocabulary.md` §1.11; `references/locate-bench.md`
   (gold carry); the command index in `SKILL.md`; the L6 row of `docs/design/stage_map.md` §4.0.
-- tests: a new *tests/test_locate_carry.py*.
+- tests: a new `tests/test_locate_carry.py`.
 
 ### 6.3 Shared files, by section
 
@@ -670,7 +681,7 @@ new command), and a merge keeps every bullet.
 = RULES_STATEMENT_CUT`, `vocab.SPAN_END_RULE = SPAN_END_STATEMENT_CUT`; the planner writes
 `statement_cut_rule` and `status_rule`; `CHALLENGE_ABSENCE_SAMPLE_RATE` is 0.5; the labeler is
 `locate-label/6` and `bench.gold.LABELER_RULES` maps it to 3; the e2e driver's documents take the
-new shapes, and it runs *cf locate carry* between two of its inventories; the version pins in the tests move; `docs/design/stage_map.md` §4.0 names the four
+new shapes, and it runs `cf locate carry` between two of its inventories; the version pins in the tests move; `docs/design/stage_map.md` §4.0 names the four
 keys; `CHANGELOG.md` says what changed for a newly planned run. From then on the bench's score
 refuses gold of `locate-label/5` against a run of rules 3, as it refuses any gold of other rules,
 until the relabel.
@@ -704,9 +715,11 @@ in WikiLean). These are the follow-ups, each needed only once a set of status ru
    *tests/data/locate/status-parity-2.json* beside the round-3 table, which stays the test of
    `/1` sets.
 3. **Verdicts** (the revised 0015): key a verdict by `pair_key` beside `location_key`; it then
-   survives every re-cut and revision that leaves its passage's text alone. Show one whose
-   `pair_key` no longer appears as a verdict on an earlier cut, with the fate from the carry map
-   (or from the port of §4.2, held to *tests/data/locate/carry-parity.json*), and ask again.
+   survives every re-cut and revision that leaves its passage's text alone, and one that read the
+   conjuncts (a bundle's, a bundle part's) only while they are the same too (§4.4: the map's
+   `conjuncts_changed`). Show one whose `pair_key` no longer appears as a verdict on an earlier
+   cut, with the fate from the carry map (or from the port of §4.2, held to
+   `tests/data/locate/carry-parity.json`), and ask again.
 4. **The ballot** (the council harness): a bundle is one option, keyed by `bundle_key`, its parts
    shown each beside its conjunct from the claim's `conjuncts`; the "not a statement" flag is the
    token `not_a_statement`, kept beside the ranking and keyed by `passage_key`.
@@ -733,6 +746,22 @@ Readings the maintainer may overrule (each is one change here and in the package
   that number becomes `/3`.
 - **No new run of the old flow**: after the flip a locate run needs an inventory of the cut, and a
   challenge a locate run of rules 3 (§2.2). Old runs stay readable, gated, tallied and exported.
+- **Gold in one passage carries more strictly than §4.4's letter** (`cf bench carry`): only while
+  the new passages over its span are that passage at its span, not whenever the passage is
+  `unchanged`. A new passage nested in the unchanged one, or the unchanged text's twin cut
+  elsewhere on the page, changes the run passages the score joins the label against
+  (`bench.metrics.join`, greedy by overlap), so the row is relabelled. The letter is a small
+  change to `bench.carry`.
+- **Gold on a new revision whose text is unchanged is `reanchor`, not `carried`**: the
+  maintainer's answer carries gold wherever its text is unchanged, so its labels stand and the
+  report gives its span on the new layer; the bench scores only runs on the layers its frame
+  pins, so the row reaches a score only through a new gold version on a frame of the new layer,
+  which no tool writes yet (below).
+- **A `--rows` row that does not say whether it read the conjuncts is held to the conjunct test**
+  (§4.4's "for anything that read the conjuncts"); `"reads_conjuncts": false` leaves the test out.
+- **`cf locate carry` records nothing in a `state.json`**: §4.3 has it write nothing but the map
+  (and `--rows-out`), against CLAUDE.md §5's step that records a command's counts. The two runs
+  each pin their own sourceset, so no one `state.json` is the map's; its `counts` are its record.
 
 Not built in this round, and why:
 
@@ -754,3 +783,10 @@ Not built in this round, and why:
 - **A statement-level bench frame.** The G3 span sample draws blocks; relabelling it at statement
   level, with the labeler cutting by §3.4, is the bench relabel step that follows smoke 4. The
   flip's labeler bump already stops the score from mixing the two.
+- **The carry package's `scripts/bench/gold.py` share** (§6.2): the label rows'
+  `conjunct_relation` and gold bundles derived under status rule 2. It calls the fixes package's
+  `derive_status(…, status_rule=2)`, so it lands after fixes merges and no later than the flip,
+  where `bench.gold.LABELER_RULES` maps `locate-label/6` to 3.
+- **A writer of the re-anchored frame**: `cf bench carry` gives a `reanchor` row's span on the new
+  layer and edits no gold file; no tool writes a frame of the new layer, or the gold version on
+  it, from those anchors.
