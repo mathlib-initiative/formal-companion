@@ -626,7 +626,8 @@ then the flip (§7). No run is planned between a merge and the flip (this round 
 and the flip is what a run of the new flow needs. A prompt that describes the new flow renders
 it only for a plan of the new versions: the locate and challenge prompts by the slot
 `judgment_rules_statement_cut` (`vocab.JUDGMENT_RULES`, which the planner writes into gate.json),
-so a plan made before the flip renders the prompts it rendered before.
+so a plan made before the flip renders the prompts it rendered before. (After the flip both
+slots and the text they kept for the earlier flow were removed, §9.)
 
 ### 6.1 Built here
 
@@ -649,7 +650,8 @@ stage reads any of it.
 - `templates/prompts/locate-inventory.md.tmpl`: §3.4, the conjuncts and shapes (from the
   slots), `until` under the new end rule, PD9's line. Where a passage ends, and what rule 10
   refuses, is said by the end rule the run's tool applies: a `span_end_statement_cut` slot
-  (`vocab.SPAN_END_RULE == SPAN_END_STATEMENT_CUT`) keeps version 1's paragraph until the flip.
+  (`vocab.SPAN_END_RULE == SPAN_END_STATEMENT_CUT`) keeps version 1's paragraph until the flip
+  (removed with the slot after it, §9).
 - `scripts/gate/locate_text.py`: `passage_end(…, rule=2, next_start=…, formulas=…)`,
   `extent(…)` and its helpers (§3.1), `units(…)` (§3.3); the rule-1 behaviour unchanged.
 - `scripts/locate/passage_ids.py`: the end by the run's `span_end_rule` (§3.2; rule 2 in two
@@ -753,8 +755,8 @@ sourceset and runs `cf locate carry` and `cf bench carry` over the two inventori
 a run of the earlier flow is gated, tallied, re-planned or exported plans its runs as the planner
 did before the flip (`tests/_locate_fixtures.before_the_flip`), since a run planned now names the
 new versions and refuses that flow. The locate and challenge prompts' rules-2 text and the
-inventory prompt's version-1 end paragraph stay in the templates behind their slots, which no
-plan made now renders (§9).
+inventory prompt's version-1 end paragraph, which no plan made since the flip could render, were
+removed after it with their slots (§9).
 
 **What stays as it was**, and how each package proves it before it merges (and the flip once
 more):
@@ -877,7 +879,7 @@ after the rulings and is not among them: the gold bundle's.
   each pin their own sourceset, so no one `state.json` is the map's; its `counts` are its record.
 
 Not built in this round, and why (deferred past the flip by the maintainer's ruling S7, each
-until its own trigger, but for the last, which a ruling's consequence put at the flip):
+until its own trigger):
 
 - **Fix 1d, a second challenger for confirmed claims.** Two verdicts on one record are refused
   everywhere a challenge plan is read (`outcomes.challenge_values`), and combining them is a new
@@ -900,10 +902,17 @@ until its own trigger, but for the last, which a ruling's consequence put at the
 - **A writer of the re-anchored frame**: `cf bench carry` gives a `reanchor` row's span on the new
   layer and edits no gold file; no tool writes a frame of the new layer, or the gold version on
   it, from those anchors.
-- **Removing the prompts' pre-flip text.** The locate and challenge prompts' rules-2 branches
-  (`{{#unless judgment_rules_statement_cut}}`) and the inventory prompt's version-1 end paragraph
-  (`{{#unless span_end_statement_cut}}`) stay behind their slots, which no plan made now renders
-  (the planner writes rules 3 and span-end rule 2 and refuses the earlier flow). Reading F4 of the
-  pre-flip readings had them deleted at the flip; that is a cleanup of its own, since
-  `tests/test_locate_judgment.py`'s `TestThePromptsBeforeTheFlip` and the word-for-word checks of
-  the rules-2 lines go with them.
+
+**Built after the flip: the prompts' pre-flip text removed** (reading F4's consequence). The
+locate and challenge prompts' rules-2 branches (`{{#unless judgment_rules_statement_cut}}`) and
+the inventory prompt's version-1 end paragraph (`{{#unless span_end_statement_cut}}`) were left
+behind their slots at the flip, which no plan made since could render: the planner writes rules
+3 and span-end rule 2 and refuses the earlier flow, and no re-gate, tally or export renders a
+prompt. They went in a commit of their own, with both slots (`locate.prompts.build_context`
+fills neither) and the `if` blocks they chose between, so the templates hold the statement
+cut's text only; a plan made now renders its four prompts byte for byte as before, and only the
+template files' shas (`locate.config_shas.prompts`) move. A run planned before the flip keeps
+the prompts it rendered (`runs/<run>/prompts/`, their shas in its `run.yaml`).
+`tests/test_locate_judgment.py`'s `TestThePromptsBeforeTheFlip` and the word-for-word checks of
+the rules-2 lines and the version-1 paragraph went with them; `TestThePromptsAreTheFlipsOnly`
+holds the templates to the versions the planner writes.

@@ -200,8 +200,9 @@ is enough.
   goes on the passage that states the theorem, which may be its theorem box.
   Gate rule 10 (the proposal's §3.3; §9 below) binds only a run whose
   `gate.json` names `statement_cut_rule`, which the planner writes from the
-  flip on, and the inventory prompt describes the cut's end only to a run
-  planned under end rule 2 (its `span_end_statement_cut` slot). It refuses,
+  flip on, and the inventory prompt describes the cut's end of end rule 2,
+  which every run planned since the flip names (a run planned before keeps the
+  prompt it rendered, version 1's paragraph). It refuses,
   over the document: two passages whose spans share
   a character; a span that ends past its extent (`locate_text.extent`, with
   `compound` when the passage has `conjuncts`, so a compound statement may run

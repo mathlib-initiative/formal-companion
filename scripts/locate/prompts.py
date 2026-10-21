@@ -15,6 +15,14 @@ locate run writes those four names from ``templates/prompts/locate-*.md.tmpl``:
 
 Every invocation is rendered from the run's own host paths, and the renderer
 (``plan.render``) refuses a template with an unfilled slot.
+
+The templates describe the versions the planner writes into every gate.json
+(docs/proposals/statement-cut.md section 7): the inventory's statement cut under
+span-end rule 2 (``vocab.SPAN_END_RULE``) and judgment rules 3
+(``vocab.JUDGMENT_RULES``).  The text they rendered for a plan made before the
+flip (the claim lists of judgment rules 2, version 1's end paragraph) sat behind
+two slots that no plan made since could render, and was removed with them; a
+change of either constant is a change to these templates.
 """
 from __future__ import annotations
 
@@ -85,19 +93,6 @@ def finish_block(preset: Preset) -> str:
             f"committing:\n\n{shape}\n\n{status}\n")
 
 
-def judgment_rules_statement_cut() -> bool:
-    """Whether a run planned now is judged under the statement cut (judgment rules 3).
-
-    ``vocab.JUDGMENT_RULES`` is what the planner writes into every gate.json it
-    plans (``judgment_rules``), so the locate and challenge prompts render the
-    statement cut's flow -- no claim list, the inventory's conjunct ids, the bundle,
-    the five prompt rules of docs/proposals/statement-cut.md section 5 -- exactly
-    when the run's gate holds its documents to it, and before the proposal's flip
-    a plan renders the text it rendered before (section 6).
-    """
-    return vocab.JUDGMENT_RULES >= vocab.RULES_STATEMENT_CUT
-
-
 def phrase_list(phrases) -> str:
     """A judgment-rule phrase list as a prompt says it: quoted, ``*`` written as ``…``."""
     return ", ".join(f'"{p[:-1]}…"' if p.endswith("*") else f'"{p}"' for p in phrases)
@@ -143,22 +138,12 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         # cflib.vocab defines
         "generality_phrases_statement_cut": phrase_list(
             vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT),
-        # the judgment rules the planner writes into this run's gate.json
-        # (`judgment_rules`, plan.gate_config): the locate and challenge prompts describe
-        # the statement cut's flow only to a run its gate holds to it, and a plan made
-        # before the flip renders the prompts it rendered before
-        "judgment_rules_statement_cut": judgment_rules_statement_cut(),
         "compound_shapes": ", ".join(f"`{s}`" for s in vocab.COMPOUND_SHAPE_ORDER),
         "min_conjuncts": vocab.MIN_CONJUNCTS,
         "max_conjuncts": vocab.MAX_CONJUNCTS,
         "cut_connectives": ", ".join(f'"{c}"' for c in vocab.CUT_CONNECTIVES),
         "cut_flags": ", ".join(f"`{f}`" for f in sorted(vocab.CUT_FLAGS)),
         "simple_statement_clause": vocab.SIMPLE_STATEMENT_CLAUSE,
-        # the end rule the planner writes into this run's gate.json (`span_end_rule`,
-        # plan.gate_config): the inventory prompt says where its passage_ids.py ends a
-        # passage, and what gate rule 10 refuses, only for the run whose tool and gate
-        # do it -- the statement cut's flip writes version 2 and rule 10 together
-        "span_end_statement_cut": vocab.SPAN_END_RULE == vocab.SPAN_END_STATEMENT_CUT,
         "per_task": per_task,
         "batch": vocab.CHALLENGE_BATCH_RECORDS,
         "is_inventory": preset.mode == vocab.LOCATE_INVENTORY,

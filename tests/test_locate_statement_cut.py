@@ -739,9 +739,8 @@ def pd9_line() -> str:
     return "- **PD9** — " + " ".join(match.group(1).replace("\n> ", " ").split())
 
 
-def rendered_inventory(span_end_statement_cut: bool | None = None) -> str:
-    """The inventory worker prompt as the planner renders it; with the end-rule slot set
-    to the given value when one is given (the flip sets it by ``vocab.SPAN_END_RULE``)."""
+def rendered_inventory() -> str:
+    """The inventory worker prompt as the planner renders it."""
     from locate import presets as lpresets, prompts as lprompts
 
     class _Universe:
@@ -752,8 +751,6 @@ def rendered_inventory(span_end_statement_cut: bool | None = None) -> str:
     preset = lpresets.get(vocab.LOCATE_INVENTORY)
     ctx = lprompts.build_context(preset, run_id="r1", host=host, universe=_Universe(),
                                  per_task=8)
-    if span_end_statement_cut is not None:
-        ctx = {**ctx, "span_end_statement_cut": span_end_statement_cut}
     return lprompts.render_prompts(preset, ctx)["worker.md"]
 
 
@@ -819,38 +816,31 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
         self.assertIn('"shape": "existence_uniqueness"', self.prompt)
 
     def test_the_end_paragraph_is_the_runs_end_rule(self):
-        """The prompt says where the run's own passage_ids.py ends a passage: version 1's
-        paragraph end until the flip, version 2 -- and what rule 10 refuses -- after it."""
-        rule = {1: rendered_inventory(False), 2: rendered_inventory(True)}
-        flat = {k: " ".join(v.split()) for k, v in rule.items()}
-        self.assertEqual(self.prompt,
-                         rule[2 if vocab.SPAN_END_RULE == vocab.SPAN_END_STATEMENT_CUT else 1])
-        self.assertIn("**Where a passage ends**: where its paragraph or list item ends", flat[1])
-        self.assertIn("So give `until` to every passage that ends before its paragraph does",
-                      flat[1])
-        self.assertIn("End each where it ends (`until`, below) when its paragraph goes on.\n- A "
-                      "single word", rule[1])
+        """The prompt says where the run's own passage_ids.py ends a passage: span-end rule
+        2, which every plan made since the flip names, and what rule 10 refuses.  Version
+        1's paragraph, which a plan made before the flip rendered, went with its slot
+        (``test_locate_judgment.TestThePromptsAreTheFlipsOnly``)."""
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT)
+        prompt = self.prompt
+        flat = self.flat
         self.assertIn("**Where a passage ends**: at the earlier of the end of its paragraph or "
-                      "list item", flat[2])
+                      "list item", flat)
         self.assertIn("less what separates the two (the space, a connective of the cut rules "
-                      "above, a comma or semicolon)", flat[2])
-        self.assertIn("So two passages never overlap", flat[2])
+                      "above, a comma or semicolon)", flat)
+        self.assertIn("So two passages never overlap", flat)
         self.assertIn("A quotation, an indented block, or a list item that holds paragraphs or a "
-                      "list of its own, counts as one paragraph here", flat[2])
-        self.assertIn("when narration you leave out follows it.\n- A single word", rule[2])
-        self.assertIn("The gate holds the cut's mechanical part", flat[2])
-        for text in ("So two passages never overlap", "The gate holds the cut's mechanical part",
-                     "The next passage's start ends each one"):
+                      "list of its own, counts as one paragraph here", flat)
+        self.assertIn("when narration you leave out follows it.\n- A single word", prompt)
+        self.assertIn("The gate holds the cut's mechanical part", flat)
+        self.assertIn("The next passage's start ends each one", flat)
+        for text in ("**Where a passage ends**: where its paragraph or list item ends",
+                     "So give `until` to every passage that ends before its paragraph does",
+                     "End each where it ends (`until`, below) when its paragraph goes on"):
             with self.subTest(text=text):
-                self.assertNotIn(text, flat[1])
-        # each branch keeps the lines around it: version 2 adds one bullet and glues none
-        bullets = {k: [line for line in v.splitlines() if line.startswith("- ")]
-                   for k, v in rule.items()}
-        self.assertEqual(len(bullets[2]), len(bullets[1]) + 1)
-        for k, text in rule.items():
-            with self.subTest(rule=k):
-                self.assertNotRegex(text, r"\{\{")
-                self.assertNotRegex(text, r"\S- \*\*|[.:]- [A-Z]")
+                self.assertNotIn(text, flat)
+        # the paragraph glues no bullet to the next
+        self.assertNotRegex(prompt, r"\{\{")
+        self.assertNotRegex(prompt, r"\S- \*\*|[.:]- [A-Z]")
 
     def test_the_labelers_fields_are_the_vocabularys(self):
         shapes = re.search(r"const SHAPES = \[(.*?)\]", LABELER).group(1)
