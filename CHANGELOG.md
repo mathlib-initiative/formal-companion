@@ -997,6 +997,18 @@ release has something to say.
   zero-cost baseline is no longer a pass.
 
 ### Added
+- The statement cut's specification, `docs/proposals/statement-cut.md` (the maintainer's answers
+  of 2026-10-21 on statement-level extraction: one passage per statement, a coverage claim only
+  as a bundle on a compound statement taking its weakest part's relation, the smoke-3 audit's
+  failure-mode fixes, and a versioned cut with a carry-over map), and the names its four packages
+  build against: `cflib.vocab`'s statement-cut block (the target versions `RULES_STATEMENT_CUT`,
+  `SPAN_END_STATEMENT_CUT`, `STATEMENT_CUT_RULE` and `STATUS_RULE`; `COMPOUND_SHAPES`, the
+  conjunct bounds, `CONJUNCT_RELATIONS`, `CUT_FLAGS`, `CARRY_FATES` and the rest), the
+  revision-free keys in `cflib.hashing` (`span_sha256`, `passage_key`, `pair_key`, `bundle_key`,
+  `cut_id`), `conjunct_relation` and `tests` at the end of `JUDGMENT_LOCATION_FIELDS`, and the
+  prompt slots the new prompts will render. Nothing reads them yet: no planner writes the new
+  versions until the proposal's flip, so every run plans, gates, tallies and exports as before,
+  and a location of an earlier document carries neither new field.
 - `cf bench score --subset <ids>|<file>`: a pre-registered subset of the split's
   articles, for a run that covers fewer than the whole split (the second smoke
   covered 4 of 36 eval articles and could not be scored). The document says
