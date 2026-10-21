@@ -66,7 +66,9 @@ them only when it overturns the prominence to ``subject`` or ``central``, and th
 outcomes apply such a verdict only then.  The records of a run of status rule 2
 also carry the passage's ``statement``, ``conjuncts`` and ``shape``, and a coverage
 record's parts each part's ``clauses`` and ``conjunct_relation``, where the
-outcomes have them.
+outcomes have them; a run of status rule 1 gets the records it always got, though
+its parts carry ``clauses`` (the claim ids of judgment rules 1 and 2), so a
+challenge planned over it now writes the tasks it wrote before (:func:`classify`).
 """
 from __future__ import annotations
 
@@ -104,8 +106,10 @@ RATE_KEYS = ("sample_rate", "strong_sample_rate", "absence_sample_rate")
 
 #: what a coverage record names of each of its parts, for the challenger
 _PART_KEYS = ("location_key", "library", "declaration", "relation", "rank")
-#: what it names beside them under judgment rules 3, where the part carries them: the
-#: conjuncts it states and its relation to them (the statement cut's section 1.2)
+#: what it names beside them under judgment rules 3 (a run of status rule 2), where the
+#: part carries them: the conjuncts it states and its relation to them (the statement
+#: cut's section 1.2).  Only there: a part of an earlier run carries ``clauses`` too, the
+#: claim ids of its own claim list, which its coverage record never showed
 _BUNDLE_PART_KEYS = ("clauses", "conjunct_relation")
 #: what a record copies from a status-rule-2 outcome row, where the row carries it
 _STATEMENT_KEYS = ("statement", "conjuncts", "shape")
@@ -119,7 +123,8 @@ def _rank(seed: int, key: str) -> str:
     return hashing.sha256_text(f"{int(seed)}\n{key}")
 
 
-def _record(row: dict, target: str, *, run_id: str, location: dict | None = None) -> dict:
+def _record(row: dict, target: str, *, run_id: str, location: dict | None = None,
+            status_rule: int = vocab.STATUS_RULE_D1) -> dict:
     rec = {"target": target, "source_id": row["source_id"], "item": row["item"],
            "run_id": run_id, "prominence": row.get("prominence"),
            "scope": row.get("scope"), "passage_kind": row.get("passage_kind"),
@@ -127,7 +132,8 @@ def _record(row: dict, target: str, *, run_id: str, location: dict | None = None
            "section": row.get("section"), "quote": row.get("quote")}
     if row.get("claims") is not None:
         rec["claims"] = row["claims"]
-    rec.update({key: row[key] for key in _STATEMENT_KEYS if row.get(key) is not None})
+    if status_rule == vocab.STATUS_RULE_BUNDLE:
+        rec.update({key: row[key] for key in _STATEMENT_KEYS if row.get(key) is not None})
     if location is not None:
         rec.update({"location_key": location["location_key"], "library": location["library"],
                     "declaration": location["declaration"], "relation": location["relation"],
@@ -195,8 +201,17 @@ def _location_rule(loc: dict, *, hot: bool, based: list[dict]) -> tuple[str, str
     return NONE, None
 
 
-def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
-    """Every record of one run's outcomes, each with its rule and stratum."""
+def classify(rows: Iterable[dict], *, run_id: str,
+             status_rule: int = vocab.STATUS_RULE_D1) -> list[dict]:
+    """Every record of one run's outcomes, each with its rule and stratum.
+
+    ``status_rule`` is the locate run's (``outcomes.build``'s ``status_rule``): only
+    under status rule 2 does a record copy the passage's ``statement``,
+    ``conjuncts`` and ``shape`` and a coverage record's part its ``clauses`` and
+    ``conjunct_relation`` (the statement cut's section 1.2), so the records of a
+    run of status rule 1 are the ones they always were.
+    """
+    bundle = status_rule == vocab.STATUS_RULE_BUNDLE
     out: list[dict] = []
     for row in rows:
         if row.get("missing"):
@@ -204,17 +219,18 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
         hot = row.get("prominence") in vocab.REFUTE_BY_DEFAULT_PROMINENCE
         based = [] if hot else bases(row)
         for loc in row.get("locations") or []:
-            rec = _record(row, "location", run_id=run_id, location=loc)
+            rec = _record(row, "location", run_id=run_id, location=loc,
+                          status_rule=status_rule)
             rule, stratum = _location_rule(loc, hot=hot, based=based)
             rec.update(rule=rule, stratum=stratum)
             out.append(rec)
         claim = row.get("coverage")
         if claim:
-            rec = _record(row, vocab.COVERAGE_TARGET, run_id=run_id)
+            rec = _record(row, vocab.COVERAGE_TARGET, run_id=run_id, status_rule=status_rule)
             by_key = {loc["location_key"]: loc for loc in row.get("locations") or []}
             rec["parts"] = [{k: by_key.get(key, {}).get(k) for k in _PART_KEYS}
-                            | {k: by_key[key][k] for k in _BUNDLE_PART_KEYS
-                               if by_key.get(key, {}).get(k) is not None}
+                            | ({k: by_key[key][k] for k in _BUNDLE_PART_KEYS
+                                if by_key.get(key, {}).get(k) is not None} if bundle else {})
                             | {"location_key": key} for key in claim["parts"]]
             rec["note"] = claim.get("note")
             rec.update(rule=REFUTE, stratum=None)
@@ -222,7 +238,7 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
         outcome = row.get("outcome")
         if outcome in (vocab.OUTCOME_ABSENT, vocab.OUTCOME_UNRESOLVED):
             target = "absence" if outcome == vocab.OUTCOME_ABSENT else "unresolved"
-            rec = _record(row, target, run_id=run_id)
+            rec = _record(row, target, run_id=run_id, status_rule=status_rule)
             if hot:
                 rec.update(rule=HUNT, stratum=None)
             elif outcome == vocab.OUTCOME_ABSENT:
@@ -231,16 +247,16 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
                 rec.update(rule=NONE, stratum=None)
             out.append(rec)
         elif outcome is None:
-            rec = _record(row, "scope", run_id=run_id)
+            rec = _record(row, "scope", run_id=run_id, status_rule=status_rule)
             rec.update(rule=SAMPLE, stratum=f"scope:{row.get('scope')}")
             out.append(rec)
         if row.get("prominence") == vocab.PROMINENCE_SUPPORTING:
-            rec = _record(row, "prominence", run_id=run_id)
+            rec = _record(row, "prominence", run_id=run_id, status_rule=status_rule)
             rec.update(rule=SAMPLE, stratum=SUPPORTING_STRATUM)
             out.append(rec)
         elif row.get("prominence") == vocab.PROMINENCE_SUBJECT:
             # the QID its records carry rests on this label: required, whatever the rates
-            rec = _record(row, "prominence", run_id=run_id)
+            rec = _record(row, "prominence", run_id=run_id, status_rule=status_rule)
             rec.update(rule=REFUTE, stratum=SUBJECT_STRATUM)
             out.append(rec)
     return out
@@ -399,7 +415,8 @@ def plan(paths: WorkspacePaths, locate_runs: list[str], *, seed: int, sample_rat
         if built["mode"] != vocab.LOCATE:
             raise CfError(f"run {run_id} is a {built['mode']} run; a challenge judges locate runs")
         inputs_seen[run_id] = {"sourceset": built["sourceset"], "universe": built["universe"]}
-        records.extend(classify(built["outcomes"], run_id=run_id))
+        records.extend(classify(built["outcomes"], run_id=run_id,
+                                status_rule=built["status_rule"]))
     pins = {(str(v["sourceset"]), str(v["universe"])) for v in inputs_seen.values()}
     if len(pins) > 1:
         raise CfError("the locate runs of one challenge pin different sourcesets or universes",

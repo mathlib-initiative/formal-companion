@@ -46,8 +46,9 @@ release has something to say.
   bundle's relation, the owed hunt, the record set of status rule 2, the smoke-3 audit's
   failure-mode fixes in the judgment prompts, the challenge plan and the outcomes. Everything
   binds only what names its version, and no planner writes one before the flip, so every run
-  planned so far plans, gates, tallies and exports as before (re-gating every workspace run and
-  re-tallying and re-exporting smoke 2 and 3 gives identical results on the base and here).
+  planned so far plans, gates, tallies and exports as before (re-gating every workspace run,
+  re-tallying and re-exporting smoke 2 and 3, and re-planning their challenges give identical
+  results on the base and here: the challenge plans and every task record, byte for byte).
   - **Status rule 2** (`run.yaml` `locate.status_rule: 2`; a run.yaml without it is status rule
     1): `derive_status(…, status_rule=2)` reads a coverage claim as a bundle, `relation`
     required, and a survived bundle counts as one more location of its weakest part's relation
@@ -69,7 +70,12 @@ release has something to say.
     unrequired location, absence and unresolved record of a supporting passage whose prominence
     sample is required in that passage's task, `conditional: "prominence"`, its planned value
     unchanged; such a verdict counts only beside an overturn of that prominence to `subject` or
-    `central` in the same challenge run. A plan made now marks none.
+    `central` in the same challenge run. A plan made now marks none. A challenge record carries
+    the passage's `statement`, `conjuncts` and `shape`, and a coverage record's part its
+    `clauses` and `conjunct_relation`, only over a locate run of status rule 2 (the proposal's
+    §1.2): the parts of a run of judgment rules 1 or 2 name claim ids too, which a coverage
+    record never showed, so a challenge re-planned over one writes the task records it always
+    wrote.
   - **The judgment prompts under rules 3**: `templates/prompts/locate.md.tmpl` and
     `locate-challenge.md.tmpl` (and the locate system prompt's gate list) describe the
     statement cut's flow — no claim list, the inventory's conjunct ids, a `hasPart`'s

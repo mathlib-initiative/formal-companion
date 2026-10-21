@@ -1512,6 +1512,14 @@ like a faithfulness run:
   relations and supporting absences at none. A plan written before the subject
   prominence rule has no `prominence:subject` record: its subject passages keep
   their prominence unchallenged, and their records the QID.
+  A plan made under judgment rules 3 (the statement cut's anomaly A3,
+  `docs/proposals/statement-cut.md` §5) adds `conditional: "prominence"` to each
+  location, absence and unresolved record of a `supporting` passage whose
+  prominence record is `required` and which it did not require itself: its
+  `planned` value is unchanged, its `task_id` is that prominence record's task, and
+  a verdict on it counts only beside an overturn of that prominence to `subject`
+  or `central` in the same document (§4, §10). A plan made before has no such key,
+  and the outcomes read it as they always did.
   A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
   for an absence, unresolved outcome, scope, prominence or coverage claim. The outcomes read it
   back: a required record no verdict judged is owed (`challenge: null`). The gate
