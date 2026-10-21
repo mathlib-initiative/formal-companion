@@ -4,8 +4,9 @@
 (constants, keys, prompt slots and the tests that pin them) and the four packages of §6.2 (cut,
 gate, fixes and carry), merged, but for the carry package's `scripts/bench/gold.py` share and
 what §9 lists as not built. The flip (§7) is not made, so no planner writes the new versions
-and every run is planned, gated, tallied and exported as before; commands and paths written in
-*italics* are not implemented.**
+and every earlier run is gated, tallied and exported as before; an inventory planned now would
+render the cut rules its gate does not hold it to, so none is planned before the flip. Commands
+and paths written in *italics* are not implemented.**
 
 This document turns the maintainer's answers of 2026-10-21 on statement-level extraction into
 rules precise enough that four builders working in parallel agree on every name. It extends

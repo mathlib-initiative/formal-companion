@@ -43,13 +43,16 @@ release has something to say.
 
 ### Changed
 - The statement cut's four packages merged (`docs/proposals/statement-cut.md` §6: cut, gate,
-  fixes, carry), the flip (§7) not made: no planner writes the new versions, so every run is
-  planned, gated, tallied and exported as before (every workspace run re-gated, smoke 2 and 3
-  re-tallied and re-exported, and chal-smoke-2 and 3 re-planned, the same on the base and
-  here). Gate rule 2's refusal of an inventory end under span-end rule 2 names the separator
-  the end leaves out ("the start of the separator before the next passage"), as the cut
-  package's `locate_text.passage_end` ends it; locate-documents §2 no longer says rule 10 is
-  unbuilt, and the proposal's status line says what is built.
+  fixes, carry), the flip (§7) not made: no planner writes the new versions. Every workspace
+  run re-gates, smoke 2 and 3 re-tally and re-export, and a re-plan of chal-smoke-2,
+  chal-smoke-3 or loc-smoke-3 writes the same tasks, plans and prompts, on the base and here
+  (`run.yaml`'s config shas and the staged gate code aside). An inventory planned now renders
+  the cut rules (its end paragraph stays version 1's), which its gate, naming no
+  `statement_cut_rule`, does not hold it to, so no run is planned before the flip. Gate rule
+  2's refusal of an inventory end under span-end rule 2 names the separator the end leaves out
+  ("the start of the separator before the next passage"), as the cut package's
+  `locate_text.passage_end` ends it; locate-documents §2 no longer says rule 10 is unbuilt, and
+  the proposal's status line says what is built.
 - The statement cut's inventory side (`docs/proposals/statement-cut.md` §3, the "cut" package):
   the end rule's version 2 and the cut rules. `locate_text.passage_end(…, rule=2, next_start=…,
   formulas=…)` ends a passage that gives no `until` at the earlier of its extent and the next
