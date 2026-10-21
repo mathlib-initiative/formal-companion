@@ -42,6 +42,14 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The statement cut's four packages merged (`docs/proposals/statement-cut.md` §6: cut, gate,
+  fixes, carry), the flip (§7) not made: no planner writes the new versions, so every run is
+  planned, gated, tallied and exported as before (every workspace run re-gated, smoke 2 and 3
+  re-tallied and re-exported, and chal-smoke-2 and 3 re-planned, the same on the base and
+  here). Gate rule 2's refusal of an inventory end under span-end rule 2 names the separator
+  the end leaves out ("the start of the separator before the next passage"), as the cut
+  package's `locate_text.passage_end` ends it; locate-documents §2 no longer says rule 10 is
+  unbuilt, and the proposal's status line says what is built.
 - The statement cut's inventory side (`docs/proposals/statement-cut.md` §3, the "cut" package):
   the end rule's version 2 and the cut rules. `locate_text.passage_end(…, rule=2, next_start=…,
   formulas=…)` ends a passage that gives no `until` at the earlier of its extent and the next
@@ -82,9 +90,9 @@ release has something to say.
   re-tallying and re-exporting smoke 2 and 3 gives identical results on the base and here). The
   gate knows `judgment_rules` 3, `span_end_rule` 2 and the new `statement_cut_rule` 1, and refuses
   a gate.json naming the cut with an earlier end rule. **Span-end rule 2** ends an inventory
-  passage without `until` at the earlier of its extent and the next passage's start
-  (`locate_text.Blocks`, `passage_end(..., rule=2)`: the cut package's, whose `locate_text.py`
-  this branch carries unchanged so that the gate is built against it). **Rule 10**
+  passage without `until` at the earlier of its extent and the next passage's start, the
+  separator before that start in neither passage (`locate_text.Blocks`, `passage_end(...,
+  rule=2)`: the cut package's `locate_text.py`, which the gate is built against). **Rule 10**
   refuses an inventory's overlapping spans, a span run from one block into the next outside a
   theorem box, the displays its sentence introduces or a compound statement's list, an end inside
   a formula, conjuncts other than none or 2-5 of a closed shape, conjuncts on a passage scoped

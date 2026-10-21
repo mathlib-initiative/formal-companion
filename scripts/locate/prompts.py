@@ -138,9 +138,9 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         # the judgment rules' phrase list (cflib.vocab), rendered so a prompt never
         # lists fewer words than the gate refuses
         "generality_phrases": phrase_list(vocab.CLOSE_MATCH_GENERALITY_PHRASES),
-        # the statement cut's slots (docs/proposals/statement-cut.md section 6): no
-        # template reads them yet; the cut and fixes packages render them, so the
-        # inventory, locate and challenge prompts list what cflib.vocab defines
+        # the statement cut's slots (docs/proposals/statement-cut.md section 6): the
+        # inventory, locate and challenge prompts render them, so they list what
+        # cflib.vocab defines
         "generality_phrases_statement_cut": phrase_list(
             vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT),
         # the judgment rules the planner writes into this run's gate.json

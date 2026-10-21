@@ -1,9 +1,11 @@
 # Statement cut: one passage per statement, bundles, and a versioned cut
 
-**Status: specification, 2026-10-21. Built: the shared names of §6.1 (constants, keys, prompt
-slots and the tests that pin them), and the carry package of §6.2 but for its
-`scripts/bench/gold.py` share (§9). Everything else here is the contract four packages build
-against; commands and paths written in *italics* are not implemented.**
+**Status: specification, 2026-10-21, built but for the flip. Built: the shared names of §6.1
+(constants, keys, prompt slots and the tests that pin them) and the four packages of §6.2 (cut,
+gate, fixes and carry), merged, but for the carry package's `scripts/bench/gold.py` share and
+what §9 lists as not built. The flip (§7) is not made, so no planner writes the new versions
+and every run is planned, gated, tallied and exported as before; commands and paths written in
+*italics* are not implemented.**
 
 This document turns the maintainer's answers of 2026-10-21 on statement-level extraction into
 rules precise enough that four builders working in parallel agree on every name. It extends
@@ -247,9 +249,9 @@ The keys depend on each other, and the planner and the gate enforce it:
 
 - A gate.json naming `statement_cut_rule` ≥ 1 with `span_end_rule` < 2 is a broken gate.json
   (exit 3): rule 10's disjointness rests on the new end rule.
-- From the flip, *cf plan-locate --preset locate* refuses an inventory run whose gate.json names
+- From the flip, `cf plan-locate --preset locate` refuses an inventory run whose gate.json names
   no `statement_cut_rule` (the hint: inventory the sources again), since judgment rules 3 reads
-  the inventory's conjuncts, and *--preset locate-challenge* refuses a locate run planned under
+  the inventory's conjuncts, and `--preset locate-challenge` refuses a locate run planned under
   `judgment_rules` < 3, since its documents carry their own claim lists. Neither touches a
   planned run: old runs are re-gated, tallied and exported by their own keys, and a new run of
   the old flow is not offered (§9). Before the flip the planner plans as it does today.
@@ -654,7 +656,7 @@ stage reads any of it.
   conjuncts in its passages.
 - docs: `references/locate-documents.md` §2; the statement-cut paragraph of
   `references/vocabulary.md` §1.11 (the cut rows).
-- tests: a new *tests/test_locate_statement_cut.py* (the end rule on synthetic layers, every
+- tests: a new `tests/test_locate_statement_cut.py` (the end rule on synthetic layers, every
   definition of §3.1, the prompt and labeler lines held together).
 
 **gate** — the gate, the planner's gate config and manifests, the receipt counts, and the flip.
@@ -668,7 +670,7 @@ stage reads any of it.
 - docs: `references/locate-documents.md` §3, §4 and §9; the "what the gate holds mechanically"
   paragraph of `references/vocabulary.md` §1.11; `docs/design/stage_map.md` §4.0's sentence on
   versioned rules (at the flip).
-- tests: a new *tests/test_locate_gate_statement_cut.py*; the version pins in
+- tests: a new `tests/test_locate_gate_statement_cut.py`; the version pins in
   `tests/test_verify_locate.py` and `tests/test_locate_judgment.py` (at the flip);
   `tests/_locate_fixtures.py` (only this package edits it); the e2e driver (at the flip).
 

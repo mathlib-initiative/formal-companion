@@ -244,9 +244,11 @@ class TestTheFixturesBlocks(unittest.TestCase):
         self.assertIsNone(self.blocks.extent(0))
 
     def test_the_ends_under_rule_2(self):
+        # the next start is the earlier, so the space before it is in neither passage
         self.assertEqual(lt.passage_end(LAYER, self.blocks, SPANS["DEF1"][0], "A widget is",
                                         rule=2, next_start=SPANS["THM1"][0]),
-                         SPANS["THM1"][0])
+                         SPANS["DEF1"][1])
+        self.assertEqual(LAYER[SPANS["DEF1"][1]:SPANS["THM1"][0]], " ")
         self.assertEqual(lt.passage_end(LAYER, PARAGRAPHS, SPANS["DEF1"][0], "A widget is"),
                          SPANS["P1"][1])
         self.assertEqual(lt.passage_end(LAYER, self.blocks, SPANS["P2"][0], "For every",
@@ -312,10 +314,13 @@ class TestTheEndRule2(InventoryCase):
         self.assertOk(self.gate(cut_body(), {}))
 
     def test_a_passage_without_until_ends_at_the_next_ones_start(self):
-        body = cut_body(replace("DEF1", span=[SPANS["DEF1"][0], SPANS["THM1"][0]], until=None))
+        # ... less the separator before that start, which is in neither passage
+        body = cut_body(replace("DEF1", span=SPANS["DEF1"], until=None))
         self.assertOk(self.gate(body, CUT))
         result = self.gate(body, BEFORE)           # rule 1 ends it at the paragraph's end
         self.assertRule(result, 2, "the end of the paragraph it starts in")
+        glued = cut_body(replace("DEF1", span=[SPANS["DEF1"][0], SPANS["THM1"][0]], until=None))
+        self.assertRule(self.gate(glued, CUT), 2, "the separator before the next passage")
 
     def test_a_passage_without_until_runs_into_the_display_it_introduces(self):
         body = cut_body(replace("P2", until=None))
@@ -333,7 +338,7 @@ class TestTheEndRule2(InventoryCase):
         self.assertOk(self.gate(body, BEFORE))
         body = cut_body(replace("DEF1", span=SPANS["P1"], until=None))
         result = self.gate(body, CUT)
-        self.assertRule(result, 2, "the start of the next passage")
+        self.assertRule(result, 2, "the separator before the next passage")
         self.assertRule(result, 10, "shares text with")
 
 

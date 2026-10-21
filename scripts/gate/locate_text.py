@@ -30,7 +30,7 @@ file into the gate directory together with the vendored packages:
    ``gate.json`` names: version 1 ends a passage that gives no ``until`` at the
    end of its paragraph; version 2, the statement cut's
    (docs/proposals/statement-cut.md section 3.2), at the earlier of its
-   *extent* and the next passage's start.
+   *extent* and the next passage's start, less the separator before it.
 5. **The blocks** the statement cut reads (the same proposal, section 3.1):
    :class:`Blocks` over ``paragraphs.json`` and ``formulas.json`` gives each
    offset its outermost block, a block the next one, and the definitions the
