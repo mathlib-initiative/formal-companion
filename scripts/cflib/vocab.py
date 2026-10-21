@@ -794,7 +794,10 @@ TWO_WAY_TEST_KEYS = ("r2", "r3")
 #: after a semicolon, at one of these words, or at a comma and "and" followed by a new
 #: subject -- never between a hypothesis and its conclusion, inside an iff, or between
 #: conjuncts about one subject.  Prompt rules, rendered into the inventory prompt and
-#: the labeler; no gate parses a sentence.
+#: the labeler: no gate decides where a sentence is cut.  The span-end rule's version 2
+#: reads the list too (``locate_text.CUT_CONNECTIVES``, restated there and pinned to this
+#: one), only to leave the one before the next passage's start -- the separator -- out
+#: of both passages (docs/proposals/statement-cut.md section 3.2).
 CUT_CONNECTIVES = (";", "since", "because", "so", "hence", "then", "moreover", ", and")
 #: Why a locate worker ends a passage ``unresolved`` because of its cut (``cut_flag``),
 #: under judgment rules 3: it states nothing a library could state, or it holds several

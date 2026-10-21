@@ -56,12 +56,13 @@ plan required and no verdict judged is owed, never silently ``not_required``.
 **Conditional records** (the smoke-3 audit's anomaly A3, the statement cut's fix 6,
 docs/proposals/statement-cut.md section 5): a prominence sample that overturned a
 ``supporting`` passage to ``central`` reopened records no task held, which stayed
-owed.  A plan made with ``conditional`` (the default once ``cflib.vocab.
-JUDGMENT_RULES`` is the statement cut's, so a plan made before the flip has none
-and nothing changes for it) puts every location, absence and unresolved record of
-a ``supporting`` passage whose prominence record is required, and which the plan
-did not require itself, in that passage's task with ``conditional: "prominence"``
-and its planned value unchanged (:func:`mark_conditional`): the challenger judges
+owed.  A plan made with ``conditional`` (the default from the statement cut's flip
+on, since ``cflib.vocab.JUDGMENT_RULES`` is the statement cut's; a plan made before
+the flip has none, and nothing changes for it) puts every location, absence and
+unresolved record of a ``supporting`` passage whose prominence record is required,
+and which the plan did not require itself, in that passage's task with
+``conditional: "prominence"`` and its planned value unchanged
+(:func:`mark_conditional`): the challenger judges
 them only when it overturns the prominence to ``subject`` or ``central``, and the
 outcomes apply such a verdict only then.  The records of a run of status rule 2
 also carry the passage's ``statement``, ``conjuncts`` and ``shape``, and a coverage

@@ -27,7 +27,8 @@ references/locate-documents.md section 12): each old passage's fate from spans a
 span text alone (``locate.carry``), for every page both runs inventoried or the
 named sources' pages.  With ``--rows`` it copies a JSON-lines file of rows keyed by
 ``passage_key`` -- known answers, a verdict export -- adding each row's ``carry``
-and ``carried``.  It reads the two runs' gated documents and their layers and writes
+and ``carried`` (a row is held to the conjunct test unless it says
+``"reads_conjuncts": false``).  It reads the two runs' gated documents and their layers and writes
 nothing else; a re-run writes the same bytes.
 """
 from __future__ import annotations
@@ -83,7 +84,9 @@ def register(subparsers) -> None:
                         "inventoried)")
     k.add_argument("--rows", type=Path, default=None, metavar="FILE",
                    help="a JSON-lines file of rows keyed by passage_key (known answers, a "
-                        "verdict export) to copy with each row's fate")
+                        "verdict export) to copy with each row's fate; a row carries only "
+                        "while its passage is unchanged and formal_math and, unless it says "
+                        "\"reads_conjuncts\": false, its conjuncts are the same")
     k.add_argument("--rows-out", type=Path, default=None, metavar="FILE",
                    help="where --rows' rows are written, each with carry and carried")
 

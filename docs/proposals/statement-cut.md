@@ -12,7 +12,7 @@ This document turns the maintainer's answers of 2026-10-21 on statement-level ex
 rules precise enough that four builders working in parallel agree on every name. It extends
 `docs/proposals/wikipedia-locate.md` (the locate pipeline) and changes the formats of
 `references/locate-documents.md`; `docs/design/stage_map.md` §4.0 says which rules are versioned,
-and changes when the flip (§7) lands.
+and changed with the flip (§7).
 
 Its sources are the maintainer's notes, which this tree does not hold: the statement-level
 extraction design and its §10 answers, the decision log's answers of 2026-10-20 (PD5–PD10, the
@@ -437,7 +437,8 @@ and in the labeler's inventory mode, `workflows/locate-label.workflow.js`, in th
 5. **Lists.** A list whose items each state a fact is one passage per item. A list of the cases
    of one definition or law, or of the conditions of one equivalence, is one compound statement
    (`cases`, `iff`). Its lead-in sentence is expository, unless it states a reason no neighbour
-   states, which is a statement of its own.
+   states, which is a statement of its own; a display inside a list item belongs to that item,
+   never to the lead-in sentence (the chain stops at a list item, §3.1).
 6. **Proofs** (PD5, unchanged): narration is expository; each statement inside is its own
    passage.
 7. **Context.** `statement` carries the hypotheses and objects, so it reads on its own and the
@@ -585,7 +586,7 @@ flip, each plan recording what it drew.
 |---|---|---|---|---|---|
 | 1a | FM7 on claims | a refute names the clause no part states, and why no R1 convention reaches each part; "they state it after unfolding" is a confirm | prompt rule + gate (rules 3): a coverage refute gives `unstated` and `part_reasons` (§1.4) | `templates/prompts/locate-challenge.md.tmpl`, `scripts/gate/verify_locate.py` | fixes, gate |
 | 1b | FM7 on claims | refuse a refute whose named clause is in a part's `clauses` unless it says why that part fails | gate (rules 3): implied by 1a, since `part_reasons` names every part | `scripts/gate/verify_locate.py` | gate |
-| 1c | FM7 on claims | refuse a claim one of whose parts carries every clause | built (rules 2, PD6); under rules 3 implied by J3 | — | — |
+| 1c | FM7 on claims | refuse a claim one of whose parts carries every clause | built (rules 2, PD6); under rules 3 J3 holds it on the locate document, and the challenge holds it beside a bundle confirm: a confirm beside the same document's verdict whose `clauses` give one part every conjunct is refused (§1.4) | `scripts/gate/verify_locate.py` | gate |
 | 1d | FM7 on claims | a second challenger for 25% of confirmed claims | **not built** (§9) | — | — |
 | 2a | FM1, FM4 | every strong record writes both instantiation tests | prompt rule + gate (rules 3): `tests` `{r2, r3}` on every strong location, a part by its `conjunct_relation` | both locate prompts; `scripts/gate/verify_locate.py` | fixes, gate |
 | 2b | FM1, FM4 | require `instantiation` on every strong record; refuse a strong relation when the passage says integer and every numeric binder is ℕ, unless the note answers it | gate (rules 3): `instantiation` required on every strong location whatever its binders, a part by its `conjunct_relation`; the ℕ tripwire on the passage's `statement` and conjunct texts (`NAT_FOR_INT_INTEGER_WORDS`: "integer", "integers", "ℤ") against the signature's binder groups (`binder_groups`), answered by a note naming "ℕ" or "natural" (`NAT_FOR_INT_NATURAL_WORDS`) | `scripts/gate/verify_locate.py` | gate |
@@ -718,10 +719,10 @@ record set.
 
 | file | cut | gate | fixes | carry |
 |---|---|---|---|---|
-| `scripts/cflib/vocab.py` | — (names are built) | the flip's two values | `derive_status`; the absence rate at the flip | — |
+| `scripts/cflib/vocab.py` | — (names are built) | the flip's two values | `derive_status`; the absence rate at the flip | — (as built, the gold carry states, `GOLD_CARRY_STATES` and its three names) |
 | `references/vocabulary.md` §1.11 | the statement-cut paragraph's cut rows | "what the gate holds mechanically" | derived status, coverage claim, challenge verdicts, the rule lines | the statement-cut paragraph's keys and fates |
 | `references/locate-documents.md` | §2 | §3, §4, §9 | §6, §10 | a new §12 |
-| `docs/design/stage_map.md` §4.0 | — | the versioned-rules sentence (at the flip) | — | the L6 row |
+| `docs/design/stage_map.md` §4.0 | — | the versioned-rules sentence (at the flip) | — | the L6 row (as built, the bench row too) |
 | `workflows/locate-label.workflow.js` | the inventory mode | — | the shared rules block, the label mode | — |
 | `templates/prompts/locate-worker-system.md.tmpl` | — | — | the judgment rules' line of the gate list | — |
 | `tests/test_locate_judgment.py` | — | the version pins (at the flip) | the word-for-word checks | — |
@@ -797,55 +798,73 @@ in WikiLean). These are the follow-ups, each needed only once a set of status ru
 
 ## 9. Readings taken, and what is not built
 
-Readings the maintainer may overrule (each is one change here and in the package that built it):
+**Settled.** The maintainer ruled on 2026-10-21 on the 35 readings the build took before the flip
+(the pre-flip readings: C1–C5 of the cut, G1–G11 of the gate, K1–K8 of the carry, F1–F4 of the
+fixes and S1–S7 of this section) and took the recommended reading on every one, so each stands as
+built; the code implements them, and the label in brackets after each reading below names its
+ruling. Readings of the cut, the gate and the carry that this section does not list are settled
+the same way where they are written: C1 the separator in neither passage (§3.2), C2 the
+outermost block as an upper bound (§3.1), C3 a formula's `!` no stop and C4 a chain stopping at a
+list item (§3.1, §3.4), C5 no run planned and no gold labelled between the merges and the flip;
+G1 a start in no block bounded by the next top-level block, G2 the receipt's `cut` block over the
+formal passages with a `conjuncts` total, G4 the ℕ check's binder grammar, G5 `tests` on a weaker
+relation form-checked, G6 a conditional verdict refused without its overturn, G7 a confirm's
+`part_relations` no stronger than the same document's `conjunct_relation`, G8 the gap check the
+location's own, G9 the ℕ tripwire over the whole statement and its conjuncts, G10 PD6 held beside
+a bundle confirm, G11 an absent fill accepting no candidate (§1.4, §3.3, §5); K3 no writer of the
+re-anchored frame yet, K6 the map's additive fields, K7 a conjunct-reading verdict carried only
+while `conjuncts_changed` is false (§8.3), K8 the de-italicised §4, §6.2, §7 and §8.3; F3 tests
+following the held relation (§1.5) and F4 the prompts' slots (§6). One reading below was taken
+after the rulings and is not among them: the gold bundle's.
 
-- **"One part per conjunct"** is read as *every conjunct stated by exactly one part* (the parts
+- **"One part per conjunct"** [S1, settled] is read as *every conjunct stated by exactly one part* (the parts
   partition the conjuncts), so a part may state two of three conjuncts. For two conjuncts — an
   iff, existence and uniqueness, nearly every bundle — the reading is the literal one. The literal
   reading for more (each part exactly one conjunct) is a one-line change to J3.
-- **A `hasPart` on a simple statement** stays allowed, naming `c1` (the design keeps "a simple
+- **A `hasPart` on a simple statement** [S2, settled] stays allowed, naming `c1` (the design keeps "a simple
   statement that has only narrowMatch or hasPart cards" partial); only a compound one's parts carry
   a conjunct relation and may form a bundle.
-- **A part is held by its `conjunct_relation`**: one whose `conjunct_relation` is strong owes
+- **A part is held by its `conjunct_relation`** [G3, settled]: one whose `conjunct_relation` is strong owes
   everything a strong location owes (fixes 2a–2c and R1's words: `tests`, `instantiation`, the
   ℕ-for-ℤ tripwire, the generality list), and so does a verdict that keeps a strong one (fix 2d),
   since a bundle takes its weakest part's relation and a strong part is a strong claim. The gap
   check (a note admitting a clause it does not state) stays the location's own, since a part
   states some conjuncts and not the rest by definition. Exempting parts from `tests` alone (the
   gate builder's first reading) is a small change to `verify_locate.check_strong_location`.
-- **A passage not scoped `formal_math` is `supporting`** (rule 10 (f)): nothing reads its
+- **A passage not scoped `formal_math` is `supporting`** [S3, settled] (rule 10 (f)): nothing reads its
   prominence, and one value keeps the subject marker where it belongs.
-- **A bundle's conjuncts are exported** (§2.4), so a ballot shows each declaration beside its
+- **A bundle's conjuncts are exported** [S4, settled] (§2.4), so a ballot shows each declaration beside its
   conjunct from the record set alone. They are the inventory worker's paraphrases, held to the
   export's cap.
-- **A confirm's `part_relations` entry counts only where it is weaker** than the part's own
+- **A confirm's `part_relations` entry counts only where it is weaker** [F2, settled] than the part's own
   `conjunct_relation` (§2.1). A challenge never raises a relation, so the outcomes keep the
   weaker of the two; "replaces", read literally, would let a confirm the gate did not admit
   raise a part. On every document the gate admits the two readings agree, and the literal one
   is a one-line change to `outcomes.bundle_relation`.
-- **A challenger's `tests` replace the worker's** on the location its confirm or downgrade
-  leaves (fix 2d), as its `step`, `convention` and `instantiation` do: the outcome row keeps one
+- **A challenger's `tests` replace the worker's** [F1, settled] on the location its confirm or
+  downgrade leaves (fix 2d), as its `step`, `convention` and `instantiation` do: the outcome row keeps one
   pair, the verdict's, and the worker's stay in its locate document. A location keeps `tests`
   while it is held to a strong relation — its own, or a part's `conjunct_relation` — and loses
   them when a verdict leaves it weaker. Keeping both pairs would be a new key on the row.
-- **`cf-locate-recordset/2`** is the status rule's format; the self-evidencing format planned under
-  that number becomes `/3`.
-- **No new run of the old flow**: after the flip a locate run needs an inventory of the cut, and a
+- **`cf-locate-recordset/2`** [S5, settled] is the status rule's format; the self-evidencing format
+  planned under that number becomes `/3`.
+- **No new run of the old flow** [S6, settled]: after the flip a locate run needs an inventory of the cut, and a
   challenge a locate run of rules 3 (§2.2). Old runs stay readable, gated, tallied and exported.
-- **Gold in one passage carries more strictly than §4.4's letter** (`cf bench carry`): only while
+- **Gold in one passage carries more strictly than §4.4's letter** [K1, settled] (`cf bench carry`): only while
   the new passages over its span are that passage at its span, not whenever the passage is
   `unchanged`. A new passage nested in the unchanged one, or the unchanged text's twin cut
   elsewhere on the page, changes the run passages the score joins the label against
   (`bench.metrics.join`, greedy by overlap), so the row is relabelled. The letter is a small
   change to `bench.carry`.
-- **Gold on a new revision whose text is unchanged is `reanchor`, not `carried`**: the
+- **Gold on a new revision whose text is unchanged is `reanchor`, not `carried`** [K2, settled]: the
   maintainer's answer carries gold wherever its text is unchanged, so its labels stand and the
   report gives its span on the new layer; the bench scores only runs on the layers its frame
   pins, so the row reaches a score only through a new gold version on a frame of the new layer,
   which no tool writes yet (below).
 - **A `--rows` row that does not say whether it read the conjuncts is held to the conjunct test**
-  (§4.4's "for anything that read the conjuncts"); `"reads_conjuncts": false` leaves the test out.
-- **A gold bundle is the labeler's word** (`bench.gold.gold_bundle`): the label mode names the
+  [K4, settled] (§4.4's "for anything that read the conjuncts"); `"reads_conjuncts": false` leaves the test out.
+- **A gold bundle is the labeler's word** [taken after the rulings, not ruled on]
+  (`bench.gold.gold_bundle`): the label mode names the
   span's bundle by its parts (`bundle`), and the transcriber holds it to what it can check —
   at least two distinct parts, each a `hasPart` kept at the pin whose `conjunct_relation` is
   strong — but not to J3's partition, since a G3 span has no inventory conjuncts and the
@@ -853,11 +872,12 @@ Readings the maintainer may overrule (each is one change here and in the package
   `hasPart`s they are. Gold statuses of a labeler of rules 3 are derived under status rule 2,
   as a run of rules 3 is. Asking the labeler for each part's claim ids would let the
   transcriber check the partition too: a change to the label schema and `gold_bundle`.
-- **`cf locate carry` records nothing in a `state.json`**: §4.3 has it write nothing but the map
+- **`cf locate carry` records nothing in a `state.json`** [K5, settled]: §4.3 has it write nothing but the map
   (and `--rows-out`), against CLAUDE.md §5's step that records a command's counts. The two runs
   each pin their own sourceset, so no one `state.json` is the map's; its `counts` are its record.
 
-Not built in this round, and why:
+Not built in this round, and why (deferred past the flip by the maintainer's ruling S7, each
+until its own trigger, but for the last, which a ruling's consequence put at the flip):
 
 - **Fix 1d, a second challenger for confirmed claims.** Two verdicts on one record are refused
   everywhere a challenge plan is read (`outcomes.challenge_values`), and combining them is a new
