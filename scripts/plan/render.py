@@ -11,6 +11,12 @@ Supported syntax, deliberately tiny:
 * ``{{#if name}} … {{/if}}``  — keep the block when ``ctx["name"]`` is truthy.
 * ``{{#unless name}} … {{/unless}}`` — keep the block when it is falsy.
 
+Blocks nest, a block of one kind inside another of the same kind included: a
+block's body never holds an opening directive of its own kind, so the innermost
+one is matched first (a ``{{#if}}`` pair for one version's text beside an
+``{{#unless}}`` pair for the other's, inside an ``{{#unless}}`` of another slot).
+A template with no such nesting renders as it did before nesting was allowed.
+
 A directive that is alone on its line consumes that whole line, so a dropped
 block leaves no blank line behind. An unknown ``{{name}}`` raises ``TemplateError`` with
 the template name in the message: a prompt with an unfilled slot must never
@@ -35,9 +41,11 @@ class TemplateError(ValueError):
 
 
 _VAR = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}")
+#: a block whose body holds no opening directive of its own kind: the innermost
+#: of a nest is matched first, and its close is its own
 _BLOCK = re.compile(
     r"(?P<open>\{\{#(?P<tag>if|unless)\s+(?P<name>[A-Za-z_][A-Za-z0-9_.]*)\s*\}\})"
-    r"(?P<body>.*?)"
+    r"(?P<body>(?:(?!\{\{#(?P=tag)\s).)*?)"
     r"(?P<close>\{\{/(?P=tag)\}\})",
     re.DOTALL,
 )

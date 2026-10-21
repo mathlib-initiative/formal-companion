@@ -840,34 +840,29 @@ class TestTheBatches(unittest.TestCase):
 
 
 class TestThePrompts(unittest.TestCase):
-    """When to claim coverage, and how a challenger checks a claim: adversarially."""
+    """When to claim coverage, and how a challenger checks a claim: adversarially.
+
+    Rendered as a plan of judgment rules 3 (the statement cut's flip) renders them, a
+    claim a bundle; a plan made now renders the claim-list text, held at the end.
+    """
 
     @classmethod
     def setUpClass(cls):
-        from locate import inputs, plan as lplan, presets as lp, prompts as lprompts
-        from test_locate_planner import scratch
+        from test_locate_judgment import render_locate_prompts
 
-        cls.rendered = {}
-        case = unittest.TestCase()
-        paths = F.make_workspace(scratch(case))
-        F.write_universe(paths)
-        db = {"path": str(paths.corpus_db(F.U)), "sha256": "1" * 64, "kind": "full"}
-        layout = lplan.host_layout(paths, host="examplebox", run_id="r1", sourceset_id=F.SS,
-                                   universe_id=F.U, tools_db=db, remote_root="/srv/cf")["host"]
-        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
-            preset = lp.get(mode)
-            ctx = lprompts.build_context(preset, run_id="r1", host=layout,
-                                         universe=inputs.load_universe(paths, F.U), per_task=8)
-            cls.rendered[mode] = lprompts.render_prompts(preset, ctx)
-        case.doCleanups()
+        cls.rendered = render_locate_prompts(vocab.RULES_STATEMENT_CUT)
+        cls.before = render_locate_prompts(vocab.JUDGMENT_RULES)
 
     def test_the_worker_is_told_when_to_claim(self):
         worker = self.rendered[vocab.LOCATE]["worker.md"]
         self.assertIn('"coverage": {"complete": true, "parts": [1, 2]', worker)
-        self.assertIn("**together** state **every** clause", worker)
+        # judgment rules 3 (the statement cut's J3): a claim is a bundle on a compound
+        # statement, its parts partitioning the inventory's conjuncts
+        self.assertIn("**together** state **every** conjunct", worker)
         self.assertIn("no part assumes more than the passage does", worker)
         self.assertIn("at least 2 of this passage's `hasPart` locations", worker)
-        self.assertIn("Never put `coverage` on an `absent` or `unresolved` passage", worker)
+        self.assertIn("Never put `coverage` on a simple statement, or on an `absent` or "
+                      "`unresolved` passage", worker)
         self.assertIn("a theorem that two quotient rings are isomorphic, stated as a ring "
                       "isomorphism", worker)
         system = self.rendered[vocab.LOCATE]["worker-system.md"]
@@ -876,8 +871,9 @@ class TestThePrompts(unittest.TestCase):
     def test_the_challenger_refutes_unless_every_clause_is_matched(self):
         worker = self.rendered[vocab.LOCATE_CHALLENGE]["worker.md"]
         self.assertIn("`prominence` or `coverage`", worker)
-        self.assertIn("**refute** it unless every clause of your claim list is stated by a part "
-                      "AND no part adds a hypothesis the passage does not have", worker)
+        self.assertIn("**refute** it unless every conjunct is stated by a part AND no part adds "
+                      "a hypothesis the passage does not have", worker)
+        self.assertNotIn("every clause of your claim list", worker)
         self.assertIn("The worker's `note` is a claim to check, not evidence", worker)
         # review 4, F2: a confirm stands in only for the part records no rule required
         self.assertIn("confirms with it only the parts whose own record the plan did not "
@@ -890,6 +886,21 @@ class TestThePrompts(unittest.TestCase):
         for name, text in self.rendered[vocab.LOCATE_CHALLENGE].items():
             with self.subTest(name=name):
                 self.assertNotRegex(text, r"\{\{")
+
+    def test_a_plan_made_before_the_flip_claims_coverage_over_its_claim_list(self):
+        """Judgment rules 2's words, as a run planned now is gated: a claim's parts together
+        state every clause of the worker's claim list, and the challenger refutes it unless
+        every clause of its own list is stated by a part."""
+        worker = self.before[vocab.LOCATE]["worker.md"]
+        self.assertIn("**together** state **every** clause", worker)
+        self.assertIn("Never put `coverage` on an `absent` or `unresolved` passage", worker)
+        self.assertNotIn("simple statement", worker)
+        challenger = self.before[vocab.LOCATE_CHALLENGE]["worker.md"]
+        self.assertIn("**refute** it unless every clause of your claim list is stated by a part "
+                      "AND no part adds a hypothesis the passage does not have", challenger)
+        self.assertNotIn("**bundle**", challenger)
+        for text in (worker, challenger):
+            self.assertNotRegex(text, r"\{\{")
 
 
 if __name__ == "__main__":
