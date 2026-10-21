@@ -55,13 +55,21 @@ release has something to say.
   theorem box, the displays its sentence introduces or a compound statement's list, an end inside
   a formula, conjuncts other than none or 2-5 of a closed shape, conjuncts on a passage scoped
   out, a passage scoped out that is not `supporting`, and two passages of one text; it counts each
-  formal passage's sentences and displays into the harvest receipt's new `cut` block and refuses
-  nothing on them. **Rule 9 under judgment rules 3** checks locate and challenge documents
-  against the inventory's conjunct ids (no `claims`), a part's `conjunct_relation`, a coverage
-  claim as a bundle on a compound statement (one part per conjunct, none stating them all, each
-  strong), the audit's fixes 1a, 2a-2d, 4a and 5b, a `cut_flag` on an unresolved passage, a
-  challenge's `part_relations`, `unstated` and `part_reasons`, `fills` for a located passage its
-  verdicts empty (A1, A2) and a prominence sample's conditional records (A3). The planner writes
+  formal passage's compound statements and their conjuncts, sentences and displays into the
+  harvest receipt's new `cut` block and refuses nothing on them. **Rule 9 under judgment rules
+  3** checks locate and challenge documents against the inventory's conjunct ids (no `claims`), a
+  part's `conjunct_relation`, a coverage claim as a bundle on a compound statement (one part per
+  conjunct, none stating them all, each strong), the audit's fixes 1a, 2a-2d, 4a and 5b, a
+  `cut_flag` on an unresolved passage, a challenge's `part_relations`, `unstated` and
+  `part_reasons`, `fills` for a located passage its verdicts empty (A1, A2; an absent fill
+  accepts no candidate) and a prominence sample's conditional records (A3). A part is held by its
+  `conjunct_relation`: one whose relation to its conjuncts is strong owes fixes 2a-2d and R1's
+  generality words as a strong location does, since the bundle takes its weakest part's relation
+  (the FM1/FM4 over-claim cannot pass by being written as a bundle). A bundle confirm beside the
+  same document's verdict giving one part every conjunct is refused (PD6, which rules 2 held
+  through `part_clauses`). The tripwire's words are `cflib.vocab.NAT_FOR_INT_INTEGER_WORDS` and
+  `NAT_FOR_INT_NATURAL_WORDS`, and the gate's copy of `REFUTE_BY_DEFAULT_PROMINENCE` is pinned
+  with the others. The planner writes
   `statement_cut_rule` beside the other keys, `locate.status_rule` into a locate run's run.yaml,
   the inventory's statement, conjuncts and shape into the manifests, and refuses a locate plan over
   an inventory without the cut and a challenge of a locate run of earlier rules, all from the flip

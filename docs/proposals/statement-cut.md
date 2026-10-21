@@ -103,11 +103,14 @@ manifest's clause ids instead of a written claim list.
    {"library": "alpha", "declaration": "Widget.exists_spanning_gadget", "relation": "hasPart",
     "rank": 1, "confidence": "high", "clauses": ["c1"], "conjunct_relation": "broadMatch",
     "step": "a spanning gadget for every widget, finite or not",
-    "instantiation": "W as a widget; no instance argument", "note": "",
+    "instantiation": "W as a widget; no instance argument",
+    "tests": {"r2": "<how c1 follows>", "r3": "<why it needs nothing more at W>"}, "note": "",
     "witness": "<why it states c1>"},
    {"library": "alpha", "declaration": "Widget.spanning_gadget_unique", "relation": "hasPart",
     "rank": 2, "confidence": "high", "clauses": ["c2"], "conjunct_relation": "exactMatch",
-    "step": "two spanning gadgets of a finite widget coincide", "note": "",
+    "step": "two spanning gadgets of a finite widget coincide",
+    "instantiation": "W as a finite widget; no instance argument",
+    "tests": {"r2": "<how c2 follows>", "r3": "<why it needs nothing more at W>"}, "note": "",
     "witness": "<why it states c2>"}],
  "coverage": {"complete": true, "parts": [1, 2],
               "note": "existence holds for every widget and uniqueness for finite ones"},
@@ -131,7 +134,9 @@ manifest's clause ids instead of a written claim list.
   conjuncts leaves them unstated, and the statement is partial). The bundle's relation is computed
   (§2.1), never written.
 - **J4, the failure-mode rules** of §5: fixes 2a–2c (`tests` and `instantiation` on every strong
-  location, the ℕ-for-ℤ tripwire, the longer generality list), fix 4a's under-claim check, fix
+  location, the ℕ-for-ℤ tripwire, the longer generality list), each holding a `hasPart` part by
+  its `conjunct_relation` (a part whose `conjunct_relation` is strong is a strong location: the
+  bundle takes the weakest part's relation, §2.1), fix 4a's under-claim check, fix
   5b's `special_case` on an absence's receipt, and an optional `cut_flag` on an unresolved passage,
   `not_a_statement` or `several_statements` (`CUT_FLAGS`): what a worker who cannot re-cut a
   passage says of its cut, counted in the tally for the inventory audit.
@@ -169,12 +174,16 @@ manifest's clause ids instead of a written claim list.
 - A coverage **confirm** gives `part_relations`, one entry for each part and no other, each one of
   `BUNDLE_RELATIONS` and no stronger (`RELATION_STRENGTH`) than that part's own
   `conjunct_relation`: a challenge never raises a relation. `part_clauses` is refused under
-  rules 3 (the parts' conjuncts are the locate document's).
+  rules 3 (the parts' conjuncts are the locate document's), so PD6 is held through the same
+  document's verdicts on the parts: a confirm beside one whose `clauses` name every conjunct is
+  refused (that part is one location, no part).
 - A coverage **refute** names in `unstated` the conjunct ids (non-empty, distinct) that no part
   states, and gives `part_reasons`, one line for every part, saying why no R1 convention reaches
   its conjunct (fix 1a).
 - A verdict that keeps or leaves a strong relation gives its own `tests` (fix 2d). A verdict on a
-  `hasPart` part may give a `conjunct_relation`, never stronger than the record's.
+  `hasPart` part may give a `conjunct_relation`, never stronger than the record's, and is held by
+  the `conjunct_relation` it leaves the part (its own, else the record's): a strong one is a
+  strong relation kept, with its `tests`, the ℕ-for-ℤ tripwire and the generality words.
 - An uphold of an absence or an unresolved outcome gives `special_case` (fix 5b) beside its
   queries.
 - `fills` (A1, A2): see §5, fix 6.
@@ -361,10 +370,12 @@ Over an inventory document, after rules 2 and 8, refusing:
   passages, which no carry-over could tell apart.
 
 It refuses nothing on a passage's size. The harvest receipt's gate block gains `cut: {passages,
-formal, compound, by_shape, sentences, displays, multi_sentence, multi_display, by_source}`:
-sentences are counted per passage (`locate_text.units`: a `.`, `!` or `?` before whitespace and
-an upper-case letter or a formula token, not after an abbreviation of
-`locate_records._ABBREVIATIONS`), displays as the `math` blocks inside it. It reports them.
+formal, compound, conjuncts, by_shape, sentences, displays, multi_sentence, multi_display,
+by_source}`: `conjuncts` is the compound statements' conjuncts, so a cut's clauses are
+`conjuncts + formal − compound` (a simple statement's one clause each); sentences are counted
+per passage (`locate_text.units`: a `.`, `!` or `?` before whitespace and an upper-case letter
+or a formula token, not after an abbreviation of `locate_records._ABBREVIATIONS`), displays as
+the `math` blocks inside it. It reports them.
 
 ### 3.4 The prompt's rules (the inventory prompt and the labeler's inventory mode)
 
@@ -530,10 +541,10 @@ flip, each plan recording what it drew.
 | 1b | FM7 on claims | refuse a refute whose named clause is in a part's `clauses` unless it says why that part fails | gate (rules 3): implied by 1a, since `part_reasons` names every part | `scripts/gate/verify_locate.py` | gate |
 | 1c | FM7 on claims | refuse a claim one of whose parts carries every clause | built (rules 2, PD6); under rules 3 implied by J3 | — | — |
 | 1d | FM7 on claims | a second challenger for 25% of confirmed claims | **not built** (§9) | — | — |
-| 2a | FM1, FM4 | every strong record writes both instantiation tests | prompt rule + gate (rules 3): `tests` `{r2, r3}` on every strong location | both locate prompts; `scripts/gate/verify_locate.py` | fixes, gate |
-| 2b | FM1, FM4 | require `instantiation` on every strong record; refuse a strong relation when the passage says integer and every numeric binder is ℕ, unless the note answers it | gate (rules 3): `instantiation` required on every strong location whatever its binders; the ℕ tripwire on the passage's `statement` and conjunct texts ("integer", "integers", "ℤ") against the signature's binder groups (`binder_groups`), answered by a note naming "ℕ" or "natural" | `scripts/gate/verify_locate.py` | gate |
-| 2c | FM1, FM4 | "table", "for all primes", "every point", "differentiable at" join the closeMatch tripwire | gate (rules 3): `CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`; the prompts render `generality_phrases_statement_cut` | `scripts/gate/verify_locate.py`; both locate prompts | gate, fixes |
-| 2d | FM1, FM4 | a confirm of a strong basis carries the challenger's own two-way test | gate (rules 3): `tests` on every verdict that keeps or leaves a strong relation | `scripts/gate/verify_locate.py` | gate |
+| 2a | FM1, FM4 | every strong record writes both instantiation tests | prompt rule + gate (rules 3): `tests` `{r2, r3}` on every strong location, a part by its `conjunct_relation` | both locate prompts; `scripts/gate/verify_locate.py` | fixes, gate |
+| 2b | FM1, FM4 | require `instantiation` on every strong record; refuse a strong relation when the passage says integer and every numeric binder is ℕ, unless the note answers it | gate (rules 3): `instantiation` required on every strong location whatever its binders, a part by its `conjunct_relation`; the ℕ tripwire on the passage's `statement` and conjunct texts (`NAT_FOR_INT_INTEGER_WORDS`: "integer", "integers", "ℤ") against the signature's binder groups (`binder_groups`), answered by a note naming "ℕ" or "natural" (`NAT_FOR_INT_NATURAL_WORDS`) | `scripts/gate/verify_locate.py` | gate |
+| 2c | FM1, FM4 | "table", "for all primes", "every point", "differentiable at" join the closeMatch tripwire | gate (rules 3): `CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`, on an exact or close part's note too; the prompts render `generality_phrases_statement_cut` | `scripts/gate/verify_locate.py`; both locate prompts | gate, fixes |
+| 2d | FM1, FM4 | a confirm of a strong basis carries the challenger's own two-way test | gate (rules 3): `tests` on every verdict that keeps or leaves a strong relation, a part's by the `conjunct_relation` it leaves | `scripts/gate/verify_locate.py` | gate |
 | 2e | FM1, FM4 | the instantiation note states PD7's three-way test | prompt rule | both locate prompts, the labeler | fixes |
 | 3a | FM3, FM6 | a lemma that only unfolds a definition the passage glosses (`mem_*_iff`, `*_apply`, `*_def`) is `relatedMatch` | prompt rule (a name pattern is no statement; §9) | both locate prompts, the labeler | fixes |
 | 3b | FM3, FM6 | a `hasPart`/`narrowMatch` on an abstract structure names the instance at the passage's objects, and the gate checks it in the corpus | **not built as a corpus check** (§9); the binder-triggered `instantiation` of rules 1 stands | — | — |
@@ -544,7 +555,7 @@ flip, each plan recording what it drew.
 | 5a | FM5 | one query per clause for its special case, and search the conjecture libraries | prompt rule | `templates/prompts/locate.md.tmpl`, the challenge prompt's uphold | fixes |
 | 5b | FM5 | an absence receipt names the nearest special-case candidate and why it fails R3/PD4 | gate (rules 3): `receipt.special_case` on every absence, every uphold and every absent fill: `{library, declaration, reason}` (the declaration in `corpus.sqlite`, rule 3) or `{reason}` when there is none; `reason` a judgment line | `scripts/gate/verify_locate.py` | gate |
 | 5c | FM5 | the supporting-absence sample from 25% to 50% | plan rule: `CHALLENGE_ABSENCE_SAMPLE_RATE` 0.5 at the flip | `scripts/cflib/vocab.py` | fixes |
-| 6, gate | A1, A2 | a verdict that leaves a formal passage with no counting location and no absence is refused unless it brings a replacement or an absence with a hunt | gate (rules 3): a document whose verdicts leave a `located` passage with no counting location — its judged results and the unjudged `passage_locations` together — gives `fills[item]`: `{outcome: absent, receipt}` held to an absence's checks, or `{outcome: located, locations}` held to an overturn's; `fills` on any other item is refused | `scripts/gate/verify_locate.py` | gate |
+| 6, gate | A1, A2 | a verdict that leaves a formal passage with no counting location and no absence is refused unless it brings a replacement or an absence with a hunt | gate (rules 3): a document whose verdicts leave a `located` passage with no counting location — its judged results and the unjudged `passage_locations` together — gives `fills[item]`: `{outcome: absent, receipt}` held to an absence's checks (an accepted candidate among them, refused as on a locate absence), or `{outcome: located, locations}` held to an overturn's; `fills` on any other item is refused | `scripts/gate/verify_locate.py` | gate |
 | 6, derivation | A1, A2 | such a passage is `challenge_pending`, owed a hunt, not none | derivation (status 2): §2.5; the outcomes apply `fills` | `scripts/locate/outcomes.py` | fixes |
 | 6, plan | A3 | a prominence sample goes in the same task as all of its passage's locations | plan rule: for a `supporting` passage whose prominence record is required, its unrequired location, absence and unresolved records join the same task with `conditional: "prominence"`, their planned value unchanged | `scripts/locate/challenge_plan.py`, `scripts/locate/plan.py` | fixes, gate |
 | 6, gate | A3 | an overturn to subject or central comes with verdicts on those locations | gate (rules 3): a prominence overturn to `subject` or `central` judges every conditional record of its passage in the same document, each as a refuted-by-default or hunted record; a verdict on a conditional record with no such overturn is refused, and without one no conditional record is owed | `scripts/gate/verify_locate.py` | gate |
@@ -724,6 +735,13 @@ Readings the maintainer may overrule (each is one change here and in the package
 - **A `hasPart` on a simple statement** stays allowed, naming `c1` (the design keeps "a simple
   statement that has only narrowMatch or hasPart cards" partial); only a compound one's parts carry
   a conjunct relation and may form a bundle.
+- **A part is held by its `conjunct_relation`**: one whose `conjunct_relation` is strong owes
+  everything a strong location owes (fixes 2a–2c and R1's words: `tests`, `instantiation`, the
+  ℕ-for-ℤ tripwire, the generality list), and so does a verdict that keeps a strong one (fix 2d),
+  since a bundle takes its weakest part's relation and a strong part is a strong claim. The gap
+  check (a note admitting a clause it does not state) stays the location's own, since a part
+  states some conjuncts and not the rest by definition. Exempting parts from `tests` alone (the
+  gate builder's first reading) is a small change to `verify_locate.check_strong_location`.
 - **A passage not scoped `formal_math` is `supporting`** (rule 10 (f)): nothing reads its
   prominence, and one value keeps the subject marker where it belongs.
 - **A bundle's conjuncts are exported** (§2.4), so a ballot shows each declaration beside its

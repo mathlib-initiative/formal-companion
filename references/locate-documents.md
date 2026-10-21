@@ -396,11 +396,12 @@ inventory owns the clause list, and everything above is checked against it:
  "locations": [
    {"library": "alpha", "declaration": "Widget.exists_spanning_gadget", "relation": "hasPart",
     "rank": 1, "confidence": "high", "clauses": ["c1"], "conjunct_relation": "broadMatch",
-    "step": "a spanning gadget for every widget, finite or not", "note": "",
-    "witness": "…"},
+    "step": "a spanning gadget for every widget, finite or not",
+    "instantiation": "…", "tests": {"r2": "…", "r3": "…"}, "note": "", "witness": "…"},
    {"library": "alpha", "declaration": "Widget.spanning_gadget_unique", "relation": "hasPart",
     "rank": 2, "confidence": "high", "clauses": ["c2"], "conjunct_relation": "exactMatch",
-    "step": "two spanning gadgets of a finite widget coincide", "note": "", "witness": "…"}],
+    "step": "two spanning gadgets of a finite widget coincide",
+    "instantiation": "…", "tests": {"r2": "…", "r3": "…"}, "note": "", "witness": "…"}],
  "coverage": {"complete": true, "parts": [1, 2],
               "note": "existence holds for every widget and uniqueness for finite ones"},
  "receipt": {"queries": ["…"], "candidates": [], "query_clauses": {"…": ["c1"]}}}
@@ -437,15 +438,22 @@ inventory owns the clause list, and everything above is checked against it:
   objects, needs nothing more>}` (`TWO_WAY_TEST_KEYS`, each a one-line judgment
   field), and an `instantiation` whatever its binders. **The ℕ-for-ℤ tripwire**:
   when the passage's `statement` or a conjunct says "integer", "integers" or `ℤ`
+  (`NAT_FOR_INT_INTEGER_WORDS`; the symbol anywhere, as in "nℤ")
   and every number-typed binder group of the declaration's signature
   (`verify_locate.numeric_binders`: `(n : ℕ)`, `{m k : ℤ}` …, as `binder_groups`
   reads the telescope) is `ℕ`, the strong relation is refused unless its `note`
-  names `ℕ` or the naturals (a statement over ℕ for one over ℤ is `narrowMatch`,
-  R3); a declaration with no recorded signature, or no number-typed binder, is
-  not held to it. An exact or close note is held to
+  names `ℕ` or the naturals (`NAT_FOR_INT_NATURAL_WORDS`; a statement over ℕ for
+  one over ℤ is `narrowMatch`, R3); a declaration with no recorded signature, or
+  no number-typed binder, is not held to it. An exact or close note is held to
   `CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`, the list above with "table",
   "for all primes", "every point" and "differentiable at". `tests` on another
-  relation is checked when given.
+  relation is checked when given. **A part is held by its `conjunct_relation`**:
+  a `hasPart` of a compound statement whose `conjunct_relation` is `exactMatch`,
+  `closeMatch` or `broadMatch` is a strong location here — its `tests`, its
+  `instantiation`, the tripwire, and the generality words when it is exact or
+  close — since a bundle takes its weakest part's relation; a `narrowMatch` part
+  owes none of them. The gap check stays the location's own: a part states some
+  conjuncts and not the rest by definition.
 - **An absence's special case (fix 5b).** An absence's receipt names the nearest
   special-case candidate it found and why it fails R3 or PD4:
   `receipt.special_case: {library, declaration, reason}` — the declaration in
@@ -576,7 +584,10 @@ list. Then:
   `parts` carry each part's `clauses` and `conjunct_relation`), nor than a
   `conjunct_relation` the same document gives the part's own record: a challenge
   never raises a relation. `part_clauses` is refused. A part with no
-  `conjunct_relation` in the manifest cannot be checked (exit 3).
+  `conjunct_relation` in the manifest cannot be checked (exit 3). PD6, which
+  rules 2 held through `part_clauses`, is held through the same document's
+  verdicts on the parts: a confirm beside a verdict whose `clauses` name every
+  conjunct of the passage is refused, since that part is one location, no part.
 - A coverage **refute** names in `unstated` the conjunct ids, non-empty and
   distinct, that no part states, and gives `part_reasons`, one line for every
   part and no other, saying why no R1 convention reaches its conjunct (fix 1a;
@@ -587,7 +598,9 @@ list. Then:
   answered by its note or the record's; the generality words are the longer list.
   A verdict that leaves a `hasPart` of a compound statement may give a
   `conjunct_relation`, never stronger than the record's; no other verdict gives
-  one.
+  one. Such a verdict is held by the `conjunct_relation` it leaves the part (its
+  own, else the record's on a confirm): a strong one is a strong relation kept,
+  with its `tests`, the tripwire and the generality words.
 - An `uphold` of an absence or an unresolved outcome gives `special_case` beside
   its queries (fix 5b), as an absence's receipt does.
 - **Fills (anomalies A1, A2).** A document whose verdicts leave a `located`
@@ -597,7 +610,9 @@ list. Then:
   which no task judges) together — gives `fills[<item>]`: `{outcome: absent,
   receipt}`, held to an absence's checks (at least `min_absence_queries` distinct
   queries, a query of its own per clause, no rejection of a part, the special
-  case, the export's receipt), or `{outcome: located, locations}`, held to an
+  case, no `accepted` candidate — an accepted candidate is one of the passage's
+  counting locations, and an absent fill leaves it none, as on a locate absence
+  (rule 1) — the export's receipt), or `{outcome: located, locations}`, held to an
   overturn's. `fills` on any other item is refused.
 - **Conditional records (anomaly A3).** A record the challenge plan marks
   `conditional: "prominence"` — a sampled `supporting` passage's unrequired
@@ -1710,9 +1725,11 @@ like a faithfulness run:
   `statement_cut_rule` with a `span_end_rule` below 2 is exit 3 (rule 10's
   disjointness rests on the new end), as is a version above the gate's own. Rule
   10 refuses nothing on a passage's size: the harvest receipt's gate block gains
-  `cut: {passages, formal, compound, by_shape, sentences, displays,
+  `cut: {passages, formal, compound, conjuncts, by_shape, sentences, displays,
   multi_sentence, multi_display, by_source}` — every passage, the `formal_math`
-  ones, the compound ones and their shapes, and, over the formal ones, their
+  ones, the compound ones, their conjuncts and their shapes (the cut's clauses
+  are `conjuncts + formal − compound`, one for each simple statement), and, over
+  the formal ones, their
   sentences (`locate_text.units`: a `.`, `!` or `?` before whitespace and an
   upper-case letter or a formula, not after an abbreviation), their displays
   (`math` blocks inside the span) and how many hold more than one of each — only
