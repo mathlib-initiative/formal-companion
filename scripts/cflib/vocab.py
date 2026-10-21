@@ -662,8 +662,12 @@ CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strengthen*", "weaker", "weaken*"
 #: the fields the judgment rules add to a location of a locate document (and to an
 #: overturn's): the outcomes keep each one a document wrote, and a challenge task's
 #: manifest shows them to the challenger; none is exported (the record set's format
-#: is unchanged, references/locate-documents.md section 6)
-JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step", "convention")
+#: is unchanged, references/locate-documents.md section 6).  ``conjunct_relation``
+#: and ``tests`` are judgment rules 3's (``RULES_STATEMENT_CUT``, the statement cut
+#: below); a document of an earlier version carries neither, so its rows are the ones
+#: they always were
+JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step", "convention",
+                            "conjunct_relation", "tests")
 #: the longest one-line field a judgment rule asks of a location (``instantiation``,
 #: ``step``), and the fewest words with a letter in it: "n/a", "-" or "none" is
 #: no instantiation and no step
@@ -702,6 +706,131 @@ CANDIDATE_PART_PHRASES = ("only part", "part of the passage", "one clause",
                           "one of the clauses", "not the whole", "not the full",
                           "special case", "not the worked example", "not the example",
                           "partially", "more general*", "generali*")
+
+# --- the statement cut (docs/proposals/statement-cut.md): one passage per statement,
+# a compound statement's conjuncts written by the inventory and cited by locate and the
+# challenge, a coverage claim only as a bundle on a compound statement, and a versioned
+# cut with a carry-over map.  These are the names the proposal's four packages build
+# against.  Until its flip (the proposal's section 7) nothing reads them: no planner
+# writes the versions below, so every run is planned, gated, tallied and exported as it
+# was before them.
+#: The first judgment rules version of the statement cut (gate rule 9; the proposal's
+#: sections 1, 2 and 5): a passage's clause ids are the inventory's conjunct ids (or
+#: ``SIMPLE_STATEMENT_CLAUSE`` for a simple statement) and no document writes its own
+#: claim list; a coverage claim is a bundle; and the smoke-3 audit's failure-mode gate
+#: rules bind.  ``JUDGMENT_RULES`` becomes this at the flip.
+RULES_STATEMENT_CUT = 3
+#: The first span-end rule version of the statement cut (gate rule 2's end check; the
+#: proposal's section 3): a passage that gives no ``until`` ends at the earlier of its
+#: extent (its block, and the displays its last sentence introduces) and the next
+#: passage's start.  ``SPAN_END_RULE`` becomes this at the flip.
+SPAN_END_STATEMENT_CUT = 2
+#: The statement-cut rule (gate rule 10, the inventory's cut checks; the proposal's
+#: section 3): the version a gate.json names as ``statement_cut_rule``.  ``cf
+#: plan-locate`` writes it into every gate.json from the flip on; a gate.json without
+#: the key is gated without rule 10, as every run planned before it is.
+STATEMENT_CUT_RULE = 1
+#: The status rule (the proposal's section 2): the version of the derivation a locate
+#: run's outcomes are derived under, recorded in its ``run.yaml`` (``locate.status_rule``)
+#: and in the seal of its record set.  Version 1 (``STATUS_RULE_D1``) is decision D1 as
+#: parity round 3 reads it: a survived coverage claim acts as one more ``exactMatch``
+#: location.  Version 2 (``STATUS_RULE_BUNDLE``) is the maintainer's answer of
+#: 2026-10-21 to question 9: a survived bundle acts as one location of its weakest
+#: part's relation, and a passage the challenge leaves with no counting location and no
+#: absence is owed a hunt.  A run.yaml without the key is version 1, and
+#: :func:`derive_status` defaults to it; ``cf plan-locate`` writes ``STATUS_RULE`` from
+#: the flip on.
+STATUS_RULE_D1 = 1
+STATUS_RULE_BUNDLE = 2
+STATUS_RULE = STATUS_RULE_BUNDLE
+#: The closed list of compound shapes (the maintainer's answer of 2026-10-21 to question
+#: 2): one statement whose conclusion is a conjunction the text does not separate.
+#: Anything else that holds two results is two statements, and the inventory cuts it.
+#: ``existence_uniqueness`` -- existence and uniqueness; ``iff`` -- an equivalence, or
+#: the conditions of one equivalence; ``cases`` -- the cases of one law or one
+#: definition, in one sentence, one display or one list; ``conclusions`` -- several
+#: conclusions about one subject under one hypothesis; ``equations`` -- one display
+#: that holds several equations (an equation chain is no compound: it is one statement,
+#: its end-to-end equation).
+SHAPE_EXISTENCE_UNIQUENESS = "existence_uniqueness"
+SHAPE_IFF = "iff"
+SHAPE_CASES = "cases"
+SHAPE_CONCLUSIONS = "conclusions"
+SHAPE_EQUATIONS = "equations"
+#: the shapes in the maintainer's order, as a prompt lists them
+COMPOUND_SHAPE_ORDER = (SHAPE_EXISTENCE_UNIQUENESS, SHAPE_IFF, SHAPE_CASES,
+                        SHAPE_CONCLUSIONS, SHAPE_EQUATIONS)
+COMPOUND_SHAPES = frozenset(COMPOUND_SHAPE_ORDER)
+#: A compound statement's conjuncts (an inventory passage's ``conjuncts``): at least
+#: ``MIN_CONJUNCTS`` and at most ``MAX_CONJUNCTS``, ids ``c1`` .. ``cN`` in order
+#: (``CLAIM_ID``'s grammar), each one line of at most ``MAX_CLAIM_CHARS`` characters in
+#: the inventory worker's own words; a simple statement has none.  A shape named in
+#: ``SHAPE_CONJUNCT_COUNTS`` has exactly that many.
+MIN_CONJUNCTS = 2
+MAX_CONJUNCTS = 5
+SHAPE_CONJUNCT_COUNTS = {SHAPE_EXISTENCE_UNIQUENESS: 2}
+#: the one clause id of a simple statement: the statement itself, what a location's
+#: ``clauses`` and a receipt's ``query_clauses`` name on a passage with no conjuncts
+SIMPLE_STATEMENT_CLAUSE = "c1"
+#: what a ``hasPart`` location of a compound statement bears to the conjunct(s) it names
+#: (its ``conjunct_relation``, judged by R1-R3 and PD1-PD10 against the conjunct, not the
+#: passage): the relations that state a conjunct, or a special case of it
+CONJUNCT_RELATIONS = frozenset({EXACT_MATCH, CLOSE_MATCH, BROAD_MATCH, NARROW_MATCH})
+#: the relations a bundle may have: its weakest part's (question 9), and every part of a
+#: bundle states its conjuncts strongly, so a bundle's relation is a strong one
+BUNDLE_RELATIONS = STRONG_RELATIONS
+#: A strong location's two instantiation tests under judgment rules 3 (the smoke-3
+#: audit's FM1/FM4 fix), its ``tests``: ``r2`` -- how the passage follows from the
+#: declaration; ``r3`` -- why the declaration, at the passage's objects, needs nothing
+#: the passage does not give.  Each is a one-line judgment field.
+TWO_WAY_TEST_KEYS = ("r2", "r3")
+#: Where the inventory cuts inside a sentence (the maintainer's answer to question 3):
+#: after a semicolon, at one of these words, or at a comma and "and" followed by a new
+#: subject -- never between a hypothesis and its conclusion, inside an iff, or between
+#: conjuncts about one subject.  Prompt rules, rendered into the inventory prompt and
+#: the labeler; no gate parses a sentence.
+CUT_CONNECTIVES = (";", "since", "because", "so", "hence", "then", "moreover", ", and")
+#: Why a locate worker ends a passage ``unresolved`` because of its cut (``cut_flag``),
+#: under judgment rules 3: it states nothing a library could state, or it holds several
+#: statements the inventory did not cut.  ``not_a_statement`` is also the token of the
+#: consumer's "not a statement" ballot flag (the maintainer's answer to question 7),
+#: which no stage here writes.
+CUT_FLAG_NOT_A_STATEMENT = "not_a_statement"
+CUT_FLAG_SEVERAL_STATEMENTS = "several_statements"
+CUT_FLAGS = frozenset({CUT_FLAG_NOT_A_STATEMENT, CUT_FLAG_SEVERAL_STATEMENTS})
+#: The coverage claim as a record of status rule 2 carries it: the three keys of
+#: ``COVERAGE_RECORD_KEYS``, the bundle's ``relation`` (one of ``BUNDLE_RELATIONS``), its
+#: ``conjuncts`` (``[{id, text, part}]``, each conjunct beside the location key of the
+#: part that states it) and its ``bundle_key`` (``cflib.hashing.bundle_key``)
+COVERAGE_RECORD_KEYS_BUNDLE = COVERAGE_RECORD_KEYS | {"relation", "conjuncts", "bundle_key"}
+#: The words an ``exactMatch`` or ``closeMatch`` note may not say under judgment rules 3:
+#: ``CLOSE_MATCH_GENERALITY_PHRASES`` and the four the smoke-3 audit's FM1/FM4 fix adds
+#: (a closeMatch for a law that covers more than a finite table, for every prime or every
+#: point, or for a differentiability hypothesis is a generalisation or a special case,
+#: never a convention).  A run of an earlier version is gated by the earlier list.
+CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT = CLOSE_MATCH_GENERALITY_PHRASES + (
+    "table", "for all primes", "every point", "differentiable at")
+#: What a re-cut does to one passage of the old cut, by the carry-over map (the
+#: proposal's section 4; computed from spans and span text only): ``unchanged`` -- a
+#: passage of the new cut has the same ``passage_key`` (the same text on the same page);
+#: ``end_moved`` -- one new passage overlaps it and starts where it starts; ``split`` --
+#: two or more new passages overlap it; ``merged`` -- one new passage overlaps it, starts
+#: before it and holds the whole of it; ``reshaped`` -- one new passage overlaps it,
+#: starting elsewhere and not holding it; ``removed`` -- no new passage overlaps it
+#: (its text is still on the page, kept by no passage); ``changed`` -- the new
+#: revision does not hold its text exactly once, so it cannot be placed there.  Only
+#: ``unchanged`` carries a verdict, a gold label or a known answer; every other fate asks
+#: again.  ``CARRY_NEW`` marks a new passage that overlaps no old one.
+CARRY_UNCHANGED = "unchanged"
+CARRY_END_MOVED = "end_moved"
+CARRY_SPLIT = "split"
+CARRY_MERGED = "merged"
+CARRY_RESHAPED = "reshaped"
+CARRY_REMOVED = "removed"
+CARRY_CHANGED = "changed"
+CARRY_FATES = frozenset({CARRY_UNCHANGED, CARRY_END_MOVED, CARRY_SPLIT, CARRY_MERGED,
+                         CARRY_RESHAPED, CARRY_REMOVED, CARRY_CHANGED})
+CARRY_NEW = "new"
 #: a locate task carries at most this many formal_math passages (section 3, L3b)
 MAX_PASSAGES_PER_LOCATE_TASK = 8
 #: a challenge task judges about this many records (section 5)

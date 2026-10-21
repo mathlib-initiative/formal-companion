@@ -692,6 +692,33 @@ challenged again), whatever its challenge; a coverage claim with no challenge va
 a key outside `COVERAGE_RECORD_KEYS`; and any value outside these sets — a `refuted` challenge
 among them.
 
+**The statement cut** (`docs/proposals/statement-cut.md`, the maintainer's answers of
+2026-10-21): the inventory cuts an article into statements, one passage per statement; a
+compound statement's conjuncts are the inventory's, cited by locate and the challenge; a
+coverage claim is a **bundle**, allowed only on a compound statement, whose relation is its
+weakest part's; and a re-cut is a routine, versioned operation with a carry-over map. Its names
+are defined in `cflib.vocab`'s statement-cut block and `cflib.hashing`, and **nothing reads them
+until the proposal's flip** (its §7): until then no planner writes the versions below, and every
+run is planned, gated, tallied and exported as before. The proposal's §1–§5 are normative for the
+packages that build it; each package extends this paragraph in its own section (§6 of the
+proposal says which).
+
+| name | values |
+|---|---|
+| versions | `RULES_STATEMENT_CUT` (3: `judgment_rules` of the cut), `SPAN_END_STATEMENT_CUT` (2: `span_end_rule` of the cut), `STATEMENT_CUT_RULE` (1: `statement_cut_rule`, gate rule 10), `STATUS_RULE` (`status_rule` in a locate run's `run.yaml` and in its record set's seal: 1 is `STATUS_RULE_D1`, today's derivation and the default; 2 is `STATUS_RULE_BUNDLE`) |
+| `COMPOUND_SHAPES` | `existence_uniqueness` · `iff` · `cases` · `conclusions` · `equations` (the closed list; `COMPOUND_SHAPE_ORDER` is the maintainer's order). A compound statement has `MIN_CONJUNCTS`–`MAX_CONJUNCTS` (2–5) conjuncts `c1` … `cN`, `existence_uniqueness` exactly 2 (`SHAPE_CONJUNCT_COUNTS`); a simple statement has none, and its one clause id is `SIMPLE_STATEMENT_CLAUSE` (`c1`) |
+| a part's `conjunct_relation` | `CONJUNCT_RELATIONS`: `exactMatch` · `closeMatch` · `broadMatch` · `narrowMatch`, judged against the conjunct; a bundle's relation is one of `BUNDLE_RELATIONS` (the strong ones), its weakest part's |
+| a strong location's `tests` | `TWO_WAY_TEST_KEYS`: `r2` (how the passage follows from the declaration) · `r3` (why the declaration needs nothing more at the passage's objects) |
+| `CUT_FLAGS` | `not_a_statement` · `several_statements`: why a locate worker ends a passage unresolved because of its cut; `not_a_statement` is also the consumer's ballot flag, which no stage here writes |
+| `CARRY_FATES` | `unchanged` · `end_moved` · `split` · `merged` · `reshaped` · `removed` · `changed`, and `new` (`CARRY_NEW`) for a new passage that overlaps no old one; only `unchanged` carries a verdict, a gold label or a known answer |
+
+The keys (`cflib.hashing`, each one definition): `span_sha256` is the sha256 of the passage's
+layer text; `passage_key` is sha256 of `<pageid>\n<span_sha256>`; `pair_key` of
+`<passage_key>\n<repository>\n<declaration>`, the repository the lean end's `uri`; `bundle_key`
+of the passage key and its parts' pair keys, sorted, one per line; `cut_id` of the canonical JSON
+of a page's pageid, layer sha and sorted spans. None holds a revision, a commit, a run or an
+item, so a key changes only when what it names does.
+
 **Challenge verdicts** (`CHALLENGE_VERDICTS`, the proposal's §5): every record leaves a workspace with one.
 
 | value | meaning |

@@ -125,6 +125,17 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         # the judgment rules' phrase list (cflib.vocab), rendered so a prompt never
         # lists fewer words than the gate refuses
         "generality_phrases": phrase_list(vocab.CLOSE_MATCH_GENERALITY_PHRASES),
+        # the statement cut's slots (docs/proposals/statement-cut.md section 6): no
+        # template reads them yet; the cut and fixes packages render them, so the
+        # inventory, locate and challenge prompts list what cflib.vocab defines
+        "generality_phrases_statement_cut": phrase_list(
+            vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT),
+        "compound_shapes": ", ".join(f"`{s}`" for s in vocab.COMPOUND_SHAPE_ORDER),
+        "min_conjuncts": vocab.MIN_CONJUNCTS,
+        "max_conjuncts": vocab.MAX_CONJUNCTS,
+        "cut_connectives": ", ".join(f'"{c}"' for c in vocab.CUT_CONNECTIVES),
+        "cut_flags": ", ".join(f"`{f}`" for f in sorted(vocab.CUT_FLAGS)),
+        "simple_statement_clause": vocab.SIMPLE_STATEMENT_CLAUSE,
         "per_task": per_task,
         "batch": vocab.CHALLENGE_BATCH_RECORDS,
         "is_inventory": preset.mode == vocab.LOCATE_INVENTORY,
