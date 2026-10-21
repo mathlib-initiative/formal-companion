@@ -17,7 +17,9 @@ it give the rows, statuses and record sets they always did.
   overturn of that prominence to ``subject`` or ``central``;
 * the verdict fields of judgment rules 3: a challenger's ``tests`` (fix 2d), a
   part's ``conjunct_relation`` (never raised), a refute's ``unstated`` and
-  ``part_reasons`` (fix 1a), an uphold's ``special_case`` (fix 5b);
+  ``part_reasons`` (fix 1a), an uphold's ``special_case`` (fix 5b), read on a run of
+  status rule 2 only, and a part held by its ``conjunct_relation`` (a strong part
+  keeps its ``tests``);
 * the rows of status rule 2 (section 1.5) and its counts.
 
 The prompt rules of the same fixes (2a, 2e, 3a, 4b, 5a) are held word for word in
@@ -468,20 +470,59 @@ class TestTheVerdictFieldsOfRules3(unittest.TestCase):
         self.assertEqual(got["locations"][0]["tests"], tests)
 
     def test_a_downgrade_leaves_no_field_its_relation_does_not_take(self):
-        row = _row(coverage=None, locations=[{
-            "location_key": "c" * 64, "library": "alpha", "declaration": "W.thm",
-            "relation": "exactMatch", "rank": 1, "proof_status": "proved", "statement": False,
-            "clauses": ["c1", "c2"], "tests": {"r2": "a", "r3": "b"}}])
-        got, _ = _challenge(row, {"c" * 64: {"action": "downgrade", "relation": "hasPart",
-                                             "clauses": ["c1"], "conjunct_relation": "exactMatch",
-                                             "step": "the existence conjunct"}})
+        def exact():
+            return _row(coverage=None, locations=[{
+                "location_key": "c" * 64, "library": "alpha", "declaration": "W.thm",
+                "relation": "exactMatch", "rank": 1, "proof_status": "proved", "statement": False,
+                "clauses": ["c1", "c2"], "tests": {"r2": "a", "r3": "b"}}])
+        tests = {"r2": "the existence conjunct is the lemma at W", "r3": "nothing more at W"}
+        # to a strong part: a strong location still (the gate's held_label), with the
+        # challenger's own tests
+        got, _ = _challenge(exact(), {"c" * 64: {
+            "action": "downgrade", "relation": "hasPart", "clauses": ["c1"],
+            "conjunct_relation": "exactMatch", "step": "the existence conjunct", "tests": tests}})
         loc = got["locations"][0]
-        self.assertNotIn("tests", loc)
         self.assertEqual((loc["relation"], loc["conjunct_relation"]), ("hasPart", "exactMatch"))
+        self.assertEqual(loc["tests"], tests)
+        # to a part of a special case, or to a part with no conjunct relation: no tests
+        for given in ({"conjunct_relation": "narrowMatch"}, {}):
+            with self.subTest(given=given):
+                got, _ = _challenge(exact(), {"c" * 64: {
+                    "action": "downgrade", "relation": "hasPart", "clauses": ["c1"],
+                    "step": "the existence conjunct", "tests": tests, **given}})
+                self.assertNotIn("tests", got["locations"][0])
+        got, _ = _challenge(exact(), {"c" * 64: {"action": "downgrade", "relation": "narrowMatch",
+                                                 "clauses": ["c1"], "step": "at a finite W"}})
+        self.assertNotIn("tests", got["locations"][0])
         got, _ = _challenge(_row(coverage=None), {"a" * 64: {"action": "downgrade",
                                                               "relation": "relatedMatch"}})
         self.assertNotIn("conjunct_relation", got["locations"][0])
         self.assertNotIn("step", got["locations"][0])
+
+    def test_a_strong_part_keeps_its_tests(self):
+        """A part whose conjunct_relation is strong is held as a strong location (the gate's
+        reading, the proposal's J4 and section 1.4), so a confirm keeps its tests: the
+        challenger's when it gives them, else the worker's; a confirm that weakens the part
+        to a narrowMatch drops them, as an unchallenged narrowMatch part never has them."""
+        worker_tests = {"r2": "the worker's", "r3": "the worker's"}
+        mine = {"r2": "existence is the lemma at W", "r3": "no extra hypothesis at W"}
+
+        def row():
+            got = _row(coverage=None)
+            got["locations"][0]["tests"] = dict(worker_tests)
+            return got
+        got, problems = _challenge(row(), {"a" * 64: {"action": "confirm", "tests": mine}})
+        self.assertEqual(got["locations"][0]["tests"], mine)
+        self.assertEqual(problems, [])
+        got, _ = _challenge(row(), {"a" * 64: {"action": "confirm"}})
+        self.assertEqual(got["locations"][0]["tests"], worker_tests)
+        got, _ = _challenge(row(), {"a" * 64: {"action": "confirm", "tests": mine,
+                                               "conjunct_relation": "narrowMatch"}})
+        self.assertEqual(got["locations"][0]["conjunct_relation"], "narrowMatch")
+        self.assertNotIn("tests", got["locations"][0])
+        self.assertEqual(outcomes.held_relation(_row()["locations"][1]), "broadMatch")
+        self.assertEqual(outcomes.held_relation({"relation": "hasPart"}), "hasPart")
+        self.assertEqual(outcomes.held_relation({"relation": "closeMatch"}), "closeMatch")
 
     def test_a_part_relation_is_weakened_never_raised(self):
         got, problems = _challenge(_row(), {"b" * 64: {"action": "confirm",
@@ -490,7 +531,15 @@ class TestTheVerdictFieldsOfRules3(unittest.TestCase):
         got, problems = _challenge(_row(), {"b" * 64: {"action": "confirm",
                                                        "conjunct_relation": "exactMatch"}})
         self.assertEqual(got["locations"][1]["conjunct_relation"], "broadMatch")
-        self.assertIn("stronger than its own", got["problem"])
+        self.assertIn("the conjunct relation 'exactMatch', stronger than its own 'broadMatch'",
+                      got["problem"])
+        # a value that is no conjunct relation is named as that, not as a stronger one
+        got, problems = _challenge(_row(), {"b" * 64: {"action": "confirm",
+                                                       "conjunct_relation": "hasPart"}})
+        self.assertEqual(got["locations"][1]["conjunct_relation"], "broadMatch")
+        self.assertIn("the conjunct relation 'hasPart', which is none of broadMatch, "
+                      "closeMatch, exactMatch, narrowMatch", got["problem"])
+        self.assertNotIn("stronger", got["problem"])
 
     def test_a_close_match_parts_convention_is_kept(self):
         row = _row(coverage=None)
@@ -531,6 +580,46 @@ class TestTheVerdictFieldsOfRules3(unittest.TestCase):
         for key in ("coverage_part_relations", "challenge_receipt", "owed", "fill"):
             self.assertNotIn(key, got)
 
+    def test_status_rule_1_reads_none_of_rules_3s_verdict_fields(self):
+        """The proposal's section 7: every new field appears only under the versions that name
+        it.  A verdict of a run of status rule 1 that carries rules 3's fields -- which its
+        gate (rules 1 or 2) does not refuse -- leaves the row the same verdict without them
+        leaves: no tests, conjunct relation, part relations, unstated, part reasons or special
+        case, and no problem for a stronger conjunct relation."""
+        extra = {"tests": {"r2": "a two-way test", "r3": "of rules 3"},
+                 "conjunct_relation": "narrowMatch"}
+
+        def rule_1_row():
+            row = _row(conjuncts=None)
+            for loc in row["locations"]:
+                loc.pop("conjunct_relation")
+            return row
+        plain = {"a" * 64: {"action": "confirm"}, "coverage": {"action": "confirm"}}
+        rich = {"a" * 64: {"action": "confirm", **extra},
+                "b" * 64: {"action": "downgrade", "relation": "narrowMatch", "step": "at W",
+                           **extra},
+                "coverage": {"action": "confirm", "part_relations": {"a" * 64: "broadMatch"}}}
+        plain["b" * 64] = {k: v for k, v in rich["b" * 64].items() if k not in extra}
+        want, want_problems = _challenge(rule_1_row(), plain, status_rule=1)
+        got, problems = _challenge(rule_1_row(), rich, status_rule=1)
+        self.assertEqual((got, problems), (want, want_problems))
+        self.assertNotIn("coverage_part_relations", got)
+        refute = {"coverage": {"action": "refute", "unstated": ["c2"],
+                               "part_reasons": {"a" * 64: "r", "b" * 64: "s"}}}
+        got, _ = _challenge(rule_1_row(), refute, status_rule=1)
+        self.assertEqual(set(got["coverage_refuted"]) & {"unstated", "part_reasons"}, set())
+        sid, item = "s", "In-text #0000c0de"
+        key = outcomes.record_key("absence", sid, item)
+        for status_rule, kept in ((1, False), (2, True)):
+            row = _row(coverage=None, locations=[], outcome="absent",
+                       absence={"receipt": {"queries": ["q"]}, "challenge": None})
+            got, _ = _challenge(row, {key: {"action": "uphold", "queries": ["a", "b", "c"],
+                                            "special_case": {"reason": "none is stated"}}},
+                                status_rule=status_rule,
+                                planned_extra={key: {"planned": "required", "outcome": "absent",
+                                                     "challenge_run": "chl"}})
+            self.assertEqual("special_case" in got["challenge_receipt"], kept)
+
 
 class TestTheRowsOfStatusRule2(_Challenged):
     """Section 1.5: the statement, conjuncts and shape, the cut flag; and the counts."""
@@ -566,6 +655,32 @@ class TestTheRowsOfStatusRule2(_Challenged):
             for key in ("statement", "conjuncts", "shape", "cut_flag", "owed", "fill"):
                 self.assertNotIn(key, out)
         self.assertEqual(set(built["counts"]), STATUS_1_COUNTS)
+
+    def test_a_document_of_status_rule_1_yields_its_rows_whatever_keys_it_carries(self):
+        """A rules-1 or rules-2 gate does not refuse a key it does not know, so a locate
+        document of a run of status rule 1 may carry ``tests`` and ``conjunct_relation``:
+        its rows are the ones the same document without them gives, and only a run of
+        status rule 2 keeps them (the proposal's section 7)."""
+        want = outcomes.build(self.paths, "loc-1")
+        docs = F.locate_documents(self.paths, "loc-1")
+        for doc in docs.values():
+            for passage in doc["passages"]:
+                for loc in passage.get("locations") or []:
+                    loc["tests"] = {"r2": "how it follows", "r3": "nothing more needed"}
+                    loc["conjunct_relation"] = "exactMatch"
+        shutil.rmtree(self.paths.corpus_run_dir("loc-1"))
+        F.write_harvest(self.paths, "loc-1", docs)
+        got = outcomes.build(self.paths, "loc-1")
+        self.assertEqual([outcomes.outcome_row(r) for r in got["outcomes"]],
+                         [outcomes.outcome_row(r) for r in want["outcomes"]])
+        self.assertEqual(got["counts"], want["counts"])
+        set_status_rule(self.paths, "loc-1", 2)
+        kept = [loc for row in outcomes.build(self.paths, "loc-1")["outcomes"]
+                for loc in row["locations"]]
+        self.assertTrue(kept)
+        for loc in kept:
+            self.assertEqual("tests" in loc, outcomes.held_relation(loc) in vocab.STRONG_RELATIONS)
+            self.assertEqual("conjunct_relation" in loc, loc["relation"] == "hasPart")
 
     def test_a_cut_flag_outside_the_list_is_a_problem(self):
         set_status_rule(self.paths, "loc-1", 2)

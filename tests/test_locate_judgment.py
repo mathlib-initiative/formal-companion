@@ -1477,25 +1477,48 @@ class TestTheOutcomesKeepWhatFitsTheRelation(unittest.TestCase):
 # the prompts say each rule the gate holds
 # --------------------------------------------------------------------------- #
 
-class TestThePrompts(unittest.TestCase):
+def render_locate_prompts(rules: int) -> dict[str, dict[str, str]]:
+    """``{mode: {prompt name: text}}`` as a plan of judgment ``rules`` renders them.
 
-    @classmethod
-    def setUpClass(cls):
-        from locate import inputs, plan as lplan, presets as lp, prompts as lprompts
+    The prompts read the judgment rules the planner writes into a run's gate.json
+    (``vocab.JUDGMENT_RULES``; ``locate.prompts.judgment_rules_statement_cut``), so a
+    plan of rules 3 -- the statement cut's flip -- is rendered with that constant at
+    ``RULES_STATEMENT_CUT``, and a plan made now with it as it is.
+    """
+    from unittest import mock
 
-        cls.rendered = {}
-        case = unittest.TestCase()
-        paths = F.make_workspace(scratch(case))
-        F.write_universe(paths)
-        db = {"path": str(paths.corpus_db(F.U)), "sha256": "1" * 64, "kind": "full"}
-        layout = lplan.host_layout(paths, host="examplebox", run_id="r1", sourceset_id=F.SS,
-                                   universe_id=F.U, tools_db=db, remote_root="/srv/cf")["host"]
+    from locate import inputs, plan as lplan, presets as lp, prompts as lprompts
+
+    rendered = {}
+    case = unittest.TestCase()
+    paths = F.make_workspace(scratch(case))
+    F.write_universe(paths)
+    db = {"path": str(paths.corpus_db(F.U)), "sha256": "1" * 64, "kind": "full"}
+    layout = lplan.host_layout(paths, host="examplebox", run_id="r1", sourceset_id=F.SS,
+                               universe_id=F.U, tools_db=db, remote_root="/srv/cf")["host"]
+    with mock.patch.object(vocab, "JUDGMENT_RULES", rules):
         for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE, vocab.LOCATE_INVENTORY):
             preset = lp.get(mode)
             ctx = lprompts.build_context(preset, run_id="r1", host=layout,
                                          universe=inputs.load_universe(paths, F.U), per_task=8)
-            cls.rendered[mode] = lprompts.render_prompts(preset, ctx)
-        case.doCleanups()
+            rendered[mode] = lprompts.render_prompts(preset, ctx)
+    case.doCleanups()
+    return rendered
+
+
+def json_example(prompt: str) -> dict:
+    """The worked document of a locate or challenge prompt (its one ```json block)."""
+    start = prompt.index("```json\n") + len("```json\n")
+    return json.loads(prompt[start:prompt.index("\n```", start)])
+
+
+class TestThePrompts(unittest.TestCase):
+    """The locate prompts as a plan of judgment rules 3 renders them (the statement cut's
+    flip); :class:`TestThePromptsBeforeTheFlip` renders them as a plan made now does."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rendered = render_locate_prompts(vocab.RULES_STATEMENT_CUT)
 
     def worker(self, mode=vocab.LOCATE) -> str:
         return self.rendered[mode]["worker.md"]
@@ -2078,8 +2101,8 @@ class TestThePrompts(unittest.TestCase):
                 # fixes 2a and 2b: tests and instantiation on every strong location, ℕ for ℤ
                 "**Every `exactMatch`, `closeMatch` and `broadMatch` writes its two-way test as "
                 "`tests`**",
-                "**required on every `exactMatch`, `closeMatch` and `broadMatch`, whatever its "
-                "binders**",
+                "**required on every `exactMatch`, `closeMatch` and `broadMatch`, and on every "
+                "`hasPart` whose `conjunct_relation` is one of them, whatever its binders**",
                 'when the `statement` or a conjunct says "integer", "integers" or "ℤ" and every '
                 'numeric binder of the declaration is ℕ',
                 # fix 5b: the absence's special case; J4: the cut flag
@@ -2114,6 +2137,61 @@ class TestThePrompts(unittest.TestCase):
         for text in (worker, challenger, system):
             self.assertNotRegex(text, r"\{\{")
 
+    def test_a_part_is_held_by_its_conjunct_relation(self):
+        """The gate holds a ``hasPart`` of a compound statement by its ``conjunct_relation``
+        (the proposal's J4 and section 1.4; ``verify_locate.held_label``): a strong part writes
+        its ``instantiation`` and ``tests``, and a verdict that leaves one gives its own tests.
+        So every location and verdict of both prompts' worked documents is held so: a worker
+        who copies the bundle example writes a bundle the gate admits."""
+        tests_keys = set(vocab.TWO_WAY_TEST_KEYS)
+
+        def held(relation, conjunct_relation):
+            return conjunct_relation if relation == vocab.HAS_PART else relation
+
+        worker = json_example(self.worker())
+        strong_parts = 0
+        for passage in worker["passages"]:
+            for loc in passage["locations"]:
+                if held(loc["relation"], loc.get("conjunct_relation")) not in vocab.STRONG_RELATIONS:
+                    continue
+                strong_parts += loc["relation"] == vocab.HAS_PART
+                with self.subTest(declaration=loc["declaration"], rank=loc["rank"]):
+                    self.assertTrue(str(loc.get("instantiation") or "").strip())
+                    self.assertEqual(set(loc.get("tests") or {}), tests_keys)
+        self.assertEqual(strong_parts, 2)
+        challenge = json_example(self.worker(vocab.LOCATE_CHALLENGE))
+        overturned = [loc for v in challenge["verdicts"] for loc in v.get("locations") or []]
+        for v in challenge["verdicts"]:
+            if v["target"] != "location" or v["action"] != "downgrade":
+                continue
+            if held(v["relation"], v.get("conjunct_relation")) in vocab.STRONG_RELATIONS:
+                with self.subTest(downgrade=v["relation"]):
+                    self.assertEqual(set(v.get("tests") or {}), tests_keys)
+        for loc in overturned:
+            if held(loc["relation"], loc.get("conjunct_relation")) in vocab.STRONG_RELATIONS:
+                self.assertEqual(set(loc.get("tests") or {}), tests_keys)
+        worker, challenger = " ".join(self.worker().split()), " ".join(
+            self.worker(vocab.LOCATE_CHALLENGE).split())
+        system = self.rendered[vocab.LOCATE]["worker-system.md"]
+        self.assertIn("**A part is held by its `conjunct_relation`**: the bundle takes its weakest "
+                      "part's relation (step 7), so a part whose `conjunct_relation` is "
+                      "`exactMatch`, `closeMatch` or `broadMatch` is a strong location of the "
+                      "conjuncts it names", worker)
+        self.assertIn("as does a `hasPart` whose `conjunct_relation` is strong", worker)
+        self.assertIn("A `hasPart` whose `conjunct_relation` is one of the three writes them too, "
+                      "of the conjuncts it states", worker)
+        self.assertIn("and is held by the `conjunct_relation` it leaves the part (yours, else the "
+                      "record's on a confirm)", challenger)
+        self.assertIn("a verdict that keeps or leaves a strong relation (a part's by the "
+                      "`conjunct_relation` it leaves) and each strong overturn location (a part "
+                      "by its own) gives `tests`", challenger)
+        self.assertIn("and a `hasPart` whose `conjunct_relation` is one of those three without them "
+                      "(a part is held by its `conjunct_relation`)", system)
+        self.assertIn("a verdict that keeps or leaves a strong relation (a part's by the "
+                      "`conjunct_relation` it leaves) without your own `tests`", system)
+        self.assertIn("so a `hasPart` whose `conjunct_relation` is one of the three writes both "
+                      "too", self.fix_lines()["2a"])
+
     def test_every_failure_mode_label_resolves_in_the_tree(self):
         """FM1-FM9 are cited by code, tests and the changelog: section 1.11 defines each."""
         text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
@@ -2139,6 +2217,96 @@ class TestThePrompts(unittest.TestCase):
         self.assertNotIn("the worker may have listed too few clauses", worker)
         self.assertNotIn(' "claims": {"<item>": [', worker)
         self.assertNotRegex(worker, r"\{\{")
+
+
+
+class TestThePromptsBeforeTheFlip(unittest.TestCase):
+    """A plan made before the statement cut's flip renders the prompts it rendered before.
+
+    Its gate.json names judgment rules 2 (``vocab.JUDGMENT_RULES``), whose documents carry
+    their own claim lists, so its locate and challenge prompts say so: the statement
+    cut's text (no claim list, conjunct ids, the bundle, fixes 2a-5a, PD9's rewording)
+    is rendered only for a plan of rules 3 (``judgment_rules_statement_cut``; the
+    proposal's section 6), and a challenge re-planned over an old run never tells its
+    worker what its gate refuses.  The words below are what the prompts said, and these
+    tests held, before the statement cut.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rendered = render_locate_prompts(vocab.JUDGMENT_RULES)
+
+    def text(self, mode, name="worker.md") -> str:
+        return self.rendered[mode][name]
+
+    def test_the_slot_reads_the_rules_the_planner_writes(self):
+        from unittest import mock
+
+        from locate import plan as lplan, prompts as lprompts
+        self.assertLess(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
+        self.assertFalse(lprompts.judgment_rules_statement_cut())
+        with mock.patch.object(vocab, "JUDGMENT_RULES", vocab.RULES_STATEMENT_CUT):
+            self.assertTrue(lprompts.judgment_rules_statement_cut())
+        source = Path(lplan.__file__).read_text(encoding="utf-8")
+        self.assertIn('"judgment_rules": vocab.JUDGMENT_RULES,', source)
+
+    def test_the_worker_writes_its_claim_list(self):
+        worker = self.text(vocab.LOCATE)
+        for needle in ("**write its claim list first**",
+                       '{"id": "c1", "text": "<the clause, paraphrased in a few words>"}',
+                       "use one only when its `clauses` name every claim",
+                       '"clauses": ["c1", "c2"]', "their `clauses` together name every claim",
+                       "**a query of its own for every claim**",
+                       "**Check every candidate against each claim before you reject it.**",
+                       "makes X a claim only when X is a declarative mathematical statement that "
+                       "no neighbouring passage already states (PD9)"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, worker)
+        system = self.text(vocab.LOCATE, "worker-system.md")
+        self.assertIn("a located or absent passage without its claim list (`claims`)", system)
+        self.assertIn("or whose `part_clauses` give one part every claim", system)
+
+    def test_the_challenger_writes_its_own_claim_list(self):
+        challenger = self.text(vocab.LOCATE_CHALLENGE)
+        for needle in ("**First, write the claim list of each passage you judge**",
+                       "the worker may have listed too few clauses",
+                       "with a query of its own for every clause of your claim list",
+                       "your list has at least as many claims as the worker's", "`part_clauses`",
+                       ' "claims": {"<item>": [', "check the record against your claim list"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, challenger)
+
+    def test_nothing_of_the_statement_cut_is_rendered(self):
+        rules_3 = ("you write no claim list", "conjunct_relation", "part_relations",
+                   "part_reasons", "special_case", "cut_flag", '"fills"', "conditional",
+                   "**Fix 2a**", "**Fix 5a**", "a passage of its own only when X",
+                   "is held by its `conjunct_relation`", "any `claims` list")
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+            for name in ("worker.md", "worker-system.md"):
+                text = self.text(mode, name)
+                for needle in rules_3:
+                    with self.subTest(mode=mode, prompt=name, needle=needle):
+                        self.assertNotIn(needle, text)
+                self.assertNotRegex(text, r"\{\{")
+        # the generality words are the earlier list's: none of fix 2c's four
+        for phrase in set(vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT) - set(
+                vocab.CLOSE_MATCH_GENERALITY_PHRASES):
+            for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+                self.assertNotIn(f'"{phrase}"', self.text(mode))
+
+    def test_the_two_renders_share_everything_outside_the_judgment_rules(self):
+        """The slot changes the judgment text and nothing else: the reviewer's prompts and the
+        inventory's are one text, and the universe, tools and gate lines are in both."""
+        after = render_locate_prompts(vocab.RULES_STATEMENT_CUT)
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE, vocab.LOCATE_INVENTORY):
+            for name in ("reviewer-system.md", "reviewer.md"):
+                self.assertEqual(self.text(mode, name), after[mode][name])
+        self.assertEqual(self.rendered[vocab.LOCATE_INVENTORY], after[vocab.LOCATE_INVENTORY])
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+            for needle in ("## How to judge a relation: rules R1–R7", "## Before you commit, run "
+                           "the gate", "VALIDATION FAILED"):
+                self.assertIn(needle, self.text(mode))
+                self.assertIn(needle, after[mode]["worker.md"])
 
 
 if __name__ == "__main__":

@@ -141,6 +141,21 @@ class TestRenderer(unittest.TestCase):
         with self.assertRaises(TemplateError):
             render("{{nope}}", {}, name="t.md")
 
+    def test_blocks_of_one_kind_nest(self):
+        """A block's body never holds an opening of its own kind, so the innermost of a nest
+        is matched first: one version's text in an ``if`` and the other's in an ``unless``,
+        inside an ``unless`` of another slot (the locate system prompt's judgment line)."""
+        tpl = ("a\n{{#unless inv}}\nB\n{{#if new}}\nN\n{{/if}}\n{{#unless new}}\nO\n"
+               "{{/unless}}\n{{/unless}}\nc\n")
+        self.assertEqual(render(tpl, {"inv": False, "new": True}), "a\nB\nN\nc\n")
+        self.assertEqual(render(tpl, {"inv": False, "new": False}), "a\nB\nO\nc\n")
+        for new in (True, False):
+            self.assertEqual(render(tpl, {"inv": True, "new": new}), "a\nc\n")
+        inline = "x {{#if a}}A{{#if b}}+B{{/if}}{{/if}}. y\n"
+        self.assertEqual(render(inline, {"a": True, "b": True}), "x A+B. y\n")
+        self.assertEqual(render(inline, {"a": True, "b": False}), "x A. y\n")
+        self.assertEqual(render(inline, {"a": False, "b": True}), "x . y\n")
+
 
 # --------------------------------------------------------------------------- #
 # presets == the recorded diff of the v1 campaign's five roots
