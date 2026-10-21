@@ -1500,35 +1500,46 @@ class TestThePrompts(unittest.TestCase):
     def worker(self, mode=vocab.LOCATE) -> str:
         return self.rendered[mode]["worker.md"]
 
-    def test_fm1_the_worker_writes_the_claim_list_first(self):
+    def test_fm1_the_worker_reads_the_inventorys_clauses(self):
+        """Judgment rules 3 (the statement cut's J1): the inventory owns the one clause list,
+        so the worker writes no claim list of its own (FM1's fix of rules 1 and 2 was a
+        worker's list, which the challenger's drifted from on 48 smoke-3 passages)."""
         worker = self.worker()
-        self.assertIn("**write its claim list first**", worker)
-        self.assertIn('{"id": "c1", "text": "<the clause, paraphrased in a few words>"}', worker)
-        self.assertIn("never more than twelve consecutive words of the article", worker)
-        self.assertIn("use one only when its `clauses` name every claim", worker)
-        self.assertIn('"clauses": ["c1", "c2"]', worker)
-        self.assertIn("their `clauses` together name every claim", worker)
+        self.assertIn("**Its clauses are the inventory's, and you write no claim list** (a "
+                      "`claims` field is refused)", worker)
+        self.assertIn("a **simple statement** carries none, and its one clause is `c1`", worker)
+        self.assertIn("`conjuncts`, 2 to 5 entries", worker)
+        self.assertIn("copies more than twelve consecutive words of the article", worker)
+        self.assertIn("use one only when its `clauses` name every clause", worker)
+        self.assertIn('"clauses": ["c1"]', worker)
+        self.assertIn("their `clauses` pairwise disjoint and together naming every conjunct",
+                      worker)
+        self.assertNotIn("**write its claim list first**", worker)
+        self.assertNotIn('"claims": [{"id": "c1"', worker)
         system = self.rendered[vocab.LOCATE]["worker-system.md"]
-        self.assertIn("a located or absent passage without its claim list (`claims`)", system)
+        self.assertIn("any `claims` list (the clause ids are the manifest passage's conjunct "
+                      "ids, or `c1` for a simple statement)", system)
+        self.assertNotIn("a located or absent passage without its claim list (`claims`)", system)
 
     def test_fm5_a_query_for_every_claim_and_the_general_theorem(self):
         worker = self.worker()
-        self.assertIn("**a query of its own for every claim**", worker)
+        self.assertIn("**a query of its own for every clause**", worker)
         self.assertIn("tag every query you list", worker)
         self.assertIn("**general theorem it is an instance of**, with a query of its own tagged "
                       "`general`", worker)
         self.assertIn('"query_clauses": {"<query a>": ["c1"]', worker)
-        self.assertIn("**Check every candidate against each claim before you reject it.**",
+        self.assertIn("**Check every candidate against each clause before you reject it.**",
                       worker)
         self.assertIn('"not the whole passage" or "not the worked example" is no reason to '
                       'reject it', worker)
         challenger = self.worker(vocab.LOCATE_CHALLENGE)
-        self.assertIn("with a query of its own for every clause of your claim list", challenger)
+        self.assertIn("with a query of its own for every clause of the passage", challenger)
+        self.assertNotIn("for every clause of your claim list", challenger)
         self.assertIn("listing the queries you ran (`queries`, at least 3 distinct) tagged with "
-                      "your claims (`query_clauses`", challenger)
+                      "the clauses (`query_clauses`", challenger)
         self.assertIn('"target": "absence", "action": "uphold",', challenger)
         system = self.rendered[vocab.LOCATE]["worker-system.md"]
-        self.assertIn("an absence whose `query_clauses` leave a query untagged or a claim without "
+        self.assertIn("an absence whose `query_clauses` leave a query untagged or a clause without "
                       "a query of its own", system)
         self.assertIn("or that rejects a candidate for stating part of the passage", system)
 
@@ -1595,9 +1606,11 @@ class TestThePrompts(unittest.TestCase):
                       "they credit it with**", worker)
         self.assertIn("a lemma the proof uses along the way", worker)
         self.assertIn("Every `hasPart` and `narrowMatch` says, in `step`", worker)
-        self.assertIn("on a proof, the displayed step it states — the equation, the case, the "
-                      "inequality; on any other passage, the clause, as the declaration states "
-                      "it", worker)
+        # PD5 cut proofs into their statements, so the step is the conjunct, never a proof's
+        # displayed step (which stays for the inventories planned before PD5)
+        self.assertIn("what the declaration alone entails of this passage: the conjunct, as the "
+                      "declaration states it at the passage's objects", worker)
+        self.assertNotIn("on a proof, the displayed step it states", worker)
         challenger = self.worker(vocab.LOCATE_CHALLENGE)
         self.assertIn("A `hasPart` or `narrowMatch` stands only when the declaration alone "
                       "entails what it is credited with", challenger)
@@ -1646,15 +1659,17 @@ class TestThePrompts(unittest.TestCase):
     def test_the_challenge_prompt_puts_the_claim_list_check_first(self):
         challenger = self.worker(vocab.LOCATE_CHALLENGE)
         location = challenger.index("- **A location** is refuted by default.")
-        first = challenger.index("  - Check it against your claim list first", location)
+        first = challenger.index("  - Check it against the passage's clauses first", location)
         downgrade = challenger.index("downgrade", location)
         self.assertLess(first, downgrade)
         self.assertLess(challenger.index("**FM7**"),
                         challenger.index("## How to judge a relation: rules R1–R7"))
         self.assertIn("Every verdict on a location, a coverage claim, an absence or an "
-                      "unresolved outcome rests on it", challenger)
-        self.assertIn("your list has at least as many claims as the worker's", challenger)
-        self.assertIn("`part_clauses`", challenger)
+                      "unresolved outcome rests on them", challenger)
+        # one list, the inventory's: FM7's "at least as many claims as the worker's" is void
+        self.assertNotIn("your list has at least as many claims as the worker's", challenger)
+        self.assertIn("`part_relations`", challenger)
+        self.assertIn("No `claims` and no `part_clauses`", challenger)
         self.assertIn("(`passage_locations`, read-only", challenger)
 
     def test_the_reviewer_reads_what_the_plan_now_does(self):
@@ -1715,7 +1730,7 @@ class TestThePrompts(unittest.TestCase):
                       "three-way test, PD7)", " ".join(text.split()))
         # PD5 in the scope it gives and in the inventory it enumerates; PD9 on its claim list
         self.assertIn("each statement inside a proof is its own passage", " ".join(text.split()))
-        self.assertIn("a stated reason only by PD9", rules)
+        self.assertIn("never a stated reason, which PD9 makes a passage of its own", rules)
         # the closeMatch gloss is R1's domain-extension test, not every closeMatch's
         self.assertNotIn("the two differing where both are defined", rules)
         self.assertIn("A case outside the passage's domain never makes a closeMatch; a difference "
@@ -1886,24 +1901,29 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("**Inside a proof, each definition, theorem, equation or declarative "
                       "statement is a passage of its own**", inventory)
         self.assertIn("and proof narration and commentary (PD5)", inventory)
-        self.assertIn("neither is proof narration — what a proof uses, how it goes (PD5)", worker)
+        self.assertIn("Proof narration, history and motivation are no passages (PD5)", worker)
         # a narration passage the inventory scoped formal_math reaches the worker anyway: it
-        # cannot re-scope it, so it ends unresolved, as vocabulary.md section 1.11 documents
-        self.assertIn("proof narration or commentary, which PD5 makes no `formal_math` passage: "
-                      "that is the inventory's defect, which you cannot re-scope, so name PD5 in "
-                      "`reason`", worker)
+        # cannot re-cut it, so it ends unresolved with its cut_flag (J4), as vocabulary.md
+        # section 1.11 documents
+        self.assertIn("(proof narration or commentary, which PD5 makes no `formal_math` passage, "
+                      "or a description), or it holds several statements the inventory did not "
+                      "cut: that is the inventory's defect, which you cannot re-cut, so say so "
+                      "with a `cut_flag`, one of `not_a_statement`, `several_statements`, and "
+                      "name PD5 or the statements in `reason`", worker)
+        self.assertIn('"cut_flag": "several_statements"', worker)
         vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
                               .read_text(encoding="utf-8").split())
         self.assertIn("narration ends `unresolved`, its `reason` naming PD5 — exported as one "
                       "`UNRESOLVED` record with no status, counted in the unresolved rate",
                       vocabulary)
-        self.assertIn("never proof narration (PD5)", challenger)
-        # PD6: a part that alone states every clause is no part
-        self.assertIn("**A part that alone states every clause is no part** (PD6)", worker)
-        self.assertIn("**Refute a claim one of whose parts alone states every clause of your "
-                      "claim list** (PD6)", challenger)
-        self.assertIn("or one of whose parts names every claim alone (PD6", system)
-        self.assertIn("or whose `part_clauses` give one part every claim", system)
+        # the challenger writes no claim list, so PD5 reaches it as the rule line only
+        self.assertNotIn("never proof narration (PD5)", challenger)
+        # PD6: a part that alone states every conjunct is no part
+        self.assertIn("**A part that alone states every conjunct is no part** (PD6)", worker)
+        self.assertIn("**Refute a claim one of whose parts alone states every conjunct** (PD6)",
+                      challenger)
+        self.assertIn("one of whose parts names every conjunct alone (PD6", system)
+        self.assertNotIn("`part_clauses` give one part every claim", system)
         # PD7: junk values left closeMatch's list; the closeMatch example is no junk value
         self.assertNotIn("`junk_value`", worker)
         self.assertNotIn('"Lean returns 0 at n = 0"', worker + challenger)
@@ -1930,10 +1950,11 @@ class TestThePrompts(unittest.TestCase):
         # PD8: the bridge after instantiating is decidable arithmetic, or relatedMatch
         self.assertIn("makes it `relatedMatch`, not `broadMatch` (PD8)", worker)
         self.assertIn("a bridge through a named lemma makes it `relatedMatch` (PD8)", challenger)
-        # PD9: a stated reason is a claim only when no neighbouring passage states it
-        self.assertIn("makes X a claim only when X is a declarative mathematical statement that "
-                      "no neighbouring passage already states (PD9)", worker)
-        self.assertIn("no neighbouring passage already states (PD9)", challenger)
+        # PD9, reworded on 2026-10-21: a stated reason is a passage of its own, never a clause
+        self.assertIn("a stated reason is a passage of its own, never a clause of the statement "
+                      "it supports (PD9)", worker)
+        for text in (worker, challenger):
+            self.assertNotIn("makes X a claim only when", text)
         for text in (worker, challenger, inventory):
             self.assertNotRegex(text, r"\{\{")
 
@@ -1994,6 +2015,105 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("PD9's stated reasons and PD10's encodings are not checked mechanically",
                       vocabulary)
 
+    @staticmethod
+    def fix_lines() -> dict[str, str]:
+        """The statement cut's prompt rules as references/vocabulary.md section 1.11 writes them."""
+        text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        start = text.index("**The statement cut's prompt rules**")
+        block = text[start:text.index("**The failure modes**", start)]
+        return {m.group(1): "- **Fix %s** — %s" % (m.group(1), " ".join(m.group(2).split()))
+                for m in re.finditer(r"^- \*\*Fix (2a|2e|3a|4b|5a)\*\* — (.*?)(?=^\S|\Z)",
+                                     block, re.M | re.S)}
+
+    def test_the_statement_cuts_prompt_rules_are_word_for_word_in_all_three(self):
+        """docs/proposals/statement-cut.md section 5: fixes 2a, 2e, 3a, 4b and 5a are written
+        word for word in vocabulary.md, both locate prompts and the labeler."""
+        lines = self.fix_lines()
+        self.assertEqual(sorted(lines), ["2a", "2e", "3a", "4b", "5a"])
+        labeler = (HERE.parent / "workflows" / "locate-label.workflow.js").read_text(encoding="utf-8")
+        labeler = " ".join(labeler[labeler.index("const RULES = `"):labeler.index("const huntTools")]
+                           .replace("\\`", "`").split())
+        for name, line in sorted(lines.items()):
+            for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+                with self.subTest(fix=name, mode=mode):
+                    self.assertIn(line, " ".join(self.worker(mode).split()))
+            with self.subTest(fix=name, mode="labeler"):
+                self.assertIn(line, labeler)
+        proposal = (HERE.parent / "docs" / "proposals" / "statement-cut.md").read_text(
+            encoding="utf-8")
+        self.assertIn("The new prompt rules (fixes 2a, 2e, 3a, 4b and 5a)", proposal)
+        # what each says, beside the words: the two-way test, PD7's test in the line, the
+        # unfolding lemma, the defined object and the swapped roles, the special case
+        self.assertIn("`r2`, how the passage follows from the declaration", lines["2a"])
+        self.assertIn("states PD7's three-way test", lines["2e"])
+        self.assertIn("`mem_*_iff`, `*_apply`, `*_def`", lines["3a"])
+        self.assertIn("read it with its roles swapped", lines["4b"])
+        self.assertIn("one query for its conclusion under a stronger hypothesis", lines["5a"])
+
+    def test_pd9_carries_the_maintainers_rewording(self):
+        """The answer of 2026-10-21 to question 5: a stated reason X is a passage of its own,
+        in the words the proposal's section 3.4 gives every rule file."""
+        proposal = (HERE.parent / "docs" / "proposals" / "statement-cut.md").read_text(
+            encoding="utf-8")
+        start = proposal.index("> **PD9** —")
+        quoted = " ".join(line.lstrip("> ").strip() for line in
+                          proposal[start:proposal.index("\n\n", start)].splitlines())
+        self.assertEqual(self.rule_lines()["PD9"], "- " + quoted)
+        self.assertIn("otherwise X is no passage and no clause", self.rule_lines()["PD9"])
+
+    def test_the_rules_3_documents_reach_both_prompts(self):
+        """Judgment rules 3's fields (the proposal's sections 1.3 and 1.4, and section 5's gate
+        rows) are what the locate and challenge prompts ask for."""
+        worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)
+        system = self.rendered[vocab.LOCATE]["worker-system.md"]
+        for needle in (
+                # J2: a part's relation to its conjuncts
+                '"conjunct_relation": "broadMatch"',
+                "**A `hasPart` of a compound statement names the conjuncts it states and its "
+                "`conjunct_relation`**",
+                # J3 and fix 4a: the bundle, and the under-claim it must not leave
+                "**Write it whenever your parts so partition the conjuncts**",
+                "its relation is its weakest part's, which the outcomes compute (you write none)",
+                "Never put `coverage` on a simple statement",
+                # fixes 2a and 2b: tests and instantiation on every strong location, ℕ for ℤ
+                "**Every `exactMatch`, `closeMatch` and `broadMatch` writes its two-way test as "
+                "`tests`**",
+                "**required on every `exactMatch`, `closeMatch` and `broadMatch`, whatever its "
+                "binders**",
+                'when the `statement` or a conjunct says "integer", "integers" or "ℤ" and every '
+                'numeric binder of the declaration is ℕ',
+                # fix 5b: the absence's special case; J4: the cut flag
+                '"special_case": {"library": "<id>"', "with a `cut_flag`, one of"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, worker)
+        for needle in (
+                # fix 2d: the challenger's own tests
+                "**A verdict that keeps or leaves `exactMatch`, `closeMatch` or `broadMatch` "
+                "gives your own two-way test as `tests`**",
+                # section 1.4: a confirm's part relations, a refute's unstated and part reasons
+                '"part_relations": {"<a part\'s location_key>": "broadMatch"',
+                "none stronger than that part's own `conjunct_relation` (a challenge never "
+                "raises a relation)",
+                '"unstated": ["c2"]', '"part_reasons": {',
+                '"The parts state it after unfolding or encoding" is a confirm',
+                # fix 5b on an uphold, fix 6's fills and A3's conditional records
+                '"special_case": {"reason":',
+                "**Never leave a located passage with nothing.**", '"fills": {',
+                "**When you overturn a `supporting` prominence to `subject` or `central`, judge "
+                "in the same document every record of that passage your manifest marks "
+                '`conditional: "prominence"`**',
+                "without such an overturn, give a conditional record no verdict"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, challenger)
+        # fix 2c: the longer generality list in every prompt that warns of it
+        for phrase in vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT:
+            said = f'"{phrase[:-1]}…"' if phrase.endswith("*") else f'"{phrase}"'
+            for text in (worker, challenger, system):
+                with self.subTest(phrase=phrase):
+                    self.assertIn(said, text)
+        for text in (worker, challenger, system):
+            self.assertNotRegex(text, r"\{\{")
+
     def test_every_failure_mode_label_resolves_in_the_tree(self):
         """FM1-FM9 are cited by code, tests and the changelog: section 1.11 defines each."""
         text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
@@ -2003,19 +2123,21 @@ class TestThePrompts(unittest.TestCase):
 
     def test_fm7_the_challenger_applies_d1_and_keeps_linked_declarations_together(self):
         line = self.rule_lines()["FM7"]
-        for needle in ("check the record against your claim list", "Apply D1",
+        for needle in ("check the record against the passage's clauses", "Apply D1",
                        "a bijection is the data form of a cardinality equation",
                        "Keep definitionally linked declarations consistent",
                        "your task holds every required location of a passage",
                        "`passage_locations`", "never a refute"):
             self.assertIn(needle, line)
 
-    def test_fm1_the_challenger_lists_the_clauses_itself(self):
+    def test_fm1_the_challenger_reads_the_inventorys_clauses(self):
         worker = self.worker(vocab.LOCATE_CHALLENGE)
-        self.assertIn("**First, write the claim list of each passage you judge**", worker)
-        self.assertIn("the worker may have listed too few clauses", worker)
-        self.assertIn("stand only when they name every claim", worker)
-        self.assertIn(' "claims": {"<item>": [', worker)
+        self.assertIn("**The passage's clauses are the inventory's**, and you write no claim list "
+                      "(a `claims` field is refused)", worker)
+        self.assertIn("stand only when they name every clause", worker)
+        self.assertNotIn("**First, write the claim list of each passage you judge**", worker)
+        self.assertNotIn("the worker may have listed too few clauses", worker)
+        self.assertNotIn(' "claims": {"<item>": [', worker)
         self.assertNotRegex(worker, r"\{\{")
 
 

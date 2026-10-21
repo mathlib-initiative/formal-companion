@@ -42,6 +42,46 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The statement cut, the fixes package (`docs/proposals/statement-cut.md` §2, §5 and §6.2): the
+  bundle's relation, the owed hunt, the record set of status rule 2, the smoke-3 audit's
+  failure-mode fixes in the judgment prompts, the challenge plan and the outcomes. Everything
+  binds only what names its version, and no planner writes one before the flip, so every run
+  planned so far plans, gates, tallies and exports as before (re-gating every workspace run and
+  re-tallying and re-exporting smoke 2 and 3 gives identical results on the base and here).
+  - **Status rule 2** (`run.yaml` `locate.status_rule: 2`; a run.yaml without it is status rule
+    1): `derive_status(…, status_rule=2)` reads a coverage claim as a bundle, `relation`
+    required, and a survived bundle counts as one more location of its weakest part's relation
+    where status rule 1 makes it one more `exactMatch` — so a definition passage whose bundle is
+    `broadMatch` is `partial` (the maintainer's answer to question 9). The cases are a new
+    hand-written table, `tests/data/locate/status-parity-2.json` (`cf-locate-status-parity/2`);
+    the round-3 table is untouched and still passes, the keyword given or not. The outcomes
+    compute the bundle's relation (each part's `conjunct_relation`, replaced by a confirm's
+    `part_relations`, the weaker kept), copy the inventory's `statement`, `conjuncts` and `shape`
+    onto each row, keep an unresolved passage's `cut_flag`, and owe a hunt to a located passage
+    the challenge leaves with nothing that counts and no absence (challenge
+    `challenge_pending`, `owed: "hunt"`, refused by the export; anomalies 1 and 2), applying a
+    challenge document's `fills` first; the counts gain `owed_hunt`, `by_cut_flag` and
+    `bundles`. Such a run exports `cf-locate-recordset/2`: the seal's `status_rule`, the
+    revision-free `passage_key` on every record and `pair_key` on a location's (restated in
+    `locate.records` in lockstep with `cflib.hashing`), and a bundle with its relation, its
+    conjuncts each beside its part and its `bundle_key`.
+  - **Conditional records** (anomaly 3): a challenge plan made under judgment rules 3 puts every
+    unrequired location, absence and unresolved record of a supporting passage whose prominence
+    sample is required in that passage's task, `conditional: "prominence"`, its planned value
+    unchanged; such a verdict counts only beside an overturn of that prominence to `subject` or
+    `central` in the same challenge run. A plan made now marks none.
+  - **The judgment prompts under rules 3**: `templates/prompts/locate.md.tmpl` and
+    `locate-challenge.md.tmpl` (and the locate system prompt's gate list) describe the
+    statement cut's flow — no claim list, the inventory's conjunct ids, a `hasPart`'s
+    `conjunct_relation`, the bundle and its under-claim rule, `tests` on every strong location
+    and verdict, `instantiation` on every strong location, the ℕ-for-ℤ tripwire, the longer
+    generality list, an absence's and an uphold's `special_case`, a confirm's `part_relations`,
+    a refute's `unstated` and `part_reasons`, `fills`, `cut_flag` and conditional records — and
+    carry the five new prompt rules (fixes 2a, 2e, 3a, 4b and 5a) word for word with
+    `references/vocabulary.md` §1.11 and the labeler, as do PD9's reworded line (a stated reason
+    is a passage of its own) and FM7's (one clause list, the inventory's). The labeler's label
+    mode gives a `hasPart` its `conjunct_relation`; its version moves at the flip. No run should
+    be planned from these prompts before the flip, whose gate holds them.
 - Locate judgment rules: PD10's exception. A link that is itself what the passage asserts is no
   encoding: when the lemma that links the two notions is the passage's own theorem, a
   declaration stated with the notion whose definition already contains that theorem's claim

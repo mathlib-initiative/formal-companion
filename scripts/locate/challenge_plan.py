@@ -52,6 +52,21 @@ what the plan made of each (``passage_locations``).  The whole plan --
 including every record's planned challenge value -- is written to
 ``runs/<id>/challenge-plan.json``, which the outcomes read back: a record a
 plan required and no verdict judged is owed, never silently ``not_required``.
+
+**Conditional records** (the smoke-3 audit's anomaly A3, the statement cut's fix 6,
+docs/proposals/statement-cut.md section 5): a prominence sample that overturned a
+``supporting`` passage to ``central`` reopened records no task held, which stayed
+owed.  A plan made with ``conditional`` (the default once ``cflib.vocab.
+JUDGMENT_RULES`` is the statement cut's, so a plan made before the flip has none
+and nothing changes for it) puts every location, absence and unresolved record of
+a ``supporting`` passage whose prominence record is required, and which the plan
+did not require itself, in that passage's task with ``conditional: "prominence"``
+and its planned value unchanged (:func:`mark_conditional`): the challenger judges
+them only when it overturns the prominence to ``subject`` or ``central``, and the
+outcomes apply such a verdict only then.  The records of a run of status rule 2
+also carry the passage's ``statement``, ``conjuncts`` and ``shape``, and a coverage
+record's parts each part's ``clauses`` and ``conjunct_relation``, where the
+outcomes have them.
 """
 from __future__ import annotations
 
@@ -89,6 +104,15 @@ RATE_KEYS = ("sample_rate", "strong_sample_rate", "absence_sample_rate")
 
 #: what a coverage record names of each of its parts, for the challenger
 _PART_KEYS = ("location_key", "library", "declaration", "relation", "rank")
+#: what it names beside them under judgment rules 3, where the part carries them: the
+#: conjuncts it states and its relation to them (the statement cut's section 1.2)
+_BUNDLE_PART_KEYS = ("clauses", "conjunct_relation")
+#: what a record copies from a status-rule-2 outcome row, where the row carries it
+_STATEMENT_KEYS = ("statement", "conjuncts", "shape")
+#: the challenge target a conditional record waits on (outcomes.CONDITIONAL_PROMINENCE)
+CONDITIONAL = outcomes_mod.CONDITIONAL_PROMINENCE
+#: the records a required prominence sample takes into its task as conditional ones
+_CONDITIONAL_TARGETS = ("location", "absence", "unresolved")
 
 
 def _rank(seed: int, key: str) -> str:
@@ -103,6 +127,7 @@ def _record(row: dict, target: str, *, run_id: str, location: dict | None = None
            "section": row.get("section"), "quote": row.get("quote")}
     if row.get("claims") is not None:
         rec["claims"] = row["claims"]
+    rec.update({key: row[key] for key in _STATEMENT_KEYS if row.get(key) is not None})
     if location is not None:
         rec.update({"location_key": location["location_key"], "library": location["library"],
                     "declaration": location["declaration"], "relation": location["relation"],
@@ -188,6 +213,8 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
             rec = _record(row, vocab.COVERAGE_TARGET, run_id=run_id)
             by_key = {loc["location_key"]: loc for loc in row.get("locations") or []}
             rec["parts"] = [{k: by_key.get(key, {}).get(k) for k in _PART_KEYS}
+                            | {k: by_key[key][k] for k in _BUNDLE_PART_KEYS
+                               if by_key.get(key, {}).get(k) is not None}
                             | {"location_key": key} for key in claim["parts"]]
             rec["note"] = claim.get("note")
             rec.update(rule=REFUTE, stratum=None)
@@ -290,6 +317,34 @@ def draw(records: list[dict], *, seed: int, sample_rate: float,
     return records
 
 
+def mark_conditional(records: list[dict]) -> list[dict]:
+    """Mark each record a required prominence sample takes into its task (anomaly A3).
+
+    For a ``supporting`` passage whose prominence record the draw required, each of
+    its location, absence and unresolved records the plan did not require gets
+    ``conditional: "prominence"``, its planned value unchanged: :func:`batches` puts
+    it in the passage's task, beside the prominence record, so a challenger who
+    overturns the prominence to ``subject`` or ``central`` judges it there, as a
+    refuted-by-default or hunted record, and one who does not leaves it alone.
+    Returns the records marked.
+    """
+    sampled = {(r["run_id"], r["source_id"], r["item"]) for r in records
+               if r["target"] == "prominence" and r["planned"] == vocab.CHALLENGE_REQUIRED
+               and r.get("prominence") == vocab.PROMINENCE_SUPPORTING}
+    marked = []
+    for rec in records:
+        if rec["target"] in _CONDITIONAL_TARGETS and rec["planned"] != vocab.CHALLENGE_REQUIRED \
+                and (rec["run_id"], rec["source_id"], rec["item"]) in sampled:
+            rec["conditional"] = CONDITIONAL
+            marked.append(rec)
+    return marked
+
+
+def _in_task(rec: dict) -> bool:
+    """A record a challenge task holds: a required one, or a conditional one."""
+    return rec["planned"] == vocab.CHALLENGE_REQUIRED or rec.get("conditional") == CONDITIONAL
+
+
 def batches(records: list[dict], *, size: int = vocab.CHALLENGE_BATCH_RECORDS) -> list[list[dict]]:
     """The required records in tasks of at most ``size``, sources kept in order.
 
@@ -297,9 +352,11 @@ def batches(records: list[dict], *, size: int = vocab.CHALLENGE_BATCH_RECORDS) -
     are more than ``size``), so the challenger who judges a coverage claim judges
     the parts it names too, and one challenger judges every required location of
     a passage -- two encodings of one object, or a definition and the declaration
-    defined from it, get one challenger's relations (the FM7 rule).
+    defined from it, get one challenger's relations (the FM7 rule).  A conditional
+    record (:func:`mark_conditional`) joins its passage's unit, so it is in the task
+    of the prominence record whose overturn it waits on.
     """
-    required = sorted((r for r in records if r["planned"] == vocab.CHALLENGE_REQUIRED),
+    required = sorted((r for r in records if _in_task(r)),
                       key=lambda r: (r["source_id"], (r.get("span") or [0])[0], r["item"],
                                      r["target"], r["key"]))
     units: list[list[dict]] = []
@@ -320,9 +377,18 @@ def batches(records: list[dict], *, size: int = vocab.CHALLENGE_BATCH_RECORDS) -
 def plan(paths: WorkspacePaths, locate_runs: list[str], *, seed: int, sample_rate: float,
          strong_sample_rate: float = DEFAULT_STRONG_SAMPLE_RATE,
          absence_sample_rate: float = DEFAULT_ABSENCE_SAMPLE_RATE,
-         batch_size: int = vocab.CHALLENGE_BATCH_RECORDS) -> dict:
-    """The challenge plan over harvested locate runs: records, strata, rates and task batches."""
+         batch_size: int = vocab.CHALLENGE_BATCH_RECORDS,
+         conditional: bool | None = None) -> dict:
+    """The challenge plan over harvested locate runs: records, strata, rates and task batches.
+
+    ``conditional`` marks the conditional records of anomaly A3
+    (:func:`mark_conditional`); by default it is on exactly when the judgment rules
+    the plan's gate will name are the statement cut's (``cflib.vocab.JUDGMENT_RULES``
+    at ``RULES_STATEMENT_CUT`` or later), whose challenge gate judges them.
+    """
     rates = rates_of(sample_rate, strong_sample_rate, absence_sample_rate)
+    if conditional is None:
+        conditional = vocab.JUDGMENT_RULES >= vocab.RULES_STATEMENT_CUT
     if not locate_runs:
         raise CfError("a challenge plan judges harvested locate runs",
                       hint="name them with --challenge-of <run-id> (repeatable)")
@@ -353,6 +419,8 @@ def plan(paths: WorkspacePaths, locate_runs: list[str], *, seed: int, sample_rat
                                "rank and say so")
         seen[rec["key"]] = rec["run_id"]
     draw(records, seed=seed, **rates)
+    if conditional:
+        mark_conditional(records)
     show_siblings(records)
     groups = batches(records, size=batch_size)
     first = next(iter(inputs_seen.values()))
@@ -376,7 +444,8 @@ def plan_document(run_id: str, built: dict, *, seed: int, sample_rate: float,
             "planned")}
             | {"task_id": task_of.get(rec["key"])}
             | ({"parts": [part["location_key"] for part in rec["parts"]]}
-               if rec["target"] == vocab.COVERAGE_TARGET else {}))
+               if rec["target"] == vocab.COVERAGE_TARGET else {})
+            | ({"conditional": rec["conditional"]} if rec.get("conditional") else {}))
     counts: dict[str, int] = defaultdict(int)
     for rec in rows:
         counts[rec["planned"]] += 1

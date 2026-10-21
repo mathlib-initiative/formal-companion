@@ -56,6 +56,28 @@ named in ``problems`` and left owed.  Every row carries the ``source_sha`` and
 ``layer_sha256`` of the document it came from, and a document whose pins are not
 the run's manifest's puts a ``problem`` on each of its rows -- the export refuses
 those, as it does a row whose location could not be joined.
+
+**Status rule 2** (docs/proposals/statement-cut.md sections 1.5, 2.1, 2.5 and 5): a
+locate run whose ``run.yaml`` names ``locate.status_rule: 2`` (:func:`status_rule_of`;
+a run.yaml without it is status rule 1, and its rows, counts and statuses are
+exactly the ones they always were) is derived by the bundle's rule.  Its rows carry
+the passage's ``statement``, ``conjuncts`` and ``shape`` from the frozen inventory;
+its coverage claim is a **bundle** whose ``relation`` is its weakest part's
+(:func:`bundle_relation`: each part's ``conjunct_relation``, replaced by a
+confirm's ``part_relations`` entry, the weaker of the two kept); a challenge
+document's ``fills`` replace the last counting location a verdict removed
+(:func:`_apply_fill`); a ``located`` passage the challenge leaves with no counting
+location and no absence is **owed a hunt** -- challenge ``challenge_pending``,
+``owed: "hunt"`` and a ``problem``, so the export refuses it -- and an unresolved
+passage keeps its ``cut_flag``; the counts gain ``owed_hunt``, ``by_cut_flag`` and
+``bundles``.  Two rules bind every run, since only the documents and plans of the
+statement cut carry what they read: a verdict's ``tests`` and ``conjunct_relation``
+are kept on the location it leaves (a ``conjunct_relation`` never stronger than the
+location's own), and a verdict on a record its plan marked ``conditional:
+"prominence"`` (``locate.challenge_plan``, the smoke-3 audit's anomaly 3) applies
+only when the same challenge run overturned the passage's prominence to ``subject``
+or ``central``; otherwise it is named and ignored, as a verdict on any record the
+plan did not require is.
 """
 from __future__ import annotations
 
@@ -77,6 +99,32 @@ CHALLENGE_PLAN_SCHEMA = "cf-locate-challenge-plan/1"
 #: a relation's strength, strongest first: a ``downgrade`` names a WEAKER one
 #: (references/locate-documents.md section 4); one order, the gate's too
 RELATION_STRENGTH = vocab.RELATION_STRENGTH
+#: what a row of status rule 2 copies from its frozen inventory passage (the statement
+#: cut's section 1.5): the passage's self-contained restatement and, on a compound
+#: statement, its conjuncts and shape
+STATEMENT_FIELDS = ("statement", "conjuncts", "shape")
+#: the challenge target a conditional record waits on (``locate.challenge_plan``): its
+#: verdict applies once the same challenge run overturns that passage's prominence
+CONDITIONAL_PROMINENCE = "prominence"
+
+
+def status_rule_of(run: dict) -> int:
+    """The status rule a locate run's outcomes are derived under: ``locate.status_rule``.
+
+    A run.yaml without the key -- every run planned before the statement cut's flip
+    -- is status rule 1 (``cflib.vocab.STATUS_RULE_D1``); one naming a rule this code
+    does not define is refused, never derived by another.
+    """
+    value = (run.get("locate") or {}).get("status_rule")
+    if value is None:
+        return vocab.STATUS_RULE_D1
+    if type(value) is not int or value not in (vocab.STATUS_RULE_D1, vocab.STATUS_RULE_BUNDLE):
+        raise CfError(f"run.yaml names status rule {value!r}, which this checkout does not "
+                      "derive",
+                      hint=f"status rules {vocab.STATUS_RULE_D1} and {vocab.STATUS_RULE_BUNDLE} "
+                           "are defined (docs/proposals/statement-cut.md section 2.2); tally the "
+                           "run with the checkout that planned it")
+    return int(value)
 
 
 def decl_token(library: str, declaration: str, commit: str) -> str:
@@ -292,7 +340,8 @@ def _unresolved_by(doc: dict) -> str:
 # --------------------------------------------------------------------------
 
 def challenge_values(paths: WorkspacePaths, run_id: str, challenge_runs: Iterable[str], *,
-                     require_gate: bool = True) -> tuple[dict, dict, list[str], dict]:
+                     require_gate: bool = True, conditional: dict | None = None,
+                     fills: dict | None = None) -> tuple[dict, dict, list[str], dict]:
     """``(planned, verdicts, problems, gates)`` of the challenge runs of locate run ``run_id``.
 
     ``planned`` is ``{record key: plan row}`` -- the records of each run's
@@ -302,6 +351,17 @@ def challenge_values(paths: WorkspacePaths, run_id: str, challenge_runs: Iterabl
     ``gates`` is each challenge run's receipt summary.  A challenge run that did
     not challenge ``run_id`` is refused; one whose plan requires nothing has no
     documents to read.  One record planned or judged twice is refused.
+
+    Two optional dicts the caller passes are filled (the statement cut's section 5,
+    anomalies A1-A3), so the four-value result stays what every reader takes:
+    ``conditional`` gets ``{record key: verdict}`` for a record the plan marked
+    ``conditional: "prominence"`` (not required, in the task of its passage's
+    required prominence record), whose verdict applies only beside an overturn of
+    that prominence to ``subject`` or ``central`` in the same run; ``fills`` gets
+    ``{(source_id, join key): fill}`` from each document's ``fills``, what replaces
+    the last counting location a verdict removed.  Without them, a verdict on a
+    conditional record is named and ignored like any other unrequired one, and no
+    document's fills are read.
     """
     planned: dict[str, dict] = {}
     verdicts: dict[str, dict] = {}
@@ -357,6 +417,15 @@ def challenge_values(paths: WorkspacePaths, run_id: str, challenge_runs: Iterabl
                                     f"record {challenge_run} planned for {run_id}; ignored")
                     continue
                 if plan_row.get("planned") != vocab.CHALLENGE_REQUIRED:
+                    if conditional is not None and \
+                            plan_row.get("conditional") == CONDITIONAL_PROMINENCE:
+                        # judged in the task of its passage's prominence record; it counts
+                        # only beside that prominence's overturn (_apply_challenge)
+                        if key in conditional:
+                            raise CfError(f"{rel}: record {key[:12]} is judged twice")
+                        conditional[key] = {**v, "source_id": sid,
+                                            "challenge_run": challenge_run}
+                        continue
                     problems.append(f"{rel}: {target} {v.get('item')} was planned "
                                     f"{plan_row.get('planned')}; the verdict is ignored")
                     continue
@@ -367,6 +436,16 @@ def challenge_values(paths: WorkspacePaths, run_id: str, challenge_runs: Iterabl
                 if isinstance(claims, dict) and isinstance(claims.get(v.get("item")), list):
                     # the challenger's claim list of the passage, which its clauses name
                     verdicts[key]["claims"] = claims[v.get("item")]
+            if fills is not None and isinstance(doc.get("fills"), dict):
+                for item, fill in sorted(doc["fills"].items()):
+                    pkey = (sid, cf_items.join_key(str(item)))
+                    if pkey in fills:
+                        problems.append(f"{rel}: {sid} {item} is filled twice; the second fill "
+                                        "is ignored")
+                        continue
+                    fills[pkey] = {**(fill if isinstance(fill, dict) else {"outcome": fill}),
+                                   "item": str(item), "source_id": sid,
+                                   "challenge_run": challenge_run, "document": rel}
     return planned, verdicts, problems, gates
 
 
@@ -500,6 +579,7 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
     run = run_yaml(paths, run_id)
     loc_block = run["locate"]
     mode = str(loc_block.get("mode") or run.get("mode"))
+    status_rule = status_rule_of(run)
     sourceset_id = str((loc_block.get("sourceset") or {}).get("id") or "")
     uni_pin = loc_block.get("universe") or {}
     universe = inputs.load_universe(paths, str(uni_pin.get("id"))) if uni_pin.get("id") else None
@@ -512,7 +592,8 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
     problems: list[str] = []
     result = {"run": run, "mode": mode, "rows": [], "outcomes": [], "problems": problems,
               "gate": gate, "gates": gates, "challenge_runs": list(challenge_runs),
-              "sourceset": loc_block.get("sourceset"), "universe": uni_pin}
+              "sourceset": loc_block.get("sourceset"), "universe": uni_pin,
+              "status_rule": status_rule}
     if mode == vocab.LOCATE_INVENTORY:
         result["rows"] = finding_rows(run_id, docs, sourceset_id=sourceset_id,
                                       universe=universe)
@@ -529,8 +610,11 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
         frozen = inv["passages"]
         gates[inv_run] = {"role": vocab.LOCATE_INVENTORY, **inv["gate"]}
     planned = _planned(paths, run_id, loc_block)
+    c_conditional: dict = {}
+    c_fills: dict = {}
     c_planned, c_verdicts, c_problems, c_gates = challenge_values(
-        paths, run_id, challenge_runs, require_gate=require_gate)
+        paths, run_id, challenge_runs, require_gate=require_gate, conditional=c_conditional,
+        fills=c_fills)
     problems.extend(c_problems)
     gates.update({rid: {"role": vocab.LOCATE_CHALLENGE, **g} for rid, g in c_gates.items()})
     # the CHECK database, pinned to the universe the run was planned in (whose
@@ -571,7 +655,7 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
                     problems.append(f"{rel}: passage {item} is not one the run planned")
                 base = frozen.get(key) or planned.get(key) or {}
                 row = _outcome(run_id, sid, item, p, doc, base, universe, db, problems,
-                               task_id=_task_of(rel), inv_run=inv_run)
+                               task_id=_task_of(rel), inv_run=inv_run, status_rule=status_rule)
                 for text in doc_problems:
                     _problem(row, problems, text)
                 outcomes.append(row)
@@ -579,20 +663,35 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
             if key in seen:
                 continue
             base = frozen.get(key) or plan
-            outcomes.append(_missing(run_id, key[0], plan["item"], base, plan))
+            outcomes.append(_missing(run_id, key[0], plan["item"], base, plan,
+                                     status_rule=status_rule))
         run_sources = set(loc_block.get("source_ids") or []) or {k[0] for k in planned}
         for key, base in sorted(frozen.items()):
             if key in seen or key in planned or base.get("scope") in vocab.LOCATED_SCOPES:
                 continue
             if key[0] not in run_sources:
                 continue
-            outcomes.append(_scoped_out(run_id, key[0], base["item"], base, inv_run))
+            outcomes.append(_scoped_out(run_id, key[0], base["item"], base, inv_run,
+                                        status_rule=status_rule))
         layer_of = _Layers(paths, sourceset_id)
+        conditional_of: dict[tuple[str, str], dict] = {}
+        for key, verdict in c_conditional.items():
+            conditional_of.setdefault(
+                (verdict["source_id"], cf_items.join_key(str(verdict.get("item") or ""))),
+                {})[key] = verdict
+        rows_of = {(r["source_id"], cf_items.join_key(r["item"])) for r in outcomes}
+        for pkey, fill in sorted(c_fills.items()):
+            if pkey not in rows_of:
+                problems.append(f"{fill['document']}: a fill for {fill['source_id']} "
+                                f"{fill['item']}, which is no passage of run {run_id}; ignored")
         for row in outcomes:
-            _apply_challenge(row, c_planned, c_verdicts, universe, db, problems, layer_of)
-            _derive(row, problems)
+            pkey = (row["source_id"], cf_items.join_key(row["item"]))
+            _apply_challenge(row, c_planned, c_verdicts, universe, db, problems, layer_of,
+                             status_rule=status_rule, conditional=conditional_of.get(pkey),
+                             fill=c_fills.get(pkey))
+            _derive(row, problems, status_rule=status_rule)
             for scratch in ("record_challenge", "prominence_challenge",
-                            "passage_challenge_override", "coverage_lapsed"):
+                            "passage_challenge_override", "coverage_lapsed", "counted_before"):
                 row.pop(scratch, None)
         outcomes.sort(key=lambda r: (r["source_id"], r["span"][0] if r.get("span") else -1,
                                      r["item"]))
@@ -602,7 +701,7 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
     result["rows"] = finding_rows(run_id, docs, sourceset_id=sourceset_id, universe=universe,
                                   accepted=accepted)
     result["outcomes"] = outcomes
-    result["counts"] = _locate_counts(outcomes, result["rows"])
+    result["counts"] = _locate_counts(outcomes, result["rows"], status_rule=status_rule)
     return result
 
 
@@ -643,9 +742,16 @@ def _base_fields(sid: str, item: str, base: dict) -> dict:
             "layer_sha256": base.get("layer_sha256")}
 
 
+def _statement_fields(base: dict, status_rule: int) -> dict:
+    """What a row of status rule 2 copies from its frozen inventory passage, where written."""
+    if status_rule != vocab.STATUS_RULE_BUNDLE:
+        return {}
+    return {key: base[key] for key in STATEMENT_FIELDS if base.get(key) is not None}
+
+
 def _outcome(run_id: str, sid: str, item: str, p: dict, doc: dict, base: dict,
              universe: inputs.Universe, db, problems: list[str], *, task_id: str,
-             inv_run: str) -> dict:
+             inv_run: str, status_rule: int = vocab.STATUS_RULE_D1) -> dict:
     outcome = p.get("outcome")
     own: list[str] = []
     if outcome not in vocab.LOCATE_OUTCOMES:
@@ -675,6 +781,16 @@ def _outcome(run_id: str, sid: str, item: str, p: dict, doc: dict, base: dict,
     if isinstance(p.get("claims"), list):
         # the passage's claim list (the judgment rules): what its locations' clauses name
         row["claims"] = p["claims"]
+    row.update(_statement_fields(base, status_rule))
+    if status_rule == vocab.STATUS_RULE_BUNDLE and outcome == vocab.OUTCOME_UNRESOLVED \
+            and p.get("cut_flag") is not None:
+        # what a worker who cannot re-cut the passage says of its cut (J4), counted in
+        # the tally for the inventory audit
+        if p["cut_flag"] in vocab.CUT_FLAGS:
+            row["cut_flag"] = p["cut_flag"]
+        else:
+            own.append(f"{sid} {item}: cut_flag {p['cut_flag']!r} is not one of "
+                       f"{', '.join(sorted(vocab.CUT_FLAGS))}")
     for text in own:
         _problem(row, problems, text)
     for text in dropped:
@@ -717,8 +833,10 @@ def coverage_claim(given, outcome, locations: list[dict]) -> tuple[dict | None, 
     return {"complete": True, "parts": keys, "note": note, "challenge": None}, ""
 
 
-def _missing(run_id: str, sid: str, item: str, base: dict, plan: dict) -> dict:
-    return {**_base_fields(sid, item, base), "outcome": None, "locations": [],
+def _missing(run_id: str, sid: str, item: str, base: dict, plan: dict, *,
+             status_rule: int = vocab.STATUS_RULE_D1) -> dict:
+    return {**_base_fields(sid, item, base), **_statement_fields(base, status_rule),
+            "outcome": None, "locations": [],
             "coverage": None, "coverage_refuted": None,
             "absence": None, "receipt": {}, "reason": "no document landed for this passage",
             "unresolved_by": None, "missing": True, "refuted": [], "challenge": None,
@@ -726,8 +844,10 @@ def _missing(run_id: str, sid: str, item: str, base: dict, plan: dict) -> dict:
             "task_id": plan.get("task_id")}
 
 
-def _scoped_out(run_id: str, sid: str, item: str, base: dict, inv_run: str) -> dict:
-    return {**_base_fields(sid, item, base), "outcome": None, "locations": [],
+def _scoped_out(run_id: str, sid: str, item: str, base: dict, inv_run: str, *,
+                status_rule: int = vocab.STATUS_RULE_D1) -> dict:
+    return {**_base_fields(sid, item, base), **_statement_fields(base, status_rule),
+            "outcome": None, "locations": [],
             "coverage": None, "coverage_refuted": None,
             "absence": None, "receipt": {}, "reason": f"scoped {base.get('scope')}",
             "unresolved_by": None, "missing": False, "refuted": [], "challenge": None,
@@ -735,10 +855,52 @@ def _scoped_out(run_id: str, sid: str, item: str, base: dict, inv_run: str) -> d
             "task_id": None}
 
 
+def _conditional_verdicts(row: dict, planned: dict, verdicts: dict,
+                          conditional: dict | None, problems: list[str]) -> dict:
+    """``verdicts`` with the passage's conditional verdicts that apply (anomaly A3).
+
+    A record the challenge plan marked ``conditional: "prominence"`` was put in the
+    task of its passage's required prominence record with its planned value
+    unchanged; its verdict applies only when the same challenge run overturned that
+    prominence to ``subject`` or ``central`` (an overturn this function sees as the
+    passage-level loop will apply it: planned for the outcome the passage has, to a
+    prominence other than its own).  Otherwise each is named in ``problems`` and
+    ignored, as a verdict on any record the plan did not require is.
+    """
+    if not conditional:
+        return verdicts
+    sid, item = row["source_id"], row["item"]
+    pkey = record_key("prominence", sid, item)
+    overturn = verdicts.get(pkey)
+    plan = planned.get(pkey) or {}
+    run = None
+    if overturn is not None and overturn.get("action") == "overturn" \
+            and overturn.get("prominence") in vocab.REFUTE_BY_DEFAULT_PROMINENCE \
+            and overturn.get("prominence") != row.get("prominence") \
+            and plan.get("outcome") == row.get("outcome"):
+        run = overturn.get("challenge_run")
+    out = dict(verdicts)
+    for key, verdict in sorted(conditional.items()):
+        if run is not None and verdict.get("challenge_run") == run:
+            out[key] = verdict
+        else:
+            problems.append(f"{sid} {item}: a verdict on the conditional {verdict.get('target')} "
+                            f"record {key[:12]} with no overturn of the passage's prominence to "
+                            "subject or central in its challenge run; ignored")
+    return out
+
+
 def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
-                     problems: list[str], layer_of=None) -> None:
+                     problems: list[str], layer_of=None, *,
+                     status_rule: int = vocab.STATUS_RULE_D1, conditional: dict | None = None,
+                     fill: dict | None = None) -> None:
     sid, item = row["source_id"], row["item"]
     outcome_seen = row["outcome"]
+    verdicts = _conditional_verdicts(row, planned, verdicts, conditional, problems)
+    # whether the passage counted before the challenge: one it leaves without is owed a
+    # hunt under status rule 2 (_derive)
+    row["counted_before"] = any(l.get("relation") != vocab.RELATED_MATCH
+                                for l in row["locations"])
     # locations first: their own records
     kept = []
     for loc in row["locations"]:
@@ -759,7 +921,7 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
             if isinstance(verdict.get("claims"), list):
                 row["challenge_claims"] = verdict["claims"]
             if action in vocab.CHALLENGE_KEEP:
-                _judged_fields(loc, verdict)
+                _judged_fields(loc, verdict, row, problems)
             if action == "refute":
                 row["refuted"].append({**loc, "witness": verdict.get("witness", "")})
                 row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
@@ -777,12 +939,12 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                     loc["relation"] = relation
                     if relation == vocab.CLOSE_MATCH and not str(loc.get("note") or "").strip():
                         loc["note"] = downgrade_note(verdict, layer_of(sid) if layer_of else None)
-                    _judged_fields(loc, verdict)
+                    _judged_fields(loc, verdict, row, problems)
         kept.append(loc)
     row["locations"] = _renumbered(kept)
     confirmed: list[dict] = []
     if row.get("coverage") is not None:
-        confirmed = _apply_coverage(row, planned, verdicts, problems)
+        confirmed = _apply_coverage(row, planned, verdicts, problems, status_rule=status_rule)
     # the passage-level record: an absence, an unresolved outcome, a scope or a prominence
     target = {vocab.OUTCOME_ABSENT: "absence", vocab.OUTCOME_UNRESOLVED: "unresolved"}.get(
         row["outcome"])
@@ -824,6 +986,10 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
             # rules): its queries, tagged with its own claims
             row["challenge_receipt"] = {"queries": verdict["queries"],
                                         "query_clauses": verdict.get("query_clauses")}
+            if isinstance(verdict.get("special_case"), dict):
+                # the nearest special case the challenger found and why it fails (the
+                # smoke-3 audit's FM5 fix, judgment rules 3), beside its queries
+                row["challenge_receipt"]["special_case"] = verdict["special_case"]
         if action == "overturn" and t in ("absence", "unresolved", "scope"):
             new, dropped = _join_locations(sid, item, verdict.get("locations") or [], universe,
                                            db, problems)
@@ -871,6 +1037,64 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
     # a part a prominence overturn put under a rule requiring it is challenge_pending,
     # owed its own verdict under that rule, and the claim does not stand in for it
     confirm_parts(confirmed)
+    if fill is not None:
+        if status_rule == vocab.STATUS_RULE_BUNDLE:
+            _apply_fill(row, fill, universe, db, problems)
+        else:
+            problems.append(f"{sid} {item}: a fill from {fill.get('challenge_run')} on a run of "
+                            f"status rule {status_rule}, which no fill binds; ignored")
+
+
+def _counts(loc: dict) -> bool:
+    return loc.get("relation") != vocab.RELATED_MATCH
+
+
+def _apply_fill(row: dict, fill: dict, universe, db, problems: list[str]) -> None:
+    """A challenge document's ``fills[item]``: what replaces the last counting location.
+
+    The smoke-3 audit's anomalies A1 and A2, the statement cut's fix 6: a document
+    whose verdicts leave a ``located`` passage with no counting location gives
+    ``{outcome: absent, receipt}`` -- the challenger hunted and found nothing, so
+    the passage is ``absent`` beside its ``relatedMatch`` locations, the absence
+    the challenger's own (``survived``) -- or ``{outcome: located, locations}`` --
+    the replacement locations it found, each its own witnessed finding
+    (``survived``), first, then the kept ``relatedMatch`` ones, as an overturn's.
+    A fill applies only when the passage counted before the challenge, its
+    challenge run's verdicts left it with no counting location and no absence,
+    and those verdicts are the fill's own run's; otherwise it is named on the row
+    and ignored (the gate refuses it first).
+    """
+    sid, item = row["source_id"], row["item"]
+    run = fill.get("challenge_run")
+    if row["outcome"] != vocab.OUTCOME_LOCATED or row.get("absence") is not None \
+            or not row.get("counted_before") or any(_counts(l) for l in row["locations"]) \
+            or row["runs"].get("challenge") != run:
+        _problem(row, problems, f"{sid} {item}: {run}'s fill names a passage its verdicts did "
+                                "not leave without a location that counts; it is ignored")
+        return
+    outcome = fill.get("outcome")
+    if outcome == vocab.OUTCOME_ABSENT and isinstance(fill.get("receipt"), dict):
+        row["outcome"] = vocab.OUTCOME_ABSENT
+        row["absence"] = {"receipt": fill["receipt"], "challenge": vocab.CHALLENGE_SURVIVED}
+        row["fill"] = {"outcome": outcome, "challenge_run": run}
+        return
+    if outcome == vocab.OUTCOME_LOCATED and isinstance(fill.get("locations"), list):
+        new, dropped = _join_locations(sid, item, fill["locations"], universe, db, problems)
+        for text in dropped:
+            row["problem"] = "; ".join(filter(None, [row.get("problem"), text]))
+        new = [loc for loc in new if _counts(loc)]
+        if not new:
+            _problem(row, problems, f"{sid} {item}: {run}'s fill names no location that exists "
+                                    "and counts")
+            return
+        for loc in new:
+            loc["challenge"] = vocab.CHALLENGE_SURVIVED
+        row["locations"] = _overturned(new, row["locations"])
+        row["fill"] = {"outcome": outcome, "challenge_run": run}
+        return
+    _problem(row, problems, f"{sid} {item}: a fill is {{outcome: absent, receipt}} or "
+                            f"{{outcome: located, locations}}, not {fill.get('outcome')!r}; it is "
+                            "ignored")
 
 
 #: what a confirm or downgrade verdict may say of the record it leaves, which replaces
@@ -880,7 +1104,8 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
 _VERDICT_FIELDS = ("step", "convention", "instantiation")
 
 
-def _judged_fields(loc: dict, verdict: dict) -> None:
+def _judged_fields(loc: dict, verdict: dict, row: dict | None = None,
+                   problems: list[str] | None = None) -> None:
     """What a challenger says the location it leaves states (the judgment rules).
 
     Called for a confirm, and for a downgrade once it is applied.  ``clauses``
@@ -894,25 +1119,60 @@ def _judged_fields(loc: dict, verdict: dict) -> None:
     downgrade from ``closeMatch`` to ``broadMatch`` leaves no convention behind.
     Nothing changes for a verdict that names none of them on a record that carries
     none (every verdict of a run planned before the rules).
+
+    Under judgment rules 3 (the statement cut's fixes 2d and J2) a verdict that
+    keeps or leaves a strong relation gives its own two-way ``tests``, which
+    replace the worker's, and one on a ``hasPart`` part may give a
+    ``conjunct_relation``, never stronger than the location's own: a stronger one
+    is named on the row and the location's kept (a challenge never raises a
+    relation).
     """
     if isinstance(verdict.get("clauses"), list):
         loc["challenge_clauses"] = verdict["clauses"]
     for key in _VERDICT_FIELDS:
         if isinstance(verdict.get(key), str) and verdict[key].strip():
             loc[key] = verdict[key]
+    if isinstance(verdict.get("tests"), dict):
+        loc["tests"] = verdict["tests"]
+    given = verdict.get("conjunct_relation")
+    if given is not None:
+        own = loc.get("conjunct_relation")
+        if given not in vocab.CONJUNCT_RELATIONS or \
+                (own in RELATION_STRENGTH and RELATION_STRENGTH[given] < RELATION_STRENGTH[own]):
+            if row is not None and problems is not None:
+                _problem(row, problems, f"{row['source_id']} {row['item']}: a verdict gives "
+                                        f"{loc.get('library')}:{loc.get('declaration')} the "
+                                        f"conjunct relation {given!r}, stronger than its own "
+                                        f"{own!r} or none; the location's is kept")
+        else:
+            loc["conjunct_relation"] = given
     _fit_fields(loc)
 
 
 def _fit_fields(loc: dict) -> None:
-    """Drop a judgment field the location's relation does not take (see :func:`_judged_fields`)."""
-    if loc.get("relation") != vocab.CLOSE_MATCH:
+    """Drop a judgment field the location's relation does not take (see :func:`_judged_fields`).
+
+    A ``convention`` belongs to a ``closeMatch`` (and, under judgment rules 3, to a
+    ``hasPart`` whose ``conjunct_relation`` is a ``closeMatch``: J2), a ``step`` to a
+    ``hasPart`` or ``narrowMatch``, and -- judgment rules 3's two, only where a
+    document wrote them -- ``tests`` to a strong relation and a ``conjunct_relation``
+    to a ``hasPart``.
+    """
+    if loc.get("relation") != vocab.HAS_PART:
+        loc.pop("conjunct_relation", None)
+    # a closeMatch's convention, or (judgment rules 3, J2) a part's whose conjunct
+    # relation is a closeMatch
+    if loc.get("relation") != vocab.CLOSE_MATCH and \
+            loc.get("conjunct_relation") != vocab.CLOSE_MATCH:
         loc.pop("convention", None)
     if loc.get("relation") not in vocab.STEP_RELATIONS:
         loc.pop("step", None)
+    if loc.get("relation") not in vocab.STRONG_RELATIONS:
+        loc.pop("tests", None)
 
 
 def _apply_coverage(row: dict, planned: dict, verdicts: dict,
-                    problems: list[str]) -> list[dict]:
+                    problems: list[str], *, status_rule: int = vocab.STATUS_RULE_D1) -> list[dict]:
     """A coverage claim's challenge (the maintainer's decision D1); the parts it confirms.
 
     Every claim is refuted by default: ``confirm`` makes it ``survived``, and
@@ -927,6 +1187,15 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict,
     nothing, confirms no part, and the passage carries a problem, which the
     export refuses, until the claim is challenged again.  Anything but a
     standing survived claim returns no part.
+
+    Under status rule 2 the claim is a bundle (the statement cut's sections 2.1
+    and 1.4): a confirm's ``part_relations`` are kept beside it
+    (``coverage_part_relations``), a refute's ``unstated`` and ``part_reasons`` on
+    ``coverage_refuted``, and a standing claim gets its ``relation``, its weakest
+    part's (:func:`bundle_relation`).  A bundle on a simple statement (no
+    conjuncts), or one whose relation is no bundle's -- a part with no
+    ``conjunct_relation``, or one that states only a special case of its conjuncts
+    -- no longer holds: it upgrades nothing and the passage carries a problem.
     """
     sid, item, claim = row["source_id"], row["item"], row["coverage"]
     key = record_key(vocab.COVERAGE_TARGET, sid, item)
@@ -951,9 +1220,18 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict,
                 # the challenger's clauses of each part (the judgment rules), beside the
                 # claim: the claim itself keeps exactly its record keys
                 row["coverage_challenge_clauses"] = verdict["part_clauses"]
+            if verdict.get("action") == "confirm" and isinstance(verdict.get("part_relations"),
+                                                                 dict):
+                # the challenger's relation of each part to its conjuncts (judgment rules 3),
+                # which replaces the part's own in the bundle's relation
+                row["coverage_part_relations"] = verdict["part_relations"]
             if verdict.get("action") == "refute":
                 row["coverage_refuted"] = {**claim, "challenge": vocab.CHALLENGE_DOWNGRADED,
                                            "witness": verdict.get("witness", "")}
+                for extra in ("unstated", "part_reasons"):
+                    # what a refute names under judgment rules 3 (the statement cut's fix 1a)
+                    if verdict.get(extra) is not None:
+                        row["coverage_refuted"][extra] = verdict[extra]
                 row["coverage"] = None
                 row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
                 return []
@@ -968,9 +1246,64 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict,
                                 f"{', '.join(named.get(k, k[:12]) for k in gone)}, which the "
                                 "challenge refuted or downgraded; the claim no longer holds "
                                 "and is to be challenged again")
-    elif claim["challenge"] == vocab.CHALLENGE_SURVIVED:
+        return []
+    if status_rule == vocab.STATUS_RULE_BUNDLE and not _bundle_stands(row, claim, standing,
+                                                                       problems):
+        return []
+    if claim["challenge"] == vocab.CHALLENGE_SURVIVED:
         return [standing[k] for k in claim["parts"]]
     return []
+
+
+def bundle_relation(parts: Iterable[dict], part_relations: dict | None = None) -> str | None:
+    """A bundle's relation: its weakest part's (the maintainer's answer to question 9).
+
+    docs/proposals/statement-cut.md section 2.1: for each part, its
+    ``conjunct_relation`` as the locate document wrote it (or a verdict on the part
+    weakened it), and, once a challenger confirmed the claim, that confirm's
+    ``part_relations`` entry for it, the weaker of the two kept, since a challenge
+    never raises a relation; then the weakest over the parts (greatest
+    ``RELATION_STRENGTH``).  None when a part has no conjunct relation of
+    ``CONJUNCT_RELATIONS``.  A bundle of an ``exactMatch`` and a ``broadMatch`` part is
+    a ``broadMatch`` bundle.
+    """
+    weakest: str | None = None
+    for loc in parts:
+        own = loc.get("conjunct_relation")
+        if own not in vocab.CONJUNCT_RELATIONS:
+            return None
+        given = (part_relations or {}).get(loc.get("location_key"))
+        relation = own
+        if given in vocab.CONJUNCT_RELATIONS and RELATION_STRENGTH[given] > RELATION_STRENGTH[own]:
+            relation = given
+        if weakest is None or RELATION_STRENGTH[relation] > RELATION_STRENGTH[weakest]:
+            weakest = relation
+    return weakest
+
+
+def _bundle_stands(row: dict, claim: dict, standing: dict, problems: list[str]) -> bool:
+    """Put the bundle's relation on a standing claim of status rule 2, or lapse the claim."""
+    sid, item = row["source_id"], row["item"]
+    why = ""
+    if not row.get("conjuncts"):
+        why = ("a bundle stands only on a compound statement, and the inventory gives this "
+               "passage no conjuncts")
+    else:
+        relation = bundle_relation([standing[k] for k in claim["parts"]],
+                                   row.get("coverage_part_relations")
+                                   if claim.get("challenge") == vocab.CHALLENGE_SURVIVED else None)
+        if relation is None:
+            why = "a part of the bundle names no conjunct_relation"
+        elif relation not in vocab.BUNDLE_RELATIONS:
+            why = (f"its weakest part is a {relation} of its conjuncts, a special case that "
+                   "leaves them unstated")
+        else:
+            claim["relation"] = relation
+            return True
+    row["coverage_lapsed"] = True
+    _problem(row, problems, f"{sid} {item}: the bundle no longer holds: {why}; it upgrades "
+                            "nothing and is to be challenged again")
+    return False
 
 
 def confirm_parts(parts: Iterable[dict]) -> None:
@@ -1058,7 +1391,8 @@ def _overturned(new: list[dict], old: list[dict]) -> list[dict]:
     return ordered
 
 
-def _derive(row: dict, problems: list[str]) -> None:
+def _derive(row: dict, problems: list[str], *,
+            status_rule: int = vocab.STATUS_RULE_D1) -> None:
     row["challenge"] = None if row["missing"] else _passage_challenge(row)
     if row["outcome"] in (None, vocab.OUTCOME_UNRESOLVED) or row["missing"]:
         row["status"] = None
@@ -1071,13 +1405,41 @@ def _derive(row: dict, problems: list[str]) -> None:
     coverage = None
     if claim is not None and claim.get("challenge") is not None \
             and not row.get("coverage_lapsed") and len(joined) == len(row["locations"]):
-        coverage = records.coverage_ext(claim)
+        coverage = records.coverage_ext(claim, status_rule=status_rule)
     try:
         row["status"] = vocab.derive_status(row["passage_kind"] or vocab.PASSAGE_OTHER,
-                                            joined, row["absence"] is not None, coverage)
+                                            joined, row["absence"] is not None, coverage,
+                                            status_rule=status_rule)
     except CfError as exc:
         _problem(row, problems, f"{row['source_id']} {row['item']}: {exc}")
         row["status"] = None
+    if status_rule == vocab.STATUS_RULE_BUNDLE:
+        _owed_hunt(row, problems)
+
+
+def _owed_hunt(row: dict, problems: list[str]) -> None:
+    """A located passage the challenge left with nothing that counts is owed a hunt.
+
+    The statement cut's section 2.5 (the smoke-3 audit's anomalies A1 and A2), under
+    status rule 2 only: a ``located`` passage that counted before the challenge and
+    is left with no counting location and no absence has no status, and nobody
+    checked that it is absent.  Its challenge is ``challenge_pending`` (one record it
+    owes is still owed, as a reopened one is) unless a record is owed outright, it
+    carries ``owed: "hunt"``, and a problem names it, so the export refuses it by
+    name and the tally counts it as ``owed_hunt``.  Under status rule 1 the same
+    passage stays what it always was: no status, exported.  A challenge document of
+    judgment rules 3 makes the case unreachable with its ``fills``; this is the net
+    under them.
+    """
+    if row["outcome"] != vocab.OUTCOME_LOCATED or row.get("absence") is not None \
+            or not row.get("counted_before") or any(_counts(l) for l in row["locations"]):
+        return
+    if row["challenge"] is not None:
+        row["challenge"] = vocab.CHALLENGE_PENDING
+    row["owed"] = vocab.CHALLENGE_RULE_HUNT
+    _problem(row, problems, f"{row['source_id']} {row['item']}: the challenge left this located "
+                            "passage with no location that counts and no absence: it is owed a "
+                            "hunt, and is not exported until one is recorded")
 
 
 def _inventory_counts(docs, rows) -> dict:
@@ -1091,10 +1453,11 @@ def _inventory_counts(docs, rows) -> dict:
                                                    if r["kind"] == vocab.PASSAGE).items()))}
 
 
-def _locate_counts(outcomes: list[dict], rows: list[dict]) -> dict:
+def _locate_counts(outcomes: list[dict], rows: list[dict], *,
+                   status_rule: int = vocab.STATUS_RULE_D1) -> dict:
     located = [o for o in outcomes if o["outcome"] is not None]
     by_library = Counter(l["library"] for o in outcomes for l in o["locations"])
-    return {
+    counts = {
         "passages": len(outcomes),
         "by_outcome": dict(sorted(Counter(o["outcome"] or "none" for o in outcomes).items())),
         "by_status": dict(sorted(Counter(o["status"] or "none" for o in located).items())),
@@ -1110,6 +1473,32 @@ def _locate_counts(outcomes: list[dict], rows: list[dict]) -> dict:
         "problems": sum(1 for o in outcomes if o.get("problem")),
         "rows": dict(sorted(Counter(r["kind"] for r in rows).items())),
     }
+    if status_rule == vocab.STATUS_RULE_BUNDLE:
+        counts.update(_bundle_counts(outcomes))
+    return counts
+
+
+def _bundle_counts(outcomes: list[dict]) -> dict:
+    """The counts status rule 2 adds (every other count is status rule 1's, unchanged).
+
+    ``owed_hunt``: located passages the challenge left with nothing that counts
+    (:func:`_owed_hunt`); ``by_cut_flag``: the ``cut_flag`` of each unresolved
+    passage that carries one, for the inventory audit; ``bundles``: the coverage
+    claims locate wrote (standing or refuted), those whose challenge is
+    ``survived`` and that hold, and those by relation.
+    """
+    written = [o for o in outcomes if o.get("coverage") or o.get("coverage_refuted")]
+    # a claim gets its relation only while it holds (_bundle_stands): a lapsed one has none
+    survived = [o for o in outcomes if (o.get("coverage") or {}).get("challenge")
+                == vocab.CHALLENGE_SURVIVED and (o.get("coverage") or {}).get("relation")]
+    return {
+        "owed_hunt": sum(1 for o in outcomes if o.get("owed") == vocab.CHALLENGE_RULE_HUNT),
+        "by_cut_flag": dict(sorted(Counter(o["cut_flag"] for o in outcomes
+                                           if o.get("cut_flag")).items())),
+        "bundles": {"written": len(written), "survived": len(survived),
+                    "by_relation": dict(sorted(Counter(o["coverage"]["relation"]
+                                                       for o in survived).items()))},
+    }
 
 
 def outcome_row(row: dict) -> dict:
@@ -1120,9 +1509,11 @@ def outcome_row(row: dict) -> dict:
             "refuted", "coverage_refuted", "task_id")
     out = {k: row.get(k) for k in keep}
     # the judgment rules' claim lists, only where a document wrote one: a run planned
-    # before them writes the rows it always did
+    # before them writes the rows it always did; and status rule 2's fields (the
+    # statement cut's section 1.5), only on a run of that rule
     for key in ("claims", "challenge_claims", "challenge_receipt",
-                "coverage_challenge_clauses"):
+                "coverage_challenge_clauses", "coverage_part_relations", *STATEMENT_FIELDS,
+                "cut_flag", "owed", "fill"):
         if row.get(key) is not None:
             out[key] = row[key]
     if row.get("problem"):

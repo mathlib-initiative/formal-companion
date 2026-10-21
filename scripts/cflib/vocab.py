@@ -1215,7 +1215,11 @@ def _field(location, name: str, default=None):
     return getattr(location, name, default)
 
 
-def _coverage_parts(coverage, by_key: dict) -> list[tuple[str, bool]]:
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def _coverage_parts(coverage, by_key: dict, *,
+                    status_rule: int = STATUS_RULE_D1) -> list[tuple[str, bool]]:
     """A coverage claim's parts as ``(proof_status, statement)``, or refuse the claim.
 
     The claim is the one a record carries: a mapping with exactly the keys
@@ -1226,18 +1230,28 @@ def _coverage_parts(coverage, by_key: dict) -> list[tuple[str, bool]]:
     challenge value and is no record's claim: its holder passes none, since it
     upgrades nothing.  Every part must be one of the passage's locations, and a
     ``hasPart`` one: a claim naming anything else says nothing a record can carry.
+    Under status rule 2 the claim is a bundle (:func:`_bundle_fields`): its keys lie
+    within ``COVERAGE_RECORD_KEYS_BUNDLE`` and it carries its ``relation``.
     """
     if isinstance(coverage, (list, tuple, set, str, bytes)):
         raise CfError(f"a passage's coverage claim is one {{complete, parts, challenge}} "
                       f"object, not a {type(coverage).__name__}",
                       hint="a passage carries at most one claim")
+    allowed = COVERAGE_RECORD_KEYS_BUNDLE if status_rule == STATUS_RULE_BUNDLE \
+        else COVERAGE_RECORD_KEYS
     if isinstance(coverage, dict):
-        extra = sorted(set(coverage) - COVERAGE_RECORD_KEYS)
+        extra = sorted(set(coverage) - allowed)
+        if extra and status_rule == STATUS_RULE_BUNDLE:
+            raise CfError(f"a bundle is {{complete, parts, challenge, relation, conjuncts, "
+                          f"bundle_key}}; unexpected {', '.join(map(str, extra))}",
+                          hint="a record of status rule 2 carries its claim's six keys and no "
+                               "others (references/locate-documents.md section 6)")
         if extra:
             raise CfError(f"a coverage claim is {{complete, parts, challenge}}; unexpected "
                           f"{', '.join(map(str, extra))}",
                           hint="the claim's note is not exported; a record carries the "
-                               "three keys and no others")
+                               "three keys and no others (a bundle's relation is status rule "
+                               "2's: pass status_rule=2 for a record set of that rule)")
     if _field(coverage, "complete") is not True:
         raise CfError(f"a coverage claim says complete: true, not "
                       f"{_field(coverage, 'complete')!r}",
@@ -1268,7 +1282,61 @@ def _coverage_parts(coverage, by_key: dict) -> list[tuple[str, bool]]:
                                "to be challenged again")
         out.append((str(_field(location, "proof_status") or ""),
                     bool(_field(location, "statement", False))))
+    if status_rule == STATUS_RULE_BUNDLE:
+        _bundle_fields(coverage, list(parts))
     return out
+
+
+def _bundle_fields(coverage, parts: list[str]) -> str:
+    """A bundle's ``relation``, once its status-rule-2 fields are checked; refuse otherwise.
+
+    docs/proposals/statement-cut.md sections 2.1 and 2.3: ``relation`` is required and
+    one of ``BUNDLE_RELATIONS`` (the weakest part's, computed by the outcomes, never
+    written by a document).  ``conjuncts`` and ``bundle_key`` are what the record set
+    carries beside it (section 2.4), each checked when given: the conjuncts are
+    ``MIN_CONJUNCTS``..``MAX_CONJUNCTS`` objects ``{id, text, part}`` in id order
+    ``c1``..``cN``, each part one of the claim's ``parts``, and every part stating at
+    least one (so, with two parts or more, none states them all: PD6); the bundle key
+    is 64 lowercase hex (``cflib.hashing.bundle_key``).
+    """
+    relation = _field(coverage, "relation")
+    if relation is None:
+        raise CfError("a bundle carries its relation, its weakest part's",
+                      hint="under status rule 2 the outcomes put the bundle's relation on the "
+                           "claim (docs/proposals/statement-cut.md section 2.1)")
+    if relation not in BUNDLE_RELATIONS:
+        raise CfError(f"a bundle's relation is one of {', '.join(sorted(BUNDLE_RELATIONS))}, "
+                      f"not {relation!r}",
+                      hint="every part of a bundle states its conjuncts strongly, so the "
+                           "weakest part's relation is a strong one")
+    conjuncts = _field(coverage, "conjuncts")
+    if conjuncts is not None:
+        if not isinstance(conjuncts, (list, tuple)) or \
+                not MIN_CONJUNCTS <= len(conjuncts) <= MAX_CONJUNCTS:
+            raise CfError(f"a bundle's conjuncts are {MIN_CONJUNCTS} to {MAX_CONJUNCTS} "
+                          f"{{id, text, part}} objects, not {conjuncts!r}")
+        named = set()
+        for n, conjunct in enumerate(conjuncts, 1):
+            if not isinstance(conjunct, dict) or set(conjunct) != {"id", "text", "part"}:
+                raise CfError(f"a bundle's conjunct is {{id, text, part}}, not {conjunct!r}")
+            if conjunct["id"] != f"c{n}":
+                raise CfError(f"a bundle's conjuncts are c1..c{len(conjuncts)} in order; "
+                              f"conjunct {n} is {conjunct['id']!r}")
+            if not isinstance(conjunct["text"], str) or not conjunct["text"].strip():
+                raise CfError(f"conjunct {conjunct['id']} has no text")
+            if conjunct["part"] not in parts:
+                raise CfError(f"conjunct {conjunct['id']} names part "
+                              f"{str(conjunct['part'])[:12]}, which is not one of the bundle's")
+            named.add(conjunct["part"])
+        idle = [p for p in parts if p not in named]
+        if idle:
+            raise CfError(f"bundle part {idle[0][:12]} states no conjunct",
+                          hint="a bundle's parts partition its conjuncts, each stating at "
+                               "least one, so no part states them all (PD6)")
+    key = _field(coverage, "bundle_key")
+    if key is not None and (not isinstance(key, str) or not _HEX64.match(key)):
+        raise CfError(f"a bundle_key is 64 lowercase hex, not {key!r}")
+    return relation
 
 
 def _part_finished(proof_status: str, statement: bool) -> bool:
@@ -1315,7 +1383,7 @@ def _location_status(passage_kind: str, relation: str, theorem_reads: tuple[str,
 
 
 def derive_status(passage_kind: str, locations: Iterable, absent: bool,
-                  coverage=None) -> str | None:
+                  coverage=None, *, status_rule: int = STATUS_RULE_D1) -> str | None:
     """A passage's derived status: the Literature Links ``status`` of its records.
 
     docs/proposals/wikipedia-locate.md section 2.6, computed once per passage
@@ -1383,7 +1451,30 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
     or a key outside ``COVERAGE_RECORD_KEYS`` (a ``note``: the record format has
     none); and any value outside the vocabulary -- a ``refuted`` challenge
     among them, since a refute removes the claim.
+
+    ``status_rule`` (keyword only) is the version of this derivation a locate
+    run's outcomes are derived under (``STATUS_RULE_D1``, the default, or
+    ``STATUS_RULE_BUNDLE``; docs/proposals/statement-cut.md section 2.3).  Status
+    rule 1 is everything above, unchanged in every case of
+    ``tests/data/locate/status-parity.json``, and still refuses a claim with any
+    key outside ``COVERAGE_RECORD_KEYS``, a ``relation`` among them.  Under status
+    rule 2 the claim is a **bundle** as a record of that rule carries it: keys
+    within ``COVERAGE_RECORD_KEYS_BUNDLE``, its ``relation`` required and one of
+    ``BUNDLE_RELATIONS`` (its weakest part's), and its optional ``conjuncts`` and
+    ``bundle_key`` checked (:func:`_bundle_fields`).  A survived bundle acts as
+    one more location of THAT relation -- where status rule 1 makes it one more
+    ``exactMatch`` -- with the same fixed stand-in for its proof status
+    (:func:`_coverage_location`), so a bundle of broader parts on a definition,
+    construction or notation passage is ``partial``, as one broader location is
+    (PD1).  Everything else is status rule 1; the cases are
+    ``tests/data/locate/status-parity-2.json``.
     """
+    if type(status_rule) is not int or status_rule not in (STATUS_RULE_D1,
+                                                            STATUS_RULE_BUNDLE):
+        raise CfError(f"status rule {status_rule!r} is not one this code derives by",
+                      hint=f"status rules {STATUS_RULE_D1} (decision D1) and "
+                           f"{STATUS_RULE_BUNDLE} (the bundle's relation) are defined; a "
+                           "run.yaml without locate.status_rule is 1")
     check(passage_kind, PASSAGE_KINDS, "passage kind")
     best: str | None = None
     counted: list[str] = []
@@ -1424,9 +1515,13 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
                       hint="an absence may sit beside relatedMatch locations only; "
                            "drop the absence or downgrade the location")
     if coverage is not None:
-        parts = _coverage_parts(coverage, by_key)
+        parts = _coverage_parts(coverage, by_key, status_rule=status_rule)
         if _field(coverage, "challenge") == CHALLENGE_SURVIVED:
-            status = _location_status(passage_kind, EXACT_MATCH, *_coverage_location(parts))
+            # status rule 1: one more exactMatch (decision D1); status rule 2: one more
+            # location of the bundle's own relation, its weakest part's
+            relation = (str(_field(coverage, "relation")) if status_rule == STATUS_RULE_BUNDLE
+                        else EXACT_MATCH)
+            status = _location_status(passage_kind, relation, *_coverage_location(parts))
             if best is None or _STATUS_RANK[status] < _STATUS_RANK[best]:
                 best = status
     if best is not None:

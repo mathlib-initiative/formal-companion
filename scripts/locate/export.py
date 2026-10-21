@@ -72,8 +72,16 @@ sourceset, universe and checkout writes byte-identical files, and a re-export
 into the same directory removes the files the PREVIOUS seal named that the new
 set does not carry -- nothing else.  The target is refused when it is this
 checkout or a companion repository (or inside one), a symlink, or a non-empty
-directory that holds no ``cf-locate-recordset/1`` seal, or holds a file its seal
-does not name.
+directory that holds no ``cf-locate-recordset/1`` (or ``/2``) seal, or holds a file
+its seal does not name.
+
+**The record set of status rule 2** (docs/proposals/statement-cut.md section 2.4):
+a locate run whose ``run.yaml`` names ``locate.status_rule: 2`` exports
+``cf-locate-recordset/2`` -- ``SEAL.json`` carries ``/1``'s keys and one more,
+``status_rule`` (2), and its records are built by ``records.passage_records`` under
+that rule (the revision-free ``passage_key`` on every record, ``pair_key`` on a
+location record, a coverage claim as its bundle).  A run of status rule 1 (every
+run.yaml without the key) exports ``cf-locate-recordset/1`` byte for byte as before.
 """
 from __future__ import annotations
 
@@ -93,6 +101,12 @@ from sources import websource
 from . import inputs, outcomes as outcomes_mod, records
 
 SEAL_SCHEMA = "cf-locate-recordset/1"
+#: the record set of status rule 2 (``records.STATUS_RULE_BUNDLE``): /1's shapes, a bundle's
+#: relation, conjuncts and key, and the revision-free keys on every record
+SEAL_SCHEMA_BUNDLE = "cf-locate-recordset/2"
+#: the seal schema of each status rule, and the schemas a target directory may hold
+SEAL_SCHEMAS = {records.STATUS_RULE_D1: SEAL_SCHEMA,
+               records.STATUS_RULE_BUNDLE: SEAL_SCHEMA_BUNDLE}
 #: the default per-source byte budget of records/<source-id>.jsonl and its receipts:
 #: 0, off.  A consumer with a cap (an import into a store with a per-row limit) passes
 #: its own with --byte-budget, and the seal records the budget that applied.
@@ -103,6 +117,9 @@ RUN_CAMPAIGN_PREFIX = vocab.RUN_TOKEN_PREFIX
 #: section 6) -- a consumer refuses a seal with any other key, so the export writes no other
 SEAL_KEYS = ("schema", "set_id", "campaign", "universe", "sourceset", "skill_commit", "created",
              "byte_budget", "files")
+#: the seal of ``cf-locate-recordset/2``: /1's keys and the status rule its statuses were
+#: derived under
+SEAL_KEYS_BUNDLE = SEAL_KEYS + ("status_rule",)
 #: a campaign id the seal may carry: letters, digits and ``._:-``, at most 128, never
 #: starting ``run:`` (that prefix is a run token's); the grammar of ``set_id`` and
 #: ``sourceset.id`` too (``cflib.vocab.RECORDSET_TOKEN``, the one definition)
@@ -291,6 +308,7 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
                       hint="pass the locate run with --run and its challenge runs with "
                            "--challenge-run")
     run = built["run"]
+    status_rule = built["status_rule"]
     campaign = campaign_token(run, run_id, challenge_runs)
     pin = run["locate"]["sourceset"]
     check_token(pin.get("id"), f"run {run_id}'s sourceset id",
@@ -369,7 +387,8 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
         kept = 0
         for row in sorted(by_source[sid], key=lambda r: ((r.get("span") or [0])[0], r["item"])):
             try:
-                recs, cars = records.passage_records(source, row, layer, uni_doc)
+                recs, cars = records.passage_records(source, row, layer, uni_doc,
+                                                     status_rule=status_rule)
             except records.RecordError as exc:
                 refused.append({"source_id": sid, "item": row["item"], "reason": str(exc)})
                 continue
@@ -410,7 +429,7 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
     for rel, text in sorted(texts.items()):
         files[rel] = hashing.sha256_text(text)
     seal = {
-        "schema": SEAL_SCHEMA,
+        "schema": SEAL_SCHEMAS[status_rule],
         "set_id": set_id,
         "campaign": campaign,
         "universe": {"id": universe.id, "universe_sha256": universe.sha256},
@@ -420,6 +439,8 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
         "byte_budget": int(byte_budget or 0),
         "files": files,
     }
+    if status_rule == records.STATUS_RULE_BUNDLE:
+        seal["status_rule"] = status_rule
     atomic_write(out / "SEAL.json", records.canonical(seal) + "\n")
     # the runs and the manifest version are the workspace's provenance, in the report:
     # the agreed seal carries the campaign token and the manifest's sha instead
@@ -441,7 +462,7 @@ def check_target(out: Path, workspace=None) -> set[str]:
 
     Never this checkout or a companion repository (CLAUDE.md sections 1 and 4),
     never a symlink, and never a directory that holds anything but an earlier
-    set: a non-empty directory needs a ``cf-locate-recordset/1`` ``SEAL.json``,
+    set: a non-empty directory needs a ``cf-locate-recordset/1`` (or ``/2``) ``SEAL.json``,
     and every file in it must be one that seal names.  Returns the names, which
     a re-export may remove when the new set does not carry them.
     """
@@ -475,7 +496,7 @@ def check_target(out: Path, workspace=None) -> set[str]:
         return set()
     seal_path = out / "SEAL.json"
     seal = read_json(seal_path) if seal_path.is_file() else None
-    if not isinstance(seal, dict) or seal.get("schema") != SEAL_SCHEMA:
+    if not isinstance(seal, dict) or seal.get("schema") not in SEAL_SCHEMAS.values():
         raise CfError(f"{out} is not empty and holds no {SEAL_SCHEMA} seal",
                       hint="pass an empty or new directory with --out")
     named = set(seal.get("files") or {})

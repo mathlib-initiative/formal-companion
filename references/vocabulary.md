@@ -367,8 +367,9 @@ for that relabel:
   bridge that needs a named lemma (`Nat.mul_mod`, a parity lemma for (−1)^n) makes it
   `relatedMatch` (R5). R2's weakenings (a strict derivative for a plain one, an iff for an if)
   are no instantiation: PD8 leaves them to R2.
-- **PD9** — a stated reason ("it holds because X") makes X a claim only when X is a declarative
-  mathematical statement that no neighbouring passage already states.
+- **PD9** — a stated reason ("it holds because X") is a passage of its own only when X is a
+  declarative mathematical statement that no neighbouring passage already states; otherwise X is
+  no passage and no clause.
 - **PD10** — one notion in two encodings is no bridge: a declaration that uses Mathlib's
   standard notion where the passage has its own definition of the same thing (`IsCoprime m n`
   where the passage says m and n have no common factor other than 1, linked by
@@ -422,7 +423,12 @@ PD7's test for "trivial" are the maintainer's later answers that day):
   weakening (a strict derivative for a plain one, which needs `HasStrictDerivAt.hasDerivAt`), is
   no instantiation and stays `broadMatch` by R2.
 - PD9 sharpens the claim list (R4, FM1), beside "history, motivation and attribution are not
-  claims".
+  claims". The maintainer's answer of 2026-10-21 to the statement cut's question 5 rewords it
+  with the same test: a stated reason X becomes a passage of its own, cut by the inventory,
+  rather than a clause of the passage it supports (the words above, which the inventory, locate
+  and challenge prompts and the bench's labeler carry). A run of judgment rules 2 was planned
+  under the earlier words, which made X a claim of that passage's list; the gate checks neither
+  wording.
 - PD10 sharpens R1's `encoding` and limits PD8: a library lemma that links Mathlib's standard
   notion to the passage's notion of the same thing (`IsCoprime` and "no common factor other than
   1", through `Int.isCoprime_iff_gcd_eq_one`) is an encoding difference, not a PD8 bridge, since
@@ -497,14 +503,51 @@ never a junk value: it is a `closeMatch` by a real convention, or weaker.
 **The challenger's rule** (the audit's FM7: 8 of 25 challenge results were wrong, each a reasoning
 slip, not a search miss), in the challenge prompt word for word:
 
-- **FM7** — before you downgrade or refute, check the record against your claim list of the
-  passage. Apply D1: an exact or close match to an equivalence or other data that states the
-  theorem formalizes it, so a bijection is the data form of a cardinality equation and stays
-  `closeMatch`. Keep definitionally linked declarations consistent: two declarations on one
-  passage defined one from the other, or one object in two encodings, get the same relation
-  unless their statements differ — your task holds every required location of a passage, and
-  each location record shows the passage's other locations (`passage_locations`), read-only. A
-  trivial special case is `narrowMatch` (PD3), never a refute.
+- **FM7** — before you downgrade or refute, check the record against the passage's clauses,
+  its conjuncts or the one clause of a simple statement. Apply D1: an exact or close match to an
+  equivalence or other data that states the theorem formalizes it, so a bijection is the data
+  form of a cardinality equation and stays `closeMatch`. Keep definitionally linked declarations
+  consistent: two declarations on one passage defined one from the other, or one object in two
+  encodings, get the same relation unless their statements differ — your task holds every
+  required location of a passage, and each location record shows the passage's other locations
+  (`passage_locations`), read-only. A trivial special case is `narrowMatch` (PD3), never a
+  refute.
+
+Until the statement cut (judgment rules 3) the challenger wrote a claim list of its own and the
+rule read "check the record against your claim list of the passage"; under rules 3 the
+inventory owns the one list, the passage's conjuncts (`docs/proposals/statement-cut.md` §1.4), so
+a challenge prompt planned from this text says the words above.
+
+**The statement cut's prompt rules** (the smoke-3 audit's §5 fixes 2a, 2e, 3a, 4b and 5a, as
+`docs/proposals/statement-cut.md` §5 names them), in both locate prompts and the bench's
+labeler word for word. They are judgment, which the challenge re-checks; the gate holds only
+their mechanical halves (a strong location's `tests` and `instantiation`, an absence's
+`special_case`):
+
+- **Fix 2a** — every `exactMatch`, `closeMatch` or `broadMatch` writes both instantiation tests,
+  one line each, as its `tests`: `r2`, how the passage follows from the declaration (by
+  instantiation, or by one of R2's weakenings), and `r3`, why the declaration, at the passage's
+  own objects, needs nothing the passage does not give (no stronger hypothesis, no extra instance
+  argument). A `closeMatch` stands only when both hold with a named convention and nothing else
+  differs; when either fails, the relation is weaker.
+- **Fix 2e** — when the declaration is defined beyond the passage's domain, its `instantiation`
+  line states PD7's three-way test: whether it agrees with the passage on the passage's domain,
+  and whether each case outside that domain is trivial (a junk or default value the passage's
+  mathematics does not depend on, or an extra case that reduces to a tautology) or has real
+  mathematical content.
+- **Fix 3a** — a lemma that only unfolds a definition the passage glosses (a membership,
+  application or definitional lemma, `mem_*_iff`, `*_apply`, `*_def`, restating what the
+  passage's term means) is `relatedMatch`, never a part; a name is no statement, so read what
+  the lemma states before you credit it.
+- **Fix 4b** — on a definition, construction or notation passage, a declaration that is the
+  defined object is an `exactMatch` or `closeMatch` (R7), never a part; and before you call a
+  declaration's hypothesis stronger than the passage's, read it with its roles swapped (a
+  symmetric hypothesis, the two objects exchanged), and call it stronger only when no such
+  reading is the passage's.
+- **Fix 5a** — search each clause's special case too: for every clause, one query for its
+  conclusion under a stronger hypothesis (PD4's `narrowMatch`), and search the universe's
+  statement-only conjecture libraries, where a `narrowMatch` to a declaration stated without a
+  proof still makes a theorem passage `partial`.
 
 **The failure modes** the rules answer, as the audit numbered them (the labels code, tests and
 the changelog cite):
@@ -612,6 +655,24 @@ carries it as `extensions[‹locate›].coverage = {"complete": true, "parts": [
 of the passage, the note left out — and `outcomes` derives the status from that same projection
 (`records.coverage_ext`), so a record's status is the one its claim gives.
 
+**The bundle** (judgment rules 3 and status rule 2, `docs/proposals/statement-cut.md` §1.3,
+§1.4 and §2): under the statement cut a coverage claim is a bundle or nothing. It stands only
+on a compound statement — a passage the inventory gave `conjuncts` and a `shape` — and its
+parts are `hasPart` locations whose `clauses` name the inventory's conjunct ids, pairwise
+disjoint, together every conjunct, none all of them, each with a `conjunct_relation`
+(`CONJUNCT_RELATIONS`) to the conjuncts it states that is one of `BUNDLE_RELATIONS`. A
+challenger's **confirm** gives `part_relations`, one per part, none stronger than the part's
+own (a challenge never raises a relation), and its **refute** names the conjuncts no part
+states (`unstated`) and, for every part, why no R1 convention reaches its conjunct
+(`part_reasons`); "the parts state it after unfolding or encoding" is a confirm. The bundle's
+relation is its weakest part's (status rule 2 above), and a record of `cf-locate-recordset/2`
+carries it as `{"complete": true, "parts": [<location_key>, …], "challenge", "relation",
+"conjuncts": [{"id", "text", "part": <location_key>}], "bundle_key"}`
+(`COVERAGE_RECORD_KEYS_BUNDLE`): the conjuncts in id order, each beside the part that states it,
+held to the export's free-text cap, and `bundle_key` the `cflib.hashing.bundle_key` of the
+passage key and the parts' pair keys, so a consumer shows a bundle's declarations each beside
+its conjunct, and keys a vote on it, from the record set alone.
+
 **Parity, round 2** (2026-10-18). Run against the consumer's own implementation, the shared table
 agreed on every status an exported record set can carry, and `derive_status` differed on three
 inputs no export produces; each is now refused here as the consumer refuses it, by the record
@@ -692,6 +753,50 @@ challenged again), whatever its challenge; a coverage claim with no challenge va
 a key outside `COVERAGE_RECORD_KEYS`; and any value outside these sets — a `refuted` challenge
 among them.
 
+**Status rule 2: a bundle takes its weakest part's relation** (`STATUS_RULE_BUNDLE`; the
+maintainer's answer of 2026-10-21 to the statement cut's question 9, accepting its
+recommendation: a bundle of broader parts is `broadMatch`, so a definition passage with only
+broader parts is `partial`, as with a single broader card; `docs/proposals/statement-cut.md` §2). Each
+version of the derivation binds only the locate runs whose `run.yaml` names it as
+`locate.status_rule`: one without the key is status rule 1, everything above, and its tallies
+and record sets are what they always were. `derive_status(…, status_rule=2)` reads a coverage
+claim as a **bundle**, the claim a record of `cf-locate-recordset/2` carries: keys within
+`COVERAGE_RECORD_KEYS_BUNDLE` — `complete` · `parts` · `challenge` · `relation` · `conjuncts` ·
+`bundle_key` — its `relation` required and one of `BUNDLE_RELATIONS`, its `conjuncts` (when
+given) `c1` … `cN` in order, each `{id, text, part}` beside the one part that states it and
+every part stating at least one, and its `bundle_key` (when given) 64 lowercase hex. A survived
+bundle acts as one more location of **its own relation**, where status rule 1 makes it one more
+`exactMatch`, with the same fixed stand-in for its proof status (finished when every part is
+`proved` or data). Only the definition row's `broadMatch` changes:
+
+| passage | bundle relation | parts | status rule 1 | status rule 2 |
+|---|---|---|---|---|
+| theorem, conjecture | `exactMatch` / `closeMatch` / `broadMatch` | finished | `formalized` | `formalized` |
+| theorem, conjecture | any of the three | unfinished | `statement_only` | `statement_only` |
+| definition, construction, notation | `exactMatch` / `closeMatch` | finished | `formalized` | `formalized` |
+| definition, construction, notation | `broadMatch` | finished | `formalized` | **`partial`** |
+| definition, construction, notation | `broadMatch` | unfinished | `statement_only` | **`partial`** |
+| example, other | `broadMatch` | finished | `formalized` | `formalized` (the theorem row) |
+
+The bundle's relation is computed, never written (`outcomes.bundle_relation`): each part's
+`conjunct_relation` as its locate document wrote it (or a verdict on the part weakened it),
+replaced, once a challenger confirms the claim, by that confirm's `part_relations` entry for the
+part, the weaker of the two kept; then the weakest over the parts (the greatest
+`RELATION_STRENGTH`). A bundle of an `exactMatch` and a `broadMatch` part is a `broadMatch`
+bundle. A bundle whose relation is no bundle's — a part with no conjunct relation, or a part
+that states only a special case of its conjuncts (`narrowMatch`) — or one on a passage the
+inventory gave no conjuncts no longer holds: it upgrades nothing and the export refuses the
+passage until it is challenged again. Status rule 2 adds one derivation outside
+`derive_status`: a `located` passage the challenge leaves with no location that counts and no
+absence is **owed a hunt** — its challenge is `challenge_pending`, its outcome row carries
+`owed: "hunt"` (`CHALLENGE_RULE_HUNT`) and a `problem`, so the export refuses it, and the tally
+counts it as `owed_hunt` (the smoke-3 audit's anomalies 1 and 2); under status rule 1 such a
+passage has no status and is exported. The hand-written cases are
+`tests/data/locate/status-parity-2.json` (`cf-locate-status-parity/2`, every case with
+`status_rule: 2` and, where status rule 1 reads the claim's three D1 keys, what it derives
+there), run beside `tests/data/locate/status-parity.json`, which stays the test of status rule
+1 and of every `cf-locate-recordset/1` set.
+
 **The statement cut** (`docs/proposals/statement-cut.md`, the maintainer's answers of
 2026-10-21): the inventory cuts an article into statements, one passage per statement; a
 compound statement's conjuncts are the inventory's, cited by locate and the challenge; a
@@ -727,10 +832,27 @@ item, so a key changes only when what it names does.
 | `downgraded` | challenged, and the relation or the outcome was weakened |
 | `not_required` | outside every challenge rule |
 | `sampled_out` | inside the stratified sample's frame, and not drawn |
-| `challenge_pending` | a rule now requires it and no challenge judged it: the passage's prominence was overturned to `subject` or `central` after its records were planned under `supporting`, so its unjudged locations (a part of a coverage claim confirmed in the same run among them), absence or unresolved outcome are refuted-by-default or hunted records nobody refuted or hunted. Exported as it is, with no QID on its subject end; a consumer reads it as unchallenged |
+| `challenge_pending` | a rule now requires it and no challenge judged it: the passage's prominence was overturned to `subject` or `central` after its records were planned under `supporting`, so its unjudged locations (a part of a coverage claim confirmed in the same run among them), absence or unresolved outcome are refuted-by-default or hunted records nobody refuted or hunted. Exported as it is, with no QID on its subject end; a consumer reads it as unchallenged. Under status rule 2 also the challenge of a passage **owed a hunt** (`owed: "hunt"`): a located passage the challenge left with no location that counts and no absence, which the export refuses |
 
 `CHALLENGE_UNJUDGED` is `not_required` · `sampled_out` · `challenge_pending`: the values of a
 record no verdict judged.
+
+Two challenge rules of the statement cut (the smoke-3 audit's three status anomalies,
+`docs/proposals/statement-cut.md` §5, fix 6), each binding only what names it. **Conditional
+records** (anomaly 3): a challenge plan made under judgment rules 3 puts every location,
+absence and unresolved record of a `supporting` passage whose prominence record it requires,
+and which it does not require itself, in that passage's task, marked `conditional:
+"prominence"` with its planned value unchanged (`challenge_plan.mark_conditional`); the
+challenger judges them only when it overturns the prominence to `subject` or `central`, and
+then judges every one, each as a refuted-by-default or hunted record, and the outcomes apply such
+a verdict only beside that overturn in the same challenge run (a plan made before has no such
+record, so nothing changes for it). **Fills** (anomalies 1 and 2): a challenge document of
+judgment rules 3 whose verdicts leave a `located` passage with no location that counts — its
+judged results and the unjudged `passage_locations` together — gives `fills[<item>]`,
+`{"outcome": "absent", "receipt"}` held to an absence's checks or `{"outcome": "located",
+"locations"}` held to an overturn's, and the outcomes of a run of status rule 2 apply it: the
+passage becomes absent beside its `relatedMatch` locations, the absence the challenger's own
+(`survived`), or takes the challenger's locations first (`survived`), as an overturn's.
 
 **The values the locate documents carry** (`references/locate-documents.md`, every one in
 `cflib.vocab`'s locate block):
@@ -763,7 +885,7 @@ record no verdict judged.
 | `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one of its own under the judgment rules (each claim, and `general`, matched to a distinct query) |
 | `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules. `LEGACY_CLOSE_MATCH_CONVENTIONS` is the list under judgment rules 1, with `junk_value` (`CONVENTION_JUNK_VALUE`), which PD7 took off it: a run planned under rules 1 is gated by it, and its records keep the value. `encoding` covers one notion under two definitions that a library lemma links (PD10) |
 | `CLOSE_MATCH_GENERALITY_PHRASES` | `stronger` · `strengthen*` · `weaker` · `weaken*` · `more general*` · `generali*` · `special case` · `particular case` · `broader` · `narrower` · `strict derivative*` · `strict differentiab*` · `strictly differentiab*` — words an `exactMatch` or `closeMatch` note may not say (`says_generality`: whole words, case-folded, a trailing `*` any ending of the word, so "more generally" and "generalisation" are hits); each describes a `broadMatch`, a `narrowMatch` or a weakening. "strict" and "strictly" alone are not on it: a strict inequality or a strictly increasing list is no strengthening. The prompts render the list from this tuple |
-| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only |
+| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` · `conjunct_relation` · `tests` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only; the last two are judgment rules 3's, a `conjunct_relation` a `hasPart`'s of a compound statement and `tests` a strong location's, and a verdict that gives them replaces the location's (a `conjunct_relation` never with a stronger one), the outcomes dropping each from a location whose relation no longer takes it |
 | `STEP_RELATIONS` | `hasPart` · `narrowMatch` — the relations whose location says, in its `step`, what the declaration alone entails of the passage (on a proof the displayed step, on any other passage the clause) |
 | `CANDIDATE_PART_PHRASES` | `only part` · `part of the passage` · `one clause` · `one of the clauses` · `not the whole` · `not the full` · `special case` · `not the worked example` · `not the example` · `partially` · `more general*` · `generali*` — what an absence's rejected candidate may not be rejected as (`rejects_a_part`, matched as `CLOSE_MATCH_GENERALITY_PHRASES` are): a declaration that states a clause, a case or a generalisation of the passage is a location, and the absence is refused under the judgment rules |
 | `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
