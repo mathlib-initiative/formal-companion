@@ -892,15 +892,15 @@ receipt counts.
 - **Units.** A passage is one or more whole units: a sentence, or one of its independent clauses, with the displays that sentence introduces; or a list item. It never runs from one paragraph into the next, except inside a theorem box, into the displays its last sentence introduces, or, for a compound statement, over the items of one list.
 - **Displays.** A displayed formula is never cut and belongs to the sentence that introduces it. An equation chain (a = b = c) is one statement, its end-to-end equation; its middle terms are steps, not conjuncts. A display of several separate equations is one compound statement, shape `equations`.
 - **Inside a sentence.** Cut where an independent clause asserts a fact of its own, at one of ";", "since", "because", "so", "hence", "then", "moreover", ", and" (", and" only when a new subject follows). Never cut between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject. Each piece starts at a word, and the connective starts no piece.
-- **Lists.** A list whose items each state a fact is one passage per item. A list of the cases of one definition or law, or of the conditions of one equivalence, is one compound statement (shape `cases` or `iff`) that starts at its first item. Its lead-in sentence ("the following are equivalent:") is expository, unless it states a reason no neighbour states, which is a statement of its own.
+- **Lists.** A list whose items each state a fact is one passage per item. A list of the cases of one definition or law, or of the conditions of one equivalence, is one compound statement (shape `cases` or `iff`) that starts at its first item. Its lead-in sentence ("the following are equivalent:") is expository, unless it states a reason no neighbour states, which is a statement of its own; a display inside a list item belongs to that item, never to the lead-in sentence.
 - **Proofs.** Proof narration and commentary is expository (PD5); each definition, theorem, equation or declarative statement inside a proof is a passage of its own, and the proof as a whole is none.
 - **Context.** A sentence that only sets up objects or hypotheses ("Let W be a finite widget.") states nothing of its own: it opens the first statement that uses it, since a statement is never cut from its hypothesis. Context from further away stays out of the span: `statement` carries the hypotheses and objects ("for a finite widget W, …"), so it reads on its own and the span stays tight.
 - **Conjuncts.** A compound statement is one of a closed list of shapes: `existence_uniqueness` (existence and uniqueness), `iff` (an equivalence, or the conditions of one), `cases` (the cases of one law or one definition, in one sentence, one display or one list), `conclusions` (several conclusions about one subject under one hypothesis) and `equations` (one display holding several equations). Write its `conjuncts`, 2 to 5 of them, and its `shape`; `existence_uniqueness` has exactly two. A simple statement has neither. Anything else that holds two results is two statements: cut it.
 - **The subject.** A lead that describes the subject rather than states it is expository; the subject marker, `prominence: subject`, goes on the passage that states the theorem or definition, which may be its theorem box. A passage not scoped `formal_math` is always `supporting`.
 
 A stated reason is cut by PD9 in the words the proposal's §3.4 gives it, which the inventory
-prompt and the labeler's inventory mode carry from this package on and the judgment rules' own
-PD9 line takes at the proposal's flip: "a stated reason ("it holds because X") is a passage of
+prompt and the labeler's inventory mode carry, and the judgment rules' own PD9 line took at the
+proposal's flip (a plan of rules 3 renders it): "a stated reason ("it holds because X") is a passage of
 its own only when X is a declarative mathematical statement that no neighbouring passage already
 states; otherwise X is no passage and no clause."
 
@@ -983,7 +983,7 @@ task), the challenge plan's default sampling rates `CHALLENGE_SAMPLE_RATE` (0.2:
 passage's strong locations beside its basis) and `CHALLENGE_ABSENCE_SAMPLE_RATE` (0.5 from the
 statement cut's flip, the smoke-3 audit's fix 5c, 0.25 before: a `supporting` passage's
 absence; `cf plan-locate --sample-rate`, `--strong-sample-rate`, `--absence-sample-rate`, each
-recorded in `run.yaml`, so a plan made before the flip records the 0.25 it drew at), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
+recorded in `run.yaml`, so a plan made before the flip recorded the 0.25 it drew at), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
 `EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), the record set's
 token grammars (`references/locate-documents.md` §6, the consumer's own): `RECORDSET_TOKEN`
 (letters, digits and `._:-`, at most 128, a letter or digit first: a seal's `set_id`, its

@@ -360,7 +360,8 @@ def statement_cut_planned() -> bool:
     From the flip on ``vocab.JUDGMENT_RULES`` is ``RULES_STATEMENT_CUT``: the
     manifests carry the inventory's conjuncts, ``run.yaml`` names the status rule,
     and a plan over an inventory or locate run of the earlier flow is refused.
-    Before it the planner plans as it always did.
+    Before it the planner planned as it always had (the tests plan a run of that
+    flow so, ``tests/_locate_fixtures.before_the_flip``).
     """
     return vocab.JUDGMENT_RULES >= vocab.RULES_STATEMENT_CUT
 
@@ -408,7 +409,7 @@ def check_cut_inputs(paths: WorkspacePaths, mode: str, *, inventory_run: str | N
     inventory planned under the statement-cut rule; and a challenge of a locate
     run whose documents carry their own claim lists (judgment rules below 3) has
     no conjunct ids to judge against.  Neither touches a planned run: old runs are
-    re-gated, tallied and exported by their own keys.  Before the flip nothing is
+    re-gated, tallied and exported by their own keys.  Before the flip nothing was
     refused here.
     """
     if not statement_cut_planned():

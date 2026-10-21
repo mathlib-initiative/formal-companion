@@ -176,9 +176,9 @@ is enough.
   names version 1 or no version, so a re-gate recomputes its ends by version 1,
   or holds them only to the layer and the quote, exactly as before.
 - **The statement cut** (`statement_cut_rule` 1 in `gate.json`; the
-  proposal's §1.1 and §3; no run is planned under it before the proposal's
-  flip, and one whose `gate.json` names no `statement_cut_rule` is gated as
-  before). A passage is one statement, cut by the rules of
+  proposal's §1.1 and §3; every run planned from the proposal's flip on names
+  it, and one whose `gate.json` names no `statement_cut_rule` — every run
+  planned before the flip — is gated as before). A passage is one statement, cut by the rules of
   `references/vocabulary.md` §1.11 ("How the inventory cuts"), which the
   inventory prompt gives word for word. Two fields join the row, on a compound
   statement only, and there is no new scope and no new passage kind:
@@ -473,7 +473,7 @@ list, re-checks it.
 
 **Under judgment rules 3** (`RULES_STATEMENT_CUT`, the statement cut:
 `docs/proposals/statement-cut.md` §1.3 and §5), which bind a run whose `gate.json`
-names `judgment_rules: 3` — none is planned before the proposal's flip (§9) — the
+names `judgment_rules: 3` — every run planned from the proposal's flip on (§9) — the
 inventory owns the clause list, and everything above is checked against it:
 
 ```json
@@ -1833,7 +1833,7 @@ like a faithfulness run:
   **The statement cut's versions** (`docs/proposals/statement-cut.md` §2.2) are
   written from the proposal's flip on, and bind only a gate.json that names them,
   so every run planned before it is re-gated, tallied and exported as it was. The
-  gate knows them before the planner writes them: `judgment_rules` 3 (§3 and §4,
+  gate knew them before the planner wrote them: `judgment_rules` 3 (§3 and §4,
   "Under judgment rules 3"), `span_end_rule` 2 and `statement_cut_rule` 1, its own
   key, written in every mode. `span_end_rule` 2 ends an inventory passage that
   gives no `until` at the earlier of its **extent** — its block, the whole of a
@@ -1879,7 +1879,8 @@ like a faithfulness run:
   (inventory the sources again) and `--preset locate-challenge` of a locate run
   judged under `judgment_rules` below 3, whose documents carry their own claim
   lists. A planned run is never touched by either refusal. Before the flip
-  (`locate.plan.statement_cut_planned`) every manifest and run.yaml is what it was.
+  (`locate.plan.statement_cut_planned`) every manifest and run.yaml was what it had
+  always been.
 
   Three pins hold what the gate reads to the bytes the plan read; each is exit 3
   on a mismatch. `corpus_db.sha256`, the sha256 of the CHECK database when the

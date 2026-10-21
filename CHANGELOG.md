@@ -42,6 +42,17 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The statement cut, tidied after the flip. The inventory's Lists rule says what the chain that
+  stops at a list item implies (the maintainer's reading C4): a display inside a list item
+  belongs to that item, never to the list's lead-in sentence — in `references/vocabulary.md`
+  §1.11, the inventory prompt and the labeler word for word (the labeler's file sha moves; no
+  gold of `locate-label/6` is labelled yet), and in the proposal's §3.4. `cf locate carry
+  --rows`'s help says a row is held to the conjunct test unless it says `"reads_conjuncts":
+  false`; `cflib.vocab.CUT_CONNECTIVES` says the span-end rule 2 reads it for the separator; the
+  proposal's §5 says the challenge holds PD6 beside a bundle confirm, its §6.3 what the carry
+  package built, and its §9 that the maintainer settled every pre-flip reading on 2026-10-21
+  (and that the gold bundle's, taken after, is not among them); two CHANGELOG bullets below say
+  what their changes did, and docs that spoke of the flip as ahead speak of it as made.
 - **The statement cut's flip** (`docs/proposals/statement-cut.md` §7). What changes for a run
   planned now:
   - its `gate.json` names `judgment_rules` 3, `span_end_rule` 2 and `statement_cut_rule` 1 in
@@ -1207,10 +1218,12 @@ release has something to say.
   once: re-score both sides of a `cf bench compare` made across this change.
   `tests/data/locate/carry-parity.json` holds the hand-written cases a consumer's port runs.
   Nothing else reads the map, so every run plans, gates, tallies and exports as before. The
-  proposal's status line, §4, §6.2 and §9 say what of the carry package is built, the readings
-  it took (gold carried more strictly than §4.4's letter, `reanchor` with no tool yet writing the
-  new frame, no `state.json` record), and that its `scripts/bench/gold.py` share waits for the
-  fixes package's `derive_status(…, status_rule=2)`.
+  proposal's status line, §4, §6.2, §7 and §9 say what of the carry package is built, the
+  readings it took (gold carried more strictly than §4.4's letter, `reanchor` with no tool yet
+  writing the new frame, no `state.json` record), and that its `scripts/bench/gold.py` share
+  waits for the fixes package's `derive_status(…, status_rule=2)`; §8.3 tells WikiLean that a
+  verdict that read the conjuncts (a bundle's, a bundle part's) carries only while the map's
+  `conjuncts_changed` is false.
 - The statement cut's specification, `docs/proposals/statement-cut.md` (the maintainer's answers
   of 2026-10-21 on statement-level extraction: one passage per statement, a coverage claim only
   as a bundle on a compound statement taking its weakest part's relation, the smoke-3 audit's
@@ -1220,9 +1233,10 @@ release has something to say.
   conjunct bounds, `CONJUNCT_RELATIONS`, `CUT_FLAGS`, `CARRY_FATES` and the rest), the
   revision-free keys in `cflib.hashing` (`span_sha256`, `passage_key`, `pair_key`, `bundle_key`,
   `cut_id`), `conjunct_relation` and `tests` at the end of `JUDGMENT_LOCATION_FIELDS`, and the
-  prompt slots the new prompts will render. Nothing reads them yet: no planner writes the new
-  versions until the proposal's flip, so every run plans, gates, tallies and exports as before,
-  and a location of an earlier document carries neither new field.
+  prompt slots the new prompts will render. No stage read them when this landed (the four
+  packages that read them followed, and the planner writes the new versions from the proposal's
+  flip on), so every run planned before the flip plans, gates, tallies and exports as before, and
+  a location of an earlier document carries neither new field.
 - `cf bench score --subset <ids>|<file>`: a pre-registered subset of the split's
   articles, for a run that covers fewer than the whole split (the second smoke
   covered 4 of 36 eval articles and could not be scored). The document says
