@@ -2,8 +2,8 @@
 
 **Status: specification, 2026-10-21, built but for the flip. Built: the shared names of §6.1
 (constants, keys, prompt slots and the tests that pin them) and the four packages of §6.2 (cut,
-gate, fixes and carry), merged, but for the carry package's `scripts/bench/gold.py` share and
-what §9 lists as not built. The flip (§7) is not made, so no planner writes the new versions
+gate, fixes and carry), merged, the carry package's `scripts/bench/gold.py` share after the
+fixes package, but for what §9 lists as not built. The flip (§7) is not made, so no planner writes the new versions
 and every earlier run is gated, tallied and exported as before; an inventory planned now would
 render the cut rules its gate does not hold it to, so none is planned before the flip. Commands
 and paths written in *italics* are not implemented.**
@@ -705,8 +705,9 @@ record set.
   `scripts/cflib/paths.py` (`WorkspacePaths`).
 - `scripts/bench/` (`scripts/bench/carry.py`, `scripts/cfcmd/bench.py`'s `carry` subcommand,
   and `scripts/bench/gold.py`: the label rows' `conjunct_relation`, gold bundles derived under
-  status rule 2). The `gold.py` share is not built: it calls the fixes package's
-  `derive_status(…, status_rule=2)`, so it lands after fixes merges and no later than the flip.
+  status rule 2). The `gold.py` share calls the fixes package's `derive_status(…,
+  status_rule=2)`, so it landed after fixes merged, before the flip; the labeler's label mode
+  names the span's bundle (`bundle`, `references/locate-bench.md` §5 and §6).
 - `tests/data/locate/carry-parity.json`.
 - docs: a new §12 "Carry-over maps" in `references/locate-documents.md`; the keys and fates rows
   of the statement-cut paragraph in `references/vocabulary.md` §1.11; `references/locate-bench.md`
@@ -831,6 +832,14 @@ Readings the maintainer may overrule (each is one change here and in the package
   which no tool writes yet (below).
 - **A `--rows` row that does not say whether it read the conjuncts is held to the conjunct test**
   (§4.4's "for anything that read the conjuncts"); `"reads_conjuncts": false` leaves the test out.
+- **A gold bundle is the labeler's word** (`bench.gold.gold_bundle`): the label mode names the
+  span's bundle by its parts (`bundle`), and the transcriber holds it to what it can check —
+  at least two distinct parts, each a `hasPart` kept at the pin whose `conjunct_relation` is
+  strong — but not to J3's partition, since a G3 span has no inventory conjuncts and the
+  labeler lists its claims to itself only; a bundle that does not stand leaves its parts the
+  `hasPart`s they are. Gold statuses of a labeler of rules 3 are derived under status rule 2,
+  as a run of rules 3 is. Asking the labeler for each part's claim ids would let the
+  transcriber check the partition too: a change to the label schema and `gold_bundle`.
 - **`cf locate carry` records nothing in a `state.json`**: §4.3 has it write nothing but the map
   (and `--rows-out`), against CLAUDE.md §5's step that records a command's counts. The two runs
   each pin their own sourceset, so no one `state.json` is the map's; its `counts` are its record.
@@ -855,10 +864,6 @@ Not built in this round, and why:
 - **A statement-level bench frame.** The G3 span sample draws blocks; relabelling it at statement
   level, with the labeler cutting by §3.4, is the bench relabel step that follows smoke 4. The
   flip's labeler bump already stops the score from mixing the two.
-- **The carry package's `scripts/bench/gold.py` share** (§6.2): the label rows'
-  `conjunct_relation` and gold bundles derived under status rule 2. It calls the fixes package's
-  `derive_status(…, status_rule=2)`, so it lands after fixes merges and no later than the flip,
-  where `bench.gold.LABELER_RULES` maps `locate-label/6` to 3.
 - **A writer of the re-anchored frame**: `cf bench carry` gives a `reanchor` row's span on the new
   layer and edits no gold file; no tool writes a frame of the new layer, or the gold version on
   it, from those anchors.

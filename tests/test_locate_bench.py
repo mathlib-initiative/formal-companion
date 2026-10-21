@@ -1340,6 +1340,183 @@ process.stdout.write(JSON.stringify({ result, calls }))
                                    "inventory:s1": merged})
         self.assertEqual(both["result"]["labels"][0]["enumerators"], ["A", "B"])
 
+    def test_the_label_mode_hands_its_bundle_to_the_transcriber(self):
+        """The statement cut's gold (docs/proposals/statement-cut.md section 6.2): the
+        labeler names the span's bundle, and its result carries it (``[]`` for none)."""
+        args = {"mode": "label", "bench": "b1", "digest": "d", "hunters": 1,
+                "universe": {"id": "u1", "libraries": [{"id": "mathlib", "commit": "a" * 40}]},
+                "sources": [{"source_id": "s1"}],
+                "tasks": [{"task_id": f"g3-{k}", "source_id": "s1", "span": [0, 4],
+                           "excerpt": "abcd"} for k in (1, 2)]}
+        parts = [{"library": "mathlib", "declaration": "Widget.conj_three"},
+                 {"library": "mathlib", "declaration": "Widget.spanning_zero"}]
+        responses = {}
+        for k in (1, 2):
+            responses[f"hunt0:g3-{k}"] = {"task_id": f"g3-{k}", "scope": "formal_math",
+                                          "queries": ["rg"], "candidates": []}
+            responses[f"label:g3-{k}"] = {"task_id": f"g3-{k}", "scope": "formal_math",
+                                          "declarations": [], "evidence": "e"}
+        responses["label:g3-1"]["bundle"] = parts
+        out = self.execute(args, responses)
+        labels = {l["task_id"]: l for l in out["result"]["labels"]}
+        self.assertEqual(labels["g3-1"]["bundle"], parts)
+        self.assertEqual(labels["g3-2"]["bundle"], [])
+        prompt = next(c["prompt"] for c in out["calls"] if c["label"] == "label:g3-1")
+        self.assertIn("Name in bundle the hasPart\nparts that are the span's bundle", prompt)
+
+
+class TestTheStatementCutsGold(unittest.TestCase):
+    """The carry package's ``bench.gold`` share (docs/proposals/statement-cut.md sections
+    2.3 and 6.2): under judgment rules 3 a label row's ``hasPart`` keeps its
+    ``conjunct_relation``, the labeler's bundle stands as a survived bundle stands in a
+    run, and the statuses are derived under status rule 2; gold of an earlier labeler is
+    transcribed as it always was."""
+
+    def part(self, name, conjunct_relation, proof_status="proved", relation="hasPart"):
+        d = {"library": "mathlib", "declaration": name, "relation": relation,
+             "proof_status": proof_status, "statement": False}
+        if conjunct_relation is not None:
+            d["conjunct_relation"] = conjunct_relation
+        return d
+
+    @staticmethod
+    def named(*names):
+        return [{"library": "mathlib", "declaration": n} for n in names]
+
+    def test_a_bundle_takes_its_weakest_parts_relation(self):
+        decls = [self.part("A", "exactMatch"), self.part("B", "broadMatch")]
+        bundle, why = gold_mod.gold_bundle(decls, self.named("B", "A"))
+        self.assertIsNone(why)
+        self.assertEqual(bundle, {"parts": self.named("A", "B"), "relation": "broadMatch"})
+        rule2 = vocab.STATUS_RULE_BUNDLE
+        self.assertEqual(gold_mod._gold_status("theorem", decls, bundle=bundle,
+                                               status_rule=rule2),
+                         ("formalized", False))
+        # without it the two parts are two hasParts, as a refuted claim leaves them
+        self.assertEqual(gold_mod._gold_status("theorem", decls, status_rule=rule2),
+                         ("partial", False))
+        unfinished = [self.part("A", "exactMatch"), self.part("B", "exactMatch", "statement_only")]
+        bundle, _ = gold_mod.gold_bundle(unfinished, self.named("A", "B"))
+        self.assertEqual(gold_mod._gold_status("theorem", unfinished, bundle=bundle,
+                                               status_rule=rule2)[0], "statement_only")
+
+    def test_a_broader_bundle_on_a_definition_is_partial_as_status_rule_2_has_it(self):
+        decls = [self.part("A", "exactMatch", "definition"),
+                 self.part("B", "broadMatch", "definition")]
+        bundle, _ = gold_mod.gold_bundle(decls, self.named("A", "B"))
+        rule2 = vocab.STATUS_RULE_BUNDLE
+        self.assertEqual(gold_mod._gold_status("definition", decls, bundle=bundle,
+                                               status_rule=rule2)[0], "partial")
+        exact = [self.part("A", "exactMatch", "definition"),
+                 self.part("B", "closeMatch", "definition")]
+        bundle, _ = gold_mod.gold_bundle(exact, self.named("A", "B"))
+        self.assertEqual(bundle["relation"], "closeMatch")
+        self.assertEqual(gold_mod._gold_status("definition", exact, bundle=bundle,
+                                               status_rule=rule2)[0], "formalized")
+        with self.assertRaises(CfError) as ctx:
+            gold_mod._gold_status("definition", exact, bundle=bundle,
+                                  status_rule=vocab.STATUS_RULE_D1)
+        self.assertIn("status rule 2's", str(ctx.exception))
+
+    def test_a_bundle_that_does_not_stand_says_why(self):
+        decls = [self.part("A", "exactMatch"), self.part("B", "narrowMatch"),
+                 self.part("C", None), self.part("D", None, relation="exactMatch")]
+        for named, needle in (
+                (self.named("A"), "at least 2 distinct parts, not 1"),
+                (self.named("A", "A"), "at least 2 distinct parts, not 1"),
+                (self.named("A", "Z"), "bundle part mathlib:Z is none of the declarations"),
+                (self.named("A", "D"), "mathlib:D is a exactMatch, not a hasPart"),
+                (self.named("A", "B"), "states its claims as 'narrowMatch'"),
+                (self.named("A", "C"), "states its claims as None"),
+                ({"library": "mathlib"}, "not a list of {library, declaration} parts")):
+            with self.subTest(needle=needle):
+                bundle, why = gold_mod.gold_bundle(decls, named)
+                self.assertIsNone(bundle)
+                self.assertIn(needle, why)
+        self.assertEqual(gold_mod.gold_bundle(decls, []), (None, None))
+        self.assertEqual(gold_mod.gold_bundle(decls, None), (None, None))
+
+    def test_the_status_rule_follows_the_labelers_judgment_rules(self):
+        with mock.patch.dict(gold_mod.LABELER_RULES, {"locate-label/6": 3}):
+            self.assertEqual(gold_mod.gold_status_rule("locate-label/6"),
+                             vocab.STATUS_RULE_BUNDLE)
+        for version in ("locate-label/5", "locate-label/4", None, "locate-label/0"):
+            self.assertEqual(gold_mod.gold_status_rule(version), vocab.STATUS_RULE_D1)
+
+    def labeler(self, version, rules):
+        """This checkout's labeler, stamped ``version`` labelling by judgment ``rules``."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(gold_mod, "LABELER_VERSION", version))
+        stack.enter_context(mock.patch.dict(gold_mod.LABELER_RULES, {version: rules}))
+        self.addCleanup(stack.close)
+
+    def transcribed(self, labels_for):
+        world = anchored(self)
+        cf(world, "bench", "anchor", "b1", "--emit-args", "label")
+        args = json.loads(layout_of(world).label_args("label").read_text())
+        labels = [dict(labels_for(k), task_id=t["task_id"]) for k, t in enumerate(args["tasks"])]
+        path = world.root / "r.json"
+        path.write_text(json.dumps(fake_result(args, labels)))
+        cf(world, "bench", "anchor", "b1", "--transcribe", path)
+        rows = {r["gold_id"]: r for r in gold_mod.read_labels(layout_of(world), "G3")}
+        return [rows[t["task_id"]] for t in args["tasks"]]
+
+    @staticmethod
+    def label(k):
+        decls = [{"library": "mathlib", "declaration": "Widget.conj_three", "relation": "hasPart",
+                  "conjunct_relation": "exactMatch"},
+                 {"library": "mathlib", "declaration": "Widget.spanning_zero",
+                  "relation": "hasPart", "conjunct_relation": "broadMatch"},
+                 {"library": "mathlib", "declaration": "Widget.mul_spanning",
+                  "relation": "relatedMatch", "conjunct_relation": "exactMatch"},
+                 {"library": "mathlib", "declaration": "Widget.add_spanning",
+                  "relation": "hasPart", "conjunct_relation": "hasPart"}]
+        bundle = ([{"library": "mathlib", "declaration": "Widget.conj_three"},
+                   {"library": "mathlib", "declaration": "Widget.spanning_zero"}]
+                  if k == 0 else [])
+        return {"scope": "formal_math", "passage_kind": "theorem", "declarations": decls,
+                "bundle": bundle, "evidence": "read at the pin", "hunters": []}
+
+    def test_gold_of_judgment_rules_3_keeps_the_conjunct_relations_and_the_bundle(self):
+        self.labeler("locate-label/6", vocab.RULES_STATEMENT_CUT)
+        rows = self.transcribed(self.label)
+        self.assertGreater(len(rows), 1)
+        for row in rows:
+            by = {d["declaration"]: d for d in row["declarations"]}
+            self.assertEqual(sorted(by), ["Widget.conj_three", "Widget.mul_spanning",
+                                          "Widget.spanning_zero"])
+            self.assertEqual(by["Widget.conj_three"]["conjunct_relation"], "exactMatch")
+            self.assertEqual(by["Widget.spanning_zero"]["conjunct_relation"], "broadMatch")
+            # only a hasPart carries one
+            self.assertNotIn("conjunct_relation", by["Widget.mul_spanning"])
+            self.assertEqual([d["declaration"] for d in row["dropped"]], ["Widget.add_spanning"])
+            self.assertTrue(row["dropped"][0]["reason"].startswith(
+                "conjunct_relation 'hasPart' is not one of broadMatch, closeMatch"),
+                row["dropped"][0]["reason"])
+            self.assertEqual(row["labeler_version"], "locate-label/6")
+        first, rest = rows[0], rows[1:]
+        self.assertEqual(first["bundle"], {"parts": [
+            {"library": "mathlib", "declaration": "Widget.conj_three"},
+            {"library": "mathlib", "declaration": "Widget.spanning_zero"}],
+            "relation": "broadMatch"})
+        self.assertIsNone(first["bundle_problem"])
+        self.assertEqual((first["status"], first["related"]), ("formalized", True))
+        for row in rest:
+            self.assertEqual((row["bundle"], row["bundle_problem"]), (None, None))
+            self.assertEqual(row["status"], "partial")
+
+    def test_gold_of_an_earlier_labeler_is_transcribed_as_before(self):
+        self.labeler("locate-label/5", vocab.RULES_PD5_PD9)
+        rows = self.transcribed(self.label)
+        for row in rows:
+            self.assertNotIn("bundle", row)
+            self.assertNotIn("bundle_problem", row)
+            self.assertFalse(any("conjunct_relation" in d for d in row["declarations"]))
+            # hasPart parts, named as a bundle or not, are partial (status rule 1 has no
+            # bundle; a bad conjunct_relation is no relation of its rules either)
+            self.assertEqual(row["status"], "partial")
+            self.assertEqual(len(row["declarations"]), 4)
+
 
 # ---------------------------------------------------------------------------
 # freeze

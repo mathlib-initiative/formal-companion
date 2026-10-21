@@ -42,6 +42,17 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The statement cut's bench gold (`docs/proposals/statement-cut.md` §6.2, the carry package's
+  `scripts/bench/gold.py` share, which needed the fixes package's `derive_status(…,
+  status_rule=2)`). Gold of a labeler that labels by judgment rules 3 is transcribed as a run of
+  those rules is derived: a `hasPart` keeps its `conjunct_relation` (another value drops it with
+  the reason), the label's new `bundle` names the span's bundle, which stands on two or more
+  distinct `hasPart`s kept at the pin, each strong to its claims, as a survived bundle of its
+  weakest part's relation, and the statuses are status rule 2's (`bench.gold.gold_bundle`,
+  `gold_status_rule`); a G3 row adds `bundle` and `bundle_problem`. No labeler version maps to
+  judgment rules 3 yet, so gold labelled now is transcribed as before, keys and statuses alike.
+  The labeler's label mode asks for the bundle (`bundle`, `[]` for none), so its file's sha
+  moves; its version stays `locate-label/5` until the flip.
 - The statement cut's four packages merged (`docs/proposals/statement-cut.md` §6: cut, gate,
   fixes, carry), the flip (§7) not made: no planner writes the new versions. Every workspace
   run re-gates, smoke 2 and 3 re-tally and re-export, and a re-plan of chal-smoke-2,

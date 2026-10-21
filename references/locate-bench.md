@@ -232,6 +232,22 @@ relation counts, else `not_formalized` (the hunters searched, so an empty list i
 absence); `related` is true when a `relatedMatch` declaration stands beside it. A non-math span
 has no status.
 
+Gold of a labeler that labels by the statement cut's judgment rules (`bench.gold.LABELER_RULES`
+at `cflib.vocab.RULES_STATEMENT_CUT`, 3; `docs/proposals/statement-cut.md` §2.3 and §6.2) is
+derived as a run of those rules is, under status rule 2 (`bench.gold.gold_status_rule`). A
+`hasPart` declaration keeps the `conjunct_relation` the labeler gave it (one of
+`CONJUNCT_RELATIONS`, or none for a span that states one claim; any other value drops the
+declaration with the reason), and no other relation carries one. The label names the span's
+bundle (`bundle`, §6): its parts, `hasPart` declarations kept at the pin, each strong to its
+claims (`BUNDLE_RELATIONS`), that together state every claim, each claim by exactly one. A
+bundle of at least two distinct such parts stands as a survived bundle stands in a run: one
+more location of its weakest part's relation, so a `broadMatch` bundle on a definition span is
+`partial`. The row adds `bundle: {parts: [{library, declaration}], relation}` (the parts in
+name order; null when the label names none or it does not stand) and `bundle_problem` (why a
+named bundle does not stand: then its parts count as the `hasPart`s they are). Gold of an
+earlier labeler is transcribed as before, with neither key and no `conjunct_relation`; a G1 row
+of the statement cut's labeler adds no key, its one relation being the accept set's.
+
 **GX** (`gold/gx.jsonl`), the exhaustive inventories of `--gx` (8) eval articles, drawn with
 `random.Random("<seed>:gx")`: `{gold_id (gx- + 12 hex of the span), source_id, span, quote,
 passage_kind, scope, from: [A, B, F], signed_by}` — two independent enumerators (A, B) plus the
@@ -265,7 +281,7 @@ least *h* (§8.1).
 | mode | tasks | agents per task | result row |
 |---|---|---|---|
 | `anchor` | resolved G1 entries, with each accept declaration's signature and path | one labeler | `{task_id, quote, relation, passage_kind, evidence}` |
-| `label` | G3 spans, the span's text inline | `--hunters` (2) independent hunters, then one labeler | `{task_id, scope, passage_kind, declarations, evidence, hunters}` |
+| `label` | G3 spans, the span's text inline | `--hunters` (2) independent hunters, then one labeler | `{task_id, scope, passage_kind, declarations, bundle, evidence, hunters}`; a `hasPart` declaration gives its `conjunct_relation`, and `bundle` names the parts of the span's bundle (`[]` for none; §5) |
 | `calibrate` | anchored G1 passages, **no accept set** | the same, tag-blind | the same |
 | `inventory` | GX articles, with their finder passages | two independent enumerators, then one labeler | `{task_id, source_id, passages: [{quote, passage_kind, scope, from}]}` |
 
