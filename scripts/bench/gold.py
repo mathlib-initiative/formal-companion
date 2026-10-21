@@ -665,10 +665,16 @@ def gold_bundle(declarations: list[dict], named: Any) -> tuple[dict | None, str 
     if len(set(keys)) != len(keys) or len(keys) < vocab.MIN_COVERAGE_PARTS:
         return None, (f"a bundle names at least {vocab.MIN_COVERAGE_PARTS} distinct parts, "
                       f"not {len(set(keys))}")
-    kept = {_part_key(d): d for d in declarations}
+    kept: dict[str, list[dict]] = {}
+    for d in declarations:
+        kept.setdefault(_part_key(d), []).append(d)
     parts = []
     for key in keys:
-        d = kept.get(key)
+        if len(kept.get(key) or []) > 1:
+            # _recheck keeps each once; a list holding one twice is no bundle's, in any order
+            return None, (f"bundle part {key} is kept {len(kept[key])} times: a declaration "
+                          f"has one relation to a span")
+        d = (kept.get(key) or [None])[0]
         if d is None:
             return None, f"bundle part {key} is none of the declarations kept at the pin"
         if d["relation"] != vocab.HAS_PART:
@@ -692,9 +698,12 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
     ``conjuncts`` (gold of judgment rules 3, :func:`gold_status_rule`): a ``hasPart``
     keeps the ``conjunct_relation`` the labeler gave it, one of
     ``CONJUNCT_RELATIONS`` or none (a part of a span that states one claim), and is
-    dropped with the reason for any other value; no other relation carries one.
+    dropped with the reason for any other value; no other relation carries one.  And
+    a declaration is kept once (:func:`_once`): status rule 2 keys a location by
+    ``library:declaration``, which a span's locations hold at most once each.
     """
     kept, dropped = [], []
+    listed: list[dict] = []
     for d in declarations or []:
         lib, name = str(d.get("library") or ""), str(d.get("declaration") or "")
         relation = d.get("relation")
@@ -716,9 +725,52 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
         kept.append({"library": lib, "declaration": name, "commit": libs[lib]["commit"],
                      "relation": relation, "proof_status": row["proof_status"],
                      "statement": bool(row["statement"]), "evidence": d.get("evidence") or ""})
+        listed.append(d)
         if part is not None:
             kept[-1]["conjunct_relation"] = part
+    if conjuncts:
+        kept, again = _once(kept, listed)
+        dropped.extend(again)
     return kept, dropped
+
+
+def _once(kept: list[dict], listed: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Each ``library:declaration`` kept once, and the listings dropped with the reason.
+
+    ``listed[i]`` is the labeler's entry ``kept[i]`` came from.  Under status rule 2 a
+    standing bundle keys every counting declaration by ``library:declaration``
+    (:func:`_gold_status`), and ``vocab.derive_status`` refuses a key held twice, so a
+    labeler that listed one declaration twice aborted the whole transcription.  A
+    declaration listed again with the same relation (and ``conjunct_relation``) says
+    nothing new: the first listing is kept and each repeat dropped.  Listed with two
+    relations it contradicts itself, and a declaration has one relation to a span:
+    every listing is dropped, whatever their order, and a bundle naming it does not
+    stand (:func:`gold_bundle`).
+    """
+    def judged(d: dict) -> tuple:
+        return d["relation"], d.get("conjunct_relation")
+
+    groups: dict[str, list[int]] = {}
+    for i, d in enumerate(kept):
+        groups.setdefault(_part_key(d), []).append(i)
+    out, dropped = [], []
+    for i, d in enumerate(kept):
+        group = groups[_part_key(d)]
+        if len(group) == 1:
+            out.append(d)
+            continue
+        relations = sorted({judged(kept[j]) for j in group}, key=repr)
+        if len(relations) > 1:
+            said = ", ".join(r if c is None else f"{r} ({c})" for r, c in relations)
+            dropped.append({**listed[i], "reason": f"listed {len(group)} times with different "
+                                                   f"relations ({said}): a declaration has one "
+                                                   f"relation to a span"})
+        elif i == group[0]:
+            out.append(d)
+        else:
+            dropped.append({**listed[i], "reason": f"listed {len(group)} times with the same "
+                                                   f"relation: the first is kept"})
+    return out, dropped
 
 
 def labeler_rules(version: Any) -> int:
