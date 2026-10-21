@@ -47,6 +47,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -908,20 +909,35 @@ class Pipeline:
              "r3": "a finite widget meets every hypothesis the declaration has"}
     SPECIAL = {"reason": "no library states it for a special widget either"}
 
-    def cut_gate(self, run_id: str, manifest_fn=None) -> Path:
+    def cut_gate(self, run_id: str, manifest_fn=None, *, suffix: str = "",
+                 signatures: dict[str, str] | None = None) -> Path:
         """``run_id``'s staged gate, as the same run planned under the cut would stage it.
 
         A copy of the host gate directory whose gate.json names the cut's versions
         (:data:`CUT_KEYS`) and whose task manifests ``manifest_fn`` rewrites (the
         inventory's statement, conjuncts and shape, which the planner copies from the
-        flip on, docs/proposals/statement-cut.md section 1.2).
+        flip on, docs/proposals/statement-cut.md section 1.2).  ``signatures``
+        (``{declaration: signature}``) gives this copy its own corpus.sqlite with
+        those signatures, pinned by its gate.json as a planner pins the database it
+        planned with: the synthetic universe has no number-typed binder, which the
+        naturals-for-integers tripwire reads.
         """
-        cut = self.made / "host" / f"{run_id}-gate-cut"
+        cut = self.made / "host" / f"{run_id}-gate-cut{suffix}"
         if cut.is_dir():
             shutil.rmtree(cut)
         shutil.copytree(self.host_gate(run_id), cut)
         gate = self.read_json(cut / "gate.json")
         gate.update(self.CUT_KEYS, tasks_dir=str(cut / "tasks"), log_dir=str(cut / "log"))
+        if signatures:
+            db = cut / "corpus.sqlite"
+            shutil.copy2(gate["corpus_db"]["path"], db)
+            con = sqlite3.connect(db)
+            for name, signature in signatures.items():
+                con.execute("UPDATE decls SET signature = ? WHERE name = ?", (signature, name))
+            con.commit()
+            con.close()
+            gate["corpus_db"] = {"path": str(db),
+                                 "sha256": hashlib.sha256(db.read_bytes()).hexdigest()}
         self.write_json(cut / "gate.json", gate)
         for path in sorted((cut / "tasks").glob("*.json")):
             manifest = self.read_json(path)
@@ -1023,6 +1039,23 @@ class Pipeline:
         def end_moved(ps):
             ps[lead]["span"][1] -= 1
 
+        head = lt.HeadMap(layer, formulas)
+
+        def same_text(ps):                   # two passages of one word: one passage_key
+            for start in (layer.index("gadget version"),
+                          layer.rindex("spanning gadget.") + len("spanning ")):
+                ps.append({"item": "", "head_words": 0, "span": [start, start + len("gadget")],
+                           "quote": {"exact": "gadget",
+                                     "prefix": layer[max(0, start - 24):start], "suffix": ""},
+                           "until": "gadget", "section": [], "fragment": None,
+                           "passage_kind": "other", "prominence": "supporting",
+                           "scope": "non_math", "concept": None, "finder": "model",
+                           "statement": "a synthetic word, twice"})
+            ps.sort(key=lambda p: p["span"][0])
+            keyed = lt.assign_ids(head.head, [head.to_head(p["span"][0]) for p in ps])
+            for p, (_start, digest, words) in zip(ps, keyed):
+                p.update(item=f"In-text #{digest}", head_words=words)
+
         cases = {"rule 10 overlap": (overlap, "shares text with"),
                  "rule 10 run on": (run_on, "only inside a theorem box"),
                  "rule 10 display": (cut_display, "inside the formula"),
@@ -1030,6 +1063,7 @@ class Pipeline:
                  "rule 10 shape": (shapeless, "the closed list"),
                  "rule 10 scope": (scoped_out_conjuncts, "belong to a formal_math passage"),
                  "rule 10 prominence": (scoped_out_central, "the subject marker goes"),
+                 "rule 10 same text": (same_text, "two passages with one span text"),
                  "rule 2 end rule 2": (end_moved, "passage_ids.py ends it")}
         for name, (fn, needle) in cases.items():
             path = self.write_json(self.made / "inv-cut" / name.replace(" ", "-") / task_id
@@ -1073,8 +1107,8 @@ class Pipeline:
                                or "at the passage's finite widget, no instance needed")
                 elif loc["relation"] == "hasPart":
                     loc["clauses"] = ["c2"] if compound else ["c1"]
-                    if compound:
-                        loc["conjunct_relation"] = "exactMatch"
+                    if compound:          # a strong part is held as a strong location is
+                        loc.update(conjunct_relation="exactMatch", tests=dict(self.TESTS))
             if p["outcome"] == "absent":
                 p["receipt"]["special_case"] = dict(self.SPECIAL)
         path = self.write_json(self.made / "loc-cut" / "good" / task_id / f"{WIDGET}.json", doc)
@@ -1123,7 +1157,8 @@ class Pipeline:
             ps[box]["locations"].append(dict(
                 self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 2,
                                clauses=("c1",)), conjunct_relation="exactMatch",
-                step="the existence of a spanning gadget"))
+                step="the existence of a spanning gadget", tests=dict(self.TESTS),
+                instantiation="at the passage's finite widget, no instance needed"))
 
         def no_special_case(ps):
             ps[absent]["receipt"].pop("special_case")
@@ -1147,12 +1182,156 @@ class Pipeline:
             self.refused(code, text, f"rules-3 {name}", "rule 9")
             check(needle in text, f"the rules-3 {name} violation was refused, but not for "
                                   f"{needle!r}:\n{text}")
+        self._cut_bundles(gate_dir, task_id, doc, items, box, subject)
+
+    def _cut_bundles(self, gate_dir: Path, task_id: str, doc: dict, items: dict, box: int,
+                     subject: int) -> None:
+        """The widget theorem's bundle under judgment rules 3, its bad twins, and fix 2b.
+
+        The theorem box is a compound statement; its two strong hasPart parts, one
+        per conjunct, claimed together, are a bundle (J3).  Each part is held by its
+        conjunct_relation, as a strong location is (fixes 2a-2c): under status rule 2
+        the bundle takes its weakest part's relation.
+        """
+        def mutate(fn):
+            bad = json.loads(json.dumps(doc))
+            fn(bad["passages"])
+            return bad
+
+        def bundle(ps):
+            ps[box]["locations"].append(dict(
+                self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 2,
+                               clauses=("c1",)), conjunct_relation="exactMatch",
+                step="the existence of a spanning gadget", tests=dict(self.TESTS),
+                instantiation="at the passage's finite widget, no instance needed"))
+            ps[box]["coverage"] = {"complete": True, "parts": [1, 2],
+                                   "note": "existence and the size bound, one part each"}
+
+        good = mutate(bundle)
+        path = self.write_json(self.made / "loc-cut" / "bundle" / task_id / f"{WIDGET}.json",
+                               good)
+        code, text = self.gate_cut(gate_dir, path)
+        check(code == 0, f"the cut gate refused the widget theorem's bundle:\n{text}")
+
+        def on_bundle(fn):
+            def both(ps):
+                bundle(ps)
+                fn(ps[box]["locations"])
+            return both
+
+        def partition(locs):
+            locs[1]["clauses"] = ["c2"]
+
+        def special_case_part(locs):
+            locs[1]["conjunct_relation"] = "narrowMatch"
+
+        def close_part(locs):
+            locs[0]["conjunct_relation"] = "closeMatch"
+
+        def part_tests(locs):
+            locs[0].pop("tests")
+
+        def part_generality(locs):
+            locs[1]["note"] = "a stronger statement than the conjunct"
+
+        cases = {"J3 one part per conjunct": (partition, "both name c2"),
+                 "J3 a strong part": (special_case_part, "a bundle's part states them strongly"),
+                 "J2 a close part's convention": (close_part, "names the convention it differs"),
+                 "2a a part's tests": (part_tests, "a part whose conjunct_relation is "
+                                                   "exactMatch writes both instantiation tests"),
+                 "R1 a part's generality": (part_generality, "the note of a part whose "
+                                                             "conjunct_relation is exactMatch "
+                                                             "says 'stronger'")}
+        for name, (fn, needle) in cases.items():
+            path = self.write_json(self.made / "loc-cut" / name.replace(" ", "-") / task_id
+                                   / f"{WIDGET}.json", mutate(on_bundle(fn)))
+            code, text = self.gate_cut(gate_dir, path)
+            self.refused(code, text, f"rules-3 {name}", "rule 9")
+            check(needle in text, f"the rules-3 {name} violation was refused, but not for "
+                                  f"{needle!r}:\n{text}")
+        # fix 2b: the naturals-for-integers tripwire, on a whole location and on a part;
+        # the gate copies differ in which passage speaks of integers
+        nat = {"Widget.exists_spanning_gadget": "∀ (n : ℕ) (w : Widget), ∃ g, g.Spans w"}
+        rewrite = self._cut_manifests(items)
+        for which, at, body in (("whole", subject, doc), ("part", box, good)):
+            item = doc["passages"][at]["item"]
+
+            def integers(manifest, item=item):
+                rewrite(manifest)
+                for d in manifest["documents"]:
+                    for row in d.get("passages") or []:
+                        if row["item"] == item:
+                            row["statement"] = "every finite widget of integer order spans"
+
+            nat_dir = self.cut_gate("loc-1", integers, suffix=f"-nat-{which}", signatures=nat)
+            path = self.write_json(self.made / "loc-cut" / f"2b-nat-{which}" / task_id
+                                   / f"{WIDGET}.json", body)
+            code, text = self.gate_cut(nat_dir, path)
+            self.refused(code, text, f"rules-3 2b naturals for integers ({which})", "rule 9")
+            check(f"{item}.locations[" in text and "every number-typed binder" in text,
+                  f"the naturals-for-integers violation ({which}) was refused, but not on "
+                  f"{item}'s location for its binders:\n{text}")
+            answered = json.loads(json.dumps(body))
+            for loc in answered["passages"][at]["locations"]:
+                if loc["declaration"] in nat:
+                    loc["note"] = "the orders are natural numbers here"
+            path = self.write_json(self.made / "loc-cut" / f"2b-nat-{which}-answered" / task_id
+                                   / f"{WIDGET}.json", answered)
+            code, text = self.gate_cut(nat_dir, path)
+            check(code == 0, f"the cut gate refused an answered naturals-for-integers "
+                             f"({which}):\n{text}")
+
+    #: the second part of the widget theorem's bundle, as a challenge plan of the cut would
+    #: hand it over (a synthetic location key)
+    PART_KEY = hashlib.sha256(b"e2e: the widget theorem's existence part").hexdigest()
+
+    def _cut_challenge_manifests(self, items: dict) -> callable:
+        """The challenge manifests as a challenge plan of the cut would write them.
+
+        The inventory's statement and conjuncts on every record (:meth:`_cut_manifests`);
+        the widget theorem's bundle -- its hasPart record states c2 exactly, a second part
+        states c1 broadly, and their coverage claim -- and a conditional absence of the
+        sampled supporting passage, which the plan puts in its prominence record's task
+        (anomaly A3; docs/proposals/statement-cut.md section 5).
+        """
+        base = self._cut_manifests(items)
+
+        def rewrite(manifest: dict) -> None:
+            base(manifest)
+            for d in manifest["documents"]:
+                if d["source_id"] != WIDGET:
+                    continue
+                recs = d["records"]
+                part = next(r for r in recs if r["target"] == "location" and r.get("conjuncts"))
+                part.update(clauses=["c2"], conjunct_relation="exactMatch")
+                other = dict(json.loads(json.dumps(part)), location_key=self.PART_KEY,
+                             key=self.PART_KEY, declaration="Widget.exists_spanning_gadget",
+                             rank=2, clauses=["c1"], conjunct_relation="broadMatch",
+                             step="the existence of a spanning gadget")
+                part["passage_locations"] = [{"location_key": self.PART_KEY,
+                                              "relation": "hasPart"}]
+                other["passage_locations"] = [{"location_key": part["location_key"],
+                                               "relation": "hasPart"}]
+                coverage = {k: v for k, v in part.items() if k not in (
+                    "location_key", "key", "library", "declaration", "relation", "rank",
+                    "clauses", "conjunct_relation", "step", "instantiation",
+                    "passage_locations", "claims")}
+                coverage.update(target="coverage", note="existence and the size bound", parts=[
+                    {k: r[k] for k in ("location_key", "library", "declaration", "relation",
+                                       "rank", "clauses", "conjunct_relation")}
+                    for r in (part, other)])
+                sampled = next(r for r in recs if r["target"] == "prominence"
+                               and r.get("prominence") == "supporting")
+                conditional = dict(json.loads(json.dumps(sampled)), target="absence",
+                                   conditional="prominence")
+                recs.extend([other, coverage, conditional])
+        return rewrite
 
     def _cut_challenge(self) -> None:
         """The widget's challenge document under judgment rules 3, and its bad twins."""
         items = self._inventory_items()
-        gate_dir = self.cut_gate("chl-1", self._cut_manifests(items))
-        manifests = self._manifests("chl-1")
+        gate_dir = self.cut_gate("chl-1", self._cut_challenge_manifests(items))
+        manifests = {p.stem: self.read_json(p) for p in sorted((gate_dir / "tasks").glob("*.json"))}
         task_id, d = next((t, d) for t, m in manifests.items() for d in m["documents"]
                           if d["source_id"] == WIDGET)
         verdicts = []
@@ -1161,12 +1340,20 @@ class Pipeline:
             ids = ["c1", "c2"] if compound else ["c1"]
             v = {"item": rec["item"], "target": rec["target"],
                  "witness": "re-read the signature at the pin (synthetic)"}
+            if rec.get("conditional"):
+                continue                      # owed only beside an overturn (A3)
             if rec["target"] == "location":
                 v.update(location_key=rec["location_key"], action="confirm")
                 if rec["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
                     v.update(clauses=ids, tests=dict(self.TESTS))
                 elif rec["relation"] != "relatedMatch":
                     v["clauses"] = [c for c in rec.get("clauses") or [] if c in ids] or ids[:1]
+                    if rec.get("conjunct_relation") in ("exactMatch", "closeMatch",
+                                                        "broadMatch"):
+                        v["tests"] = dict(self.TESTS)    # a strong part, held as strong
+            elif rec["target"] == "coverage":
+                v.update(action="confirm", part_relations={
+                    part["location_key"]: part["conjunct_relation"] for part in rec["parts"]})
             elif rec["target"] in ("absence", "unresolved"):
                 queries = [f"synthetic hunt {n} for {rec['item'][-8:]}" for n in range(3)]
                 v.update(action="uphold", queries=queries,
@@ -1223,6 +1410,107 @@ class Pipeline:
                                filled)
         code, text = self.gate_cut(gate_dir, path)
         check(code == 0, f"the cut gate refused an emptied passage's fill:\n{text}")
+        self._cut_challenge_bundle(gate_dir, task_id, d, doc, filled, verdicts[strong]["item"])
+
+    def _cut_challenge_bundle(self, gate_dir: Path, task_id: str, d: dict, doc: dict,
+                              filled: dict, emptied_item: str) -> None:
+        """Rules 3's bundle verdicts, conditional records and fills, refused for their rules."""
+        verdicts = doc["verdicts"]
+        records = d["records"]
+        conditional = next(r for r in records if r.get("conditional"))
+        box_part = next(r for r in records if r["target"] == "location"
+                        and r.get("conjunct_relation") == "exactMatch")
+        bundle = next(i for i, v in enumerate(verdicts) if v["target"] == "coverage")
+        part = next(i for i, v in enumerate(verdicts)
+                    if v.get("location_key") == box_part["location_key"])
+        other = next(i for i, v in enumerate(verdicts) if v.get("location_key") == self.PART_KEY)
+        sampled = next(i for i, v in enumerate(verdicts) if v["target"] == "prominence"
+                       and v["item"] == conditional["item"])
+        queries = [f"synthetic hunt {n} for {conditional['item'][-8:]}" for n in range(3)]
+        hunted = {"item": conditional["item"], "target": "absence", "action": "uphold",
+                  "queries": queries, "query_clauses": {q: ["c1"] for q in queries},
+                  "special_case": dict(self.SPECIAL),
+                  "witness": "searched again (synthetic)"}
+        overturn = {"item": conditional["item"], "target": "prominence", "action": "overturn",
+                    "prominence": "central", "witness": "the article's centre (synthetic)"}
+
+        def mutate(fn, base=doc):
+            bad = json.loads(json.dumps(base))
+            fn(bad)
+            return bad
+
+        def reopened(bad):                   # an overturn to central, and the record it owes
+            bad["verdicts"][sampled] = dict(overturn)
+            bad["verdicts"].append(dict(hunted))
+
+        path = self.write_json(self.made / "chl-cut" / "A3-reopened" / task_id
+                               / f"{WIDGET}.json", mutate(reopened))
+        code, text = self.gate_cut(gate_dir, path)
+        check(code == 0, f"the cut gate refused an overturn that judges its conditional "
+                         f"record:\n{text}")
+
+        def stronger(bad):
+            bad["verdicts"][bundle]["part_relations"][self.PART_KEY] = "exactMatch"
+
+        def part_clauses(bad):
+            bad["verdicts"][bundle]["part_clauses"] = {
+                k: ["c1"] for k in bad["verdicts"][bundle]["part_relations"]}
+
+        def bare_refute(bad):
+            bad["verdicts"][bundle] = {"item": verdicts[bundle]["item"], "target": "coverage",
+                                       "action": "refute", "unstated": ["c1"],
+                                       "witness": "the existence part is another lemma"}
+
+        def raised(bad):
+            bad["verdicts"][other]["conjunct_relation"] = "exactMatch"
+
+        def whole_part(bad):
+            bad["verdicts"][part]["clauses"] = ["c1", "c2"]
+
+        def part_tests(bad):
+            bad["verdicts"][part].pop("tests")
+
+        def unasked(bad):
+            bad["verdicts"].append(dict(hunted))
+
+        def unjudged(bad):
+            bad["verdicts"][sampled] = dict(overturn)
+
+        def needless_fill(bad):
+            bad["fills"] = {verdicts[bundle]["item"]: json.loads(json.dumps(
+                filled["fills"][emptied_item]))}
+
+        def accepted_fill(bad):
+            bad["fills"][emptied_item]["receipt"]["candidates"] = [
+                {"library": "alpha", "declaration": "Widget.card_dvd", "verdict": "accepted",
+                 "reason": ""}]
+
+        cases = {
+            "part_relations stronger": (stronger, "stronger than the part's own broadMatch", 9),
+            "part_clauses": (part_clauses, "part_clauses is refused under the statement cut",
+                             9),
+            "1a part_reasons": (bare_refute, "says, for every part, why no R1 convention", 9),
+            "a raised conjunct_relation": (raised, "stronger than the record's broadMatch", 9),
+            "PD6 a whole part": (whole_part, "names every conjunct", 9),
+            "2d a part's tests": (part_tests, "a verdict that keeps or leaves a part whose "
+                                              "conjunct_relation is exactMatch writes both", 9),
+            "A3 a conditional record unasked": (unasked, "is a conditional record", 1),
+            "A3 a conditional record owed": (unjudged, "have no verdict", 1),
+            "fills on a passage left a location": (needless_fill, "drop it", 9)}
+        for name, (fn, needle, rule) in cases.items():
+            path = self.write_json(self.made / "chl-cut" / name.replace(" ", "-") / task_id
+                                   / f"{WIDGET}.json", mutate(fn))
+            code, text = self.gate_cut(gate_dir, path)
+            self.refused(code, text, f"rules-3 challenge {name}", f"rule {rule}")
+            check(needle in text, f"the rules-3 challenge {name} violation was refused, but not "
+                                  f"for {needle!r}:\n{text}")
+        path = self.write_json(self.made / "chl-cut" / "accepted-fill" / task_id
+                               / f"{WIDGET}.json", mutate(accepted_fill, filled))
+        code, text = self.gate_cut(gate_dir, path)
+        self.refused(code, text, "rules-3 challenge an absent fill's accepted candidate",
+                     "rule 1")
+        check("accepted candidate alpha:Widget.card_dvd is not one of this passage's" in text,
+              f"an absent fill's accepted candidate was refused, but not for it:\n{text}")
 
     # ------------------------------------------------------------------- L6
     def export(self) -> None:

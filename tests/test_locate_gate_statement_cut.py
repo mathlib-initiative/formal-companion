@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover
 import copy
 import hashlib
 import json
+import re
 import sqlite3
 import sys
 import unittest
@@ -416,7 +417,7 @@ class TestRule10(InventoryCase):
         result = self.gate(cut_body(), CUT)
         self.assertOk(result)
         self.assertEqual(self.stats(result)["cut"], {
-            "passages": 7, "formal": 5, "compound": 2,
+            "passages": 7, "formal": 5, "compound": 2, "conjuncts": 4,
             "by_shape": {"cases": 1, "existence_uniqueness": 1},
             "sentences": 7, "displays": 1, "multi_sentence": 1, "multi_display": 0})
         self.assertNotIn("cut", self.stats(self.gate(cut_body(), BEFORE)))
@@ -427,7 +428,10 @@ class TestRule10(InventoryCase):
         self.assertEqual(block["formal"], 5)
         self.assertEqual(block["by_source"][G.SID]["by_shape"],
                          {"cases": 1, "existence_uniqueness": 1})
-        self.assertIn("cut: 5 formal passage(s) of 7",
+        # the pilot's clauses a passage: conjuncts, and one for each simple statement
+        self.assertEqual((block["conjuncts"], block["by_source"][G.SID]["conjuncts"]), (4, 4))
+        self.assertEqual(block["conjuncts"] + block["formal"] - block["compound"], 7)
+        self.assertIn("cut: 5 formal passage(s) of 7, 2 compound of 4 conjunct(s)",
                       gate_corpus.render({"preset": "x", "sources": [], "files": 1, "ok": True,
                                           "problems": [], "cut": block}))
 
@@ -472,9 +476,12 @@ def strong(lib="alpha", decl="Widget.exists_spanning_gadget", relation="exactMat
 
 
 def part(lib, decl, rank, clause, relation="exactMatch", **extra) -> dict:
+    """A hasPart of the compound theorem; a strong one carries what a strong location does."""
+    held = ({"instantiation": "at the passage's finite widget, no instance needed",
+             "tests": copy.deepcopy(TESTS)} if relation in vocab.STRONG_RELATIONS else {})
     return {**G.location(lib, decl, "hasPart", rank), "clauses": [clause],
             "conjunct_relation": relation, "step": f"the {clause} conjunct as the library states it",
-            **extra}
+            **held, **extra}
 
 
 def cut_locate_body() -> dict:
@@ -665,6 +672,19 @@ class TestRules3OnALocateDocument(LocateCase):
             with self.subTest(signature=signature):
                 self.assertOk(self.gate(cut_locate_body(), vocab.RULES_STATEMENT_CUT))
 
+    def test_the_tripwires_words_are_cflibs_and_read_as_they_did(self):
+        """vocab.NAT_FOR_INT_*_WORDS, read as the gate's two patterns read before the move."""
+        before = (r"(?<![\w'])integers?(?![\w'])|ℤ", r"ℕ|(?<![\w'])natural")
+        texts = ("an integer order", "the integers", "n in nℤ", "a ℤ-module", "integerness",
+                 "orders are natural numbers", "naturally", "an ℕ-valued map", "supernatural",
+                 "Integer orders", "no number at all")
+        for pattern, old in zip((vl._INTEGER_WORDS, vl._NATURAL_WORDS), before):
+            for text in texts:
+                with self.subTest(pattern=old, text=text):
+                    folded = vl.fold_words(text)
+                    self.assertEqual(bool(pattern.search(folded)),
+                                     bool(re.search(old, folded)))
+
     def test_fix_2c_the_longer_generality_list(self):
         body = cut_locate_body()
         body["passages"][0]["locations"][0]["note"] = "the lemma holds at every point"
@@ -710,6 +730,80 @@ class TestRules3OnALocateDocument(LocateCase):
             self.fx, thm={"conjuncts": [{"id": "c2", "text": "x"}, {"id": "c1", "text": "y"}]}))
         self.assertBroken(self.gate(cut_locate_body(), vocab.RULES_STATEMENT_CUT),
                           "the frozen inventory is inconsistent")
+
+
+#: how the gate names a bundle part it holds by its conjunct_relation
+STRONG_PART = "part whose conjunct_relation is exactMatch"
+
+
+class TestABundlePartIsHeldByItsConjunctRelation(LocateCase):
+    """Rules 3: a part of a compound statement is held by its ``conjunct_relation``.
+
+    Under status rule 2 a bundle takes its weakest part's relation, so a part whose
+    conjunct_relation is strong is a strong claim and passes every check a strong
+    location does: fixes 2a-2c and R1's generality words.  Before this, the checks
+    read the location's own relation (``hasPart``), so the FM1/FM4 over-claims the
+    fixes target passed by being written as a bundle.
+    """
+
+    def test_a_good_bundle_passes(self):
+        self.assertOk(self.gate(bundle_body(), vocab.RULES_STATEMENT_CUT))
+
+    def test_fix_2a_a_strong_part_writes_both_tests(self):
+        body = bundle_body()
+        del body["passages"][0]["locations"][0]["tests"]
+        self.assertCutOnly(body, f"a {STRONG_PART} writes both instantiation tests")
+        body = bundle_body()
+        del body["passages"][0]["locations"][1]["tests"]
+        self.assertCutOnly(body, "a part whose conjunct_relation is broadMatch writes both")
+
+    def test_fix_2b_a_strong_part_says_its_instantiation(self):
+        body = bundle_body()
+        del body["passages"][0]["locations"][0]["instantiation"]
+        self.assertCutOnly(body, f"a {STRONG_PART} says how the declaration is instantiated")
+
+    def test_fix_2b_the_naturals_for_integers_tripwire_on_a_part(self):
+        sign(self.fx, "Widget.exists_spanning_gadget", NAT_ONLY)
+        self.fx.manifest(self.TASK, cut_manifest_doc(
+            self.fx, thm={"statement": "for every integer order a spanning gadget exists"}))
+        self.assertCutOnly(bundle_body(), "every number-typed binder")
+        body = bundle_body()
+        body["passages"][0]["locations"][0]["note"] = "the orders are natural numbers here"
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
+
+    def test_r1_and_fix_2c_the_generality_words_on_a_part(self):
+        for note, word in (("a stronger statement than the conjunct", "stronger"),
+                           ("the lemma holds at every point", "every point")):
+            body = bundle_body()
+            body["passages"][0]["locations"][0]["note"] = note
+            with self.subTest(note=note):
+                self.assertCutOnly(body, f"the note of a {STRONG_PART} says {word!r}")
+        # a broader part may say it is more general: that is what broadMatch is (R2)
+        body = bundle_body()
+        body["passages"][0]["locations"][1]["note"] = "a stronger statement than the conjunct"
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
+
+    def test_a_close_part_is_held_as_a_close_location(self):
+        body = bundle_body()
+        body["passages"][0]["locations"][0].update(conjunct_relation="closeMatch",
+                                                   convention="encoding")
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
+        del body["passages"][0]["locations"][0]["tests"]
+        self.assertCutOnly(body, "a part whose conjunct_relation is closeMatch writes both")
+
+    def test_a_special_case_part_owes_none_of_it(self):
+        """A narrowMatch part states a special case of its conjuncts: no strong claim."""
+        sign(self.fx, "Widget.exists_spanning_gadget", NAT_ONLY)
+        self.fx.manifest(self.TASK, cut_manifest_doc(
+            self.fx, thm={"statement": "for every integer order a spanning gadget exists"}))
+        body = bundle_body()
+        del body["passages"][0]["coverage"]
+        first = body["passages"][0]["locations"][0]
+        first["conjunct_relation"] = "narrowMatch"
+        first["note"] = "a stronger hypothesis, at every point"
+        for key in ("tests", "instantiation"):
+            first.pop(key)
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
 
 
 # --------------------------------------------------------------------------- #
@@ -763,9 +857,9 @@ class ChallengeCase(G.GateTestCase):
     def body(self) -> dict:
         return {"verdicts": [
             {"item": G.THM_ITEM, "target": "location", "location_key": KEY_A, "action": "confirm",
-             "clauses": ["c1"], "witness": "states existence"},
+             "clauses": ["c1"], "tests": copy.deepcopy(TESTS), "witness": "states existence"},
             {"item": G.THM_ITEM, "target": "location", "location_key": KEY_B, "action": "confirm",
-             "clauses": ["c2"], "witness": "states the bound"},
+             "clauses": ["c2"], "tests": copy.deepcopy(TESTS), "witness": "states the bound"},
             {"item": G.THM_ITEM, "target": "coverage", "action": "confirm",
              "part_relations": {KEY_A: "exactMatch", KEY_B: "broadMatch"},
              "witness": "the parts state both conjuncts"},
@@ -866,6 +960,55 @@ class TestRules3OnAChallenge(ChallengeCase):
         body["verdicts"][1]["conjunct_relation"] = "narrowMatch"
         self.assertCutOnly(body, "this document gives that part's record")
 
+    def test_a_verdict_on_a_part_is_held_by_the_conjunct_relation_it_leaves(self):
+        """Fix 2d, 2b and the generality words on a part, by the relation the verdict leaves it."""
+        body = self.body()
+        del body["verdicts"][0]["tests"]
+        self.assertCutOnly(body, f"a verdict that keeps or leaves a {STRONG_PART} writes both")
+        body = self.body()
+        body["verdicts"][0]["note"] = "a stronger statement than the conjunct"
+        self.assertCutOnly(body, f"the note of a {STRONG_PART} says 'stronger'")
+        body = self.body()
+        body["verdicts"][0]["note"] = "the lemma holds at every point"
+        self.assertCutOnly(body, f"the note of a {STRONG_PART} says 'every point'")
+        sign(self.fx, "Widget.exists_spanning_gadget", NAT_ONLY)
+        self.records()
+        doc = json.loads((self.fx.tasks / f"{self.TASK}.json").read_text(encoding="utf-8"))
+        for rec in doc["documents"][0]["records"]:
+            if rec["item"] == G.THM_ITEM:
+                rec["statement"] = "for every integer order a spanning gadget exists"
+        (self.fx.tasks / f"{self.TASK}.json").write_text(json.dumps(doc), encoding="utf-8")
+        self.assertCutOnly(self.body(), "every number-typed binder")
+        # a verdict that weakens the part to a special case keeps no strong relation
+        body = self.body()
+        body["verdicts"][0].update(conjunct_relation="narrowMatch")
+        del body["verdicts"][0]["tests"]
+        body["verdicts"][2] = {"item": G.THM_ITEM, "target": "coverage", "action": "refute",
+                               "unstated": ["c1"],
+                               "part_reasons": {KEY_A: "it states existence for naturals only",
+                                                KEY_B: "it bounds the size and nothing more"},
+                               "witness": "a special case"}
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
+
+    def test_a_fills_parts_are_held_by_their_conjunct_relation(self):
+        body = self.body()
+        for v in body["verdicts"][:2]:
+            v.update(action="refute")
+            for key in ("clauses", "tests"):
+                v.pop(key)
+        body["verdicts"][2] = {"item": G.THM_ITEM, "target": "coverage", "action": "refute",
+                               "unstated": ["c1", "c2"],
+                               "part_reasons": {KEY_A: "the declaration is about sprockets",
+                                                KEY_B: "the declaration is about sprockets"},
+                               "witness": "no part states the passage"}
+        body["fills"] = {G.THM_ITEM: {"outcome": "located", "locations": [
+            part("alpha", "Widget.Spanning", 1, "c1"),
+            part("beta", "Beta.Widget.gadget_of_finite", 2, "c2", "narrowMatch")]}}
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
+        del body["fills"][G.THM_ITEM]["locations"][0]["tests"]
+        self.assertRule(self.gate(body, vocab.RULES_STATEMENT_CUT), 9,
+                        f"a {STRONG_PART} writes both")
+
     def test_fix_5b_an_uphold_names_its_special_case(self):
         body = self.body()
         del body["verdicts"][3]["special_case"]
@@ -896,6 +1039,45 @@ class TestRules3OnAChallenge(ChallengeCase):
         self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
         del body["fills"][G.THM_ITEM]["locations"][0]["tests"]
         self.assertRule(self.gate(body, vocab.RULES_STATEMENT_CUT), 9, "writes both")
+
+    def test_an_absent_fill_accepts_no_candidate(self):
+        """An absent fill is held to a locate absence's rule 4: accepted means located."""
+        body = self.body()
+        for v in body["verdicts"][:2]:
+            v.update(action="refute")
+            for key in ("clauses", "tests"):
+                v.pop(key)
+        body["verdicts"][2] = {"item": G.THM_ITEM, "target": "coverage", "action": "refute",
+                               "unstated": ["c1", "c2"],
+                               "part_reasons": {KEY_A: "the declaration is about sprockets",
+                                                KEY_B: "the declaration is about sprockets"},
+                               "witness": "no part states the passage"}
+        body["fills"] = {G.THM_ITEM: {"outcome": "absent", "receipt": {
+            "queries": ["gadget divides order", "spanning gadget size", "Widget.card"],
+            "candidates": [{"library": "alpha", "declaration": "Widget.Spanning",
+                            "verdict": "accepted", "reason": ""}],
+            "query_clauses": {"gadget divides order": ["c2"], "spanning gadget size": ["c1"],
+                              "Widget.card": ["c1", "c2"]},
+            "special_case": copy.deepcopy(SPECIAL)}}}
+        self.assertRule(self.gate(body, vocab.RULES_STATEMENT_CUT), 1,
+                        "accepted candidate alpha:Widget.Spanning is not one of this passage's "
+                        "locations")
+        body["fills"][G.THM_ITEM]["receipt"]["candidates"][0].update(
+            verdict="rejected", reason="it defines spanning and states no gadget")
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
+
+    def test_pd6_a_bundle_confirm_beside_a_part_said_to_state_every_conjunct(self):
+        """Rules 3 dropped part_clauses; the same document's part verdict holds PD6 instead."""
+        body = self.body()
+        body["verdicts"][0]["clauses"] = ["c1", "c2"]
+        self.assertCutOnly(body, "your verdict on part aaaaaaaaaaaa names every conjunct")
+        # without the bundle confirm beside it, a part's clauses are only that verdict's
+        body["verdicts"][2] = {"item": G.THM_ITEM, "target": "coverage", "action": "refute",
+                               "unstated": ["c2"],
+                               "part_reasons": {KEY_A: "it states the whole, so it is no part",
+                                                KEY_B: "it bounds the order, not the size"},
+                               "witness": "one part is the whole"}
+        self.assertOk(self.gate(body, vocab.RULES_STATEMENT_CUT))
 
     def test_a_fill_on_a_passage_left_a_location_is_refused(self):
         body = self.body()

@@ -120,12 +120,16 @@ references/locate-documents.md sections 2-4 and 9):
    compound statement's conjuncts partitioned among strong parts, none stating
    them all -- and a compound statement whose strong parts state every conjunct
    writes one; a strong location writes ``tests`` and ``instantiation`` and
-   passes the naturals-for-integers tripwire, under the longer generality list;
-   an absence names its nearest ``special_case``; ``cut_flag`` sits on an
+   passes the naturals-for-integers tripwire, under the longer generality list,
+   and a part is held to all of it by its ``conjunct_relation`` (a strong one
+   is a strong location: the bundle takes its weakest part's relation); an
+   absence names its nearest ``special_case``; ``cut_flag`` sits on an
    unresolved passage only; a challenge confirms a bundle with ``part_relations``
+   -- beside no verdict of its own that gives one part every conjunct (PD6) --
    and refutes one with ``unstated`` and ``part_reasons``, a verdict that keeps
-   or leaves a strong relation runs its own ``tests``, an uphold names its
-   special case, a document that empties a located passage brings its ``fills``,
+   or leaves a strong relation (a part's by its conjunct relation) runs its own
+   ``tests``, an uphold names its special case, a document that empties a
+   located passage brings its ``fills`` (an absent one accepting no candidate),
    and a prominence sample's conditional records are judged exactly when the
    document overturns their passage to ``subject`` or ``central``;
 10. the statement cut (docs/proposals/statement-cut.md section 3.3), only for a
@@ -137,8 +141,8 @@ references/locate-documents.md sections 2-4 and 9):
    (a compound statement), and never ends inside a formula; ``conjuncts`` are
    none or 2-5 with a ``shape`` of the closed list, on a ``formal_math`` passage;
    and a passage scoped out is ``supporting``.  Rule 10 refuses nothing on a
-   passage's size: its counts of sentences and displays are the harvest
-   receipt's ``cut`` block.
+   passage's size: its counts of compound statements and their conjuncts,
+   sentences and displays are the harvest receipt's ``cut`` block.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -357,8 +361,15 @@ CONJUNCT_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch", "narro
 BUNDLE_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
 TWO_WAY_TEST_KEYS = ("r2", "r3")
 CUT_FLAGS = frozenset({"not_a_statement", "several_statements"})
+#: the naturals-for-integers tripwire's words (fix 2b; cflib.vocab.NAT_FOR_INT_INTEGER_WORDS,
+#: NAT_FOR_INT_NATURAL_WORDS, matched by word_pattern)
+NAT_FOR_INT_INTEGER_WORDS = ("integer", "integers", "ℤ")
+NAT_FOR_INT_NATURAL_WORDS = ("ℕ", "natural*")
 #: what a passage not scoped formal_math is (rule 10 (f)): the one prominence nothing reads
 PROMINENCE_SUPPORTING = "supporting"
+#: the prominences an overturn reopens a supporting passage's records to, as
+#: refuted-by-default or hunted ones (A3; cflib.vocab.REFUTE_BY_DEFAULT_PROMINENCE)
+REFUTE_BY_DEFAULT_PROMINENCE = frozenset({"subject", "central"})
 #: the relations that say a declaration states the whole passage
 #: (cflib.vocab.STRONG_RELATIONS)
 STRONG_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
@@ -1797,17 +1808,20 @@ def check_free_text(problems: Problems, where: str, texts: Iterable[tuple[str, A
 
 
 def check_generality(problems: Problems, where: str, relation: Any, note: Any, *,
-                     rules: int = 1) -> None:
+                     rules: int = 1, label: str | None = None) -> None:
     """Rule 9 (R1-R3, FM4): an exactMatch or closeMatch note names no generality.
 
     The words are those of the run's judgment rules (:func:`generality_phrases`):
-    rules 3 add the smoke-3 audit's four (fix 2c).
+    rules 3 add the smoke-3 audit's four (fix 2c).  ``label`` names what is held
+    when it is not the location's own relation: a bundle part, held by its
+    ``conjunct_relation`` (:func:`held_label`).
     """
     if not _one_of(relation, (EXACT_MATCH, CLOSE_MATCH)):
         return
     word = says_generality(note, generality_phrases(rules))
     if word:
-        problems.add(9, where, f"the {relation} note says {word!r}: an exactMatch differs from "
+        subject = f"the {relation} note" if label is None else f"the note of a {label}"
+        problems.add(9, where, f"{subject} says {word!r}: an exactMatch differs from "
                                f"its passage by nothing and a closeMatch by a convention only "
                                f"(R1); a declaration stronger or more general is broadMatch "
                                f"(R2), a special case narrowMatch (R3), a weakening hasPart or "
@@ -2131,11 +2145,15 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
 
     Under judgment rules 3 (the statement cut; ``row`` is the frozen passage, its
     statement and conjuncts) a ``hasPart`` of a compound statement gives its
-    ``conjunct_relation`` and nothing else does (J2), the convention following a
-    ``closeMatch`` part; a strong location writes both instantiation ``tests``
-    and an ``instantiation`` whatever its binders, and states no naturals for the
-    passage's integers unanswered (fixes 2a, 2b); and an exact or close note is
-    held to the longer list of generality words (fix 2c).
+    ``conjunct_relation`` and nothing else does (J2); a strong location writes
+    both instantiation ``tests`` and an ``instantiation`` whatever its binders,
+    and states no naturals for the passage's integers unanswered (fixes 2a, 2b);
+    and an exact or close note is held to the longer list of generality words
+    (fix 2c).  A part is held by its ``conjunct_relation`` (:func:`held_label`):
+    its convention, its generality words and fixes 2a-2b are a strong location's
+    when that relation is strong, since a bundle takes its weakest part's
+    relation (status rule 2).  The gap check stays the location's own: a part
+    states some conjuncts and not the rest by definition.
     """
     relation = location.get("relation")
     known = relation if _one_of(relation, LOCATE_RELATIONS) else None
@@ -2148,17 +2166,20 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
     check_step(problems, where, known, location.get("step"), source, passage_kind=passage_kind)
     held_to = (check_conjunct_relation(problems, where, known, location.get("conjunct_relation"),
                                        row) if cut else known)
+    label = held_label(known, held_to)
     check_convention(problems, where, held_to, location.get("convention"),
                      rules=cfg.judgment_rules)
-    check_generality(problems, where, known, location.get("note"), rules=cfg.judgment_rules)
+    check_generality(problems, where, held_to, location.get("note"), rules=cfg.judgment_rules,
+                     label=label)
     if known in STRONG_RELATIONS:
         for field in ("note", "instantiation"):
             phrase = admits_missing_clause(location.get(field))
             if phrase:
                 problems.add(9, where, _gap_problem(phrase, known, field))
                 break
-    if cut and known in STRONG_RELATIONS:
-        check_strong_location(cfg, ctx, problems, where, location, known, row, source)
+    if cut and held_to in STRONG_RELATIONS:
+        check_strong_location(cfg, ctx, problems, where, location, held_to, row, source,
+                              label=label)
         return
     if cut and location.get("tests") is not None:
         check_tests(problems, where, location.get("tests"), source)
@@ -2364,12 +2385,22 @@ def _passage_texts(row: dict | None) -> list[str]:
     return [t for t in texts if isinstance(t, str)]
 
 
-#: the words by which a passage speaks of integers (the smoke-3 audit's fix 2b)
-_INTEGER_WORDS = re.compile(r"(?<![\w'])integers?(?![\w'])|ℤ")
+def word_pattern(words: Iterable[str]) -> re.Pattern:
+    """A list of the tripwire's words as one pattern (cflib.vocab's ``NAT_FOR_INT_*_WORDS``).
+
+    A word is matched as a phrase list's is (:func:`phrase_pattern`: whole words, a
+    trailing ``*`` any ending); a symbol, any entry that is not ASCII, anywhere.
+    """
+    return re.compile("|".join(phrase_pattern(w).pattern if w.isascii() else re.escape(w)
+                               for w in words))
+
+
+#: the words by which a passage speaks of integers, and a note answers it (fix 2b)
+_INTEGER_WORDS = word_pattern(NAT_FOR_INT_INTEGER_WORDS)
 #: a binder's number type, as the index prints it, and the set it names
 _NUMBER_TYPES = {"ℕ": "ℕ", "Nat": "ℕ", "ℤ": "ℤ", "Int": "ℤ", "ℚ": "ℚ", "Rat": "ℚ",
                  "ℝ": "ℝ", "Real": "ℝ", "ℂ": "ℂ", "Complex": "ℂ"}
-_NATURAL_WORDS = re.compile(r"ℕ|(?<![\w'])natural")
+_NATURAL_WORDS = word_pattern(NAT_FOR_INT_NATURAL_WORDS)
 
 
 def numeric_binders(signature: Any) -> list[str]:
@@ -2458,13 +2489,33 @@ def check_conjunct_relation(problems: Problems, where: str, relation: str, value
     return relation
 
 
+def held_label(relation: Any, held_to: Any) -> str | None:
+    """What a refusal calls a location held by another relation than its own, or None.
+
+    Under judgment rules 3 a ``hasPart`` of a compound statement is held by its
+    ``conjunct_relation`` (:func:`check_conjunct_relation`, a location verdict's
+    :func:`_judge_verdict_conjunct_relation`): the relation it bears to the
+    conjuncts it states, which is the relation a bundle takes from it (the
+    weakest part's, status rule 2).  A part whose ``conjunct_relation`` is strong
+    is held to every check a strong location is -- fixes 2a-2c and R1's words --
+    and the refusal names it as "a part whose conjunct_relation is <relation>".
+    """
+    return None if held_to == relation else f"part whose conjunct_relation is {held_to}"
+
+
 def check_strong_location(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
-                          location: dict, relation: str, row: dict | None, source: Any) -> None:
-    """Fixes 2a and 2b on a strong location: its ``tests``, its ``instantiation``, the ℕ tripwire."""
+                          location: dict, relation: str, row: dict | None, source: Any, *,
+                          label: str | None = None) -> None:
+    """Fixes 2a and 2b on a strong location: its ``tests``, its ``instantiation``, the ℕ tripwire.
+
+    ``relation`` is the strong relation it is held by: its own, or a part's
+    ``conjunct_relation``, which ``label`` then names (:func:`held_label`).
+    """
+    what = relation if label is None else label
     check_tests(problems, where, location.get("tests"), source,
-                required=f"a {relation}")
+                required=f"a {what}")
     if _blank(location.get("instantiation")):
-        problems.add(9, where, f"a {relation} says how the declaration is instantiated at the "
+        problems.add(9, where, f"a {what} says how the declaration is instantiated at the "
                                f"passage's objects, whatever its binders (instantiation: <one "
                                f"line>): which objects, and which instance or hypothesis makes "
                                f"it apply")
@@ -2988,14 +3039,16 @@ def check_statement_cut(problems: Problems, name: str, passages: list,
     conjuncts on a passage not scoped ``formal_math``; (f) a passage not scoped
     ``formal_math`` whose prominence is not ``supporting``; (g) two passages with
     one span text.  Nothing is refused on a passage's size: the counts --
-    sentences (``locate_text.units``) and displays (``math`` blocks) of each
-    ``formal_math`` passage -- are the harvest receipt's ``cut`` block.
+    the compound statements and their conjuncts, and the sentences
+    (``locate_text.units``) and displays (``math`` blocks) of each ``formal_math``
+    passage -- are the harvest receipt's ``cut`` block.
     """
     layer = source.layer
     blocks = source.blocks()
     top_starts = [blk.start for blk in blocks.top]
-    counts = {"passages": len(passages), "formal": 0, "compound": 0, "by_shape": {},
-              "sentences": 0, "displays": 0, "multi_sentence": 0, "multi_display": 0}
+    counts = {"passages": len(passages), "formal": 0, "compound": 0, "conjuncts": 0,
+              "by_shape": {}, "sentences": 0, "displays": 0, "multi_sentence": 0,
+              "multi_display": 0}
     # (d), (e), (f): every passage the document writes
     for i, p in enumerate(passages):
         if not isinstance(p, dict):
@@ -3016,6 +3069,7 @@ def check_statement_cut(problems: Problems, name: str, passages: list,
             counts["formal"] += 1
             if ids:
                 counts["compound"] += 1
+                counts["conjuncts"] += len(ids)
                 shape = p.get("shape")
                 if _one_of(shape, COMPOUND_SHAPES):
                     counts["by_shape"][shape] = counts["by_shape"].get(shape, 0) + 1
@@ -3315,7 +3369,11 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
     relation, and an exact or close one's note says no generality.  A counting
     relation it keeps on a declaration with instance arguments, whose record names
     no instantiation (every record of a run planned before the rules), carries the
-    challenger's own.
+    challenger's own.  Under judgment rules 3 a verdict on a part of a compound
+    statement is held by the ``conjunct_relation`` it leaves the part
+    (:func:`held_label`): a strong one owes its own ``tests`` (fix 2d), the ℕ
+    tripwire (fix 2b) and the generality words (fix 2c, R1), as a verdict that
+    keeps a strong location does.
     """
     action, old = v.get("action"), rec.get("relation")
     result = old if action == "confirm" else v.get("relation") if action == "downgrade" else None
@@ -3336,6 +3394,7 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
     held_to = result
     if cut:
         held_to = _judge_verdict_conjunct_relation(problems, where, v, rec, result, action)
+    label = held_label(result, held_to)
     own = v.get("convention")
     if held_to == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own):
         own = rec.get("convention")
@@ -3346,11 +3405,12 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
     check_convention(problems, where, held_to, own, rules=cfg.judgment_rules, kept=kept)
     note = (_challenger_note(v, rec, source, result) if action == "downgrade"
             else str(v.get("note") or ""))
-    check_generality(problems, where, result, note, rules=cfg.judgment_rules)
-    if cut and result in STRONG_RELATIONS:
-        # fix 2d: the challenger's own two-way test, and the tripwire on what it leaves
+    check_generality(problems, where, held_to, note, rules=cfg.judgment_rules, label=label)
+    if cut and held_to in STRONG_RELATIONS:
+        # fix 2d: the challenger's own two-way test, and the tripwire on what it leaves --
+        # a part's by the conjunct_relation the verdict leaves it (held_label)
         check_tests(problems, where, v.get("tests"), source,
-                    required=f"a verdict that keeps or leaves a {result}")
+                    required=f"a verdict that keeps or leaves a {label or held_to}")
         why = nat_for_int(cfg, ctx, rec, rec, [v.get("note"), rec.get("note")])
         if why:
             problems.add(9, where, why)
@@ -3732,6 +3792,10 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
     weakened = {str(v.get("location_key")): v.get("conjunct_relation") for v in verdicts
                 if isinstance(v, dict) and v.get("target") == "location"
                 and v.get("conjunct_relation") is not None}
+    #: the clause ids this document's location verdicts say each record states (rules 3)
+    stated = {str(v.get("location_key")): _clauses_of(v) for v in verdicts
+              if isinstance(v, dict) and v.get("target") == "location"
+              and _clauses_of(v) is not None}
     for i, v in enumerate(verdicts):
         if not (isinstance(v, dict) and v.get("target") == "coverage"
                 and v.get("action") == "confirm"):
@@ -3757,6 +3821,18 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                  f"conjunct_relation {given} this document gives that part's "
                                  f"record: give the part the weaker relation, or refute the "
                                  f"claim when it is no strong one")
+        if cfg.judgment_rules >= RULES_STATEMENT_CUT:
+            # PD6, which rules 2 held through a confirm's part_clauses: a part this
+            # document's own verdict says states every conjunct is one location, no part
+            ids = claims_of.get(v.get("item")) or []
+            for key, _part in _part_keys(rec):
+                named = stated.get(key)
+                if ids and named is not None and set(ids) <= named:
+                    problems.add(9, f"{name}: verdicts[{i}]",
+                                 f"your verdict on part {key[:12]} names every conjunct "
+                                 f"({', '.join(ids)}): {WHOLE_PART}, so the claim stands on "
+                                 f"no such part; refute it, and judge that part's own record "
+                                 f"on its own")
     unowed: set[tuple] = set()
     if cfg.judgment_rules >= RULES_STATEMENT_CUT:
         unowed = check_conditional(problems, name, verdicts, records)
@@ -3766,10 +3842,6 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
         problems.add(1, name, f"{len(owed)} record(s) of this task have no verdict "
                               f"({', '.join(str(k[0]) + ' ' + str(k[1]) for k in owed[:3])})")
     return stats
-
-
-#: a prominence a supporting passage's records become refuted-by-default or hunted under
-REOPENING_PROMINENCE = frozenset({"subject", "central"})
 
 
 def check_conditional(problems: Problems, name: str, verdicts: list,
@@ -3786,7 +3858,7 @@ def check_conditional(problems: Problems, name: str, verdicts: list,
     """
     reopened = {v.get("item") for v in verdicts if isinstance(v, dict)
                 and v.get("target") == "prominence" and v.get("action") == "overturn"
-                and v.get("prominence") in REOPENING_PROMINENCE}
+                and v.get("prominence") in REFUTE_BY_DEFAULT_PROMINENCE}
     conditional = {k for k, rec in records.items() if rec.get("conditional")}
     for i, v in enumerate(verdicts):
         if not isinstance(v, dict):
@@ -3903,6 +3975,16 @@ def check_fills(cfg: GateConfig, ctx: Context, problems: Problems, name: str, do
             check_query_clauses(problems, where, fill["receipt"], ids, absent=True,
                                 passage_kind=kind)
             check_rejections(problems, where, receipt)
+            # rule 4's reading, as a locate document's absence is held to it (check_locate):
+            # an accepted candidate is one of the passage's counting locations, and an
+            # absent fill leaves the passage none
+            for cand in receipt["candidates"]:
+                if cand.get("verdict") == "accepted":
+                    problems.add(1, where, f"accepted candidate {cand.get('library')}:"
+                                           f"{cand.get('declaration')} is not one of this "
+                                           f"passage's locations with a relation that counts: "
+                                           f"an absent fill leaves it none, so locate it "
+                                           f"(outcome: located), or reject it with a reason")
             check_special_case(cfg, ctx, problems, where,
                                fill["receipt"].get("special_case")
                                if isinstance(fill["receipt"], dict) else None,

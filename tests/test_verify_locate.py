@@ -393,6 +393,9 @@ class TestTheInlinedVocabularyIsCflibs(unittest.TestCase):
             "CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT":
                 vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT,
             "PROMINENCE_SUPPORTING": vocab.PROMINENCE_SUPPORTING,
+            "REFUTE_BY_DEFAULT_PROMINENCE": vocab.REFUTE_BY_DEFAULT_PROMINENCE,
+            "NAT_FOR_INT_INTEGER_WORDS": vocab.NAT_FOR_INT_INTEGER_WORDS,
+            "NAT_FOR_INT_NATURAL_WORDS": vocab.NAT_FOR_INT_NATURAL_WORDS,
         }
         for name, theirs in pairs.items():
             with self.subTest(name=name):
