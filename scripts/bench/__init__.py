@@ -18,7 +18,9 @@ the file formats references/locate-bench.md defines.  ``cf bench`` (one module,
   each kept per article cluster so an interval is a cluster bootstrap;
 * :mod:`bench.score` -- the score document, its pins and ``measurement_id``,
   and the refusals (section 8.3);
-* :mod:`bench.compare` -- the section 9 acceptance rule and the loop ledger.
+* :mod:`bench.compare` -- the section 9 acceptance rule and the loop ledger;
+* :mod:`bench.carry` -- which gold rows a re-cut carries and which it relabels,
+  over the carry-over map of docs/proposals/statement-cut.md section 4.
 
 ``cf score`` and ``scripts/score/`` are a different measurement (faithfulness
 defects against an answer key) and are untouched.

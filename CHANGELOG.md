@@ -997,6 +997,24 @@ release has something to say.
   zero-cost baseline is no longer a pass.
 
 ### Added
+- `cf locate carry --from <inventory run> --to <inventory run>` and `cf bench carry`, the
+  statement cut's carry-over map (`docs/proposals/statement-cut.md` §4): a re-cut is a routine
+  operation, and what was judged on the old cut carries wherever its passage's text is unchanged.
+  The map (`scripts/locate/carry.py`, `cf-locate-carry/1` in `references/locate-documents.md`
+  §12) keys every passage of both runs' cuts of a page by `passage_key` and gives each old passage
+  its fate from spans and span text only (`unchanged`, `end_moved`, `split`, `merged`,
+  `reshaped`, `removed`, or `changed` when a new revision does not hold its text exactly once) and
+  lists the new passages, refusing a page whose cut holds one text twice or whose document was
+  made on another layer; it is written to `reports/locate-carry/<from>/<to>.json`, the same bytes
+  on a re-run, and `--rows` copies rows keyed by `passage_key` (known answers, a verdict export)
+  with each one's fate and whether it carries (unchanged, `formal_math` before and after, the same
+  conjuncts). `cf bench carry` writes `gold/carry-<n>.json` (`cf-bench-carry/1`,
+  `references/locate-bench.md` §7): a frozen gold row is carried only when the passages over
+  its span did not move (every one unchanged, and no other new passage there), so a span inside
+  one old passage carries exactly when that passage is unchanged, and every row is to relabel
+  across a labeler bump; no label file is edited. `tests/data/locate/carry-parity.json` holds the
+  hand-written cases a consumer's port runs. Nothing else reads the map, so every run plans, gates,
+  tallies and exports as before.
 - The statement cut's specification, `docs/proposals/statement-cut.md` (the maintainer's answers
   of 2026-10-21 on statement-level extraction: one passage per statement, a coverage claim only
   as a bundle on a compound statement taking its weakest part's relation, the smoke-3 audit's

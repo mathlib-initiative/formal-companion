@@ -15,6 +15,7 @@ measurement and is untouched.
     cf bench compare <id> <baseline-score> <candidate-score> --claim G3.fnf_rate --aa <replicate>
     cf bench compare <id> <baseline> <candidate> --claim G3.fnf_rate --aa <r> --replication b0:loop-…
     cf bench compare <id> <baseline-score> --aa <replicate> --claim G3.fnf_rate   # the A/A alone
+    cf bench carry <id> --from <inventory run> --to <inventory run>   # gold across a re-cut
 
 Labels never leave this machine: ``benches/<id>/host/`` is the only part a run
 host may be given (the article lists of each split and the canary strings).
@@ -36,6 +37,7 @@ from cflib.paths import skill_root
 from cflib.workspace import from_args
 from cflib.yamlio import read_yaml, write_yaml
 
+from bench import carry as carry_mod
 from bench import compare as compare_mod
 from bench import curated as curated_mod
 from bench import draw as draw_mod
@@ -45,6 +47,7 @@ from bench import score as score_mod
 from bench.layout import (BENCH_SCHEMA, CLUSTERS_SCHEMA, DRAW_SCHEMA, FRAME_SCHEMA, G1_RESOLVED_SCHEMA,
                           GOLD_SCHEMA, HOST_SCHEMA, LABEL_FILES, SPANS_SCHEMA, BenchLayout, now,
                           sha_of)
+from locate import carry as locate_carry
 from locate import inputs as locate_inputs
 from sources import render_html
 
@@ -201,6 +204,15 @@ def register(subparsers) -> None:
     c.add_argument("--seed", type=int, default=0)
     c.add_argument("--note", default="")
     c.add_argument("--json", action="store_true", dest="as_json")
+
+    k = sub.add_parser("carry", help="which frozen gold rows a re-cut carries and which it "
+                                     "relabels, over the carry-over map of two inventory runs")
+    k.add_argument("bench_id")
+    k.add_argument("--from", dest="from_run", required=True, metavar="RUN",
+                   help="the inventory run of the old cut, the one the runs the gold scores "
+                        "were planned on")
+    k.add_argument("--to", dest="to_run", required=True, metavar="RUN",
+                   help="the inventory run of the new cut")
 
 
 # --------------------------------------------------------------------------
@@ -1050,11 +1062,31 @@ def _compare(ws, args) -> int:
     return 0
 
 
+def _carry(ws, args) -> int:
+    """``gold/carry-<n>.json``: the newest frozen gold over the map of two inventory runs."""
+    layout = BenchLayout.of(ws.paths, args.bench_id)
+    bench = _bench(layout)
+    doc = locate_carry.build(ws.paths, args.from_run, args.to_run)
+    report = carry_mod.carry_gold(layout, bench, doc)
+    path = carry_mod.write(layout, report)
+    total = report["counts"]["total"]
+    print(f"bench {args.bench_id} gold version {report['gold']['version']} across "
+          f"{args.from_run} -> {args.to_run}: {total['carried']} of {total['rows']} row(s) "
+          f"carried, {total['relabel']} to relabel ({total['no_span']} without a span, which no "
+          f"cut moves); {path}")
+    if report["labeler"]["bumped"]:
+        print(f"  {report['note']}")
+    print("  no label file was edited: a relabel is a new gold version (cf bench anchor, then "
+          "cf bench freeze --supersede)")
+    return 0
+
+
 def run(args) -> int:
     ws = from_args(args)
     command = getattr(args, "bench_command", None)
     handlers = {"build": _build, "anchor": _anchor, "freeze": _freeze, "score": _score,
-                "compare": _compare}
+                "compare": _compare, "carry": _carry}
     if command not in handlers:
-        raise CfError("cf bench needs a subcommand", hint="build, anchor, freeze, score or compare")
+        raise CfError("cf bench needs a subcommand",
+                      hint="build, anchor, freeze, score, compare or carry")
     return handlers[command](ws, args)

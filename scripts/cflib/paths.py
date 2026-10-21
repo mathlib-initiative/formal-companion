@@ -435,6 +435,12 @@ class WorkspacePaths:
     def locate_tally_json(self, run_id: str) -> Path:
         return self.reports_dir / f"locate-tally.{_safe_id(run_id, 'run_id')}.json"
 
+    def locate_carry_json(self, from_run: str, to_run: str) -> Path:
+        """The carry-over map from one inventory run's cut to another's
+        (references/locate-documents.md section 12)."""
+        return (self.reports_dir / "locate-carry" / _safe_id(from_run, "run_id")
+                / f"{_safe_id(to_run, 'run_id')}.json")
+
     # -- ledger, routing, detection ------------------------------------
     @property
     def ledger_dir(self) -> Path:

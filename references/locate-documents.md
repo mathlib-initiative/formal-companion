@@ -6,13 +6,14 @@ change to a shape is a change here in the same commit. **Status**: the formats
 are fixed and built: `scripts/gate/locate_text.py` (the head text and the layer
 quote of §7), the paths of `cflib.paths`, the sourcesets and renderer of §7
 (`cf sourceset`), the universes and `corpus.sqlite` of §8 (`cf corpus`), and the
-planner side (`scripts/locate/`: §5's candidates, §6's sealed set, §9's run and
-§10's outcomes).
+planner side (`scripts/locate/`: §5's candidates, §6's sealed set, §9's run,
+§10's outcomes and §12's carry-over map).
 
 **Contents**: 1 the common header · 2 inventory document · 3 locate document ·
 4 challenge document · 5 candidates file · 6 sealed record set · 7 sourcesets and
 rendered web sources · 8 universes, library indexes and `corpus.sqlite` · 9 a
-locate run on disk · 10 harvested rows and passage outcomes · 11 campaigns
+locate run on disk · 10 harvested rows and passage outcomes · 11 campaigns · 12 carry-over
+maps
 
 Every example is synthetic: a made-up article ("Widget lemma", page id 1001,
 revision 2002), made-up libraries `alpha` and `beta`, made-up declarations.
@@ -2193,3 +2194,120 @@ operator's machine only harvests receipts: `status` reads each shard's
 `RECEIPT.json` (complete, the gate as ok, FAILED or UNGATED — a receipt with no
 gate block was never gated — the `locate` block, the priced cost) and totals
 the UNRESOLVED rate.
+
+## 12. Carry-over maps
+
+A re-cut is routine (the maintainer's answer of 2026-10-21): an inventory may divide a page
+again, at the same revision or at a new one, and what was judged on the old cut carries to the
+new one wherever its passage's text is unchanged, while only the changed passages are asked
+again (`docs/proposals/statement-cut.md` §4). The map that says which is which is
+`cf locate carry`, the code `scripts/locate/carry.py`:
+
+```
+cf locate carry --from <old inventory run> --to <new inventory run> [--source ID]…
+                [--rows FILE --rows-out FILE]
+```
+
+It reads the two runs' gated inventory documents (§2; a run that is not a `locate-inventory`
+run, or whose receipt is not complete and gated, is refused), the sourceset each run pinned and
+each source's `layer.txt`, and writes one file, `reports/locate-carry/<from>/<to>.json`
+(`cflib.paths.WorkspacePaths.locate_carry_json`), for every page both runs hold a document for,
+or only the pages of the named `--source`s. The document holds no time and no path, so a re-run
+over the same runs writes the same bytes.
+
+**The keys** are `cflib.hashing`'s, one definition each (`references/vocabulary.md` §1.11):
+`span_sha256` is the sha256 of the passage's layer text, `passage_key` the sha256 of
+`<pageid>\n<span_sha256>`, and `cut_id` the sha256 of the canonical JSON of the page id, the layer
+sha and the cut's spans, sorted. None holds a revision, a run or an item, so the same text on the
+same page is one passage key under any cut and in any revision; an item may survive a re-cut that
+a key does not (an end that moved), and the reverse.
+
+**The map**, for one page, from spans and span text only:
+
+1. Key every passage of both cuts, whatever its scope. Two passages of one cut with one key —
+   the same text — refuse the page, since nothing could tell them apart (gate rule 10 (g) keeps
+   that out of every cut made under `statement_cut_rule` 1; an older cut is checked here).
+2. An old passage whose key a new passage has is **`unchanged`**.
+3. Any other is placed on the new layer: at its own span when both documents were made on one
+   layer (the same `layer_sha256`), else at the one occurrence of its text in the new layer
+   (overlapping occurrences counted). A text the new layer does not hold exactly once is
+   **`changed`**: it is never guessed onto a place.
+4. With M the new passages that share a character with the placed span: none is **`removed`**;
+   two or more is **`split`**; one that starts where it starts is **`end_moved`**; one that
+   starts before it and holds the whole of it is **`merged`**; one otherwise is **`reshaped`**.
+5. A new passage no old passage went into — no old passage has its key, and it shares no
+   character with a placed old one — is **`new`**.
+
+The fates are `cflib.vocab.CARRY_FATES` and `CARRY_NEW`. A page is also refused when a
+document's `layer_sha256` is not the sha of the layer the sourceset holds for its source (its
+spans are offsets into one layer), when a document is unresolved, when a run holds two sources of
+the page, or when a span is not inside its layer; each refusal names its reason.
+
+```json
+{"schema": "cf-locate-carry/1",
+ "old": {"inventory_run": "inv-a", "span_end_rule": 0, "statement_cut_rule": 0},
+ "new": {"inventory_run": "inv-b", "span_end_rule": 2, "statement_cut_rule": 1},
+ "sources": null,
+ "pages": [
+   {"pageid": 1001,
+    "old": {"source_id": "enwiki-1001-2002", "layer_sha256": "<hex>", "cut_id": "<hex>"},
+    "new": {"source_id": "enwiki-1001-2002", "layer_sha256": "<hex>", "cut_id": "<hex>"},
+    "same_layer": true,
+    "passages": [
+      {"passage_key": "<old key>", "item": "In-text #0000c0de", "span": [120, 380],
+       "scope": "formal_math", "fate": "split",
+       "into": [{"passage_key": "<new key>", "item": "In-text #0000c0de", "span": [120, 241]},
+                {"passage_key": "<new key>", "item": "In-text #0000a11d", "span": [243, 380]}],
+       "scope_changed": false, "conjuncts_changed": true},
+      {"passage_key": "<key>", "item": "In-text #0000f00d", "span": [400, 466],
+       "scope": "formal_math", "fate": "unchanged",
+       "into": [{"passage_key": "<the same key>", "item": "In-text #0000f00d", "span": [400, 466]}],
+       "scope_changed": false, "conjuncts_changed": false},
+      {"passage_key": "<key>", "item": "In-text #0000d00d", "span": [470, 498],
+       "scope": "expository", "fate": "removed", "into": [],
+       "scope_changed": null, "conjuncts_changed": null}],
+    "new_passages": [{"passage_key": "<key>", "item": "In-text #0000b0b0", "span": [500, 540],
+                      "scope": "formal_math", "fate": "new"}],
+    "counts": {"new": 1, "removed": 1, "split": 1, "unchanged": 1}}],
+ "refused": [{"pageid": 1002, "reason": "two passages of the old cut share one passage_key (…)"}],
+ "unpaired": {"old": [1003], "new": []},
+ "counts": {"pages": 1, "new": 1, "removed": 1, "split": 1, "unchanged": 1}}
+```
+
+| field | |
+|---|---|
+| `old`, `new` | each run, with the `span_end_rule` and `statement_cut_rule` its `gate.json` names (0: it names none, as a run planned before the rule) — what the cut was made under |
+| `sources` | the `--source` ids, sorted, or null for every page |
+| `pages[].old`, `.new` | the source each cut read, its layer sha and the cut's `cut_id` |
+| `pages[].passages` | every passage of the old cut, by span: its key, item, span and scope as the old document has them, its `fate`, and `into` the new passages it went into, by span (one for `unchanged`, the same key; none for `removed` and `changed`) |
+| `scope_changed`, `conjuncts_changed` | whether a passage of `into` has another `scope`, or another conjunct list (the sha256 of the canonical JSON of its `conjuncts`, `[]` for a simple statement, differs); null when `into` is empty |
+| `pages[].new_passages` | the new passages of fate `new`, by span, with their scope |
+| `counts` | each fate (and `new`) that occurs, per page and summed, and `pages`, the pages mapped |
+| `refused` | the pages the map could not be computed for, by page id, with the reason |
+| `unpaired` | the page ids only the old run (`old`) or only the new run (`new`) holds a document for |
+
+**Rows.** `--rows FILE --rows-out FILE` (always together) copy a JSON-lines file of objects,
+each with a `passage_key` of the old cut — known answers, a verdict export, anything keyed by a
+passage — in its order to `--rows-out`, one canonical JSON object a line, each row gaining
+`carry` (`{fate, into, scope_changed, conjuncts_changed}` of its old passage, or null when no
+mapped old passage has the key) and `carried`. The map's own entries give each old item's key. A
+row without a 64-hex `passage_key`, a `--rows-out` inside the skill repo or naming the `--rows`
+file itself, are refused before anything is written; a row's other keys are kept as written.
+
+**What carries** (`docs/proposals/statement-cut.md` §4.4; `locate.carry.carries`): a pair
+verdict, label or known answer on an old passage carries when the passage is `unchanged`, was
+and still is `formal_math` (`scope` `formal_math`, `scope_changed` false), and its conjuncts are
+the same (`conjuncts_changed` false). A row does not say whether it read the conjuncts, so the
+conjunct test is applied to every row; a consumer that knows a row read none may carry it on the
+first two tests from `carry`. A key built on the passage key — `pair_key`, `bundle_key` — is
+unchanged exactly when the passage is, so a verdict keyed by one carries with no lookup.
+Everything else is asked again, the old verdict shown as one on an earlier cut; a status is never
+carried, only derived again. Bench gold is carried by `cf bench carry` over the same map
+(`references/locate-bench.md` §7).
+
+**The parity table.** `tests/data/locate/carry-parity.json` (`cf-locate-carry-parity/1`) holds
+hand-written cases — two layers, the old and the new passages, the expected fate of each old
+passage, the items it went into and the new passages — covering every fate, a new revision, a
+scope and a conjunct change and a refused page, with a passage-key test vector. A consumer that
+ports the map (`docs/proposals/statement-cut.md` §8) runs the same cases; `tests/test_locate_carry.py`
+runs them against `locate.carry.map_page`.
