@@ -209,7 +209,7 @@ exits 75 so tend retries the same worktree.
 | the gate fails on every task | the book text is missing at the configured path | intended: the gate fails closed. Check the book directory before blaming the run |
 | `aggregate usage: input=0` | agents run inside hosted sessions | expected; watch the gateway, not the orchestrator |
 | 409s when starting | the session cap, reached from another Unix user or account | the bridge exits 75 and tend retries; lower concurrency, or wait for the other workspace |
-| an agent call never returns | a hung session | every call runs under `timeout ${CF_AGENT_TIMEOUT:-45m}`; expiry exits 124, an infrastructure failure tend retries, never a verdict |
+| an agent call never returns | a hung session | every call runs under `timeout ${CF_AGENT_TIMEOUT:-45m}`; expiry exits 124, an infrastructure failure tend retries, never a verdict. A locate run whose task needs longer calls is planned with `cf plan-locate --agent-timeout <5m..3h>`, which the two wrappers export |
 | the disk fills minutes after launch | one worktree per ready task | see §2.6 |
 | a run dies | the orchestrator resumes from its sqlite state (`worker_running` → pending) | re-`tend run --root` with the same root; `run.yaml` records the exact command |
 

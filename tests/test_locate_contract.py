@@ -74,7 +74,8 @@ class TestTheDocumentValues(unittest.TestCase):
                   | vocab.CHALLENGE_PLANNED | vocab.INDEX_FLAGS | set(vocab.TOOLS_DB_KINDS)
                   | vocab.LOCATE_SKIP_REASONS
                   | {vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML,
-                     vocab.UNRESOLVED_ATTEMPT_CAP, vocab.AGENT_TIMEOUT})
+                     vocab.UNRESOLVED_ATTEMPT_CAP, vocab.AGENT_TIMEOUT,
+                     vocab.AGENT_TIMEOUT_MIN, vocab.AGENT_TIMEOUT_MAX})
         for value in sorted(values):
             with self.subTest(value=value):
                 self.assertIn(f"`{value}`", VOCABULARY_MD)
@@ -98,6 +99,7 @@ class TestTheDocumentValues(unittest.TestCase):
         """Wave 1 #85: the values packages had defined privately, now one definition."""
         self.assertEqual((vocab.MAX_TASKS_PER_ROOT, vocab.LOCATE_ATTEMPT_CAP, vocab.SESSION_SLOTS,
                           vocab.AGENT_TIMEOUT), (500, 3, 15, "45m"))
+        self.assertEqual((vocab.AGENT_TIMEOUT_MIN, vocab.AGENT_TIMEOUT_MAX), ("5m", "3h"))
         self.assertEqual(vocab.UNRESOLVED_BY, {"worker", "attempt_cap"})
         self.assertEqual(vocab.CHALLENGE_RULES, {"refute_by_default", "hunt", "basis", "sample",
                                                  "none"})
@@ -108,7 +110,7 @@ class TestTheDocumentValues(unittest.TestCase):
         self.assertEqual(vocab.CHALLENGE_PLANNED, {"required", "sampled_out", "not_required"})
         self.assertEqual(vocab.INDEX_FLAGS, {"is_prop_unknown", "published_status"})
         for name in ("MAX_TASKS_PER_ROOT", "LOCATE_ATTEMPT_CAP", "SESSION_SLOTS", "AGENT_TIMEOUT",
-                     "UNRESOLVED_BY", "CHALLENGE_RULES", "CHALLENGE_PLANNED", "INDEX_FLAGS",
+                     "AGENT_TIMEOUT_MIN", "AGENT_TIMEOUT_MAX", "UNRESOLVED_BY", "CHALLENGE_RULES", "CHALLENGE_PLANNED", "INDEX_FLAGS",
                      "STRONG_RELATIONS", "CHALLENGE_STRONG_SAMPLE_RATE",
                      "CHALLENGE_ABSENCE_SAMPLE_RATE", "CHALLENGE_RULE_BASIS"):
             with self.subTest(name=name):
@@ -419,6 +421,11 @@ class TestEveryHostCopyOfTheVocabularyIsPinned(unittest.TestCase):
         self.assertEqual(agent_call.DEFAULT_SLOTS, vocab.SESSION_SLOTS)
         self.assertEqual(agent_call.parse_duration(agent_call.DEFAULT_TIMEOUT),
                          agent_call.parse_duration(vocab.AGENT_TIMEOUT))
+        # a plan's timeout is one the bridge reads, and the default lies within its bounds
+        low, default, high = (agent_call.parse_duration(v) for v in (
+            vocab.AGENT_TIMEOUT_MIN, vocab.AGENT_TIMEOUT, vocab.AGENT_TIMEOUT_MAX))
+        self.assertLess(low, default)
+        self.assertLess(default, high)
 
     def test_the_record_builder(self):
         from locate import records

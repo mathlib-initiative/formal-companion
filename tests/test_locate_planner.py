@@ -1313,6 +1313,175 @@ class TestEveryRootStagesTheBridgeHelpers(unittest.TestCase):
         self.assertIn("gate file missing", str(caught.exception))
 
 
+class TestTheAgentTimeout(Campaign):
+    """The pilot plan's precondition 3: a plan sets the agent timeout for its run.
+
+    tend runs in the environment of the session that launches it, so the one
+    channel a plan has to the bridge's ``agent_call.py`` is the wrappers:
+    ``--agent-timeout`` stages ``CF_AGENT_TIMEOUT`` into both, and records it in
+    ``run.yaml`` (``locate.agent_timeout`` and ``locate.config_shas.agents``).  A
+    plan without it stages, records and pins what it did before the option.
+    """
+
+    def plan(self, run_id: str, *extra: str) -> tuple[int, str]:
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", run_id,
+                            *extra)
+        return code, out + err
+
+    def snapshot(self, run_id: str) -> dict[str, bytes]:
+        rd = self.paths.run_dir(run_id)
+        return {p.relative_to(rd).as_posix(): p.read_bytes() for p in sorted(rd.rglob("*"))
+                if p.is_file() and p.name != "run.yaml"}
+
+    def wrappers(self, run_id: str) -> dict[str, str]:
+        bindir = self.paths.tend_root(run_id) / "bin"
+        return {role: (bindir / f"{role}-agent.sh").read_text(encoding="utf-8")
+                for role in ("worker", "reviewer")}
+
+    def test_both_wrappers_export_it_and_run_yaml_records_it(self):
+        code, out = self.plan("inv-t", "--agent-timeout", "100m")
+        self.assertEqual(code, 0, out)
+        self.assertIn("CF_AGENT_TIMEOUT=100m in both wrappers", out)
+        for role, text in self.wrappers("inv-t").items():
+            with self.subTest(role=role):
+                self.assertEqual(text.count("CF_AGENT_TIMEOUT"), 1)
+                self.assertIn("export CF_AGENT_TIMEOUT=100m\n", text)
+                # before the exec, so the bridge and agent_call.py inherit it
+                self.assertLess(text.index("CF_AGENT_TIMEOUT"), text.index("exec "))
+        block = read_yaml(self.paths.run_yaml("inv-t"))["locate"]
+        self.assertEqual(block["agent_timeout"], "100m")
+        self.assertEqual(block["config_shas"]["agents"]["agent_timeout"], "100m")
+        root = self.paths.tend_root("inv-t")
+        for role in ("worker", "reviewer"):
+            self.assertEqual(block["gate_files"][f"bin/{role}-agent.sh"],
+                             hashing.sha256_file(root / "bin" / f"{role}-agent.sh"))
+
+    def test_without_it_nothing_is_staged_and_nothing_moves(self):
+        """The plan without the option is the plan before it: no export, no key in the
+        agents pin, and a null record; with it only the wrappers and that pin move."""
+        for text in self.wrappers("inv-1").values():
+            self.assertNotIn("CF_AGENT_TIMEOUT", text)
+        plain = read_yaml(self.paths.run_yaml("inv-1"))["locate"]
+        self.assertIsNone(plain["agent_timeout"])
+        self.assertNotIn("agent_timeout", plain["config_shas"]["agents"])
+        before = self.snapshot("inv-1")
+        code, out = self.plan("inv-1", "--agent-timeout", "100m")
+        self.assertEqual(code, 0, out)
+        timed = read_yaml(self.paths.run_yaml("inv-1"))["locate"]
+        after = self.snapshot("inv-1")
+        moved = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+        self.assertEqual(moved, ["tend-root/bin/reviewer-agent.sh",
+                                 "tend-root/bin/worker-agent.sh"])
+        for name in moved:
+            self.assertEqual(after[name].replace(b"export CF_AGENT_TIMEOUT=100m\n", b""),
+                             before[name])
+        # the gate and its configuration are untouched: the option is no gate rule
+        for name in ("gate.json", "gate.local.json", "tend-root/gate/gate.json"):
+            self.assertEqual(after[name], before[name], name)
+        self.assertEqual(timed["config_shas"]["prompts"], plain["config_shas"]["prompts"])
+        self.assertEqual(timed["config_shas"]["gate_files"], plain["config_shas"]["gate_files"])
+        self.assertEqual(timed["config_shas"]["agents"],
+                         {**plain["config_shas"]["agents"], "agent_timeout": "100m"})
+        # and planning without it again leaves no trace of it
+        code, out = self.plan("inv-1")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.snapshot("inv-1"), before)
+        self.assertEqual(read_yaml(self.paths.run_yaml("inv-1"))["locate"]["config_shas"],
+                         plain["config_shas"])
+
+    def test_every_mode_takes_it(self):
+        F.plan_locate(self, self.root, "--agent-timeout", "90m", run_id="loc-t")
+        F.write_harvest(self.paths, "loc-t", F.locate_documents(self.paths, "loc-t"))
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                            "--sourceset", F.SS, "--universe", F.U, "--challenge-of", "loc-t",
+                            "--run-id", "chl-t", "--agent-timeout", "2h")
+        self.assertEqual(code, 0, out + err)
+        for run_id, value in (("loc-t", "90m"), ("chl-t", "2h")):
+            with self.subTest(run=run_id):
+                for text in self.wrappers(run_id).values():
+                    self.assertIn(f"export CF_AGENT_TIMEOUT={value}\n", text)
+                self.assertEqual(read_yaml(self.paths.run_yaml(run_id))["locate"]
+                                 ["agent_timeout"], value)
+
+    def test_a_value_the_bridge_cannot_read_or_out_of_bounds_is_refused(self):
+        for value, needle in (("soon", "not a duration"), ("45 m", "not a duration"),
+                              ("-5m", "not a duration"), ("5min", "not a duration"),
+                              ("1h30m", "not a duration"), ("", "not a duration"),
+                              ("0", "outside"), ("4m", "outside"), ("299", "outside"),
+                              ("3.5h", "outside"), ("181m", "outside")):
+            with self.subTest(value=value):
+                code, out = self.plan("inv-bad", f"--agent-timeout={value}")
+                self.assertNotEqual(code, 0)
+                self.assertIn(needle, out)
+                self.assertIn(f"{vocab.AGENT_TIMEOUT_MIN} to {vocab.AGENT_TIMEOUT_MAX}", out)
+                self.assertFalse(self.paths.run_dir("inv-bad").exists())
+
+    def test_the_bounds_and_the_readers_spellings_are_accepted(self):
+        from run import agent_call
+        for value in (vocab.AGENT_TIMEOUT_MIN, vocab.AGENT_TIMEOUT_MAX, vocab.AGENT_TIMEOUT,
+                      "300", "6000s", "1.5h", " 100m "):
+            with self.subTest(value=value):
+                staged = mtr.check_agent_timeout(value)
+                self.assertEqual(staged, value.strip())
+                self.assertEqual(agent_call.parse_duration(staged),
+                                 agent_call.parse_duration(value))
+        self.assertIsNone(mtr.check_agent_timeout(None))
+
+    def test_a_bridge_that_does_not_time_its_call_cannot_take_it(self):
+        import dataclasses
+        preset = dataclasses.replace(lp.get(vocab.LOCATE_INVENTORY), bridge="tend-agent")
+        local = scratch(self)
+        plan = mtr.TendRootPlan(local=local / "tend-root", tend_root="/srv/r1-tend",
+                                entrypoint="/srv/r1", gate_dir="/srv/r1-gate",
+                                prompts_dir="/srv/r1-tend/prompts")
+        with self.assertRaises(CfError) as caught:
+            mtr.make_tend_root(plan, preset, run_id="r1", gate_config={"sources": {}},
+                               agent_timeout="100m")
+        self.assertIn("would reach nothing", str(caught.exception))
+        self.assertFalse((local / "tend-root").exists())
+
+    def test_the_staged_export_reaches_the_agent_over_the_launching_environment(self):
+        """The wrappers run as tend runs them, under an environment that already carries
+        ``CF_AGENT_TIMEOUT`` (the ssh session's): the plan's value wins, and without the
+        option the environment's passes through untouched, as before."""
+        code, out = self.plan("inv-t", "--agent-timeout", "100m")
+        self.assertEqual(code, 0, out)
+        tmp = Path(tempfile.mkdtemp(prefix="cf-timeout-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        fakebin = tmp / "fakebin"
+        fakebin.mkdir()
+        seen = tmp / "seen"
+        agentbox = fakebin / "agentbox"
+        agentbox.write_text("#!/bin/sh\n"
+                            f'printf \'%s\' "${{CF_AGENT_TIMEOUT:-unset}}" > "{seen}"\n'
+                            "printf '%s' '{\"type\": \"result\", \"subtype\": \"success\", "
+                            "\"is_error\": false, \"result\": \"done\", "
+                            "\"total_cost_usd\": 0.1}'\n", encoding="utf-8")
+        agentbox.chmod(0o755)
+        worktree = tmp / "worktree"
+        worktree.mkdir()
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("CF_", "TEND_", "GIT_CONFIG_"))}
+        env.update(PATH=f"{fakebin}:{env['PATH']}", USER="examplebox",
+                   CF_SLOT_DIR=str(tmp / "slots"), TEND_TASK_ID=f"inv-{F.W1}")
+        for run_id, inherited, expected in (("inv-t", "7m", "100m"), ("inv-t", None, "100m"),
+                                            ("inv-1", "7m", "7m"), ("inv-1", None, "unset")):
+            for role in ("worker", "reviewer"):
+                with self.subTest(run=run_id, inherited=inherited, role=role):
+                    if seen.exists():
+                        seen.unlink()
+                    call_env = dict(env)
+                    if inherited:
+                        call_env["CF_AGENT_TIMEOUT"] = inherited
+                    proc = subprocess.run(
+                        ["bash", str(self.paths.tend_root(run_id) / "bin" / f"{role}-agent.sh")],
+                        capture_output=True, text=True, cwd=str(worktree), env=call_env,
+                        timeout=120)
+                    self.assertTrue(seen.exists(), proc.stderr)
+                    self.assertEqual(seen.read_text(encoding="utf-8"), expected)
+
+
 class TestFieldS5TheInventoryPlansConceptArticles(unittest.TestCase):
     """S5: plan-locate read no flag, so every redirect stub, disambiguation page, list and
     biography of a rendered sourceset became a paid locate task.  Here W2's entry

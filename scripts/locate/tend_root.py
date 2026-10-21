@@ -107,7 +107,8 @@ def agent_settings(settings: dict[str, Any], env: dict[str, dict[str, str]]) -> 
     """``run.yaml`` ``locate.config_shas.agents``: what the wrappers run with, no run's own.
 
     ``settings`` is ``make_tend_root``'s ``agent_settings`` (``CF_AGENT_HOST``,
-    ``CF_MODEL``, ``CF_ALLOW_SANDBOX_BYPASS``, ``CF_AGENTBOX_PROFILE``) and
+    ``CF_MODEL``, ``CF_ALLOW_SANDBOX_BYPASS``, ``CF_AGENTBOX_PROFILE``, and
+    ``CF_AGENT_TIMEOUT`` as ``agent_timeout`` only when the plan set one) and
     ``env`` is :func:`wrapper_env`'s map, whose ``CF_ATTEMPT_CAP`` and
     ``CF_MERGE_TARGET`` both roles export.  The
     wrappers' own shas name the run's paths, so ``config_shas.gate_files`` leaves
@@ -130,7 +131,7 @@ def _copy_tree(src: Path, dest: Path) -> list[Path]:
 def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
           gate_config: dict, prompts: dict[str, str], tasks: list[TaskSpec], model: str | None,
           agent: dict[str, Any] | None, allow_sandbox_bypass: bool,
-          context: dict[str, Any]) -> dict[str, Any]:
+          context: dict[str, Any], agent_timeout: str | None = None) -> dict[str, Any]:
     """Write the root and its locate gate directory; ``{"files", "warnings", "gate_files",
     "agents"}``."""
     root = skill_root()
@@ -151,6 +152,7 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
     built = make_tend_root(
         plan, preset, run_id=run_id, gate_config=gate_config, prompts=prompts, agent=agent,
         task_count=len(tasks), model=model, allow_sandbox_bypass=allow_sandbox_bypass,
+        agent_timeout=agent_timeout,
         config_template="config-locate.yaml.tmpl", readme_template="README-locate.md.tmpl",
         gate_files=(), bin_helpers=LOCATE_BIN_HELPERS, extra_env=env,
         context=context, generator="cf plan-locate")
