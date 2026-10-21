@@ -5,8 +5,8 @@ packages build the statement cut in parallel against one set of names; this
 module pins the names they share -- ``cflib.vocab``'s statement-cut block and the
 revision-free keys of ``cflib.hashing`` -- to the proposal, so a package that
 needs another value changes the proposal, ``references/vocabulary.md`` and this
-module together.  Nothing here runs a stage: until the proposal's flip no
-planner writes these versions, and the last test says what that promises.
+module together.  Nothing here runs a stage; from the proposal's flip the planner
+writes these versions, and ``TestTheVersions`` says which.
 """
 from __future__ import annotations
 
@@ -51,10 +51,17 @@ class TestTheVersions(unittest.TestCase):
         self.assertEqual(vocab.STATUS_RULE, vocab.STATUS_RULE_BUNDLE)
 
     def test_the_planner_writes_no_version_ahead_of_the_gate(self):
-        """Before the flip the written versions are the old ones; after it, the cut's."""
-        self.assertIn(vocab.JUDGMENT_RULES, (vocab.RULES_PD5_PD9, vocab.RULES_STATEMENT_CUT))
-        self.assertIn(vocab.SPAN_END_RULE, (1, vocab.SPAN_END_STATEMENT_CUT))
+        """From the flip (the proposal's section 7) the written versions are the cut's."""
+        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT)
         self.assertLess(vocab.RULES_PD5_PD9, vocab.RULES_STATEMENT_CUT)
+        self.assertEqual(vocab.CHALLENGE_ABSENCE_SAMPLE_RATE, 0.5)          # fix 5c
+        from locate import plan as lplan
+        self.assertEqual(lplan.rule_versions(), {
+            "judgment_rules": vocab.RULES_STATEMENT_CUT,
+            "span_end_rule": vocab.SPAN_END_STATEMENT_CUT,
+            "statement_cut_rule": vocab.STATEMENT_CUT_RULE})
+        self.assertEqual(lplan.status_rule(), vocab.STATUS_RULE_BUNDLE)
 
     def test_the_proposal_names_every_key(self):
         for key in ("judgment_rules", "span_end_rule", "statement_cut_rule", "status_rule",

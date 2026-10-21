@@ -23,7 +23,7 @@ export const meta = {
 // mode no prompt carries the article's Wikidata QID, the labeler judges only what
 // the hunters found, and the transcriber counts only those finds.
 
-const LABELER_VERSION = 'locate-label/5'
+const LABELER_VERSION = 'locate-label/6'
 const A = args || {}
 const MODE = A.mode
 const TASKS = A.tasks || []

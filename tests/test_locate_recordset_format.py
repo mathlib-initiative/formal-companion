@@ -95,6 +95,12 @@ def _records(out_dir: Path) -> list[dict]:
 
 
 class _Exported(Campaign):
+    """The record set ``/1`` of ``loc-1`` (``cf-locate-recordset/2``, status rule 2's, is
+    tests/test_locate_bundle_status.py's)."""
+
+    #: a run of the earlier flow (its documents write their own claim lists), as the
+    #: planner planned it before the statement cut's flip
+    BEFORE_THE_FLIP = True
 
     def setUp(self):
         super().setUp()

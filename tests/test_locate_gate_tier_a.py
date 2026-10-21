@@ -93,11 +93,15 @@ def environ(**extra: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 class TestTheSpanEnd(tvl.GateTestCase):
-    """An inventory passage ends where passage_ids.py's rule ends it, and nowhere else."""
+    """An inventory passage ends where passage_ids.py's rule ends it, and nowhere else.
+
+    Span-end rule 1, which every inventory planned before the statement cut's flip names
+    (a run planned now names rule 2: tests/test_locate_gate_statement_cut.py).
+    """
 
     def setUp(self):
         self.fx = tvl.Fixture(self, "locate-inventory")
-        self.fx.gate["span_end_rule"] = vocab.SPAN_END_RULE      # a run planned now
+        self.fx.gate["span_end_rule"] = 1          # a run planned before the flip
         self.fx.write_gate()
         self.fx.manifest(TASK, tvl.inventory_manifest_doc(self.fx))
 
@@ -274,8 +278,8 @@ class TestTheSpanEndBindsTheRunsPlannedUnderIt(tvl.GateTestCase):
         self.rule(None)
         self.assertEqual(self.fx.gate_cfg().span_end_rule, 0)
         self.assertOk(self.fx.run(self.fx.document(TASK, body)))
-        self.rule(vocab.SPAN_END_RULE)
-        self.assertEqual(self.fx.gate_cfg().span_end_rule, vocab.SPAN_END_RULE)
+        self.rule(1)                                 # span-end rule 1, before the flip
+        self.assertEqual(self.fx.gate_cfg().span_end_rule, 1)
         self.assertRule(self.fx.run(self.fx.document(TASK, body)), 2,
                         "the end of the paragraph it starts in")
         # the shape passage_ids.py writes now, which keeps its until, passes under it
@@ -298,7 +302,7 @@ class TestTheSpanEndBindsTheRunsPlannedUnderIt(tvl.GateTestCase):
         landed = self.fx.root / "landed"
         self.fx.document(TASK, self.old_shape(), directory=landed)
         config = self.fx.root / "gate" / "gate.json"
-        for version, ok in ((None, True), (vocab.SPAN_END_RULE, False)):
+        for version, ok in ((None, True), (1, False)):
             with self.subTest(span_end_rule=version):
                 self.rule(version)
                 result = gate_corpus.gate_locate_corpus(landed, config)

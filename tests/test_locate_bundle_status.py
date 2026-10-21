@@ -300,7 +300,7 @@ CONJUNCTS = [{"id": "c1", "text": "a spanning gadget covers every part of its wi
 
 
 def set_status_rule(paths, run_id: str, rule: int | None) -> None:
-    """Name (or drop) ``locate.status_rule`` in a run's run.yaml, as the flip will write it."""
+    """Name (or drop) ``locate.status_rule`` in a run's run.yaml, as the flip writes it."""
     path = paths.run_yaml(run_id)
     data = read_yaml(path)
     if rule is None:
@@ -316,8 +316,12 @@ class _Bundled(Campaign):
     The inventory gives the passage two conjuncts (shape ``cases``); the locate
     document gives its two ``hasPart`` locations the conjuncts' clause ids and a
     ``conjunct_relation`` each -- ``exactMatch`` for the definition, ``broadMatch``
-    for the proved lemma -- and a coverage claim over both.
+    for the proved lemma -- and a coverage claim over both.  Planned as before the
+    statement cut's flip (status rule 1), so each test names status rule 2 in run.yaml
+    by hand (``set_status_rule``) where it reads it.
     """
+
+    BEFORE_THE_FLIP = True
 
     PARTS = (("Widget.Spanning", "exactMatch"), ("Widget.card_dvd", "broadMatch"))
 

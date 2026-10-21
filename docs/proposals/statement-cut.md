@@ -1,12 +1,12 @@
 # Statement cut: one passage per statement, bundles, and a versioned cut
 
-**Status: specification, 2026-10-21, built but for the flip. Built: the shared names of §6.1
-(constants, keys, prompt slots and the tests that pin them) and the four packages of §6.2 (cut,
+**Status: specification, 2026-10-21, built and flipped. Built: the shared names of §6.1
+(constants, keys, prompt slots and the tests that pin them), the four packages of §6.2 (cut,
 gate, fixes and carry), merged, the carry package's `scripts/bench/gold.py` share after the
-fixes package, but for what §9 lists as not built. The flip (§7) is not made, so no planner writes the new versions
-and every earlier run is gated, tallied and exported as before; an inventory planned now would
-render the cut rules its gate does not hold it to, so none is planned before the flip. Commands
-and paths written in *italics* are not implemented.**
+fixes package, and the flip (§7), but for what §9 lists as not built. From the flip the planner
+writes the new versions into every run it plans and refuses a run of the earlier flow; every run
+planned before it is gated, tallied and exported as before (§7's proof). Commands and paths
+written in *italics* are not implemented.**
 
 This document turns the maintainer's answers of 2026-10-21 on statement-level extraction into
 rules precise enough that four builders working in parallel agree on every name. It extends
@@ -229,7 +229,7 @@ compute it and put it on the claim as `relation`; no document writes it.
 | `status_rule` | a locate run's `run.yaml` (`locate.status_rule`); its record set's seal (new) | `derive_status`, the outcomes' owed hunt, the record-set format | 1 decision D1 (absent means 1); **2** the bundle's relation, the owed hunt, `cf-locate-recordset/2` |
 
 `cf plan-locate` writes all four from the flip on (`vocab.JUDGMENT_RULES` and
-`vocab.SPAN_END_RULE` take the values of `RULES_STATEMENT_CUT` and `SPAN_END_STATEMENT_CUT`;
+`vocab.SPAN_END_RULE` are `RULES_STATEMENT_CUT` and `SPAN_END_STATEMENT_CUT`;
 `STATEMENT_CUT_RULE` and `STATUS_RULE` are written beside them). Each binds a run only when its
 own gate.json or run.yaml names it, so a re-gate, a re-tally and a re-export of a run planned
 before the flip are what they were.
@@ -255,7 +255,7 @@ The keys depend on each other, and the planner and the gate enforce it:
   the inventory's conjuncts, and `--preset locate-challenge` refuses a locate run planned under
   `judgment_rules` < 3, since its documents carry their own claim lists. Neither touches a
   planned run: old runs are re-gated, tallied and exported by their own keys, and a new run of
-  the old flow is not offered (§9). Before the flip the planner plans as it does today.
+  the old flow is not offered (§9). Before the flip the planner planned as it always had.
 - A locate run's `status_rule` is 2 exactly when its `judgment_rules` is 3: only a run of rules 3
   writes conjunct relations, so only its bundles have a relation to take.
 
@@ -733,14 +733,27 @@ new command), and a merge keeps every bullet.
 
 ## 7. The flip, and what stays as it was
 
-**The flip** is one commit by the gate package after the four have merged: `vocab.JUDGMENT_RULES
+**The flip** is one commit after the four have merged (made): `vocab.JUDGMENT_RULES
 = RULES_STATEMENT_CUT`, `vocab.SPAN_END_RULE = SPAN_END_STATEMENT_CUT`; the planner writes
 `statement_cut_rule` and `status_rule`; `CHALLENGE_ABSENCE_SAMPLE_RATE` is 0.5; the labeler is
 `locate-label/6` and `bench.gold.LABELER_RULES` maps it to 3; the e2e driver's documents take the
-new shapes, and it runs `cf locate carry` between two of its inventories; the version pins in the tests move; `docs/design/stage_map.md` §4.0 names the four
-keys; `CHANGELOG.md` says what changed for a newly planned run. From then on the bench's score
-refuses gold of `locate-label/5` against a run of rules 3, as it refuses any gold of other rules,
-until the relabel.
+new shapes, and it runs `cf locate carry` between two of its inventories; the version pins in the
+tests move; `docs/design/stage_map.md` §4.0 names the four keys; `CHANGELOG.md` says what changed
+for a newly planned run. From then on the bench's score refuses gold of `locate-label/5` against
+a run of rules 3, as it refuses any gold of other rules, until the relabel.
+
+As made: the planner's writes and refusals were built behind `locate.plan.statement_cut_planned`
+and `rule_versions` and needed only the two values; the gate's inlined `JUDGMENT_RULES` and
+`SPAN_END_RULE` follow them (they name what the planner writes; the versions the gate knows were
+3 and 2 already). The e2e driver's runs are all of the new flow — a cut inventory with a compound
+statement, a locate document with a bundle on it, a challenge confirming the bundle's parts, the
+tally of status rule 2 and the export of `cf-locate-recordset/2` — and its last stage re-cuts the
+sourceset and runs `cf locate carry` and `cf bench carry` over the two inventories. A test of how
+a run of the earlier flow is gated, tallied, re-planned or exported plans its runs as the planner
+did before the flip (`tests/_locate_fixtures.before_the_flip`), since a run planned now names the
+new versions and refuses that flow. The locate and challenge prompts' rules-2 text and the
+inventory prompt's version-1 end paragraph stay in the templates behind their slots, which no
+plan made now renders (§9).
 
 **What stays as it was**, and how each package proves it before it merges (and the flip once
 more):
@@ -867,3 +880,10 @@ Not built in this round, and why:
 - **A writer of the re-anchored frame**: `cf bench carry` gives a `reanchor` row's span on the new
   layer and edits no gold file; no tool writes a frame of the new layer, or the gold version on
   it, from those anchors.
+- **Removing the prompts' pre-flip text.** The locate and challenge prompts' rules-2 branches
+  (`{{#unless judgment_rules_statement_cut}}`) and the inventory prompt's version-1 end paragraph
+  (`{{#unless span_end_statement_cut}}`) stay behind their slots, which no plan made now renders
+  (the planner writes rules 3 and span-end rule 2 and refuses the earlier flow). Reading F4 of the
+  pre-flip readings had them deleted at the flip; that is a cleanup of its own, since
+  `tests/test_locate_judgment.py`'s `TestThePromptsBeforeTheFlip` and the word-for-word checks of
+  the rules-2 lines go with them.

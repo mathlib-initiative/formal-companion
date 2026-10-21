@@ -25,7 +25,6 @@ import sqlite3
 import sys
 import unittest
 from pathlib import Path
-from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
@@ -187,10 +186,11 @@ class CutFixture(G.Fixture):
         self.write_gate()
 
 
-#: the version keys of a run planned under the statement cut, and of one planned now
+#: the version keys of a run planned under the statement cut (every run planned from its
+#: flip on), and of one planned before the flip (span-end rule 1, no rule 10)
 CUT = {"span_end_rule": vocab.SPAN_END_STATEMENT_CUT,
        "statement_cut_rule": vocab.STATEMENT_CUT_RULE}
-BEFORE = {"span_end_rule": vocab.SPAN_END_RULE}
+BEFORE = {"span_end_rule": 1}
 
 
 class InventoryCase(G.GateTestCase):
@@ -279,7 +279,7 @@ class TestTheVersionKeys(InventoryCase):
                          (0, 0, 0))
 
     def test_the_cut_without_its_end_rule_cannot_run(self):
-        for end in (None, vocab.SPAN_END_RULE):
+        for end in (None, 1):
             self.fx.versions(span_end_rule=end, statement_cut_rule=1)
             with self.subTest(end=end), self.assertRaises(vl.GateBroken) as caught:
                 self.fx.gate_cfg()
@@ -1123,28 +1123,27 @@ class TestRules3OnAChallenge(ChallengeCase):
 
 
 # --------------------------------------------------------------------------- #
-# the planner (sections 1.2 and 2.2): nothing changes before the flip
+# the planner (sections 1.2 and 2.2): the flip's keys, and the earlier flow refused
 # --------------------------------------------------------------------------- #
 
-def flipped():
-    """The statement cut's flip, by hand: the two vocabulary values the flip sets."""
-    return mock.patch.multiple(vocab, JUDGMENT_RULES=vocab.RULES_STATEMENT_CUT,
-                               SPAN_END_RULE=vocab.SPAN_END_STATEMENT_CUT)
-
-
 class TestThePlanner(unittest.TestCase):
+    """A run planned now names the statement cut's versions; one planned before the flip
+    (``F.before_the_flip``, as every run of an operator's workspace was) named none."""
 
     def setUp(self):
         self.root = scratch(self)
-        self.paths = F.campaign(self, self.root)
+        with F.before_the_flip():
+            self.paths = F.campaign(self, self.root)
 
     def plan(self, *argv: str) -> tuple[int, str, str]:
         return ws(self.root, "plan-locate", "--sourceset", F.SS, "--universe", F.U, *argv)
 
-    def test_before_the_flip_nothing_new_is_written(self):
-        F.plan_locate(self, self.root)
+    def test_before_the_flip_nothing_new_was_written(self):
+        with F.before_the_flip():
+            F.plan_locate(self, self.root)
         gate = read_json(self.paths.gate_json("loc-1"))
         self.assertNotIn("statement_cut_rule", gate)
+        self.assertEqual((gate["judgment_rules"], gate["span_end_rule"]), (2, 1))
         self.assertNotIn("status_rule", read_yaml(self.paths.run_yaml("loc-1"))["locate"])
         planned = read_json(self.paths.run_dir("loc-1") / "planned.json")
         rows = [p for t in planned["tasks"] for d in t["documents"] for p in d["passages"]]
@@ -1152,14 +1151,15 @@ class TestThePlanner(unittest.TestCase):
         self.assertFalse([r for r in rows if "statement" in r or "conjuncts" in r])
 
     def test_the_flip_writes_the_keys_and_refuses_the_old_flow(self):
-        with flipped():
-            code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-1",
-                                       "--run-id", "loc-9")
-            self.assertNotEqual(code, 0)
-            self.assertIn("planned before the statement cut", out + err)
-            self.assertIn("inventory the sources again", out + err)
-            code, out, err = self.plan("--preset", "locate-inventory", "--run-id", "inv-2")
-            self.assertEqual(code, 0, out + err)
+        self.assertEqual((vocab.JUDGMENT_RULES, vocab.SPAN_END_RULE),
+                         (vocab.RULES_STATEMENT_CUT, vocab.SPAN_END_STATEMENT_CUT))
+        code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-1",
+                                   "--run-id", "loc-9")
+        self.assertNotEqual(code, 0)
+        self.assertIn("planned before the statement cut", out + err)
+        self.assertIn("inventory the sources again", out + err)
+        code, out, err = self.plan("--preset", "locate-inventory", "--run-id", "inv-2")
+        self.assertEqual(code, 0, out + err)
         gate = read_json(self.paths.gate_json("inv-2"))
         self.assertEqual((gate["judgment_rules"], gate["span_end_rule"],
                           gate["statement_cut_rule"]),
@@ -1172,19 +1172,20 @@ class TestThePlanner(unittest.TestCase):
                                   {"id": "c2", "text": "its size divides the order"}],
                        shape="conclusions")
         F.write_harvest(self.paths, "inv-2", docs)
-        with flipped():
-            code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-2",
-                                       "--run-id", "loc-2")
-            self.assertEqual(code, 0, out + err)
-            F.write_harvest(self.paths, "loc-2", F.locate_documents(self.paths, "loc-2"))
-            code, out, err = self.plan("--preset", "locate-challenge", "--challenge-of",
-                                       "loc-2", "--run-id", "chl-2", "--sample-rate", "1")
-            self.assertEqual(code, 0, out + err)
+        code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-2",
+                                   "--run-id", "loc-2")
+        self.assertEqual(code, 0, out + err)
+        F.write_harvest(self.paths, "loc-2", F.locate_documents(self.paths, "loc-2"))
+        code, out, err = self.plan("--preset", "locate-challenge", "--challenge-of",
+                                   "loc-2", "--run-id", "chl-2", "--sample-rate", "1")
+        self.assertEqual(code, 0, out + err)
         self.assertEqual(read_yaml(self.paths.run_yaml("loc-2"))["locate"]["status_rule"],
                          vocab.STATUS_RULE)
         self.assertNotIn("status_rule", read_yaml(self.paths.run_yaml("chl-2"))["locate"])
         self.assertEqual(read_json(self.paths.gate_json("chl-2"))["judgment_rules"],
                          vocab.RULES_STATEMENT_CUT)
+        self.assertEqual(read_yaml(self.paths.run_yaml("chl-2"))["locate"]
+                         ["absence_sample_rate"], vocab.CHALLENGE_ABSENCE_SAMPLE_RATE)
         planned = read_json(self.paths.run_dir("loc-2") / "planned.json")
         rows = {p["item"]: p for t in planned["tasks"] for d in t["documents"]
                 for p in d["passages"]}
@@ -1192,11 +1193,11 @@ class TestThePlanner(unittest.TestCase):
         self.assertEqual(rows[theorem["item"]]["shape"], "conclusions")
         self.assertTrue(all("statement" in r for r in rows.values()))
         self.assertFalse([r for i, r in rows.items() if i != theorem["item"] and "conjuncts" in r])
-        # a challenge planned under the cut of a locate run judged under rules 2 is refused
-        F.plan_locate(self, self.root)
-        with flipped():
-            code, out, err = self.plan("--preset", "locate-challenge", "--challenge-of",
-                                       "loc-1", "--run-id", "chl-8")
+        # a challenge planned now of a locate run judged under rules 2 is refused
+        with F.before_the_flip():
+            F.plan_locate(self, self.root)
+        code, out, err = self.plan("--preset", "locate-challenge", "--challenge-of",
+                                   "loc-1", "--run-id", "chl-8")
         self.assertNotEqual(code, 0)
         self.assertIn("judged under judgment rules 2", out + err)
 
@@ -1208,10 +1209,10 @@ class TestThePlanner(unittest.TestCase):
                                "conjuncts": [{"id": "c1", "text": "a"}, {"id": "c2", "text": "b"}],
                                "shape": "iff", "conditional": "prominence"}]]}
         manifest = __import__("locate.inputs", fromlist=["manifest"]).manifest(self.paths, F.SS)
-        before = lplan.challenge_tasks(manifest, built)[0].documents[0]["records"][0]
+        with F.before_the_flip():
+            before = lplan.challenge_tasks(manifest, built)[0].documents[0]["records"][0]
         self.assertFalse({"statement", "conjuncts", "shape", "conditional"} & set(before))
-        with flipped():
-            after = lplan.challenge_tasks(manifest, built)[0].documents[0]["records"][0]
+        after = lplan.challenge_tasks(manifest, built)[0].documents[0]["records"][0]
         self.assertEqual(after["shape"], "iff")
         self.assertEqual(after["conditional"], "prominence")
 

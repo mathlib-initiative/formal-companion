@@ -53,6 +53,10 @@ class _Challenged(Campaign):
     and W1's supporting definition passage given a second strong location beside its
     basis (a ``closeMatch`` to a proved theorem, ``partial`` on a definition passage)."""
 
+    #: a run of the earlier flow (its documents write their own claim lists), as the
+    #: planner planned it before the statement cut's flip
+    BEFORE_THE_FLIP = True
+
     def setUp(self):
         super().setUp()
         F.plan_locate(self, self.root)

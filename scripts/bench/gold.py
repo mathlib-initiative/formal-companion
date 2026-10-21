@@ -64,14 +64,20 @@ from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GO
 #: the labeler, frozen by its file's sha (its prompts are inline in it)
 LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: bumped whenever the labeler's contract (args or result shape) or the rules it
-#: labels by change (/5: PD5-PD10, and R1's junk values replaced by PD7's test; PD10
+#: labels by change (/6: the statement cut's judgment rules 3 -- the cut rules in the
+#: inventory mode, a hasPart's conjunct_relation and the span's bundle in the label
+#: mode, PD9 reworded and the smoke-3 audit's prompt rules, docs/proposals/
+#: statement-cut.md section 7; /5: PD5-PD10, and R1's junk values replaced by PD7's test; PD10
 #: and PD7's test for a value joined /5 unbumped: they add no gate check, so a /6
 #: would label by the same judgment rules in LABELER_RULES below, and /5 had labelled
 #: no gold yet (references/vocabulary.md section 1.11); /4:
 #: PD4, a stronger-hypotheses special case is narrowMatch; /3: the judgment rules
 #: R1-R7 and the policy defaults PD1-PD3 of references/vocabulary.md section 1.11,
 #: word for word)
-LABELER_VERSION = "locate-label/5"
+LABELER_VERSION = "locate-label/6"
+#: the first labeler version whose label rows name it (``labeler_version``): a row
+#: without the field was labelled before it (``cf bench freeze``)
+LABELER_VERSION_NAMED_FROM = "locate-label/5"
 #: the judgment rules (``cflib.vocab.JUDGMENT_RULES``) each labeler version labels by:
 #: the score holds gold and the runs it scores to one version from
 #: ``cflib.vocab.RULES_PD5_PD9`` on (references/locate-bench.md section 8), and a
@@ -79,7 +85,8 @@ LABELER_VERSION = "locate-label/5"
 #: entry is a literal, frozen once its version is: a bump of ``LABELER_VERSION``
 #: (for a rules change or any other change to the labeler's contract) adds a line
 #: and never moves an old one
-LABELER_RULES = {"locate-label/3": 1, "locate-label/4": 1, "locate-label/5": 2}
+LABELER_RULES = {"locate-label/3": 1, "locate-label/4": 1, "locate-label/5": 2,
+                 "locate-label/6": 3}
 #: G4: at most this many maintainer spot checks per release (section 8.1)
 G4_MAX_NEGATIVES = 30
 G4_MAX_POSITIVES = 20

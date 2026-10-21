@@ -380,6 +380,9 @@ class TestTheInlinedVocabularyIsCflibs(unittest.TestCase):
     def test_the_statement_cuts_names(self):
         """The statement cut's names the gate inlines (docs/proposals/statement-cut.md 6.1)."""
         pairs = {
+            # the versions the planner writes, the statement cut's from its flip on
+            "JUDGMENT_RULES": vocab.JUDGMENT_RULES, "SPAN_END_RULE": vocab.SPAN_END_RULE,
+            "RULES_PD5_PD9": vocab.RULES_PD5_PD9,
             "RULES_STATEMENT_CUT": vocab.RULES_STATEMENT_CUT,
             "SPAN_END_STATEMENT_CUT": vocab.SPAN_END_STATEMENT_CUT,
             "STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_RULE,

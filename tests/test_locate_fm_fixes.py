@@ -38,6 +38,7 @@ import shutil
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
@@ -71,7 +72,13 @@ class _Challenged(Campaign):
     Widget lemma's central theorem (``self.item``) has one ``hasPart`` location,
     required (a central passage's locations are refuted by default); its supporting
     definition (``self.basis``) an ``exactMatch`` basis beside a ``relatedMatch``.
+    Planned as before the statement cut's flip, a run of status rule 1 unless a test
+    names status rule 2 in its run.yaml by hand (``set_status_rule``).
     """
+
+    #: a run of the earlier flow (its documents write their own claim lists), as the
+    #: planner planned it before the statement cut's flip
+    BEFORE_THE_FLIP = True
 
     def setUp(self):
         super().setUp()
@@ -276,7 +283,11 @@ class TestConditionalRecords(_Challenged):
         on, off = self.plan(True), self.plan(False)
         default = cplan.plan(self.paths, ["loc-1"], seed=7, sample_rate=1.0,
                              strong_sample_rate=0.0, absence_sample_rate=0.0)
-        self.assertLess(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
+        self.assertLess(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)      # before the flip
+        with mock.patch.object(vocab, "JUDGMENT_RULES", vocab.RULES_STATEMENT_CUT):
+            flipped = cplan.plan(self.paths, ["loc-1"], seed=7, sample_rate=1.0,
+                                 strong_sample_rate=0.0, absence_sample_rate=0.0)
+        self.assertEqual(flipped["records"], on["records"])          # a plan made now marks
         for built in (off, default):
             self.assertFalse(any("conditional" in r for r in built["records"]))
             self.assertEqual(sum(len(b) for b in built["batches"]),

@@ -6,11 +6,13 @@ tests/e2e/locate_synthetic/driver.py, which also runs on its own; here it
 runs every stage in a temporary directory -- the universe, the sourceset
 adopted from a producer's delivery (references/locate-documents.md section 7),
 L2, the three presets with the staged out-of-tree gate over good and bad
-documents, the harvests, the tally, the sealed export, the bench score, and the
+documents (all under the statement cut, docs/proposals/statement-cut.md, from its
+flip on), the harvests, the tally, the sealed export, the bench score, the
 A/A stage (a replicate planned exactly as the baseline answers ``aa ok``; one
 planned with another ``--strong-sample-rate`` is refused by name,
-references/locate-bench.md section 9, rule 5) -- and each stage's own checks
-read the artifacts it wrote.
+references/locate-bench.md section 9, rule 5) and a re-cut carried by ``cf locate
+carry`` and ``cf bench carry`` -- and each stage's own checks read the artifacts
+it wrote.
 
 One small test keeps ``cf sourceset enumerate-wikiproject`` and ``fetch``
 honest offline for as long as the skill keeps its own fetcher: over the
@@ -62,7 +64,7 @@ class TestTheSyntheticLocateCampaign(unittest.TestCase):
                        "locate candidates",
                        "--preset locate-inventory", "--preset locate ", "--preset locate-challenge",
                        "tally --locate", "export literature-links", "bench score",
-                       "--run-id loc-2", "bench compare"):
+                       "--run-id loc-2", "bench compare", "locate carry", "bench carry"):
             with self.subTest(stage=needle):
                 self.assertIn(needle, commands)
 
@@ -118,6 +120,24 @@ class TestTheSyntheticLocateCampaign(unittest.TestCase):
         self.assertGreater(agree["compared"], 2)
         self.assertIn("strong_sample_rate (--strong-sample-rate): 0.5 in the baseline, 1.0 in "
                       "the replicate", self.pipe.aa_refusal_text)
+
+
+    def test_the_runs_are_the_statement_cuts_and_a_re_cut_carries(self):
+        """From the statement cut's flip every run names its versions, and the carry-over
+        map between two of its inventories says what the re-cut did to each passage."""
+        from cflib.jsonio import read_json
+        from cflib.yamlio import load_yaml
+        paths = pipeline.cf_main_paths(self.pipe.ws)
+        for run in ("inv-1", "loc-1", "chl-1", "inv-2"):
+            with self.subTest(run=run):
+                gate = read_json(paths.gate_json(run))
+                self.assertEqual({k: gate.get(k) for k in pipeline.Pipeline.CUT_KEYS},
+                                 pipeline.Pipeline.CUT_KEYS)
+        locate = load_yaml(paths.run_yaml("loc-1").read_text(encoding="utf-8"))["locate"]
+        self.assertEqual(locate["status_rule"], 2)
+        self.assertEqual(self.pipe.carry_report["counts"],
+                         {"pages": len(pipeline.PAGES), "split": 1, "end_moved": 1,
+                          "unchanged": 5})
 
 
 class TestTheFetchPathStillWorksOffline(unittest.TestCase):
