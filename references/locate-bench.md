@@ -24,6 +24,7 @@ benches/<id>/gold/g1-resolved.json    G1 before anchoring
 benches/<id>/gold/g1.jsonl g3.jsonl gx.jsonl g4.jsonl    label files, a canary in every row
 benches/<id>/gold/calibration.json    h, the hunters' recall
 benches/<id>/gold/planted/            P: ablation.json and the module-ablated corpus.sqlite
+benches/<id>/gold/carry-<n>.json      gold version n across a re-cut (§7, `cf bench carry`)
 benches/<id>/labeler/args-<mode>.json, results/   the labeler's args and copied results
 benches/<id>/gold-manifest-<n>.json   gold version n, never rewritten
 benches/<id>/spend.json               benchmark-construction spend, its own receipt
@@ -358,6 +359,43 @@ a run's.
   then passes gate rule 3 (the full database holds it) and lands in the outcome rows as a
   location, which the score counts as `E-MEMORY`. Hypothesis mutations as synthetic sources are
   *not implemented*.
+- **Gold across a re-cut** (`docs/proposals/statement-cut.md` §4.4; `scripts/bench/carry.py`).
+  `cf bench carry <id> --from <old inventory run> --to <new inventory run>` computes the
+  carry-over map between the two cuts (`references/locate-documents.md` §12) and writes
+  `gold/carry-<n>.json` (`cf-bench-carry/1`) for the newest frozen gold version *n*, after
+  checking every frozen file as `cf bench score` does (a bench that is not frozen, or whose gold
+  changed after freeze, is refused). A gold row is labelled on a span and joined to a run's
+  passages by the words they share, so a label stays what it was exactly when the passages over
+  its span do. One row per gold row of every frozen tier that has a `span`:
+
+  ```json
+  {"tier": "G3", "gold_id": "g3-…", "source_id": "enwiki-1001-2002", "span": [120, 380],
+   "carried": false,
+   "passages": [{"passage_key": "<old key>", "item": "In-text #0000c0de", "span": [120, 380],
+                 "fate": "split"}],
+   "into": [{"passage_key": "<new key>", "item": "In-text #0000c0de", "span": [120, 241]},
+            {"passage_key": "<new key>", "item": "In-text #0000a11d", "span": [243, 380]}],
+   "reason": "the old passage In-text #0000c0de over it is split"}
+  ```
+
+  `passages` are the old cut's passages that share a character with the span, each with its
+  fate, and `into` the new cut's. A row is `carried` when both cuts are on the layer the gold is
+  labelled on (the frame article's `layer_sha256`), every passage over it is `unchanged`, and the
+  new passages over it are exactly those, at the same spans: a span that lies in one passage of
+  the old cut carries exactly when that passage is unchanged, and a span over several passages,
+  or over none, carries when none of them moved. Any other row is to relabel, with its
+  `reason`: a passage over it that moved, a new passage over it, its page refused by the map or
+  held by one run only, or a cut on another layer (a new revision or rendering: the bench scores
+  only runs on the layers it pins, so gold there is anchored again, never carried). A label is
+  kept only while the labeler that labels it is the same: when the gold manifest's
+  `labeler.version` is not this checkout's `LABELER_VERSION` (`labeler: {gold, current,
+  bumped}`), every row is to relabel and `note` says so — the flip's bump to `locate-label/6`
+  relabels all gold, and the report is for the re-cuts after it. A row without a span (a G1
+  entry at article level) joins no passage, so no cut moves it; `counts` (per tier and `total`:
+  `rows`, `carried`, `relabel`, `no_span`) counts it apart. The report also names both runs with
+  their rules (`from`, `to`) and the map's `map_sha256`. **It edits no label file**: a relabel is
+  a new gold version (`cf bench anchor`, then `cf bench freeze --supersede`), and a re-run over
+  the same gold and the same runs writes the same bytes.
 
 ## 8. The score document
 

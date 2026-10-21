@@ -1,7 +1,7 @@
 """cf locate -- the deterministic steps of locate that call no model.
 
-New code, for docs/proposals/wikipedia-locate.md section 3 (L2).  One
-subcommand today:
+New code, for docs/proposals/wikipedia-locate.md section 3 (L2) and
+docs/proposals/statement-cut.md section 4 (the carry-over map).  Two subcommands:
 
     cf locate candidates --sourceset wpm --universe u1 \\
         [--curated-1000 docs-1000.yaml] [--curated-100 docs-100.yaml] \\
@@ -17,6 +17,18 @@ names no curated hit the planted database lacks (only their count is printed and
 recorded in the sourceset's ``state.json``).  The curated lists
 are the operator's files -- Mathlib's own ``$MATHLIB/docs/1000.yaml`` and
 ``$MATHLIB/docs/100.yaml`` at the universe's commit -- read as data; nothing is fetched.
+
+    cf locate carry --from inv-a --to inv-b [--source enwiki-1001-2002] \\
+        [--rows known.jsonl --rows-out known.carried.jsonl]
+
+writes the carry-over map from one inventory run's cut to another's,
+``reports/locate-carry/<from>/<to>.json`` (``cf-locate-carry/1``,
+references/locate-documents.md section 12): each old passage's fate from spans and
+span text alone (``locate.carry``), for every page both runs inventoried or the
+named sources' pages.  With ``--rows`` it copies a JSON-lines file of rows keyed by
+``passage_key`` -- known answers, a verdict export -- adding each row's ``carry``
+and ``carried``.  It reads the two runs' gated documents and their layers and writes
+nothing else; a re-run writes the same bytes.
 """
 from __future__ import annotations
 
@@ -27,6 +39,7 @@ from cflib.errors import CfError
 from cflib.workspace import from_args
 
 from locate import candidates as cand_mod
+from locate import carry as carry_mod
 from locate import state as ss_state
 
 
@@ -58,11 +71,30 @@ def register(subparsers) -> None:
                         "universe; the run it feeds must name the same file)")
     c.add_argument("--limit", type=int, default=cand_mod.DEFAULT_LIMIT,
                    help=f"lexical hits kept per source (default {cand_mod.DEFAULT_LIMIT})")
+    k = sub.add_parser("carry",
+                       help="the carry-over map between two inventory runs' cuts: each old "
+                            "passage's fate, from spans and span text")
+    k.add_argument("--from", dest="from_run", required=True, metavar="RUN",
+                   help="the inventory run of the old cut")
+    k.add_argument("--to", dest="to_run", required=True, metavar="RUN",
+                   help="the inventory run of the new cut")
+    k.add_argument("--source", dest="sources", action="append", default=[],
+                   help="only this source's page (repeatable; default: every page both runs "
+                        "inventoried)")
+    k.add_argument("--rows", type=Path, default=None, metavar="FILE",
+                   help="a JSON-lines file of rows keyed by passage_key (known answers, a "
+                        "verdict export) to copy with each row's fate")
+    k.add_argument("--rows-out", type=Path, default=None, metavar="FILE",
+                   help="where --rows' rows are written, each with carry and carried")
 
 
 def run(args) -> int:
-    if getattr(args, "locate_command", None) != "candidates":
-        raise CfError("cf locate needs a subcommand", hint="cf locate candidates --help")
+    command = getattr(args, "locate_command", None)
+    if command == "carry":
+        return _carry(args)
+    if command != "candidates":
+        raise CfError("cf locate needs a subcommand",
+                      hint="cf locate candidates --help, or cf locate carry --help")
     if args.limit < 1:
         raise CfError("--limit must be at least 1")
     ws = from_args(args)
@@ -104,4 +136,37 @@ def run(args) -> int:
                  + f"; no render of {args.sourceset} settles that (`cf sourceset status "
                    f"{args.sourceset} --verify` lists them): the producer's corrected delivery, "
                    f"adopted into a new sourceset, does")
+    return 0
+
+
+def _carry(args) -> int:
+    if (args.rows is None) != (args.rows_out is None):
+        raise CfError("--rows and --rows-out go together",
+                      hint="name the rows to carry and the file their copy is written to")
+    ws = from_args(args)
+    rows = None
+    if args.rows is not None:
+        # every refusal before anything is written
+        carry_mod.check_rows_out(args.rows_out, source=args.rows)
+        rows = carry_mod.read_rows(args.rows)
+    doc = carry_mod.build(ws.paths, args.from_run, args.to_run, source_ids=args.sources)
+    path = carry_mod.write(ws.paths, doc)
+    counts = doc["counts"]
+    fates = ", ".join(f"{n} {fate}" for fate, n in counts.items() if fate != "pages")
+    log.info(f"carry {args.from_run} -> {args.to_run}: {counts['pages']} page(s)"
+             + (f" ({fates})" if fates else "") + f"; {path}")
+    for side, run_id in (("old", args.from_run), ("new", args.to_run)):
+        if doc["unpaired"][side]:
+            log.info(f"{len(doc['unpaired'][side])} page(s) only {run_id} inventoried: not mapped")
+    if doc["refused"]:
+        log.warn_block(f"{len(doc['refused'])} page(s) refused (named in the map's refused):",
+                       [f"  {r['pageid']}: {r['reason']}" for r in doc["refused"][:5]]
+                       + ([f"  … and {len(doc['refused']) - 5} more"]
+                          if len(doc["refused"]) > 5 else []))
+    if rows is not None:
+        carried, rcounts = carry_mod.carry_rows(doc, rows)
+        out = carry_mod.write_rows(args.rows_out, carried, source=args.rows)
+        log.info(f"rows: {rcounts['carried']} of {rcounts['rows']} carried, "
+                 f"{rcounts['asked_again']} to ask again ({rcounts['unmatched']} on no passage "
+                 f"of the old cut); {out}")
     return 0

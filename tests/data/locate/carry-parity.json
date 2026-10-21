@@ -1,0 +1,580 @@
+{
+ "cases": [
+  {
+   "expected": {
+    "counts": {
+     "end_moved": 2,
+     "merged": 1,
+     "new": 1,
+     "removed": 1,
+     "reshaped": 1,
+     "split": 1,
+     "unchanged": 2
+    },
+    "new_passages": [
+     "In-text #0000b009"
+    ],
+    "passages": [
+     {
+      "fate": "unchanged",
+      "into": [
+       "In-text #0000a001"
+      ],
+      "item": "In-text #0000a001"
+     },
+     {
+      "fate": "split",
+      "into": [
+       "In-text #0000a002",
+       "In-text #0000b002"
+      ],
+      "item": "In-text #0000a002"
+     },
+     {
+      "fate": "end_moved",
+      "into": [
+       "In-text #0000a003"
+      ],
+      "item": "In-text #0000a003"
+     },
+     {
+      "fate": "end_moved",
+      "into": [
+       "In-text #0000a004"
+      ],
+      "item": "In-text #0000a004"
+     },
+     {
+      "fate": "merged",
+      "into": [
+       "In-text #0000a004"
+      ],
+      "item": "In-text #0000a005"
+     },
+     {
+      "fate": "reshaped",
+      "into": [
+       "In-text #0000b006"
+      ],
+      "item": "In-text #0000a006"
+     },
+     {
+      "fate": "removed",
+      "into": [],
+      "item": "In-text #0000a007"
+     },
+     {
+      "fate": "unchanged",
+      "into": [
+       "In-text #0000a008"
+      ],
+      "item": "In-text #0000a008"
+     }
+    ],
+    "same_layer": true
+   },
+   "name": "a re-cut of one revision: every fate",
+   "new": {
+    "layer": "Every widget has a gadget. A gadget spans a widget since every face meets it. Gadgets of a finite widget are conjugate. The number of gadgets is finite. A widget is tame when it has one face. Tame widgets are rigid. Rigid widgets have a spanning gadget. A spanning gadget is unique. The gadget count is odd. Widgets were first studied for their gadgets. Every rigid widget is tame.",
+    "passages": [
+     {
+      "item": "In-text #0000a001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       26
+      ],
+      "text": "Every widget has a gadget."
+     },
+     {
+      "item": "In-text #0000a002",
+      "scope": "formal_math",
+      "span": [
+       27,
+       50
+      ],
+      "text": "A gadget spans a widget"
+     },
+     {
+      "item": "In-text #0000b002",
+      "scope": "formal_math",
+      "span": [
+       57,
+       77
+      ],
+      "text": "every face meets it."
+     },
+     {
+      "item": "In-text #0000a003",
+      "scope": "formal_math",
+      "span": [
+       78,
+       119
+      ],
+      "text": "Gadgets of a finite widget are conjugate."
+     },
+     {
+      "item": "In-text #0000a004",
+      "scope": "formal_math",
+      "span": [
+       153,
+       215
+      ],
+      "text": "A widget is tame when it has one face. Tame widgets are rigid."
+     },
+     {
+      "item": "In-text #0000b006",
+      "scope": "formal_math",
+      "span": [
+       254,
+       282
+      ],
+      "text": "A spanning gadget is unique."
+     },
+     {
+      "item": "In-text #0000a008",
+      "scope": "expository",
+      "span": [
+       308,
+       353
+      ],
+      "text": "Widgets were first studied for their gadgets."
+     },
+     {
+      "item": "In-text #0000b009",
+      "scope": "formal_math",
+      "span": [
+       354,
+       381
+      ],
+      "text": "Every rigid widget is tame."
+     }
+    ]
+   },
+   "old": {
+    "layer": "Every widget has a gadget. A gadget spans a widget since every face meets it. Gadgets of a finite widget are conjugate. The number of gadgets is finite. A widget is tame when it has one face. Tame widgets are rigid. Rigid widgets have a spanning gadget. A spanning gadget is unique. The gadget count is odd. Widgets were first studied for their gadgets. Every rigid widget is tame.",
+    "passages": [
+     {
+      "item": "In-text #0000a001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       26
+      ],
+      "text": "Every widget has a gadget."
+     },
+     {
+      "item": "In-text #0000a002",
+      "scope": "formal_math",
+      "span": [
+       27,
+       77
+      ],
+      "text": "A gadget spans a widget since every face meets it."
+     },
+     {
+      "item": "In-text #0000a003",
+      "scope": "formal_math",
+      "span": [
+       78,
+       152
+      ],
+      "text": "Gadgets of a finite widget are conjugate. The number of gadgets is finite."
+     },
+     {
+      "item": "In-text #0000a004",
+      "scope": "formal_math",
+      "span": [
+       153,
+       191
+      ],
+      "text": "A widget is tame when it has one face."
+     },
+     {
+      "item": "In-text #0000a005",
+      "scope": "formal_math",
+      "span": [
+       192,
+       215
+      ],
+      "text": "Tame widgets are rigid."
+     },
+     {
+      "item": "In-text #0000a006",
+      "scope": "formal_math",
+      "span": [
+       216,
+       282
+      ],
+      "text": "Rigid widgets have a spanning gadget. A spanning gadget is unique."
+     },
+     {
+      "item": "In-text #0000a007",
+      "scope": "formal_math",
+      "span": [
+       283,
+       307
+      ],
+      "text": "The gadget count is odd."
+     },
+     {
+      "item": "In-text #0000a008",
+      "scope": "expository",
+      "span": [
+       308,
+       353
+      ],
+      "text": "Widgets were first studied for their gadgets."
+     }
+    ]
+   },
+   "pageid": 1001
+  },
+  {
+   "expected": {
+    "counts": {
+     "changed": 3,
+     "new": 3,
+     "unchanged": 1
+    },
+    "new_passages": [
+     "In-text #0000d002",
+     "In-text #0000d003",
+     "In-text #0000c004"
+    ],
+    "passages": [
+     {
+      "fate": "unchanged",
+      "into": [
+       "In-text #0000c001"
+      ],
+      "item": "In-text #0000c001"
+     },
+     {
+      "fate": "changed",
+      "into": [],
+      "item": "In-text #0000c002"
+     },
+     {
+      "fate": "changed",
+      "into": [],
+      "item": "In-text #0000c003"
+     },
+     {
+      "fate": "changed",
+      "into": [],
+      "item": "In-text #0000c004"
+     }
+    ],
+    "same_layer": false
+   },
+   "name": "a new revision: unchanged text, an edit, a repeat, a longer sentence",
+   "new": {
+    "layer": "Widgets are studied in gadget theory. Every widget has a gadget. Gadgets of one widget are conjugate. A widget is tame. A widget is tame. Tame widgets are rigid and finite.",
+    "passages": [
+     {
+      "item": "In-text #0000c001",
+      "scope": "formal_math",
+      "span": [
+       38,
+       64
+      ],
+      "text": "Every widget has a gadget."
+     },
+     {
+      "item": "In-text #0000d002",
+      "scope": "formal_math",
+      "span": [
+       65,
+       101
+      ],
+      "text": "Gadgets of one widget are conjugate."
+     },
+     {
+      "item": "In-text #0000d003",
+      "scope": "formal_math",
+      "span": [
+       102,
+       137
+      ],
+      "text": "A widget is tame. A widget is tame."
+     },
+     {
+      "item": "In-text #0000c004",
+      "scope": "formal_math",
+      "span": [
+       138,
+       172
+      ],
+      "text": "Tame widgets are rigid and finite."
+     }
+    ]
+   },
+   "old": {
+    "layer": "Every widget has a gadget. Gadgets are conjugate. A widget is tame. Tame widgets are rigid.",
+    "passages": [
+     {
+      "item": "In-text #0000c001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       26
+      ],
+      "text": "Every widget has a gadget."
+     },
+     {
+      "item": "In-text #0000c002",
+      "scope": "formal_math",
+      "span": [
+       27,
+       49
+      ],
+      "text": "Gadgets are conjugate."
+     },
+     {
+      "item": "In-text #0000c003",
+      "scope": "formal_math",
+      "span": [
+       50,
+       67
+      ],
+      "text": "A widget is tame."
+     },
+     {
+      "item": "In-text #0000c004",
+      "scope": "formal_math",
+      "span": [
+       68,
+       91
+      ],
+      "text": "Tame widgets are rigid."
+     }
+    ]
+   },
+   "pageid": 1002
+  },
+  {
+   "expected": {
+    "counts": {
+     "new": 1,
+     "split": 1
+    },
+    "new_passages": [
+     "In-text #0000f003"
+    ],
+    "passages": [
+     {
+      "fate": "split",
+      "into": [
+       "In-text #0000e001",
+       "In-text #0000f002"
+      ],
+      "item": "In-text #0000e001"
+     }
+    ],
+    "same_layer": false
+   },
+   "name": "a new revision: an old text placed on the new layer",
+   "new": {
+    "layer": "A new lead sentence. Every widget has a gadget. Gadgets are conjugate in pairs. A remark.",
+    "passages": [
+     {
+      "item": "In-text #0000e001",
+      "scope": "formal_math",
+      "span": [
+       21,
+       47
+      ],
+      "text": "Every widget has a gadget."
+     },
+     {
+      "item": "In-text #0000f002",
+      "scope": "formal_math",
+      "span": [
+       48,
+       79
+      ],
+      "text": "Gadgets are conjugate in pairs."
+     },
+     {
+      "item": "In-text #0000f003",
+      "scope": "expository",
+      "span": [
+       80,
+       89
+      ],
+      "text": "A remark."
+     }
+    ]
+   },
+   "old": {
+    "layer": "Every widget has a gadget. Gadgets are conjugate in pairs.",
+    "passages": [
+     {
+      "item": "In-text #0000e001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       58
+      ],
+      "text": "Every widget has a gadget. Gadgets are conjugate in pairs."
+     }
+    ]
+   },
+   "pageid": 1003
+  },
+  {
+   "expected": {
+    "counts": {
+     "unchanged": 2
+    },
+    "new_passages": [],
+    "passages": [
+     {
+      "carries": false,
+      "conjuncts_changed": true,
+      "fate": "unchanged",
+      "into": [
+       "In-text #00001001"
+      ],
+      "item": "In-text #00001001",
+      "scope_changed": false
+     },
+     {
+      "carries": false,
+      "conjuncts_changed": false,
+      "fate": "unchanged",
+      "into": [
+       "In-text #00001002"
+      ],
+      "item": "In-text #00001002",
+      "scope_changed": true
+     }
+    ],
+    "same_layer": true
+   },
+   "name": "the same text, new conjuncts or a new scope",
+   "new": {
+    "layer": "A widget is finite exactly when its gadget is. Gadgets are conjugate.",
+    "passages": [
+     {
+      "conjuncts": [
+       {
+        "id": "c1",
+        "text": "a finite widget has a finite gadget"
+       },
+       {
+        "id": "c2",
+        "text": "a widget with a finite gadget is finite"
+       }
+      ],
+      "item": "In-text #00001001",
+      "scope": "formal_math",
+      "shape": "iff",
+      "span": [
+       0,
+       46
+      ],
+      "text": "A widget is finite exactly when its gadget is."
+     },
+     {
+      "item": "In-text #00001002",
+      "scope": "formal_math",
+      "span": [
+       47,
+       69
+      ],
+      "text": "Gadgets are conjugate."
+     }
+    ]
+   },
+   "old": {
+    "layer": "A widget is finite exactly when its gadget is. Gadgets are conjugate.",
+    "passages": [
+     {
+      "item": "In-text #00001001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       46
+      ],
+      "text": "A widget is finite exactly when its gadget is."
+     },
+     {
+      "item": "In-text #00001002",
+      "scope": "expository",
+      "span": [
+       47,
+       69
+      ],
+      "text": "Gadgets are conjugate."
+     }
+    ]
+   },
+   "pageid": 1004
+  },
+  {
+   "expected": {
+    "refused": "two passages of the old cut share one passage_key"
+   },
+   "name": "two passages of the old cut with one text",
+   "new": {
+    "layer": "Gadgets are conjugate. Widgets are tame. Gadgets are conjugate.",
+    "passages": [
+     {
+      "item": "In-text #00002001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       22
+      ],
+      "text": "Gadgets are conjugate."
+     }
+    ]
+   },
+   "old": {
+    "layer": "Gadgets are conjugate. Widgets are tame. Gadgets are conjugate.",
+    "passages": [
+     {
+      "item": "In-text #00002001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       22
+      ],
+      "text": "Gadgets are conjugate."
+     },
+     {
+      "item": "In-text #00002002",
+      "scope": "formal_math",
+      "span": [
+       41,
+       63
+      ],
+      "text": "Gadgets are conjugate."
+     }
+    ]
+   },
+   "pageid": 1005
+  }
+ ],
+ "fields": {
+  "expected.counts": "the page's counts: each fate, and new",
+  "expected.new_passages": "the items of the new passages no old passage went into (fate new), in span order",
+  "expected.passages": "every old passage in span order: its fate (cflib.vocab.CARRY_FATES) and the items of the new passages it went into, in span order; scope_changed, conjuncts_changed and carries (locate.carry.carries: a pair verdict carries) where a case pins them",
+  "expected.refused": "a page the map refuses: the reason starts with this text",
+  "old, new": "{layer, passages}: the layer text (its layer_sha256 is sha256 of its UTF-8, so two cuts with equal layers are on one layer) and the inventory passages, each {item, span, text, scope, conjuncts?, shape?}; text is layer[span] and only a check",
+  "pageid": "the page both cuts are of"
+ },
+ "function": "map_page(old cut, new cut) -> each old passage's fate, the new passages it went into, and the new passages no old one went into",
+ "keys": [
+  {
+   "pageid": 1001,
+   "passage_key": "b5748927803214aaa85fb390ec04ef502ef0afcd8b667c17c5da726cbbc2318c",
+   "span_sha256": "84e2dbe90b564cb386ac1429429e3e2e4c817d83e51d8d5496aa2dc0ab556e3f",
+   "text": "Every widget has a gadget."
+  }
+ ],
+ "rules": "docs/proposals/statement-cut.md section 4.2, references/locate-documents.md section 12",
+ "schema": "cf-locate-carry-parity/1"
+}
