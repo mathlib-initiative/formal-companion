@@ -42,6 +42,40 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The statement cut's inventory side (`docs/proposals/statement-cut.md` §3, the "cut" package):
+  the end rule's version 2 and the cut rules. `locate_text.passage_end(…, rule=2, next_start=…,
+  formulas=…)` ends a passage that gives no `until` at the earlier of its extent and the next
+  passage's start, and `locate_text.Blocks` gives the definitions the end rule and gate rule 10
+  read (an offset's outermost block, the next block, a display block, a block whose last
+  sentence introduces what follows, the displays it introduces, a run of list items, the
+  extent), with `locate_text.units` for the receipt's sentence and display counts.
+  `passage_ids.py` places every passage before it ends any and ends them by the `span_end_rule`
+  of the `gate.json` beside it (else `--span-end-rule`, default 1), writing `conjuncts` and
+  `shape` back as it found them. The inventory prompt and the bench labeler's inventory mode
+  carry the cut rules word for word with `references/vocabulary.md` §1.11 ("How the inventory
+  cuts": the test, units, displays and chains, the connectives inside a sentence, lists,
+  proofs, context in `statement`, conjuncts and the closed list of shapes, the subject marker on
+  the stating passage) and PD9 in its new words; the labeler's passages carry `statement`,
+  `conjuncts` and `shape`. `references/locate-documents.md` §2 documents both end rules and the
+  inventory passage's two new fields. Rule 1 is today's function, unchanged: no run names
+  `span_end_rule` 2 until the proposal's flip, so every run places, gates, tallies and exports
+  as before (every workspace run re-gated and smoke 2 and 3 re-tallied and re-exported, byte
+  for byte, on the base and on this change). The labeler's file sha moves; its version stays
+  `locate-label/5` until the flip.
+  After review, version 2 leaves the **separator** before the next passage's start out of both
+  passages (`Blocks.separator_start`: whitespace, a connective of `CUT_CONNECTIVES`, restated in
+  `locate_text` and pinned, and a comma or semicolon, never inside a formula), so a statement
+  has the span, and the `passage_key`, an `until` at its last word gives, whether or not its
+  neighbour is cut. A formula's last character is read past `\\`, `\end{…}` and closing braces,
+  and a block's past closing brackets and quotes after a full stop; a formula's `!` is a
+  factorial and ends no sentence (`FORMULA_STOPS`), so `x^{n!}` stops no chain; a chain stops
+  at a list item. The outermost block stays the bound, an upper one, inside a blockquote, a
+  `dd` or a list item holding other blocks, and two adjacent lists are one run (the proposal's
+  §3.1 says so). The inventory prompt says where a passage ends by the run's own end rule (a
+  `span_end_statement_cut` slot, version 1's paragraph until the flip, so a run planned before
+  it gets no rule-2 prompt), its context example is synthetic, and its conjuncts are held to
+  twelve words alone or read one after the other; the labeler asks for no `until`, requires
+  `statement` and admits only `id` and `text` in a conjunct.
 - Locate judgment rules: PD10's exception. A link that is itself what the passage asserts is no
   encoding: when the lemma that links the two notions is the passage's own theorem, a
   declaration stated with the notion whose definition already contains that theorem's claim
