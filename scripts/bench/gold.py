@@ -24,6 +24,13 @@ is what makes G3 blind -- and stamps the workflow file's sha; :func:`transcribe`
 refuses a result whose labeler is not the one emitted.  Its four modes are
 ``cflib.vocab.BENCH_LABEL_MODES``.
 
+**The statement cut** (docs/proposals/statement-cut.md sections 2 and 6.2): gold of
+a labeler that labels by judgment rules 3 keeps each ``hasPart``'s
+``conjunct_relation``, takes the parts the labeler names as the span's ``bundle``
+(:func:`gold_bundle`) and derives its statuses under status rule 2, as a run of
+those rules is derived (:func:`gold_status_rule`); gold of an earlier labeler is
+transcribed as it always was.
+
 **Label files** (``gold/g1.jsonl`` ...) carry the bench's canary string in every
 row, so a transcript that quotes a label is detectable (section 8.4).  The
 manifest :func:`freeze` writes hashes every one of them; a gold change is a new
@@ -597,18 +604,89 @@ def _anchor_quote(layer: str, quote: Any) -> tuple[list[int] | None, str]:
     return span, ""
 
 
-def _gold_status(passage_kind: str, declarations: list[dict]) -> tuple[str | None, bool]:
-    """``(derived status, related)`` of a gold passage from its re-checked declarations."""
+def _part_key(d: dict) -> str:
+    """The key a gold bundle names a part by, and :func:`_gold_status` keys it by."""
+    return f"{d['library']}:{d['declaration']}"
+
+
+def _gold_status(passage_kind: str, declarations: list[dict], *, bundle: dict | None = None,
+                 status_rule: int = vocab.STATUS_RULE_D1) -> tuple[str | None, bool]:
+    """``(derived status, related)`` of a gold passage from its re-checked declarations.
+
+    ``status_rule`` is the one the gold's labeler labels under (:func:`gold_status_rule`).
+    A ``bundle`` (:func:`gold_bundle`, status rule 2 only) is the labeler's judgment,
+    so it stands as a survived coverage claim does in a run: one more location of
+    its weakest part's relation (``vocab.derive_status``; docs/proposals/
+    statement-cut.md section 2.3).
+    """
     kind = passage_kind if passage_kind in vocab.PASSAGE_KINDS else vocab.PASSAGE_OTHER
     counting = [d for d in declarations if d.get("relation") in COUNTING]
     related = any(d.get("relation") == vocab.RELATED_MATCH for d in declarations)
     if not counting:
         return vocab.STATUS_NOT_FORMALIZED, related
-    return vocab.derive_status(kind, counting, absent=False), related
+    if bundle is None:
+        return vocab.derive_status(kind, counting, absent=False, status_rule=status_rule), related
+    if status_rule != vocab.STATUS_RULE_BUNDLE:
+        raise CfError(f"a gold bundle is status rule {vocab.STATUS_RULE_BUNDLE}'s, not "
+                      f"{status_rule}'s")
+    claim = {"complete": True, "challenge": vocab.CHALLENGE_SURVIVED,
+             "parts": [_part_key(p) for p in bundle["parts"]], "relation": bundle["relation"]}
+    located = [dict(d, location_key=_part_key(d)) for d in counting]
+    return vocab.derive_status(kind, located, absent=False, coverage=claim,
+                               status_rule=status_rule), related
+
+
+def gold_bundle(declarations: list[dict], named: Any) -> tuple[dict | None, str | None]:
+    """The span's bundle as the labeler names it, or why it stands as none.
+
+    docs/proposals/statement-cut.md sections 2.1 and 6.2: under judgment rules 3 the
+    labeler's label mode gives each ``hasPart`` its ``conjunct_relation`` and names in
+    ``bundle`` the parts that together state every claim of the span, each claim
+    stated by exactly one of them and none stating them all.  The bundle stands on at
+    least ``MIN_COVERAGE_PARTS`` distinct parts, each one of the declarations kept at
+    the pin (``declarations``, :func:`_recheck`'s), a ``hasPart`` and strong to its
+    conjuncts (``BUNDLE_RELATIONS``), as the gate holds a run's bundle (J3); its
+    relation is its weakest part's.  Returns ``({parts, relation}, None)``, ``(None,
+    None)`` when the labeler names none, or ``(None, why)``: a bundle that does not
+    stand leaves its parts each a ``hasPart``, as a refuted claim does in a run.
+    """
+    if named is None or named == []:
+        return None, None
+    if not isinstance(named, list) or not all(isinstance(p, dict) for p in named):
+        return None, "the labeler's bundle is not a list of {library, declaration} parts"
+    keys = [f"{p.get('library') or ''}:{p.get('declaration') or ''}" for p in named]
+    if len(set(keys)) != len(keys) or len(keys) < vocab.MIN_COVERAGE_PARTS:
+        return None, (f"a bundle names at least {vocab.MIN_COVERAGE_PARTS} distinct parts, "
+                      f"not {len(set(keys))}")
+    kept = {_part_key(d): d for d in declarations}
+    parts = []
+    for key in keys:
+        d = kept.get(key)
+        if d is None:
+            return None, f"bundle part {key} is none of the declarations kept at the pin"
+        if d["relation"] != vocab.HAS_PART:
+            return None, f"bundle part {key} is a {d['relation']}, not a hasPart"
+        if d.get("conjunct_relation") not in vocab.BUNDLE_RELATIONS:
+            return None, (f"bundle part {key} states its claims as "
+                          f"{d.get('conjunct_relation')!r}: a bundle's parts state them "
+                          f"strongly ({', '.join(sorted(vocab.BUNDLE_RELATIONS))})")
+        parts.append(d)
+    relation = max((d["conjunct_relation"] for d in parts),
+                   key=vocab.RELATION_STRENGTH.__getitem__)
+    return {"parts": [{"library": d["library"], "declaration": d["declaration"]}
+                      for d in sorted(parts, key=_part_key)],
+            "relation": relation}, None
 
 
 def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list[dict],
-             ) -> tuple[list[dict], list[dict]]:
+             *, conjuncts: bool = False) -> tuple[list[dict], list[dict]]:
+    """The labeler's declarations kept at the pin, and the ones dropped with the reason.
+
+    ``conjuncts`` (gold of judgment rules 3, :func:`gold_status_rule`): a ``hasPart``
+    keeps the ``conjunct_relation`` the labeler gave it, one of
+    ``CONJUNCT_RELATIONS`` or none (a part of a span that states one claim), and is
+    dropped with the reason for any other value; no other relation carries one.
+    """
     kept, dropped = [], []
     for d in declarations or []:
         lib, name = str(d.get("library") or ""), str(d.get("declaration") or "")
@@ -619,6 +697,11 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
         if relation not in vocab.LOCATE_RELATIONS:
             dropped.append({**d, "reason": f"relation {relation!r} is not a locate relation"})
             continue
+        part = d.get("conjunct_relation") if conjuncts and relation == vocab.HAS_PART else None
+        if part is not None and part not in vocab.CONJUNCT_RELATIONS:
+            dropped.append({**d, "reason": f"conjunct_relation {part!r} is not one of "
+                                           f"{', '.join(sorted(vocab.CONJUNCT_RELATIONS))}"})
+            continue
         row = inputs.declaration(conn, lib, libs[lib]["commit"], name)
         if not row:
             dropped.append({**d, "reason": "not in the universe at its commit (re-checked at the pin)"})
@@ -626,12 +709,26 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
         kept.append({"library": lib, "declaration": name, "commit": libs[lib]["commit"],
                      "relation": relation, "proof_status": row["proof_status"],
                      "statement": bool(row["statement"]), "evidence": d.get("evidence") or ""})
+        if part is not None:
+            kept[-1]["conjunct_relation"] = part
     return kept, dropped
 
 
 def labeler_rules(version: Any) -> int:
     """The judgment rules a labeler version labels by (:data:`LABELER_RULES`; 0 if none)."""
     return LABELER_RULES.get(version, 0) if isinstance(version, str) else 0
+
+
+def gold_status_rule(version: Any) -> int:
+    """The status rule a labeler version's gold statuses are derived under.
+
+    ``STATUS_RULE_BUNDLE`` from the statement cut's judgment rules on
+    (``RULES_STATEMENT_CUT``), as a locate run's ``status_rule`` is 2 exactly when its
+    ``judgment_rules`` is 3 (docs/proposals/statement-cut.md section 2.2), so a score
+    compares statuses derived alike; ``STATUS_RULE_D1`` for every earlier labeler.
+    """
+    return (vocab.STATUS_RULE_BUNDLE if labeler_rules(version) >= vocab.RULES_STATEMENT_CUT
+            else vocab.STATUS_RULE_D1)
 
 
 def provenance(args: dict) -> dict:
@@ -700,6 +797,10 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
     canary = bench["canary"]
     stamp = provenance(args)
     sha = stamp["labeler_sha256"]
+    # the statement cut's gold (judgment rules 3): a hasPart's conjunct_relation, the
+    # labeler's bundle and the statuses of status rule 2 (gold_status_rule)
+    status_rule = gold_status_rule(stamp["labeler_version"])
+    cut = status_rule == vocab.STATUS_RULE_BUNDLE
     summary: dict[str, Any] = {"mode": mode, "labels": len(by_task), "unlabeled": unlabeled}
     if mode == "anchor":
         entries = {e["entry_id"]: e for e in read_json(layout.g1_resolved).get("entries") or []}
@@ -724,7 +825,8 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                                          "commit": a["commit"], "relation": relation,
                                          "proof_status": row["proof_status"],
                                          "statement": bool(row["statement"]), "why": a["why"]})
-            status, related = _gold_status(kind, declarations) if relation else (None, False)
+            status, related = (_gold_status(kind, declarations, status_rule=status_rule)
+                               if relation else (None, False))
             rows.append({"gold_id": task_id, "source_id": entry["source_id"], "qid": entry["qid"],
                          "via": entry["via"], "level": "passage" if span else "article",
                          "span": span, "quote": label.get("quote") if span else None,
@@ -751,7 +853,7 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
             scope = label.get("scope") if label.get("scope") in vocab.SCOPES else None
             kind = label.get("passage_kind") if label.get("passage_kind") in vocab.PASSAGE_KINDS \
                 else vocab.PASSAGE_OTHER
-            kept, dropped = _recheck(conn, libs, label.get("declarations") or [])
+            kept, dropped = _recheck(conn, libs, label.get("declarations") or [], conjuncts=cut)
             if mode == "calibrate":
                 # h measures what the tag-blind HUNTERS found: a declaration counts only
                 # when a hunter returned it and the labeler kept it at the pin
@@ -765,16 +867,22 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                                               for d in kept],
                              "hunters": label.get("hunters") or [], **stamp})
                 continue
-            status, related = (_gold_status(kind, kept) if scope == vocab.SCOPE_FORMAL_MATH
-                               else (None, False))
+            formal = scope == vocab.SCOPE_FORMAL_MATH
+            bundle, unbundled = (gold_bundle(kept, label.get("bundle")) if cut and formal
+                                 else (None, None))
+            status, related = (_gold_status(kind, kept, bundle=bundle, status_rule=status_rule)
+                               if formal else (None, False))
             span_row = spans_by_id[task_id]
-            rows.append({"gold_id": task_id, "source_id": task["source_id"], "span": task["span"],
-                         "section": task.get("section"), "scope": scope, "passage_kind": kind,
-                         "status": status, "related": related, "declarations": kept,
-                         "dropped": dropped, "pi_span": span_row.get("pi_span"),
-                         "pi_article": span_row.get("pi_article"),
-                         "evidence": label.get("evidence") or "",
-                         "hunters": label.get("hunters") or [], **stamp})
+            row = {"gold_id": task_id, "source_id": task["source_id"], "span": task["span"],
+                   "section": task.get("section"), "scope": scope, "passage_kind": kind,
+                   "status": status, "related": related, "declarations": kept,
+                   "dropped": dropped, "pi_span": span_row.get("pi_span"),
+                   "pi_article": span_row.get("pi_article"),
+                   "evidence": label.get("evidence") or "",
+                   "hunters": label.get("hunters") or [], **stamp}
+            if cut:
+                row.update(bundle=bundle, bundle_problem=unbundled)
+            rows.append(row)
         if mode == "calibrate":
             anchored = {gid for gid, r in g1.items() if r.get("level") == "passage"}
             earlier = (read_json(layout.calibration_json).get("rows") or []

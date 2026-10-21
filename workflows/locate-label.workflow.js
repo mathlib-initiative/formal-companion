@@ -189,6 +189,9 @@ const LABEL_SCHEMA = {
         conjunct_relation: { type: ['string', 'null'], enum: [...CONJUNCT_RELATIONS, null],
           description: 'a hasPart only: its relation, by R1-R3 and PD1-PD10, to the claims it states; null on every other relation' },
         evidence: { type: 'string' } } } },
+    bundle: { type: 'array', items: { type: 'object', required: ['library', 'declaration'],
+      properties: { library: { type: 'string' }, declaration: { type: 'string' } } },
+      description: "the span's bundle, when it has one: hasPart declarations of your list, each with a conjunct_relation of exactMatch, closeMatch or broadMatch, that together state every claim, each claim by exactly one of them and none stating them all; [] when there is none" },
     evidence: { type: 'string' },
   },
 }
@@ -260,7 +263,8 @@ ${JSON.stringify(pool, null, 1)}
 
 You are the labeler. Read the span and the reading copy around it, decide the scope and the passage kind, and for
 EACH candidate read its statement in the pinned checkout yourself and keep it only with the relation you can
-defend, giving each hasPart its conjunct_relation; drop any you cannot find at the pin. ${tagBlind
+defend, giving each hasPart its conjunct_relation; drop any you cannot find at the pin. Name in bundle the hasPart
+parts that are the span's bundle, when there is one (else []). ${tagBlind
     ? 'Add NO declaration: judge only the hunters\' candidates, which is what this run measures.' + TAG_BLIND
     : 'Add nothing you have not read at the pin.'} If the span is not
 formal_math, return no declarations. Copy task_id "${t.task_id}" unchanged.`,
@@ -271,6 +275,7 @@ formal_math, return no declarations. Copy task_id "${t.task_id}" unchanged.`,
     scope: label.scope,
     passage_kind: label.passage_kind,
     declarations: label.declarations || [],
+    bundle: label.bundle || [],
     evidence: label.evidence || '',
     hunters: votes.map((v, i) => ({ hunter: i + 1, scope: v.scope, tools: v.tools_used || [], queries: v.queries || [],
       found: (v.candidates || []).map(c => c.library + ':' + c.declaration) })),
