@@ -192,19 +192,29 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
    --inventory-run <r>`, then `--preset locate-challenge --challenge-of <r>`; each
    run goes through `cf run <r> --host <h> --i-have-consent --include-source-text`
    (a spend cap is required) and `cf harvest`, whose
-   locate gate runs out of tree over each task's own documents — for a run
-   planned with this code, under the judgment rules too (gate rule 9: each
-   passage's claim list and the clauses every record states, an absence's
-   query of its own per clause, the instantiation line, a part's step, a
-   closeMatch's convention, a challenger's own claim list under every verdict,
-   and since PD5–PD9 no coverage part that alone states every clause and no
-   junk value as a convention; rules R1–R7 and the policy defaults PD1–PD10 in
-   `references/vocabulary.md` §1.11).
+   locate gate runs out of tree over each task's own documents, under the
+   versions its `gate.json` names. A run planned with this code names the
+   statement cut's (`docs/proposals/statement-cut.md`): its inventory is cut one
+   passage per statement, with its `statement`, `conjuncts` and `shape`, and
+   held to gate rule 10 and span-end rule 2; its locate and challenge documents
+   to judgment rules 3 (gate rule 9, `references/locate-documents.md` §3 and
+   §4): no claim list (one is refused) — the clause ids are the frozen
+   inventory's conjunct ids, `c1` for a simple statement —, the clauses every
+   record states, an absence's query of its own per clause, both instantiation
+   tests and the instantiation line on a strong location, a part's
+   `conjunct_relation` and step, a closeMatch's convention, a coverage claim
+   only as a bundle of strong parts on a compound statement, and no junk value
+   as a convention. A run planned before keeps the rules it names (a claim list
+   per passage under rules 1 and 2). Rules R1–R7 and the policy defaults
+   PD1–PD10 are in `references/vocabulary.md` §1.11.
    Larger work is a `cf campaign` of shards.
 5. `cf tally --locate --run <r> --challenge-run <c>` — passage outcomes and the
    derived status (`references/vocabulary.md` §1.11: a coverage claim over
-   `hasPart` parts counts only once a challenger confirms it); then
-   `cf export literature-links` — a sealed record set,
+   `hasPart` parts counts only once a challenger confirms it; under status rule 2,
+   which a locate run planned now names, a confirmed bundle is one more location
+   of its weakest part's relation); then
+   `cf export literature-links` — a sealed record set (`cf-locate-recordset/2`
+   for a run of status rule 2),
    every record checked by the vendored Literature Links checker, quotes capped
    and only from an open licence class.
 6. `cf bench build | anchor | freeze | score | compare | carry` — gold, metrics with

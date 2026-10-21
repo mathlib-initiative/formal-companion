@@ -42,6 +42,13 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- `SKILL.md`'s locate workflow says what a run planned now is held to: step 4 named each
+  passage's claim list and a challenger's own one under gate rule 9, which a gate of judgment
+  rules 3 refuses; it now describes the statement cut's inventory (rule 10, span-end rule 2) and
+  judgment rules 3 (the inventory's conjunct ids, a bundle, both instantiation tests), and says
+  that a run planned before keeps the rules it names; step 5 names status rule 2 and
+  `cf-locate-recordset/2`. `docs/proposals/wikipedia-locate.md` gives the challenge's
+  `absence_sample_rate` default as 0.5 (0.25 before the flip).
 - The statement cut, tidied after the flip. The inventory's Lists rule says what the chain that
   stops at a list item implies (the maintainer's reading C4): a display inside a list item
   belongs to that item, never to the list's lead-in sentence — in `references/vocabulary.md`
