@@ -62,6 +62,20 @@ release has something to say.
   as before (every workspace run re-gated and smoke 2 and 3 re-tallied and re-exported, byte
   for byte, on the base and on this change). The labeler's file sha moves; its version stays
   `locate-label/5` until the flip.
+  After review, version 2 leaves the **separator** before the next passage's start out of both
+  passages (`Blocks.separator_start`: whitespace, a connective of `CUT_CONNECTIVES`, restated in
+  `locate_text` and pinned, and a comma or semicolon, never inside a formula), so a statement
+  has the span, and the `passage_key`, an `until` at its last word gives, whether or not its
+  neighbour is cut. A formula's last character is read past `\\`, `\end{…}` and closing braces,
+  and a block's past closing brackets and quotes after a full stop; a formula's `!` is a
+  factorial and ends no sentence (`FORMULA_STOPS`), so `x^{n!}` stops no chain; a chain stops
+  at a list item. The outermost block stays the bound, an upper one, inside a blockquote, a
+  `dd` or a list item holding other blocks, and two adjacent lists are one run (the proposal's
+  §3.1 says so). The inventory prompt says where a passage ends by the run's own end rule (a
+  `span_end_statement_cut` slot, version 1's paragraph until the flip, so a run planned before
+  it gets no rule-2 prompt), its context example is synthetic, and its conjuncts are held to
+  twelve words alone or read one after the other; the labeler asks for no `until`, requires
+  `statement` and admits only `id` and `text` in a conjunct.
 - Locate judgment rules: PD10's exception. A link that is itself what the passage asserts is no
   encoding: when the lemma that links the two notions is the passage's own theorem, a
   declaration stated with the notion whose definition already contains that theorem's claim

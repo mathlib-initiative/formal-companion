@@ -194,9 +194,46 @@ class TestTheBlocks(unittest.TestCase):
                           ("{\\displaystyle a=b\\quad}", "b"),
                           ("{\\displaystyle a=b.\\qquad~}", "."),
                           ("{\\displaystyle \\left\\{x\\right.}", "x"),
-                          ("{\\displaystyle \\,}", ""), ("{\\displaystyle a = b!}", "!")):
+                          ("{\\displaystyle \\,}", ""), ("{\\displaystyle a = b!}", "!"),
+                          # what TeX writes after the last character is set aside too
+                          ("{\\displaystyle \\begin{aligned}a&=b.\\end{aligned}}", "."),
+                          ("{\\displaystyle \\begin{alignedat}{2}a&=b,\\end{alignedat}}", ","),
+                          ("{\\displaystyle a=b{\\text{.}}}", "."),
+                          ("{\\displaystyle a=b. \\\\}", "."),
+                          ("{\\displaystyle \\{x\\}}", "}"),     # an escaped brace is the end
+                          ("{\\displaystyle x^{n!}}", "!"), ("{\\displaystyle \\frac{1}{n!}}", "!")):
             with self.subTest(alt=alt):
                 self.assertEqual(lt.formula_stop(alt), want)
+
+    def test_a_formulas_factorial_is_no_full_stop(self):
+        """``x^{n!}`` ends with "!", which in TeX is a factorial: it ends no sentence and
+        no chain (``FORMULA_STOPS``), so the display after it still joins."""
+        self.assertEqual(lt.FORMULA_STOPS, lt.SENTENCE_STOPS - {"!"})
+        page = Page("<p>For each widget the count is</p>" + dd("c = \\frac{1}{n!}") + "\n"
+                    + dd("d = e."), "<p>The count " + inline("x^{n!}") + " Widgets turn.</p>")
+        b = page.blocks
+        self.assertTrue(b.introduces(b.block_at(page.at("c = \\frac{1}{n!}{"))))
+        self.assertEqual(b.extent(page.at("For each")), b.block_at(page.at("d = e.{")).end)
+        span = (page.at("The count"), page.after("Widgets turn."))
+        self.assertEqual(len(lt.units(page.layer, b, None, span)["sentences"]), 1)
+        # a full stop in the text after it still ends the sentence
+        page = Page("<p>The count is " + inline("n!") + ". Widgets turn.</p>")
+        span = (page.at("The count"), page.after("Widgets turn."))
+        self.assertEqual(len(lt.units(page.layer, page.blocks, None, span)["sentences"]), 2)
+
+    def test_closing_marks_after_a_full_stop_are_read_through(self):
+        page = Page("<p>Every widget is finite. (See the notes.)</p>" + dd("c = d."),
+                    "<p>Every gadget has a cog (when finite)</p>" + dd("e = f."),
+                    "<p>Every cog has a count (" + inline("n!") + ")</p>" + dd("g = h."))
+        b = page.blocks
+        cases = (("Every widget", ".", False), ("Every gadget", ")", True),
+                 ("Every cog", ")", True))
+        for head, last, runs_on in cases:
+            with self.subTest(head=head):
+                block = b.block_at(page.at(head))
+                self.assertEqual(b.last_character(block.start, block.end), last)
+                self.assertIs(b.introduces(block), runs_on)
+        self.assertEqual(b.extent(page.at("Every widget")), page.after("(See the notes.)"))
 
     def test_the_chain_is_the_displays_the_last_sentence_introduces(self):
         page = Page(CHAIN)
@@ -206,6 +243,47 @@ class TestTheBlocks(unittest.TestCase):
                          ["For each f", "|W| = |G| ", "k = |S|.{\\"])
         # "x = y" follows a display that ended its sentence: not introduced
         self.assertNotIn(b.block_at(page.at("x = y{")), chain)
+
+    def test_a_chain_stops_at_a_list_item(self):
+        """A list item is a unit of its own: a list of display items is one passage per item
+        (or a compound statement over them), never displays a sentence introduces."""
+        page = Page("<p>For each widget we have</p><ul><li>" + inline("a = b,") + "</li><li>"
+                    + inline("c = d,") + "</li><li>" + inline("e = f") + "</li></ul>")
+        b = page.blocks
+        intro = b.block_at(page.at("For each"))
+        self.assertTrue(b.introduces(intro))
+        self.assertEqual(b.chain(intro), [intro])
+        first = page.at("a = b,{")
+        self.assertTrue(b.is_display(b.block_at(first)))
+        self.assertEqual(b.extent(first), b.block_at(first).end)
+        self.assertEqual(b.extent(first, compound=True), b.block_at(page.at("e = f{")).end)
+
+    def test_the_extent_is_an_upper_bound_in_a_container(self):
+        """The proposal's section 3.1: block(x) is the outermost block, so inside a
+        blockquote, a dd or a list item that holds other blocks a passage no later start
+        ends runs to the container's end, and `until` is what ends it at its paragraph;
+        two lists with nothing between them are one run.  Pinned as documented."""
+        two = "<p>Every widget is finite.</p><p>Every gadget is round.</p>"
+        for html in ("<blockquote>" + two + "</blockquote>", "<dl><dd>" + two + "</dd></dl>"):
+            with self.subTest(html=html[:12]):
+                page = Page(html)
+                start = page.at("Every widget")
+                self.assertEqual(page.end(start, rule=2), page.after("gadget is round."))
+                self.assertEqual(page.end(start, rule=2, starts=[page.at("Every gadget")]),
+                                 page.after("widget is finite."))
+                self.assertLess(page.end(start, rule=2, until="is finite."),
+                                page.blocks.extent(start))
+        page = Page("<ul><li>Every widget is finite.<ul><li>every gadget is round;</li>"
+                    "<li>every cog turns.</li></ul></li><li>Every sprocket spins.</li></ul>")
+        b = page.blocks
+        self.assertEqual(page.end(page.at("Every widget"), rule=2), page.after("cog turns."))
+        nested_item = page.at("every gadget")
+        self.assertEqual(b.extent(nested_item), page.after("cog turns."))
+        self.assertEqual(b.extent(nested_item, compound=True), page.after("sprocket spins."))
+        page = Page("<ul><li>a widget is finite;</li></ul><ol><li>a gadget is round.</li></ol>")
+        run = page.blocks.list_run(page.blocks.block_at(page.at("a widget")))
+        self.assertEqual([page.text(x.span) for x in run],
+                         ["a widget is finite;", "a gadget is round."])
 
     def test_a_list_run_is_the_items_of_one_list(self):
         page = Page(LISTS)
@@ -239,24 +317,62 @@ class TestTheEndRule(unittest.TestCase):
     """Section 3.2: each cut case ended by version 2, and by version 1 as before."""
 
     def test_connectives_inside_a_sentence(self):
+        """The separator before the next start -- the space, the connective, the comma or
+        semicolon -- is in neither passage."""
         page = Page(CONNECTIVES)
         heads = ("A widget is finite", "every finite widget", "gadgets meet every")
         new = page.cut(*heads, rule=2)
         self.assertEqual([page.text(s) for s in new],
-                         ["A widget is finite when it has finitely many sprockets; ",
-                          "every finite widget has a spanning gadget, since ",
+                         ["A widget is finite when it has finitely many sprockets",
+                          "every finite widget has a spanning gadget",
                           "gadgets meet every sprocket."])
         self.assertEqual(nested(new), 0)
         old = page.cut(*heads, rule=1)
         self.assertEqual({e for _s, e in old}, {page.after("every sprocket.")})
         self.assertEqual(nested(old), 3)
-        # `until` ends a piece before its connective, under either rule
+        # `until` ends a piece before its connective, under either rule, and under rule 2
+        # it is the end the next start gives: one span, one passage_key, whether or not
+        # the reason after "since" is cut as a passage of its own
         start = page.at("every finite widget")
         for rule in (1, 2):
             with self.subTest(rule=rule):
                 self.assertEqual(page.end(start, rule=rule, starts=[page.at("gadgets meet")],
                                           until="spanning gadget"),
                                  page.after("spanning gadget"))
+        self.assertEqual(page.end(start, rule=2, starts=[page.at("gadgets meet")]),
+                         page.end(start, rule=2, until="spanning gadget"))
+
+    def test_the_separator(self):
+        """What separator_start sets aside, and what it leaves: a bare "and" is no
+        connective, a connective is a whole word, a sentence's full stop stays, and nothing
+        inside a formula is set aside."""
+        cases = (
+            ("<p>Every widget is finite, and every gadget is round.</p>", "Every widget is finite"),
+            ("<p>Every widget is finite and every gadget is round.</p>",
+             "Every widget is finite and"),
+            ("<p>Every widget is finite; moreover, every gadget is round.</p>",
+             "Every widget is finite"),
+            ("<p>Every widget is finite, so hence every gadget is round.</p>",
+             "Every widget is finite"),
+            ("<p>Every widget spans also every gadget is round.</p>", "Every widget spans also"),
+            ("<p>Every widget is finite. Then every gadget is round.</p>",
+             "Every widget is finite."),
+        )
+        for html, want in cases:
+            with self.subTest(want=want):
+                page = Page(html)
+                spans = page.cut("Every widget", "every gadget", rule=2)
+                self.assertEqual(page.text(spans[0]), want)
+                self.assertEqual(page.text(spans[1]), "every gadget is round.")
+        # a formula ending the first piece is kept whole, its own comma with it
+        page = Page("<p>Every widget has " + inline("a = b,") + " so every gadget is round.</p>")
+        first = page.cut("Every widget", "every gadget", rule=2)[0]
+        formula = page.blocks.formula_at(first[1] - 1)
+        self.assertIsNotNone(formula)
+        self.assertEqual(formula[1], first[1])
+        # never back to the passage's own start: a connective it starts with stays
+        self.assertEqual(page.blocks.separator_start(page.at("so every"), page.at("every gadget")),
+                         page.at("so every") + len("so"))
 
     def test_lists(self):
         page = Page(LISTS)
@@ -307,8 +423,8 @@ class TestTheEndRule(unittest.TestCase):
                     for h, s in zip(heads, starts)]
 
         self.assertEqual([page.text(s) for s in spans(2)],
-                         ["Proof. The argument goes by induction on the sprockets. ",
-                          "Suppose that W is a finite widget. Then W has a spanning gadget, so ",
+                         ["Proof. The argument goes by induction on the sprockets.",
+                          "Suppose that W is a finite widget. Then W has a spanning gadget",
                           "every sprocket of W is met."])
         self.assertEqual(nested(spans(2)), 0)
         old = spans(1)
@@ -340,7 +456,9 @@ class TestTheEndRule(unittest.TestCase):
         # inside a theorem box a passage runs over its paragraphs, to the next passage
         box = page.at("Theorem.")
         self.assertEqual(page.end(box, rule=2), page.after("gadget is unique."))
-        self.assertEqual(page.end(box, rule=2, starts=[page.at("Moreover")]), page.at("Moreover"))
+        # ... less the space between its paragraphs
+        self.assertEqual(page.end(box, rule=2, starts=[page.at("Moreover")]),
+                         page.after("Every widget spans."))
         self.assertEqual(page.end(box, rule=1), page.after("gadget is unique."))
         # a box of one paragraph does not run into the display after it; a paragraph does
         self.assertEqual(page.end(page.at("Lemma."), rule=2), page.after("has the gadget"))
@@ -419,9 +537,14 @@ class TestUnits(unittest.TestCase):
         box = (page.at("Theorem."), page.after("gadget is unique."))
         self.assertEqual(self.sentences(page, box),
                          ["Theorem.", "Every widget spans.", "Moreover every gadget is unique."])
-        first = page.cut("A widget is finite", "every finite widget", rule=2)[0]
+        # a span that keeps the separator's space counts no whitespace into its sentence
+        first = (page.at("A widget is finite"), page.at("every finite widget"))
+        self.assertEqual(page.text(first)[-2:], "; ")
         self.assertEqual(self.sentences(page, first),
                          ["A widget is finite when it has finitely many sprockets;"])
+        cut = page.cut("A widget is finite", "every finite widget", rule=2)[0]
+        self.assertEqual(self.sentences(page, cut),
+                         ["A widget is finite when it has finitely many sprockets"])
 
     def test_displays_are_the_math_blocks_inside(self):
         page = Page(CHAIN)
@@ -453,8 +576,8 @@ class TestPassageIds(unittest.TestCase):
                      {"id": "c2", "text": "gadgets meet every sprocket"}]
         heads = ("gadgets meet every", "A widget is finite", "every finite widget")
         for rule, ends in ((1, [page.after("every sprocket.")] * 3),
-                           (2, [page.after("every sprocket."), page.at("every finite"),
-                                page.at("gadgets meet")])):
+                           (2, [page.after("every sprocket."), page.after("many sprockets"),
+                                page.after("spanning gadget")])):
             doc = self.doc(page, heads, **{"every finite widget": {
                 "conjuncts": conjuncts, "shape": "conclusions"}})
             with self.subTest(rule=rule):
@@ -525,7 +648,7 @@ class TestTheRuleBesideTheTool(unittest.TestCase):
         return [p["span"][1] for p in written["passages"]]
 
     def test_the_gate_json_decides(self):
-        new = [self.page.at("every finite"), self.page.at("gadgets meet"),
+        new = [self.page.after("many sprockets"), self.page.after("spanning gadget"),
                self.page.after("every sprocket.")]
         old = [self.page.after("every sprocket.")] * 3
         for gate, want in (({"span_end_rule": 2}, new), ({"span_end_rule": 1}, old),
@@ -554,8 +677,8 @@ class TestTheRuleBesideTheTool(unittest.TestCase):
         self.assertEqual((proc.returncode, self.ends(written)),
                          (0, [self.page.after("every sprocket.")] * 3))
         proc, written = self.run_tool(None, "--span-end-rule", "2", where=SCRIPTS / "locate")
-        self.assertEqual(self.ends(written)[:2], [self.page.at("every finite"),
-                                                  self.page.at("gadgets meet")])
+        self.assertEqual(self.ends(written)[:2], [self.page.after("many sprockets"),
+                                                  self.page.after("spanning gadget")])
         proc, _written = self.run_tool(None, "--span-end-rule", "4", where=SCRIPTS / "locate")
         self.assertEqual(proc.returncode, 2)
 
@@ -570,6 +693,18 @@ class TestTheConstantsAreTheSkills(unittest.TestCase):
 
     def test_the_abbreviations_are_the_records(self):
         self.assertEqual(lt.ABBREVIATIONS, locate_records._ABBREVIATIONS)
+
+    def test_the_cut_connectives_are_the_vocabularys(self):
+        """The end rule's separator sets aside the connectives the cut rules name."""
+        self.assertEqual(lt.CUT_CONNECTIVES, vocab.CUT_CONNECTIVES)
+        for connective in lt.CUT_CONNECTIVES:
+            word = connective.lstrip(",; ")
+            with self.subTest(connective=connective):
+                if word:
+                    self.assertTrue(word.isalpha() and word == word.lower())
+                    self.assertTrue(set(connective[:-len(word)].strip()) <= lt.SEPARATOR_MARKS)
+                else:
+                    self.assertIn(connective, lt.SEPARATOR_MARKS)
 
     def test_the_block_names_are_the_renderers(self):
         self.assertLessEqual(set(lt.LIST_BLOCKS), render_html._BLOCK_TAGS)
@@ -604,7 +739,9 @@ def pd9_line() -> str:
     return "- **PD9** — " + " ".join(match.group(1).replace("\n> ", " ").split())
 
 
-def rendered_inventory() -> str:
+def rendered_inventory(span_end_statement_cut: bool | None = None) -> str:
+    """The inventory worker prompt as the planner renders it; with the end-rule slot set
+    to the given value when one is given (the flip sets it by ``vocab.SPAN_END_RULE``)."""
     from locate import presets as lpresets, prompts as lprompts
 
     class _Universe:
@@ -615,6 +752,8 @@ def rendered_inventory() -> str:
     preset = lpresets.get(vocab.LOCATE_INVENTORY)
     ctx = lprompts.build_context(preset, run_id="r1", host=host, universe=_Universe(),
                                  per_task=8)
+    if span_end_statement_cut is not None:
+        ctx = {**ctx, "span_end_statement_cut": span_end_statement_cut}
     return lprompts.render_prompts(preset, ctx)["worker.md"]
 
 
@@ -672,23 +811,65 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 
     def test_the_document_bullets_hold_the_gates_numbers(self):
         self.assertIn(f"one line of at most {vocab.MAX_CLAIM_CHARS} characters in your own "
-                      f"words, never more than twelve consecutive words of the article",
-                      self.flat)
+                      f"words, never more than twelve consecutive words of the article, alone "
+                      f"or read one after the other", self.flat)
         self.assertEqual(vocab.EXPORT_QUOTE_WORDS, 12)
         self.assertIn("`shape` is one of `existence_uniqueness`, `iff`, `cases`, `conclusions`, "
                       "`equations`", self.flat)
         self.assertIn('"shape": "existence_uniqueness"', self.prompt)
-        # the end rule as the tool applies it once the run names version 2
+
+    def test_the_end_paragraph_is_the_runs_end_rule(self):
+        """The prompt says where the run's own passage_ids.py ends a passage: version 1's
+        paragraph end until the flip, version 2 -- and what rule 10 refuses -- after it."""
+        rule = {1: rendered_inventory(False), 2: rendered_inventory(True)}
+        flat = {k: " ".join(v.split()) for k, v in rule.items()}
+        self.assertEqual(self.prompt,
+                         rule[2 if vocab.SPAN_END_RULE == vocab.SPAN_END_STATEMENT_CUT else 1])
+        self.assertIn("**Where a passage ends**: where its paragraph or list item ends", flat[1])
+        self.assertIn("So give `until` to every passage that ends before its paragraph does",
+                      flat[1])
+        self.assertIn("End each where it ends (`until`, below) when its paragraph goes on.\n- A "
+                      "single word", rule[1])
         self.assertIn("**Where a passage ends**: at the earlier of the end of its paragraph or "
-                      "list item", self.flat)
-        self.assertIn("So two passages never overlap", self.flat)
+                      "list item", flat[2])
+        self.assertIn("less what separates the two (the space, a connective of the cut rules "
+                      "above, a comma or semicolon)", flat[2])
+        self.assertIn("So two passages never overlap", flat[2])
+        self.assertIn("A quotation, an indented block, or a list item that holds paragraphs or a "
+                      "list of its own, counts as one paragraph here", flat[2])
+        self.assertIn("when narration you leave out follows it.\n- A single word", rule[2])
+        self.assertIn("The gate holds the cut's mechanical part", flat[2])
+        for text in ("So two passages never overlap", "The gate holds the cut's mechanical part",
+                     "The next passage's start ends each one"):
+            with self.subTest(text=text):
+                self.assertNotIn(text, flat[1])
+        # each branch keeps the lines around it: version 2 adds one bullet and glues none
+        bullets = {k: [line for line in v.splitlines() if line.startswith("- ")]
+                   for k, v in rule.items()}
+        self.assertEqual(len(bullets[2]), len(bullets[1]) + 1)
+        for k, text in rule.items():
+            with self.subTest(rule=k):
+                self.assertNotRegex(text, r"\{\{")
+                self.assertNotRegex(text, r"\S- \*\*|[.:]- [A-Z]")
 
     def test_the_labelers_fields_are_the_vocabularys(self):
         shapes = re.search(r"const SHAPES = \[(.*?)\]", LABELER).group(1)
         self.assertEqual(tuple(re.findall(r"'([a-z_]+)'", shapes)), vocab.COMPOUND_SHAPE_ORDER)
         fields = LABELER[LABELER.index("const CUT_FIELDS"):LABELER.index("const ENUM_SCHEMA")]
         self.assertIn(f"minItems: {vocab.MIN_CONJUNCTS}, maxItems: {vocab.MAX_CONJUNCTS}", fields)
+        self.assertIn("required: ['id', 'text'],\n    additionalProperties: false,", fields)
         self.assertEqual(LABELER.count("...CUT_FIELDS"), 2)
+        # both inventory schemas require every passage's `statement`
+        self.assertEqual(LABELER.count("required: ['quote', 'passage_kind', 'scope', 'statement'"),
+                         2)
+
+    def test_the_lists_rule_asks_for_nothing_the_labeler_cannot_give(self):
+        """The labeler's passages have no `until` (gold is anchored on its quote), so the
+        shared Lists rule names none; the prompt's end paragraph says when to give one."""
+        lines = {re.match(r"- \*\*(.*?)\*\*", line).group(1): line for line in cut_rule_lines()}
+        self.assertNotIn("until", lines["Lists."])
+        self.assertNotIn("until", re.search(r"CUT_FIELDS = \{(.*?)\n\}", LABELER, re.S).group(1))
+        self.assertIn("one quote per statement", labeler_cut_rules())
 
     def test_what_the_prompt_kept(self):
         """The PD5 lines and the scope line other tests hold the labeler to stay."""
@@ -709,6 +890,10 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
             with self.subTest(text=name):
                 self.assertEqual(re.findall(r"#([0-9a-f]{8})\b", text), [])
                 self.assertEqual(re.findall(r"\bQ[1-9][0-9]{3,}\b", text), [])
+        # the context rule's example is the widget one, never an article's sentence
+        lines = {re.match(r"- \*\*(.*?)\*\*", line).group(1): line for line in cut_rule_lines()}
+        self.assertIn('("Let W be a finite widget.")', lines["Context."])
+        self.assertIn('("for a finite widget W, …")', lines["Context."])
 
 
 if __name__ == "__main__":
