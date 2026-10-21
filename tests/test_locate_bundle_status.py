@@ -409,6 +409,31 @@ class TestTheBundleThroughTheRun(_Bundled):
         row, _built = self.row()
         self.assertEqual(row["coverage"]["relation"], "broadMatch")
 
+    def coverage_parts(self, run_id="chl-1") -> list[dict]:
+        """The coverage record's parts in the planned challenge's task manifests."""
+        out = []
+        for path in sorted((self.paths.tend_root(run_id) / "gate" / "tasks").glob("*.json")):
+            for doc in json.loads(path.read_text(encoding="utf-8"))["documents"]:
+                out.extend(part for rec in doc["records"] if rec["target"] == "coverage"
+                           for part in rec["parts"])
+        return out
+
+    def test_a_challenge_task_shows_the_parts_conjuncts_only_under_status_rule_2(self):
+        """Section 1.2, bound by the locate run's status rule: re-planning a challenge of a
+        run of status rule 1 writes the coverage parts it always wrote, though its parts
+        name clauses (the smoke-3 locate run's do, under judgment rules 1)."""
+        self.challenge()
+        parts = self.coverage_parts()
+        self.assertEqual(len(parts), 2)
+        for part in parts:
+            self.assertEqual(set(part), {"location_key", "library", "declaration", "relation",
+                                         "rank"})
+        set_status_rule(self.paths, "loc-1", 2)
+        self.challenge(run_id="chl-2")
+        parts = self.coverage_parts("chl-2")
+        self.assertEqual(sorted((p["clauses"], p["conjunct_relation"]) for p in parts),
+                         [(["c1"], "exactMatch"), (["c2"], "broadMatch")])
+
     def rechallenge(self, verdict):
         import shutil
         shutil.rmtree(self.paths.corpus_run_dir("chl-1"))

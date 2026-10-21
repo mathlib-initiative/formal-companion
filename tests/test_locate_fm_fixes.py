@@ -583,16 +583,20 @@ class TestTheChallengeRecordsCarryTheCut(unittest.TestCase):
         row = _row()
         row["coverage"]["challenge"] = None
         if not cut:
+            # a row of judgment rules 1 or 2: no conjuncts and no conjunct relation, but
+            # its locations name the claim ids of the run's own claim list, as the
+            # smoke-3 locate run's do
             row.pop("conjuncts")
+            row["claims"] = [{"id": "c1", "text": "a widget has a gadget"},
+                             {"id": "c2", "text": "two gadgets of a widget are equal"}]
             for loc in row["locations"]:
                 loc.pop("conjunct_relation")
-                loc.pop("clauses")
         else:
             row.update(statement="for a widget W: W has a unique gadget", shape="existence_uniqueness")
         return [row]
 
     def test_a_cut_rows_records(self):
-        recs = cplan.classify(self.rows(True), run_id="loc-1")
+        recs = cplan.classify(self.rows(True), run_id="loc-1", status_rule=2)
         for rec in recs:
             self.assertEqual(rec["shape"], "existence_uniqueness")
             self.assertEqual(len(rec["conjuncts"]), 2)
@@ -601,13 +605,48 @@ class TestTheChallengeRecordsCarryTheCut(unittest.TestCase):
                          [(["c1"], "exactMatch"), (["c2"], "broadMatch")])
 
     def test_an_earlier_rows_records_are_what_they_were(self):
-        recs = cplan.classify(self.rows(False), run_id="loc-1")
+        for status_rule in ({}, {"status_rule": 1}):
+            recs = cplan.classify(self.rows(False), run_id="loc-1", **status_rule)
+            for rec in recs:
+                for key in ("statement", "conjuncts", "shape"):
+                    self.assertNotIn(key, rec)
+            (cov,) = [r for r in recs if r["target"] == "coverage"]
+            # the parts' claim-id clauses stay off the record (re-planning a challenge of a
+            # run of rules 1 or 2 writes the task records it always wrote)
+            self.assertEqual({tuple(sorted(p)) for p in cov["parts"]},
+                             {("declaration", "library", "location_key", "rank", "relation")})
+
+    def test_status_rule_1_keeps_the_fields_off_even_where_a_row_has_them(self):
+        """The fields bind by the run's status rule, never by what a row happens to hold."""
+        recs = cplan.classify(self.rows(True), run_id="loc-1")
         for rec in recs:
             for key in ("statement", "conjuncts", "shape"):
                 self.assertNotIn(key, rec)
         (cov,) = [r for r in recs if r["target"] == "coverage"]
-        self.assertEqual({tuple(sorted(p)) for p in cov["parts"]},
-                         {("declaration", "library", "location_key", "rank", "relation")})
+        for part in cov["parts"]:
+            self.assertNotIn("clauses", part)
+            self.assertNotIn("conjunct_relation", part)
+
+    def test_the_plan_passes_the_runs_status_rule(self):
+        """``plan`` classifies each locate run by the status rule its outcomes were built by."""
+        seen = []
+        real = cplan.classify
+
+        def spy(rows, *, run_id, status_rule=vocab.STATUS_RULE_D1):
+            seen.append(status_rule)
+            return real(rows, run_id=run_id, status_rule=status_rule)
+
+        built = {"mode": vocab.LOCATE, "sourceset": "s", "universe": "u",
+                 "outcomes": self.rows(True), "status_rule": 2}
+        original_build, cplan.classify = cplan.outcomes_mod.build, spy
+        cplan.outcomes_mod.build = lambda *a, **k: built
+        try:
+            out = cplan.plan(None, ["loc-1"], seed=0, sample_rate=1.0)
+        finally:
+            cplan.outcomes_mod.build, cplan.classify = original_build, real
+        self.assertEqual(seen, [2])
+        (cov,) = [r for r in out["records"] if r["target"] == "coverage"]
+        self.assertEqual([p["clauses"] for p in cov["parts"]], [["c1"], ["c2"]])
 
 
 if __name__ == "__main__":

@@ -497,7 +497,8 @@ def check_target(out: Path, workspace=None) -> set[str]:
     seal_path = out / "SEAL.json"
     seal = read_json(seal_path) if seal_path.is_file() else None
     if not isinstance(seal, dict) or seal.get("schema") not in SEAL_SCHEMAS.values():
-        raise CfError(f"{out} is not empty and holds no {SEAL_SCHEMA} seal",
+        raise CfError(f"{out} is not empty and holds no {SEAL_SCHEMA} seal (nor a "
+                      f"{SEAL_SCHEMA_BUNDLE} one)",
                       hint="pass an empty or new directory with --out")
     named = set(seal.get("files") or {})
     stray = sorted(present - named - {"SEAL.json"})

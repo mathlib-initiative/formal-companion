@@ -269,7 +269,7 @@ the three strong relations already give one status.
 | definition | `broadMatch` | unfinished | `statement_only` | **`partial`** |
 | example, other | `broadMatch` | finished | `formalized` | `formalized` (the theorem row) |
 
-The cases are written by hand into *tests/data/locate/status-parity-2.json*
+The cases are written by hand into `tests/data/locate/status-parity-2.json`
 (`cf-locate-status-parity/2`, every case with `status_rule: 2`), the table WikiLean ports (§8);
 the rule-1 table is not touched.
 
@@ -621,6 +621,9 @@ record set.
   flow (no claim list; conjunct ids; `conjunct_relation`; the bundle; `part_relations`,
   `unstated`, `part_reasons`, `tests`, `special_case`, `fills`, `cut_flag`; conditional records)
   and the prompt rules of §5.
+- `templates/prompts/locate-worker-system.md.tmpl`: the judgment rules' line of the list of what
+  the gate refuses (its locate and challenge part, `{{#unless is_inventory}}`), in the rules-3
+  words; no other package edits the file.
 - `workflows/locate-label.workflow.js`: the shared rules block (PD9's line, §5's prompt rules) and
   the label mode's `conjunct_relation` per part — not the inventory mode, which is cut's.
 - `scripts/cflib/vocab.py`: `derive_status(…, status_rule=…)` (§2.3), and at the flip
@@ -629,10 +632,10 @@ record set.
   (§1.5, §2.1, §2.5, `fills`, conditional verdicts, `cut_flag` counts — every new count key only
   under status rule 2), `scripts/locate/records.py` (the keys restated, `coverage_ext` of status
   rule 2), `scripts/locate/export.py` (`/2`, §2.4).
-- *tests/data/locate/status-parity-2.json*.
+- `tests/data/locate/status-parity-2.json`.
 - docs: `references/locate-documents.md` §6 and §10; `references/vocabulary.md` §1.11's derived
   status, coverage claim, challenge verdicts and judgment-rule lines (PD9, the prompt rules).
-- tests: new *tests/test_locate_bundle_status.py* and *tests/test_locate_fm_fixes.py*, and the
+- tests: new `tests/test_locate_bundle_status.py` and `tests/test_locate_fm_fixes.py`, and the
   word-for-word checks in `tests/test_locate_judgment.py` for PD9 and the new lines.
 
 **carry** — the keys' consumers, the carry-over map and the bench.
@@ -657,6 +660,7 @@ record set.
 | `references/locate-documents.md` | §2 | §3, §4, §9 | §6, §10 | a new §12 |
 | `docs/design/stage_map.md` §4.0 | — | the versioned-rules sentence (at the flip) | — | the L6 row |
 | `workflows/locate-label.workflow.js` | the inventory mode | — | the shared rules block, the label mode | — |
+| `templates/prompts/locate-worker-system.md.tmpl` | — | — | the judgment rules' line of the gate list | — |
 | `tests/test_locate_judgment.py` | — | the version pins (at the flip) | the word-for-word checks | — |
 | `tests/e2e/locate_synthetic/driver.py` | — | the documents' new shapes, and a carry step between two inventories (at the flip) | — | — |
 | `CHANGELOG.md` | one bullet | one bullet, and the flip's | one bullet | one bullet |
@@ -701,7 +705,7 @@ in WikiLean). These are the follow-ups, each needed only once a set of status ru
    coverage claim with `relation`, `conjuncts` and `bundle_key` (§2.4). Keep `/1` as it is.
 2. **The status.** In the derivation the atlas builder checks parity with, read a status-2
    claim's `relation` as the stand-in's relation (§2.3), and run
-   *tests/data/locate/status-parity-2.json* beside the round-3 table, which stays the test of
+   `tests/data/locate/status-parity-2.json` beside the round-3 table, which stays the test of
    `/1` sets.
 3. **Verdicts** (the revised 0015): key a verdict by `pair_key` beside `location_key`; it then
    survives every re-cut and revision that leaves its passage's text alone. Show one whose
