@@ -432,6 +432,7 @@
     "passages": [
      {
       "carries": false,
+      "carries_unread": true,
       "conjuncts_changed": true,
       "fate": "unchanged",
       "into": [
@@ -441,7 +442,8 @@
       "scope_changed": false
      },
      {
-      "carries": false,
+      "carries": true,
+      "carries_unread": true,
       "conjuncts_changed": false,
       "fate": "unchanged",
       "into": [
@@ -556,12 +558,115 @@
     ]
    },
    "pageid": 1005
+  },
+  {
+   "expected": {
+    "counts": {
+     "unchanged": 2
+    },
+    "new_passages": [],
+    "passages": [
+     {
+      "carries": false,
+      "carries_unread": false,
+      "conjuncts_changed": false,
+      "fate": "unchanged",
+      "into": [
+       "In-text #00003001"
+      ],
+      "item": "In-text #00003001",
+      "scope_changed": true
+     },
+     {
+      "carries": true,
+      "carries_unread": true,
+      "conjuncts_changed": false,
+      "fate": "unchanged",
+      "into": [
+       "In-text #00003002"
+      ],
+      "item": "In-text #00003002",
+      "scope_changed": false
+     }
+    ],
+    "same_layer": true
+   },
+   "name": "the same text, scoped expository by the new cut, and a compound statement with the same conjuncts",
+   "new": {
+    "layer": "Tame widgets are rigid. A widget is tame exactly when it is rigid.",
+    "passages": [
+     {
+      "item": "In-text #00003001",
+      "scope": "expository",
+      "span": [
+       0,
+       23
+      ],
+      "text": "Tame widgets are rigid."
+     },
+     {
+      "conjuncts": [
+       {
+        "id": "c1",
+        "text": "a tame widget is rigid"
+       },
+       {
+        "id": "c2",
+        "text": "a rigid widget is tame"
+       }
+      ],
+      "item": "In-text #00003002",
+      "scope": "formal_math",
+      "shape": "iff",
+      "span": [
+       24,
+       66
+      ],
+      "text": "A widget is tame exactly when it is rigid."
+     }
+    ]
+   },
+   "old": {
+    "layer": "Tame widgets are rigid. A widget is tame exactly when it is rigid.",
+    "passages": [
+     {
+      "item": "In-text #00003001",
+      "scope": "formal_math",
+      "span": [
+       0,
+       23
+      ],
+      "text": "Tame widgets are rigid."
+     },
+     {
+      "conjuncts": [
+       {
+        "id": "c1",
+        "text": "a tame widget is rigid"
+       },
+       {
+        "id": "c2",
+        "text": "a rigid widget is tame"
+       }
+      ],
+      "item": "In-text #00003002",
+      "scope": "formal_math",
+      "shape": "iff",
+      "span": [
+       24,
+       66
+      ],
+      "text": "A widget is tame exactly when it is rigid."
+     }
+    ]
+   },
+   "pageid": 1006
   }
  ],
  "fields": {
   "expected.counts": "the page's counts: each fate, and new",
   "expected.new_passages": "the items of the new passages no old passage went into (fate new), in span order",
-  "expected.passages": "every old passage in span order: its fate (cflib.vocab.CARRY_FATES) and the items of the new passages it went into, in span order; scope_changed, conjuncts_changed and carries (locate.carry.carries: a pair verdict carries) where a case pins them",
+  "expected.passages": "every old passage in span order: its fate (cflib.vocab.CARRY_FATES) and the items of the new passages it went into, in span order; scope_changed, conjuncts_changed, carries and carries_unread where a case pins them: carries is locate.carry.carries, whether a pair verdict, label or known answer that read the conjuncts carries (the passage unchanged, the new passage formal_math, conjuncts_changed false), and carries_unread the same for one that read no conjunct (carries(entry, reads_conjuncts=False): the conjunct test left out)",
   "expected.refused": "a page the map refuses: the reason starts with this text",
   "old, new": "{layer, passages}: the layer text (its layer_sha256 is sha256 of its UTF-8, so two cuts with equal layers are on one layer) and the inventory passages, each {item, span, text, scope, conjuncts?, shape?}; text is layer[span] and only a check",
   "pageid": "the page both cuts are of"

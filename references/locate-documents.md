@@ -2240,8 +2240,10 @@ a key does not (an end that moved), and the reverse.
 
 The fates are `cflib.vocab.CARRY_FATES` and `CARRY_NEW`. A page is also refused when a
 document's `layer_sha256` is not the sha of the layer the sourceset holds for its source (its
-spans are offsets into one layer), when a document is unresolved, when a run holds two sources of
-the page, or when a span is not inside its layer; each refusal names its reason.
+spans are offsets into one layer), when the sourceset is missing a rendered view of the source or
+holds one that cannot be read (named by the exception's type, never by a path), when a document
+is unresolved, when a run holds two sources of the page, or when a span is not inside its layer;
+each refusal names its reason.
 
 ```json
 {"schema": "cf-locate-carry/1",
@@ -2256,12 +2258,15 @@ the page, or when a span is not inside its layer; each refusal names its reason.
     "passages": [
       {"passage_key": "<old key>", "item": "In-text #0000c0de", "span": [120, 380],
        "scope": "formal_math", "fate": "split",
-       "into": [{"passage_key": "<new key>", "item": "In-text #0000c0de", "span": [120, 241]},
-                {"passage_key": "<new key>", "item": "In-text #0000a11d", "span": [243, 380]}],
+       "into": [{"passage_key": "<new key>", "item": "In-text #0000c0de", "span": [120, 241],
+                 "scope": "formal_math"},
+                {"passage_key": "<new key>", "item": "In-text #0000a11d", "span": [243, 380],
+                 "scope": "formal_math"}],
        "scope_changed": false, "conjuncts_changed": true},
       {"passage_key": "<key>", "item": "In-text #0000f00d", "span": [400, 466],
        "scope": "formal_math", "fate": "unchanged",
-       "into": [{"passage_key": "<the same key>", "item": "In-text #0000f00d", "span": [400, 466]}],
+       "into": [{"passage_key": "<the same key>", "item": "In-text #0000f00d", "span": [400, 466],
+                 "scope": "formal_math"}],
        "scope_changed": false, "conjuncts_changed": false},
       {"passage_key": "<key>", "item": "In-text #0000d00d", "span": [470, 498],
        "scope": "expository", "fate": "removed", "into": [],
@@ -2279,7 +2284,7 @@ the page, or when a span is not inside its layer; each refusal names its reason.
 | `old`, `new` | each run, with the `span_end_rule` and `statement_cut_rule` its `gate.json` names (0: it names none, as a run planned before the rule) — what the cut was made under |
 | `sources` | the `--source` ids, sorted, or null for every page |
 | `pages[].old`, `.new` | the source each cut read, its layer sha and the cut's `cut_id` |
-| `pages[].passages` | every passage of the old cut, by span: its key, item, span and scope as the old document has them, its `fate`, and `into` the new passages it went into, by span (one for `unchanged`, the same key; none for `removed` and `changed`) |
+| `pages[].passages` | every passage of the old cut, by span: its key, item, span and scope as the old document has them, its `fate`, and `into` the new passages it went into, by span, each with its key, item, span and the scope the new cut gave it (one for `unchanged`, the same key; none for `removed` and `changed`) |
 | `scope_changed`, `conjuncts_changed` | whether a passage of `into` has another `scope`, or another conjunct list (the sha256 of the canonical JSON of its `conjuncts`, `[]` for a simple statement, differs); null when `into` is empty |
 | `pages[].new_passages` | the new passages of fate `new`, by span, with their scope |
 | `counts` | each fate (and `new`) that occurs, per page and summed, and `pages`, the pages mapped |
@@ -2291,23 +2296,35 @@ each with a `passage_key` of the old cut — known answers, a verdict export, an
 passage — in its order to `--rows-out`, one canonical JSON object a line, each row gaining
 `carry` (`{fate, into, scope_changed, conjuncts_changed}` of its old passage, or null when no
 mapped old passage has the key) and `carried`. The map's own entries give each old item's key. A
-row without a 64-hex `passage_key`, a `--rows-out` inside the skill repo or naming the `--rows`
-file itself, are refused before anything is written; a row's other keys are kept as written.
+line ends at `\n` only, so a U+2028, U+2029 or U+0085 that JSON holds unescaped inside a string
+is read as written and written back so. A row may say `"reads_conjuncts": false` — it read no
+conjunct — and the conjunct test below is then left out for it; any other value than a boolean
+is refused, and a row without the key is held to the test. A row without a 64-hex `passage_key`,
+a file that is not UTF-8, and a `--rows-out` inside the skill repo, naming the `--rows` file
+itself, naming a directory or under a path that is a file, are refused before anything is
+written; a row's other keys are kept as written.
 
-**What carries** (`docs/proposals/statement-cut.md` §4.4; `locate.carry.carries`): a pair
-verdict, label or known answer on an old passage carries when the passage is `unchanged`, was
-and still is `formal_math` (`scope` `formal_math`, `scope_changed` false), and its conjuncts are
-the same (`conjuncts_changed` false). A row does not say whether it read the conjuncts, so the
-conjunct test is applied to every row; a consumer that knows a row read none may carry it on the
-first two tests from `carry`. A key built on the passage key — `pair_key`, `bundle_key` — is
-unchanged exactly when the passage is, so a verdict keyed by one carries with no lookup.
-Everything else is asked again, the old verdict shown as one on an earlier cut; a status is never
-carried, only derived again. Bench gold is carried by `cf bench carry` over the same map
-(`references/locate-bench.md` §7).
+**What carries** (`docs/proposals/statement-cut.md` §4.4; `locate.carry.carries(entry, *,
+reads_conjuncts=True)`): a pair verdict, label or known answer on an old passage carries when the
+passage is `unchanged`, the new passage (its one `into`) is `formal_math`, and — for anything
+that read the conjuncts — `conjuncts_changed` is false. The old scope is no test: the same text,
+scoped `expository` by the old cut and `formal_math` by the new one, carries what was said of it.
+A bundle verdict read the conjuncts, and so did each of its parts' pair verdicts; a row that
+cannot say is held to the conjunct test. A key built on the passage key is necessary for a carry
+and not enough: `pair_key` is unchanged exactly when the passage key and the declaration are,
+which says nothing of the conjuncts, and `bundle_key` is unchanged exactly when the passage key
+and every part's pair key are. So a consumer that keys a verdict by `pair_key` or `bundle_key`
+carries it on that key alone only when the verdict read no conjunct; one that read them (every
+bundle verdict, every bundle part's pair verdict) also needs `conjuncts_changed` false from this
+map, or the conjuncts of the two cuts compared. Everything else is asked again, the old verdict
+shown as one on an earlier cut; a status is never carried, only derived again. Bench gold is
+carried by `cf bench carry` over the same map (`references/locate-bench.md` §7).
 
 **The parity table.** `tests/data/locate/carry-parity.json` (`cf-locate-carry-parity/1`) holds
 hand-written cases — two layers, the old and the new passages, the expected fate of each old
-passage, the items it went into and the new passages — covering every fate, a new revision, a
-scope and a conjunct change and a refused page, with a passage-key test vector. A consumer that
+passage, the items it went into and the new passages, and where a case pins them `carries` (a
+row that read the conjuncts) and `carries_unread` (one that read none) — covering every fate, a
+new revision, scope changes both ways, a conjunct change and a refused page, with a passage-key
+test vector. A consumer that
 ports the map (`docs/proposals/statement-cut.md` §8) runs the same cases; `tests/test_locate_carry.py`
 runs them against `locate.carry.map_page`.
