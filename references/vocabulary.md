@@ -544,6 +544,37 @@ A bridge lemma named in a `broadMatch`'s `instantiation` cannot be told from the
 hypotheses the line names by right (`Fact p.Prime`, a ring instance, the declaration's own
 name), and a `hasPart` naming every claim outside a coverage claim may be a weakening credited
 with its clause or a claim list too coarse to show the part, so neither is refused.
+Under judgment rules 3 (`RULES_STATEMENT_CUT`, the statement cut below; bound by a gate.json
+that names it, and none is planned before the proposal's flip) the claim list is the
+inventory's: R4 is checked against the frozen passage's conjunct ids (or `c1`), and no locate
+or challenge document writes `claims`. Mechanically, then: a `hasPart` of a compound statement
+gives its `conjunct_relation` (a `closeMatch` part its convention) and nothing else does; a
+coverage claim is a bundle — on a compound statement only, its parts' clauses partitioning the
+conjuncts, none naming them all, each part's `conjunct_relation` strong — and a compound
+statement whose strong parts partition its conjuncts without one is refused (the audit's fix
+4a); every strong location writes its two `tests` and an `instantiation`, and is refused when
+the passage speaks of integers (`NAT_FOR_INT_INTEGER_WORDS`: "integer", "integers", `ℤ`) and
+every number-typed binder of the declaration is ℕ, unless its note names ℕ or the naturals
+(`NAT_FOR_INT_NATURAL_WORDS`: `ℕ`, "natural*"; a word whole, as the phrase lists read it, a
+symbol anywhere); the generality words are `CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`; a
+`hasPart` part is held to all of these by its `conjunct_relation`, so a part whose
+`conjunct_relation` is strong is a strong location (the bundle takes its weakest part's
+relation); an absence, an uphold and an absent fill name their nearest `special_case`, and an
+absent fill accepts no candidate; a `cut_flag` sits on an unresolved passage only; a
+challenger's bundle confirm gives `part_relations` no stronger than each part's own, and stands
+beside no verdict of its document whose `clauses` give one part every conjunct (PD6); a bundle
+refute gives `unstated` and a reason for every part, a verdict that keeps or leaves a strong
+relation — a part's by the `conjunct_relation` it leaves — its own `tests`, a document that
+leaves a located passage with no counting location its `fills`, and a prominence sample's
+conditional records are judged exactly beside an overturn of their passage to subject or
+central (`REFUTE_BY_DEFAULT_PROMINENCE`). Gate rule 10 (`statement_cut_rule`, with
+`span_end_rule` 2) holds the
+inventory's cut: disjoint spans, one text one passage; no run from one block into the next but
+inside a theorem box, into the displays a sentence introduces, or over the items of one list of
+a compound statement; no end inside a formula; conjuncts none or 2–5 of a closed shape, on a
+`formal_math` passage; a passage scoped out `supporting`. What one statement is, where a
+sentence is cut, chains, proofs and PD9's stated reasons stay judgment: rule 10 counts each
+formal passage's sentences and displays into the harvest receipt and refuses nothing on them.
 
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
@@ -697,9 +728,11 @@ among them.
 compound statement's conjuncts are the inventory's, cited by locate and the challenge; a
 coverage claim is a **bundle**, allowed only on a compound statement, whose relation is its
 weakest part's; and a re-cut is a routine, versioned operation with a carry-over map. Its names
-are defined in `cflib.vocab`'s statement-cut block and `cflib.hashing`, and **nothing reads them
-until the proposal's flip** (its §7): until then no planner writes the versions below, and every
-run is planned, gated, tallied and exported as before. The proposal's §1–§5 are normative for the
+are defined in `cflib.vocab`'s statement-cut block and `cflib.hashing`, and **nothing binds a run
+until the proposal's flip** (its §7): the gate and the planner read them, but each rule binds only
+a run whose gate.json or `run.yaml` names its version, no planner writes one before the flip, and
+so every run is planned, gated, tallied and exported as before. The proposal's §1–§5 are
+normative for the
 packages that build it; each package extends this paragraph in its own section (§6 of the
 proposal says which).
 

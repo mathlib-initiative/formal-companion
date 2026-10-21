@@ -38,6 +38,7 @@ from typing import Any, Iterable
 
 from cflib import hashing, vocab
 from cflib.errors import CfError
+from cflib.jsonio import read_json
 from cflib.paths import WorkspacePaths, skill_root, templates_dir
 
 from plan.make_tasks import tend_priority
@@ -340,14 +341,109 @@ def frozen_inventory(paths: WorkspacePaths, inventory_run: str, manifest: Manife
     return by_source, left_out
 
 
+# --------------------------------------------------------------------------
+# the rule versions a run planned now names (docs/proposals/statement-cut.md 2.2)
+# --------------------------------------------------------------------------
+
+#: what a passage of a frozen inventory adds to a locate task's manifest under the
+#: statement cut (the proposal's section 1.2): its context, and a compound statement's
+#: conjuncts and shape, the clause ids its locate and challenge documents cite
+CUT_PASSAGE_KEYS = ("statement", "conjuncts", "shape")
+#: what a challenge record adds to its task's manifest under the statement cut: the
+#: same three, and ``conditional`` (a prominence sample's other records, anomaly A3)
+CUT_RECORD_KEYS = (*CUT_PASSAGE_KEYS, "conditional")
+
+
+def statement_cut_planned() -> bool:
+    """Whether a run planned now is planned under the statement cut (the proposal's flip).
+
+    From the flip on ``vocab.JUDGMENT_RULES`` is ``RULES_STATEMENT_CUT``: the
+    manifests carry the inventory's conjuncts, ``run.yaml`` names the status rule,
+    and a plan over an inventory or locate run of the earlier flow is refused.
+    Before it the planner plans as it always did.
+    """
+    return vocab.JUDGMENT_RULES >= vocab.RULES_STATEMENT_CUT
+
+
+def rule_versions() -> dict[str, int]:
+    """The versioned gate rules a gate.json planned now names, in every mode.
+
+    ``judgment_rules`` (rule 9) and ``span_end_rule`` (rule 2's end check) as
+    ever, and ``statement_cut_rule`` (rule 10) once the span-end rule is the
+    statement cut's, which rule 10's disjointness rests on: a gate.json naming
+    the cut with an earlier end rule is one the gate refuses to run.
+    """
+    versions = {"judgment_rules": vocab.JUDGMENT_RULES, "span_end_rule": vocab.SPAN_END_RULE}
+    if vocab.SPAN_END_RULE >= vocab.SPAN_END_STATEMENT_CUT:
+        versions["statement_cut_rule"] = vocab.STATEMENT_CUT_RULE
+    return versions
+
+
+def status_rule() -> int | None:
+    """The status rule a locate run planned now records (``run.yaml`` ``locate.status_rule``).
+
+    ``vocab.STATUS_RULE`` exactly when the run is judged under the statement cut's
+    rules -- only such a run writes conjunct relations, so only its bundles have a
+    relation to take -- and None (the key left out, status rule 1) before.
+    """
+    return vocab.STATUS_RULE if statement_cut_planned() else None
+
+
+def _gate_version(paths: WorkspacePaths, run_id: str, key: str) -> int:
+    """A planned run's version of one gate rule, from its gate.json (0 when it names none)."""
+    path = paths.gate_json(run_id)
+    try:
+        data = read_json(path) if path.is_file() else {}
+    except (OSError, ValueError):
+        data = {}
+    value = data.get(key) if isinstance(data, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def check_cut_inputs(paths: WorkspacePaths, mode: str, *, inventory_run: str | None,
+                     challenged_runs: Iterable[str]) -> None:
+    """Refuse a plan under the statement cut over runs of the earlier flow (section 2.2).
+
+    Judgment rules 3 read the inventory's conjuncts, so a locate plan needs an
+    inventory planned under the statement-cut rule; and a challenge of a locate
+    run whose documents carry their own claim lists (judgment rules below 3) has
+    no conjunct ids to judge against.  Neither touches a planned run: old runs are
+    re-gated, tallied and exported by their own keys.  Before the flip nothing is
+    refused here.
+    """
+    if not statement_cut_planned():
+        return
+    if mode == vocab.LOCATE and inventory_run and \
+            not _gate_version(paths, inventory_run, "statement_cut_rule"):
+        raise CfError(f"inventory run {inventory_run} was planned before the statement cut (its "
+                      f"gate.json names no statement_cut_rule), and a locate run planned now "
+                      f"cites the inventory's conjuncts",
+                      hint="inventory the sources again (cf plan-locate --preset "
+                           "locate-inventory) and locate over that run")
+    if mode == vocab.LOCATE_CHALLENGE:
+        for run_id in challenged_runs:
+            rules = _gate_version(paths, run_id, "judgment_rules")
+            if rules < vocab.RULES_STATEMENT_CUT:
+                raise CfError(f"locate run {run_id} was judged under judgment rules {rules}, "
+                              f"whose documents write their own claim lists, and a challenge "
+                              f"planned now judges against the inventory's conjunct ids",
+                              hint="challenge a locate run planned under the statement cut "
+                                   f"(judgment rules {vocab.RULES_STATEMENT_CUT})")
+
+
 def _passage_row(p: dict) -> dict:
     """A frozen passage as the worker finds it: its id and layer span, and where to read
     it -- the reading-copy ``text_span``, the ``section`` and the inventory's ``quote``
-    (already capped by the inventory's gate; the layer holds it anyway)."""
-    return {"item": p["item"], "span": list(p["span"]), "head_words": p.get("head_words"),
-            "prominence": p.get("prominence"), "passage_kind": p.get("passage_kind"),
-            "text_span": p.get("text_span"), "section": p.get("section"),
-            "quote": p.get("quote")}
+    (already capped by the inventory's gate; the layer holds it anyway).  Under the
+    statement cut it also carries the inventory's ``statement`` and a compound
+    statement's ``conjuncts`` and ``shape`` (:data:`CUT_PASSAGE_KEYS`)."""
+    row = {"item": p["item"], "span": list(p["span"]), "head_words": p.get("head_words"),
+           "prominence": p.get("prominence"), "passage_kind": p.get("passage_kind"),
+           "text_span": p.get("text_span"), "section": p.get("section"),
+           "quote": p.get("quote")}
+    if statement_cut_planned():
+        row.update({k: p[k] for k in CUT_PASSAGE_KEYS if p.get(k) is not None})
+    return row
 
 
 def _curated_rows(curated: dict[str, list[dict]] | None, sid: str) -> list[dict]:
@@ -432,6 +528,8 @@ def challenge_tasks(manifest: Manifest, built: dict,
             "library", "declaration", "relation", "rank", "outcome", "prominence", "scope",
             "passage_kind", "run_id", "parts", "note", "claims", "passage_locations",
             *vocab.JUDGMENT_LOCATION_FIELDS)
+    if statement_cut_planned():
+        keep = (*keep, *CUT_RECORD_KEYS)
     for number, batch in enumerate(built["batches"], 1):
         docs: list[dict] = []
         for rec in batch:
@@ -620,16 +718,17 @@ def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict
         "orchestrator_db": layout["orchestrator_db"],
         "max_locations": vocab.MAX_LOCATIONS_PER_PASSAGE,
         "min_absence_queries": vocab.MIN_ABSENCE_QUERIES,
-        # rule 9 binds the runs planned with this code; a gate.json without the key is
-        # a run planned before the judgment rules, gated as it always was
-        "judgment_rules": vocab.JUDGMENT_RULES,
-        # rule 2's end check binds the inventories of the runs planned with this code
-        # (their passage_ids.py keeps `until`); a gate.json without the key is a run
-        # planned before it, whose ends are held inside the layer and after the quote
-        # only.  A locate or challenge document has no span of its own to check: the
+        # rule 9 binds the runs planned with this code (judgment_rules); a gate.json
+        # without the key is a run planned before the judgment rules, gated as it always
+        # was.  Rule 2's end check binds the inventories of the runs planned with this code
+        # (span_end_rule: their passage_ids.py keeps `until`); a gate.json without the key
+        # is a run planned before it, whose ends are held inside the layer and after the
+        # quote only.  A locate or challenge document has no span of its own to check: the
         # gate reads each passage's span from the task manifest, so a locate run that
-        # reuses an older inventory plans and gates as before, whatever its ends are
-        "span_end_rule": vocab.SPAN_END_RULE,
+        # reuses an older inventory plans and gates as before, whatever its ends are.
+        # Rule 10 (statement_cut_rule) binds from the statement cut's flip on, and no run
+        # planned before it (rule_versions)
+        **rule_versions(),
         "vendor": vendor_shas(),
     }
 

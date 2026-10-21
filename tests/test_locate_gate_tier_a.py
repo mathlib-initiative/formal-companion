@@ -325,7 +325,11 @@ class TestTheSpanEndBindsTheRunsPlannedUnderIt(tvl.GateTestCase):
         self.assertOk(fx.run(fx.document(task, tvl.locate_body())))
 
     def test_a_gate_json_naming_a_newer_rule_cannot_run(self):
-        for value, needle in ((vocab.SPAN_END_RULE + 1, "this gate knows"),
+        # the gate knows the statement cut's span-end rule 2 before the planner writes it
+        # (docs/proposals/statement-cut.md section 7: the flip)
+        self.assertEqual(vl.KNOWN_SPAN_END_RULE,
+                         max(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT))
+        for value, needle in ((vl.KNOWN_SPAN_END_RULE + 1, "this gate knows"),
                               ("1", "not a version number"), (-1, "not a version number"),
                               (True, "not a version number")):
             self.rule(value)
