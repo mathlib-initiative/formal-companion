@@ -861,14 +861,21 @@ proposal says which).
 | a part's `conjunct_relation` | `CONJUNCT_RELATIONS`: `exactMatch` · `closeMatch` · `broadMatch` · `narrowMatch`, judged against the conjunct; a bundle's relation is one of `BUNDLE_RELATIONS` (the strong ones), its weakest part's |
 | a strong location's `tests` | `TWO_WAY_TEST_KEYS`: `r2` (how the passage follows from the declaration) · `r3` (why the declaration needs nothing more at the passage's objects) |
 | `CUT_FLAGS` | `not_a_statement` · `several_statements`: why a locate worker ends a passage unresolved because of its cut; `not_a_statement` is also the consumer's ballot flag, which no stage here writes |
-| `CARRY_FATES` | `unchanged` · `end_moved` · `split` · `merged` · `reshaped` · `removed` · `changed`, and `new` (`CARRY_NEW`) for a new passage that overlaps no old one; only `unchanged` carries a verdict, a gold label or a known answer |
+| `CARRY_FATES` | what a re-cut does to a passage of the old cut, by the carry-over map (`cf locate carry`, `references/locate-documents.md` §12), from spans and span text only: `unchanged` (a new passage has its passage key: the same text on the same page) · `changed` (not unchanged, and the new layer does not hold its text exactly once, so it is never placed) · placed on the new layer and overlapped by no new passage, `removed` · by two or more, `split` · by one starting where it starts, `end_moved` · by one starting before it and holding the whole of it, `merged` · by one otherwise, `reshaped`; and `new` (`CARRY_NEW`) for a new passage no old one went into. Only `unchanged` carries: a pair verdict, a label or a known answer on a passage whose new passage is `formal_math`, with the same conjuncts when it read them (`locate.carry.carries`), and a gold row whose passages, every one over its span, are unchanged and still the passages there, while the labeler version is the same (`GOLD_CARRY_STATES`); everything else is asked again, and a status is derived again, never carried |
+| `GOLD_CARRY_STATES` | what a re-cut does to a frozen gold row (`cf bench carry`, `references/locate-bench.md` §7), the old cut on the layer the gold is labelled on: `carried` (the new cut is on that layer too, and the passages over the row's span are its old ones, unchanged, at the same spans: its labels stand) · `reanchor` (the same on another layer, a new revision or rendering whose text over the span is unchanged: its labels stand and its span moves to the report's `anchor`) · `relabel` (anything else, and every row across a labeler bump); a row without a span is counted apart |
 
 The keys (`cflib.hashing`, each one definition): `span_sha256` is the sha256 of the passage's
 layer text; `passage_key` is sha256 of `<pageid>\n<span_sha256>`; `pair_key` of
 `<passage_key>\n<repository>\n<declaration>`, the repository the lean end's `uri`; `bundle_key`
 of the passage key and its parts' pair keys, sorted, one per line; `cut_id` of the canonical JSON
 of a page's pageid, layer sha and sorted spans. None holds a revision, a commit, a run or an
-item, so a key changes only when what it names does.
+item, so a key changes only when what it names does. The carry-over map keys every passage of
+both cuts by `passage_key` and names each cut by its `cut_id`; two passages of one cut with one
+key refuse their page there. A `pair_key` is unchanged exactly when its passage key and its
+declaration are, and a `bundle_key` exactly when its passage key and every part's pair key are;
+neither says anything of the conjuncts, so an unchanged key carries a verdict on its own only when
+the verdict read no conjunct, and one that read them (a bundle's, a bundle part's) also needs the
+map's `conjuncts_changed` false.
 
 **How the inventory cuts** (the proposal's §3.4; `templates/prompts/locate-inventory.md.tmpl`
 and the inventory mode of the bench's labeler, `workflows/locate-label.workflow.js`, carry these

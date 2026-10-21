@@ -88,9 +88,17 @@ TOOLS_FULL, TOOLS_BLIND, TOOLS_PLANTED = (vocab.TOOLS_DB_FULL, vocab.TOOLS_DB_BL
 STAGES = ("inventory", "locate", "challenge")
 
 
+#: the modules of ``scripts/bench/`` that compute no score and so are no part of the
+#: scorer's identity: ``carry`` says which gold rows a re-cut carries
+#: (docs/proposals/statement-cut.md section 4.4), and an edit to it changes no score
+NOT_SCORING = frozenset({"carry.py"})
+
+
 def scorer() -> dict:
-    """The scorer's own identity: a sha over ``scripts/bench/*.py``, names and bytes."""
-    files = sorted((skill_root() / "scripts" / "bench").glob("*.py"))
+    """The scorer's own identity: a sha over ``scripts/bench/*.py`` but
+    :data:`NOT_SCORING`, names and bytes."""
+    files = sorted(p for p in (skill_root() / "scripts" / "bench").glob("*.py")
+                   if p.name not in NOT_SCORING)
     parts = [(p.name, inputs.sha256_file(p)) for p in files]
     return {"sha256": sha_of(parts), "files": len(parts)}
 

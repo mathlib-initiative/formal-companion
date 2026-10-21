@@ -35,6 +35,8 @@ SCORE_SCHEMA = "cf-bench-score/1"
 LEDGER_SCHEMA = "cf-bench-ledger/1"
 SPEND_SCHEMA = "cf-bench-spend/1"
 ABLATION_SCHEMA = "cf-bench-ablation/1"
+#: which gold rows a re-cut carries and which it relabels (``cf bench carry``)
+BENCH_CARRY_SCHEMA = "cf-bench-carry/1"
 #: the document `cf bench compare <id> <baseline> --aa <r> --json` prints (never a file)
 AA_SCHEMA = "cf-bench-aa/1"
 LABEL_ARGS_SCHEMA = "cf-locate-label-args-v1"
@@ -120,6 +122,12 @@ class BenchLayout:
     @property
     def planted_dir(self) -> Path:
         return self.gold_dir / "planted"
+
+    def gold_carry_json(self, version: int) -> Path:
+        """What a re-cut does to gold manifest version ``version`` (``cf bench carry``)."""
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise CfError(f"a gold manifest version is a positive integer, not {version!r}")
+        return self.gold_dir / f"carry-{version}.json"
 
     @property
     def ablation_json(self) -> Path:

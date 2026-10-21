@@ -5,8 +5,10 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 2.6, 2.7,
 references/locate-documents.md: the L2 candidates (``candidates``), the
 sourceset-scoped planner and its three presets (``presets``, ``plan``,
 ``challenge_plan``, ``prompts``, ``tend_root``), the harvest of locate
-documents into passage outcomes with a derived status (``outcomes``), and the
-Literature Links export with its sealed record set (``records``, ``export``).
+documents into passage outcomes with a derived status (``outcomes``), the
+Literature Links export with its sealed record set (``records``, ``export``), and
+the carry-over map between two inventory runs' cuts (``carry``,
+docs/proposals/statement-cut.md section 4).
 
 ``inputs`` is the planner's view of the formats other packages write, through
 their owners (the sourceset of section 7, the universe and ``corpus.sqlite`` of
