@@ -127,17 +127,33 @@ is enough.
   its quote; else, under **version 2** (the statement cut's,
   `docs/proposals/statement-cut.md` §3.2), the earlier of its **extent** and the
   start of the document's next passage (the quote's end when no block holds the
-  start); and never before the end of its quote. The extent
+  start), the **separator** before that start left out of both passages when
+  it is the earlier (whitespace, one connective of `CUT_CONNECTIVES` as a whole
+  word, `, and` only after its comma, and a comma or semicolon, read back from
+  the next start and never inside a formula:
+  `locate_text.Blocks.separator_start`), so a statement ends where an `until` at its last word
+  would end it and keeps one `passage_key` whether or not its neighbour is a
+  passage; and never before the end of its quote. The extent
   (`locate_text.Blocks.extent`, the proposal's §3.1) is the end of the outermost
   block the passage starts in when that block is a theorem box (or shares its
   span with one, as a box holding one paragraph does), and otherwise the end of
   that block followed by the display blocks its last sentence introduces: while
   the last block's last character — a trailing formula read as the last
   character of its normalised alttext after TeX spacing (`\,` `\;` `\:` `\!`
-  `\quad` `\qquad` `~`) and a `\right.` null delimiter — is none of `.`, `!`,
-  `?`, and the next block (the first one no other block holds, after only
-  whitespace) holds a formula and no letter outside its formulas, that block
-  joins. Version 2 places every passage before it ends any, so no passage needs
+  `\quad` `\qquad` `~`), a `\right.` null delimiter, a `\\` line break, an
+  `\end{…}` closer and closing braces (`locate_text.formula_stop`), and closing
+  brackets and quotes after a full stop read through to it — is none of `.`,
+  `!`, `?` (a formula's `!` is a factorial and no stop:
+  `locate_text.FORMULA_STOPS`), and the next block (the first one no other block holds, after only
+  whitespace) holds a formula and no letter outside its formulas and is no
+  `li` (a list item is a unit of its own), that block joins. The outermost
+  block is the bound, as version 1's is: inside a `blockquote`, a `dd` or an
+  `li` that holds other blocks, a passage that no later start ends runs to the
+  container's end unless its `until` ends it sooner (the inventory prompt
+  says to give one there); a compound statement that starts in a nested item
+  runs over its parent's run of items; and `paragraphs.json` does not say
+  where a list ends, so two lists with nothing between them are one run of
+  items. Version 2 places every passage before it ends any, so no passage needs
   an `until` to stop where the next one begins, and two passages of one
   paragraph never nest. The export carries the span, so the end is the
   extent a reader highlights, and any other end is refused under rule 2: an
@@ -168,8 +184,9 @@ is enough.
   `conjuncts`, absent on a simple statement (never `[]` and never `null`), else
   2 to 5 objects with exactly the keys `id` and `text`, the ids `c1`, `c2`, … in
   order with no gap, each `text` one line of at most 300 characters in the
-  worker's own words with no more than twelve consecutive words of the source
-  (a bundle's conjuncts are exported); and `shape`, present exactly when
+  worker's own words with no more than twelve consecutive words of the source,
+  alone or read one after the other, the claim rules
+  `verify_locate.check_claims` holds (a bundle's conjuncts are exported); and `shape`, present exactly when
   `conjuncts` is, one of `cflib.vocab.COMPOUND_SHAPES` (`existence_uniqueness`
   with exactly two conjuncts, `iff`, `cases`, `conclusions`, `equations`). Only
   a `formal_math` passage carries them. `statement` stays required and is the
@@ -180,7 +197,11 @@ is enough.
   that describes the subject rather than states it is `expository`, and
   `prominence: subject` — with it the article's QID on the passage's records —
   goes on the passage that states the theorem, which may be its theorem box.
-  Gate rule 10 then refuses, over the document: two passages whose spans share
+  Gate rule 10 (the proposal's §3.3) is *not built yet*: `verify_locate.py`
+  reads no `statement_cut_rule` and gates an inventory as before, the planner
+  writes none before the flip, and the inventory prompt describes the rule
+  only to a run planned under end rule 2 (its `span_end_statement_cut` slot). Once
+  built, it refuses, over the document: two passages whose spans share
   a character; a span that ends past its extent (`locate_text.extent`, with
   `compound` when the passage has `conjuncts`, so a compound statement may run
   over the items of one list, its run of `li` or `dd` items); a span that ends

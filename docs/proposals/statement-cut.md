@@ -318,15 +318,32 @@ All offsets are layer code points (`references/locate-documents.md` §2). The bl
   every formula token removed, holds no letter: a display, or a `dd` holding only one.
 - **introduces(B)** — B's last non-space character, reading a trailing formula token as the last
   character of its normalised alttext after TeX spacing (`\,` `\;` `\:` `\!` `\quad` `\qquad`
-  `~`) and a `\right.` null delimiter (`locate_text.formula_stop`), is none of `.`, `!`, `?`: B's
-  last sentence runs on into what follows.
-- **chain(B)** — B, then while the last block introduces and its next() is a display block, that
-  block: the displays B's last sentence introduces, which belong to it.
+  `~`), a `\right.` null delimiter, a `\\` line break, an `\end{…}` closer and a closing brace
+  that is no escaped `\}` (`locate_text.formula_stop`: `\begin{aligned}a&=b.\end{aligned}` and
+  `a=b{\text{.}}` end with a full stop), and reading closing brackets and quotes after a full stop
+  through to it (`(See the notes.)` ends with one), is none of `.`, `!`, `?` (of `.` and `?` when
+  it is a formula's: TeX writes a factorial with `!`, so `x^{n!}` ends with no stop,
+  `locate_text.FORMULA_STOPS`): B's last sentence runs on into what follows.
+- **chain(B)** — B, then while the last block introduces and its next() is a display block that is
+  no `li`, that block: the displays B's last sentence introduces, which belong to it. A list item
+  is a unit of its own (§3.4, rule 2), so a list of display items is one passage per item, or a
+  compound statement over them (list run); a `dd` is how an article indents a display, and joins.
 - **list run(B)** — when B is an `li` or a `dd`: B and the next() blocks of the same `block` after
   it.
 - **extent(s, compound)** — with B = block(s): none when B is none; B's end when B is a theorem
   box; else the end of the last block of chain(L), where L is the last block of list run(B) when
   `compound` and B is an `li` or `dd`, and B otherwise.
+
+block(x) is the outermost block, as version 1's paragraph is, so the extent is an upper bound and
+not a unit: inside a `blockquote`, a `dd` or an `li` that holds other blocks (a nested list's
+parent item), a passage that no later start ends runs to the container's end, and rule 10 (b)
+does not refuse an `until` that ends it there; the prompt's units rule is what keeps such a
+passage to its paragraph, by its `until` (the prompt's end paragraph says so). A compound
+statement that starts in a nested item runs over its parent's list run, and `paragraphs.json`
+does not say where one list ends and the next begins (the renderer is frozen), so two lists with
+nothing between them are one list run; both only widen a compound statement's bound. A false
+stop would narrow a bound, and rule 10 (b) would then refuse a right `until`, which is why a
+formula's `!` is read as no stop.
 
 ### 3.2 The end rule (`span_end_rule` 2)
 
@@ -334,7 +351,14 @@ All offsets are layer code points (`references/locate-documents.md` §2). The bl
 next_start=None, formulas=None)`. Rule 1 is today's function. Rule 2: with an `until`, the end of
 its first occurrence at or after the start (as today); without one, the earlier of
 extent(start, compound=False) (the quote's end when it is none) and `next_start`, the start of
-the document's next passage; never before the quote's end. `passage_ids.py` places every passage
+the document's next passage; never before the quote's end. When `next_start` is the earlier, the
+**separator** before it is in neither passage (`Blocks.separator_start`): read back from
+`next_start`, and again while anything is set aside, whitespace, one connective of
+`CUT_CONNECTIVES` as a whole word (`, and` only after its comma) and a comma or semicolon, never a
+character inside a formula. So "…sprockets; every…" ends its first piece after "sprockets", and a
+statement ends where an `until` at its last word ends it whether or not its neighbour — a stated
+reason PD9 makes a passage, say — is cut as a passage: one span, one `passage_key` (§4.1), across
+the re-cuts the carry-over map (§4) is for. `passage_ids.py` places every passage
 first, then ends each by the rule its run names — `span_end_rule` from the gate.json beside it (a
 staged gate directory always holds one), else its *--span-end-rule* (default 1) — so before the
 flip it writes the ends it writes today, and after it no passage needs an `until` to stop where
@@ -367,8 +391,9 @@ It refuses nothing on a passage's size. The harvest receipt's gate block gains `
 formal, compound, by_shape, sentences, displays, multi_sentence, multi_display, by_source}`:
 sentences are counted per passage (`locate_text.units`: a `.`, `!` or `?` before whitespace and
 an upper-case letter or a formula token, not after an abbreviation of
-`locate_records._ABBREVIATIONS`; a formula whose alttext ends with one, by `formula_stop`, is one
-too, and a block that starts right after one stands in for the whitespace), displays as the
+`locate_records._ABBREVIATIONS`; a formula whose alttext ends with `.` or `?`, by `formula_stop`,
+is one too, a formula's `!` being a factorial, and a block that starts right after one stands in
+for the whitespace), displays as the
 `math` blocks inside it. It reports them.
 
 ### 3.4 The prompt's rules (the inventory prompt and the labeler's inventory mode)
@@ -592,7 +617,9 @@ stage reads any of it.
 **cut** — the inventory side.
 
 - `templates/prompts/locate-inventory.md.tmpl`: §3.4, the conjuncts and shapes (from the
-  slots), `until` under the new end rule, PD9's line.
+  slots), `until` under the new end rule, PD9's line. Where a passage ends, and what rule 10
+  refuses, is said by the end rule the run's tool applies: a `span_end_statement_cut` slot
+  (`vocab.SPAN_END_RULE == SPAN_END_STATEMENT_CUT`) keeps version 1's paragraph until the flip.
 - `scripts/gate/locate_text.py`: `passage_end(…, rule=2, next_start=…, formulas=…)`,
   `extent(…)` and its helpers (§3.1), `units(…)` (§3.3); the rule-1 behaviour unchanged.
 - `scripts/locate/passage_ids.py`: the end by the run's `span_end_rule` (§3.2; rule 2 in two

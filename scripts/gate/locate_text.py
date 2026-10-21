@@ -353,7 +353,12 @@ def passage_end(layer: str, paragraphs: "Sequence[dict] | Blocks", start: int, e
       (:meth:`Blocks.extent`, ``compound=False``: its block, and the displays
       its last sentence introduces; the quote's end when no block holds the
       start) and ``next_start``, the start of the document's next passage --
-      so two passages of one paragraph never nest.
+      so two passages of one paragraph never nest.  When the next start is
+      the earlier, the separator before it is in neither passage
+      (:meth:`Blocks.separator_start`: the whitespace, a connective of
+      ``CUT_CONNECTIVES`` and a comma or semicolon), so a statement's span,
+      and with it its ``passage_key``, is the same whether the next passage
+      or an ``until`` at its last word ends it.
 
     Neither ever ends before the end of the quote.  Rule 1 reads neither
     ``next_start`` nor ``formulas``; rule 2 needs the source's ``formulas``
@@ -377,8 +382,8 @@ def passage_end(layer: str, paragraphs: "Sequence[dict] | Blocks", start: int, e
         blocks = Blocks.of(layer, paragraphs, formulas)
         stop = blocks.extent(start, compound=False)
         stop = end if stop is None else stop
-        if next_start is not None:
-            stop = min(stop, next_start)
+        if next_start is not None and next_start < stop:
+            stop = blocks.separator_start(start, next_start)
         return max(end, stop)
     if not isinstance(until, str):
         raise HeadError(f"`until` is a {type(until).__name__}, not the passage's last words")
@@ -405,32 +410,71 @@ BLOCK_MATH = "math"
 LIST_BLOCKS = ("li", "dd")
 #: what ends a sentence, and the TeX spacing a formula's alttext may end with after
 #: its last character (``\qquad`` before ``\quad``, so the longer one is read first);
-#: ``\right.`` is a null delimiter, not a full stop
+#: ``\right.`` is a null delimiter, not a full stop; a line break ``\\``, an
+#: environment's ``\end{…}`` and a closing brace (``{\text{.}}``) stand after the
+#: last character too, and are set aside the same way
 SENTENCE_STOPS = frozenset(".!?")
+#: the stops a formula's last character ends a sentence with: TeX writes a factorial
+#: with ``!`` (``n!``, ``x^{n!}``, ``\frac{1}{n!}``), so a formula's ``!`` is none.
+#: Read as one it would end a chain early, and gate rule 10 (b) would refuse the
+#: ``until`` that runs a passage over a display its sentence introduces
+FORMULA_STOPS = SENTENCE_STOPS - {"!"}
 TEX_SPACING = ("\\qquad", "\\quad", "\\,", "\\;", "\\:", "\\!", "~")
 TEX_NULL_DELIMITER = "\\right."
+TEX_LINE_BREAK = "\\\\"
+_TEX_END_ENVIRONMENT = re.compile(r"\\end\s*\{[A-Za-z]+\*?\}\Z")
+#: a closing bracket or quote a block may end with after its full stop ("(See the
+#: notes.)"): read through to the stop when it stands after one
+CLOSING_MARKS = frozenset(")]\"'\u2019\u201d\u00bb")
+#: where the inventory cuts inside a sentence (``cflib.vocab.CUT_CONNECTIVES``,
+#: restated for the gate host; a test pins the two).  The end rule's version 2 leaves
+#: the one before the next passage's start out of both passages
+CUT_CONNECTIVES = (";", "since", "because", "so", "hence", "then", "moreover", ", and")
+#: what else separates two pieces of one sentence: the comma or semicolon before a
+#: connective or the next piece
+SEPARATOR_MARKS = frozenset(",;")
 #: the words a full stop does not end a sentence after (``locate_records.
 #: _ABBREVIATIONS``, restated: that module imports this one; a test pins the two)
 ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
 
 
 def formula_stop(alttext: str) -> str:
-    """The last character of a formula's normalised alttext, its trailing TeX spacing
-    (and a trailing ``\\right.`` null delimiter) set aside; '' when nothing is left.
+    """The last character of a formula's normalised alttext, what TeX writes after it
+    set aside; '' when nothing is left.
 
-    It is what a formula that ends a block or a sentence ends it with: a display
-    ``a = b.\\,`` ends its sentence with a full stop, one ending ``,`` runs on.
+    Set aside, from the end and again until nothing more is: TeX spacing, a
+    ``\\right.`` null delimiter, a line break ``\\\\``, an environment's closer
+    ``\\end{…}`` and a closing brace that is not an escaped ``\\}``.  It is what a
+    formula that ends a block or a sentence ends it with: a display ``a = b.\\,``,
+    ``\\begin{aligned}a&=b.\\end{aligned}`` or ``a = b{\\text{.}}`` ends its
+    sentence with a full stop, one ending ``,`` runs on, and ``\\{x\\}`` ends with
+    its brace.  ``x^{n!}`` ends with ``!``, a factorial, which ends no sentence
+    (``FORMULA_STOPS``).
     """
     text = normalize_alttext(alttext)
     while True:
         before = text
         text = text.rstrip()
-        for tail in (TEX_NULL_DELIMITER, *TEX_SPACING):
-            if text.endswith(tail):
-                text = text[:-len(tail)]
-                break
+        closer = _TEX_END_ENVIRONMENT.search(text)
+        if closer is not None:
+            text = text[:closer.start()]
+        elif text.endswith("}") and not _escaped(text, len(text) - 1):
+            text = text[:-1]
+        else:
+            for tail in (TEX_NULL_DELIMITER, TEX_LINE_BREAK, *TEX_SPACING):
+                if text.endswith(tail) and not _escaped(text, len(text) - len(tail)):
+                    text = text[:-len(tail)]
+                    break
         if text == before:
             return text[-1:] if text else ""
+
+
+def _escaped(text: str, at: int) -> bool:
+    """Is the character at ``at`` escaped: an odd run of backslashes before it?"""
+    run = 0
+    while at - run - 1 >= 0 and text[at - run - 1] == "\\":
+        run += 1
+    return run % 2 == 1
 
 
 class Block:
@@ -591,33 +635,59 @@ class Blocks:
 
     def last_character(self, start: int, end: int) -> str:
         """The last non-space character of ``[start, end)``, a trailing formula read as
-        :func:`formula_stop` of its alttext; '' when there is none."""
+        :func:`formula_stop` of its alttext; '' when there is none.
+
+        Closing brackets and quotes (``CLOSING_MARKS``) after a full stop are read
+        through to it: ``(See the notes.)`` ends with its full stop, and ``(x > 0)``
+        with its bracket.
+        """
+        return self._last(start, end)[0]
+
+    def _last(self, start: int, end: int) -> tuple[str, bool]:
+        """:meth:`last_character`, and whether it is a full stop: one of
+        ``SENTENCE_STOPS`` in the text, one of ``FORMULA_STOPS`` read from a formula
+        (so ``(n!)`` ends with its bracket, the factorial being no stop)."""
         i = end - 1
+        closing = ""
         while i >= start:
             if _is_white(self.layer[i]):
                 i -= 1
                 continue
             formula = self.formula_at(i)
             if formula is None:
-                return self.layer[i]
-            stop = formula_stop(formula[2])
-            if stop:
-                return stop
-            i = formula[0] - 1
-        return ""
+                ch = self.layer[i]
+                if ch in CLOSING_MARKS:
+                    closing = closing or ch
+                    i -= 1
+                    continue
+                stops = ch in SENTENCE_STOPS
+            else:
+                ch = formula_stop(formula[2])
+                if not ch:
+                    i = formula[0] - 1
+                    continue
+                stops = ch in FORMULA_STOPS
+            return (ch, True) if stops else (closing or ch, False)
+        return closing, False
 
     def introduces(self, block: Block) -> bool:
         """introduces(B): B's last non-space character is no full stop, so its last
         sentence runs on into what follows."""
-        last = self.last_character(block.start, block.end)
-        return bool(last) and last not in SENTENCE_STOPS
+        last, stops = self._last(block.start, block.end)
+        return bool(last) and not stops
 
     def chain(self, block: Block) -> list[Block]:
-        """chain(B): B, then the display blocks its last sentence introduces."""
+        """chain(B): B, then the display blocks its last sentence introduces.
+
+        A list item (``li``) is a unit of its own, never a display a sentence
+        introduces: a list of display items is one passage per item (or a
+        compound statement over them, :meth:`list_run`), so the chain stops at
+        one.  A ``dd`` is how an article indents a display, and joins.
+        """
         out = [block]
         while self.introduces(out[-1]):
             following = self.next(out[-1])
-            if following is None or not self.is_display(following):
+            if following is None or "li" in following.kinds or not self.is_display(following):
                 break
             out.append(following)
         return out
@@ -650,6 +720,55 @@ class Blocks:
         last = self.list_run(block)[-1] if compound and block.list_kind else block
         return self.chain(last)[-1].end
 
+    def separator_start(self, start: int, at: int) -> int:
+        """Where the separator before ``at`` (the next passage's start) begins.
+
+        Back from ``at``, and again while anything is set aside: whitespace, one
+        connective of ``CUT_CONNECTIVES`` as a whole word (``, and`` only after its
+        comma), and a comma or semicolon -- never a character inside a formula and
+        never back to ``start``.  So ``…sprockets; every…`` ends its first piece
+        after ``sprockets``, and ``…gadget, since gadgets…`` after ``gadget``: the
+        span of the passage before is what an ``until`` at its last word gives,
+        whatever the next passage is.
+        """
+        layer = self.layer
+        i = at
+        while i > start:
+            j = i
+            while j > start and _is_white(layer[j - 1]) and self.formula_at(j - 1) is None:
+                j -= 1
+            j = self._before_connective(start, j)
+            if j == i:
+                break
+            i = j
+        return i
+
+    def _before_connective(self, start: int, j: int) -> int:
+        """``j`` less one connective word or one separating mark ending at it."""
+        layer = self.layer
+        if j - 1 > start and layer[j - 1] in SEPARATOR_MARKS and self.formula_at(j - 1) is None:
+            return j - 1
+        for connective in CUT_CONNECTIVES:
+            word = connective.lstrip(",; ")
+            if not word:
+                continue
+            k = j - len(word)
+            if k <= start or layer[k:j].lower() != word or self.formula_at(k) is not None \
+                    or self.formula_at(j - 1) is not None:
+                continue
+            before = layer[k - 1]
+            if not (_is_white(before) or before in SEPARATOR_MARKS):
+                continue
+            if connective.startswith(","):
+                # ", and": the word counts only after its comma
+                m = k
+                while m > start and _is_white(layer[m - 1]):
+                    m -= 1
+                if not (m > start and layer[m - 1] == ","):
+                    continue
+            return k
+        return j
+
     # -- units (section 3.3, the receipt's counts) ---------------------------
 
     def units(self, span: Sequence[int]) -> dict[str, list[list[int]]]:
@@ -661,7 +780,7 @@ class Blocks:
         while i < end:
             formula = self.formula_at(i)
             if formula is not None:
-                if formula_stop(formula[2]) in SENTENCE_STOPS and formula[1] <= end:
+                if formula_stop(formula[2]) in FORMULA_STOPS and formula[1] <= end:
                     stops.append(formula[1])
                 i = max(formula[1], i + 1)
                 continue
@@ -726,8 +845,9 @@ def units(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[
 
     A sentence ends at a ``.``, ``!`` or ``?`` before whitespace and an
     upper-case letter or a formula, not after one of ``ABBREVIATIONS`` and
-    never inside a formula; a formula whose alttext ends with one
-    (:func:`formula_stop`: ``a = b.``) ends a sentence too, and so does one
+    never inside a formula; a formula whose alttext ends with ``.`` or ``?``
+    (:func:`formula_stop`: ``a = b.``; ``FORMULA_STOPS``, a formula's ``!``
+    being a factorial) ends a sentence too, and so does one
     that ends a block when the next block starts with no whitespace between
     (two paragraphs of a theorem box are glued in the layer).  Each sentence is
     its span, trailing whitespace left out.  The displays are the ``math``
