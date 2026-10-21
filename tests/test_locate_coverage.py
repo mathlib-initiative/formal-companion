@@ -864,10 +864,13 @@ class TestThePrompts(unittest.TestCase):
     def test_the_worker_is_told_when_to_claim(self):
         worker = self.rendered[vocab.LOCATE]["worker.md"]
         self.assertIn('"coverage": {"complete": true, "parts": [1, 2]', worker)
-        self.assertIn("**together** state **every** clause", worker)
+        # judgment rules 3 (the statement cut's J3): a claim is a bundle on a compound
+        # statement, its parts partitioning the inventory's conjuncts
+        self.assertIn("**together** state **every** conjunct", worker)
         self.assertIn("no part assumes more than the passage does", worker)
         self.assertIn("at least 2 of this passage's `hasPart` locations", worker)
-        self.assertIn("Never put `coverage` on an `absent` or `unresolved` passage", worker)
+        self.assertIn("Never put `coverage` on a simple statement, or on an `absent` or "
+                      "`unresolved` passage", worker)
         self.assertIn("a theorem that two quotient rings are isomorphic, stated as a ring "
                       "isomorphism", worker)
         system = self.rendered[vocab.LOCATE]["worker-system.md"]
@@ -876,8 +879,9 @@ class TestThePrompts(unittest.TestCase):
     def test_the_challenger_refutes_unless_every_clause_is_matched(self):
         worker = self.rendered[vocab.LOCATE_CHALLENGE]["worker.md"]
         self.assertIn("`prominence` or `coverage`", worker)
-        self.assertIn("**refute** it unless every clause of your claim list is stated by a part "
-                      "AND no part adds a hypothesis the passage does not have", worker)
+        self.assertIn("**refute** it unless every conjunct is stated by a part AND no part adds "
+                      "a hypothesis the passage does not have", worker)
+        self.assertNotIn("every clause of your claim list", worker)
         self.assertIn("The worker's `note` is a claim to check, not evidence", worker)
         # review 4, F2: a confirm stands in only for the part records no rule required
         self.assertIn("confirms with it only the parts whose own record the plan did not "

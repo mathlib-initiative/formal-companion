@@ -35,6 +35,8 @@ const MODEL = A.model || 'opus'
 const HUNTERS = typeof A.hunters === 'number' && A.hunters > 0 ? A.hunters : 2
 
 const RELATIONS = ['exactMatch', 'closeMatch', 'broadMatch', 'narrowMatch', 'hasPart', 'relatedMatch']
+// cflib.vocab.CONJUNCT_RELATIONS: what a hasPart bears to the claims it states (the statement cut's J2)
+const CONJUNCT_RELATIONS = ['exactMatch', 'closeMatch', 'broadMatch', 'narrowMatch']
 const KINDS = ['definition', 'theorem', 'conjecture', 'example', 'construction', 'notation', 'other']
 const SCOPES = ['formal_math', 'expository', 'non_math']
 
@@ -67,9 +69,12 @@ The relations, subject = the passage, object = the declaration:
 
 Before you judge any declaration, list the passage's claims to yourself: one line per formal clause it asserts
 (each conclusion, each direction of an iff, existence and uniqueness apart, each computation of a worked
-example, each condition of a definition; never proof narration, PD5, and a stated reason only by PD9).
-exactMatch, closeMatch and broadMatch only when the declaration states every claim; one that states some of
-them is hasPart, and one that alone states them all is never a part (PD6). Instantiate each declaration at the
+example, each condition of a definition; never proof narration, PD5, and never a stated reason, which PD9
+makes a passage of its own). exactMatch, closeMatch and broadMatch only when the declaration states every claim;
+one that states some of them is hasPart, and one that alone states them all is never a part (PD6). A hasPart
+also gets its conjunct_relation: its own relation, by R1-R3 and PD1-PD10, to the claims it states (exactMatch,
+closeMatch, broadMatch or narrowMatch), so hasPart parts that together state every claim, each with a strong
+conjunct_relation, are one bundle whose relation is its weakest part's. Instantiate each declaration at the
 passage's objects before you judge it; a broadMatch by instantiation stands only when what is left closes by
 decidable arithmetic, else the relation is relatedMatch (PD8; R2's weakenings are no instantiation, and a lemma that only links two definitions of one notion is no bridge but an encoding, PD10, unless that link is itself what the passage asserts). When the declaration is also defined where the passage is not, say in evidence
 why each case outside the passage's domain is trivial (a junk or default value that the passage's mathematics does not depend on, or an extra case that reduces to a tautology), or which one has content (PD7).
@@ -93,8 +98,15 @@ The policy defaults, the maintainer's (the gold follows them; an override change
 - **PD6** — a part of a coverage claim that alone states every clause is no part: it is one location with its own relation (a centralizer defined in any ring, where the passage has a matrix's centralizer, is \`broadMatch\`, PD1), and a coverage claim stands only on parts that each state some of the clauses.
 - **PD7** — a value the declaration gives where the passage leaves one undefined (a junk or default value, R1) is trivial when the passage's mathematics does not depend on it — in the maintainer's words, "it shouldn't matter what the value of riemannZeta 1 is" — so \`riemannZeta\` at s = 1 is a junk value against a passage that defines the zeta function away from s = 1, though Mathlib proves a closed form for it (\`riemannZeta_one\`). That test is for such values: an extra case of the statement itself (a ring that is not a field, where the passage has a field) is trivial when it reduces to a tautology, and one with real mathematical content makes a generalisation, never a junk value. Whether a case is trivial is still a judgment: an \`exactMatch\` or \`broadMatch\` that rests on it says why in its \`note\`. (PD3's trivial case is the other way round: a declaration that states only a degenerate case of the passage.)
 - **PD8** — a passage follows from a declaration by instantiation (R2) only when, after instantiating, what is left closes by decidable arithmetic (\`omega\`, \`norm_num\`, \`decide\`); a bridge that needs a named lemma (\`Nat.mul_mod\`, a parity lemma for (−1)^n) makes it \`relatedMatch\` (R5). R2's weakenings (a strict derivative for a plain one, an iff for an if) are no instantiation: PD8 leaves them to R2.
-- **PD9** — a stated reason ("it holds because X") makes X a claim only when X is a declarative mathematical statement that no neighbouring passage already states.
+- **PD9** — a stated reason ("it holds because X") is a passage of its own only when X is a declarative mathematical statement that no neighbouring passage already states; otherwise X is no passage and no clause.
 - **PD10** — one notion in two encodings is no bridge: a declaration that uses Mathlib's standard notion where the passage has its own definition of the same thing (\`IsCoprime m n\` where the passage says m and n have no common factor other than 1, linked by \`Int.isCoprime_iff_gcd_eq_one\`) differs from the passage by an \`encoding\` (R1: a \`closeMatch\` when nothing else differs), and the library lemma that links the two definitions is no PD8 bridge. It sharpens R1's encoding and limits PD8, which governs bridges between statements, not between two definitions of one notion. Its exception is a link that is itself what the passage asserts: when the lemma that links the two notions is the passage's own theorem, a declaration stated with the notion whose definition already contains that theorem's claim presupposes the passage, and it is \`relatedMatch\` (R5).
+
+The statement cut's rules, the smoke-3 audit's fixes (where they say a location's \`tests\` or \`instantiation\`, yours is in evidence):
+- **Fix 2a** — every \`exactMatch\`, \`closeMatch\` or \`broadMatch\` writes both instantiation tests, one line each, as its \`tests\`: \`r2\`, how the passage follows from the declaration (by instantiation, or by one of R2's weakenings), and \`r3\`, why the declaration, at the passage's own objects, needs nothing the passage does not give (no stronger hypothesis, no extra instance argument). A \`closeMatch\` stands only when both hold with a named convention and nothing else differs; when either fails, the relation is weaker.
+- **Fix 2e** — when the declaration is defined beyond the passage's domain, its \`instantiation\` line states PD7's three-way test: whether it agrees with the passage on the passage's domain, and whether each case outside that domain is trivial (a junk or default value the passage's mathematics does not depend on, or an extra case that reduces to a tautology) or has real mathematical content.
+- **Fix 3a** — a lemma that only unfolds a definition the passage glosses (a membership, application or definitional lemma, \`mem_*_iff\`, \`*_apply\`, \`*_def\`, restating what the passage's term means) is \`relatedMatch\`, never a part; a name is no statement, so read what the lemma states before you credit it.
+- **Fix 4b** — on a definition, construction or notation passage, a declaration that is the defined object is an \`exactMatch\` or \`closeMatch\` (R7), never a part; and before you call a declaration's hypothesis stronger than the passage's, read it with its roles swapped (a symmetric hypothesis, the two objects exchanged), and call it stronger only when no such reading is the passage's.
+- **Fix 5a** — search each clause's special case too: for every clause, one query for its conclusion under a stronger hypothesis (PD4's \`narrowMatch\`), and search the universe's statement-only conjecture libraries, where a \`narrowMatch\` to a declaration stated without a proof still makes a theorem passage \`partial\`.
 
 A passage's kind: ${KINDS.join(', ')}. A passage's scope, as the system's inventory is told it:
 \`formal_math\` — mathematics a library could state · \`expository\` — history, motivation, applications told about mathematics, and proof narration and commentary (PD5) · \`non_math\` — anything else.
@@ -148,6 +160,8 @@ const LABEL_SCHEMA = {
     passage_kind: { type: 'string', enum: KINDS },
     declarations: { type: 'array', items: { type: 'object', required: ['library', 'declaration', 'relation'],
       properties: { library: { type: 'string' }, declaration: { type: 'string' }, relation: { type: 'string', enum: RELATIONS },
+        conjunct_relation: { type: ['string', 'null'], enum: [...CONJUNCT_RELATIONS, null],
+          description: 'a hasPart only: its relation, by R1-R3 and PD1-PD10, to the claims it states; null on every other relation' },
         evidence: { type: 'string' } } } },
     evidence: { type: 'string' },
   },
@@ -212,7 +226,7 @@ ${JSON.stringify(pool, null, 1)}
 
 You are the labeler. Read the span and the reading copy around it, decide the scope and the passage kind, and for
 EACH candidate read its statement in the pinned checkout yourself and keep it only with the relation you can
-defend; drop any you cannot find at the pin. ${tagBlind
+defend, giving each hasPart its conjunct_relation; drop any you cannot find at the pin. ${tagBlind
     ? 'Add NO declaration: judge only the hunters\' candidates, which is what this run measures.' + TAG_BLIND
     : 'Add nothing you have not read at the pin.'} If the span is not
 formal_math, return no declarations. Copy task_id "${t.task_id}" unchanged.`,

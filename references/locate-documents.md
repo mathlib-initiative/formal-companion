@@ -637,6 +637,43 @@ seal carries one, since the consumer's strict builder refuses a key it does not
 know, and a run planned under the rules exports the same shapes as one planned
 before them.
 
+**The record set of status rule 2** (`cf-locate-recordset/2`;
+`docs/proposals/statement-cut.md` §2.4). A locate run whose `run.yaml` names
+`locate.status_rule: 2` — from the statement cut's flip on, exactly the runs of
+judgment rules 3 — exports `/2`; every other run exports `cf-locate-recordset/1`
+byte for byte as below. `/2` is `/1` with these differences, and no other:
+
+- `SEAL.json` carries `/1`'s keys and one more, `status_rule` (`2`), the version of
+  the derivation its records' statuses were derived by (`export.SEAL_KEYS_BUNDLE`).
+- Every record's locate extension carries `passage_key` — `sha256("<pageid>\n<span_sha256>")`,
+  the subject end's `pageid` and `span_sha256` — and a location record's also its
+  `pair_key`, `sha256("<passage_key>\n<repository>\n<declaration>")`, the
+  repository the lean end's `uri`, beside `location_key` (`cflib.hashing`, restated
+  in `records.passage_key` and `records.pair_key`). Neither holds a revision, a
+  commit, a run or an item, so a verdict keyed by `pair_key` survives a new
+  revision, a library commit and every re-cut that leaves its passage's text alone.
+- A coverage claim is a **bundle** and rides on every record of its passage as
+  `{"complete": true, "parts": [<location_key>, …], "challenge", "relation",
+  "conjuncts": [{"id", "text", "part": <location_key>}], "bundle_key"}`
+  (`cflib.vocab.COVERAGE_RECORD_KEYS_BUNDLE`, `records.bundle_ext`): `relation` the
+  bundle's, its weakest part's (one of `exactMatch`, `closeMatch`, `broadMatch`);
+  the conjuncts the frozen inventory's, in id order, each beside the one part whose
+  `clauses` name it, every part stating at least one, each text held to the
+  export's free-text cap (`locate_records.check_note`'s rule); and `bundle_key` the
+  sha256 of the passage key and the parts' pair keys, sorted, one per line. A
+  consumer shows a bundle's declarations each beside its conjunct, and keys a vote
+  on it, from the record set alone. A passage whose bundle its records cannot
+  carry — no conjuncts, a conjunct no part or two parts state, a part stating none,
+  a relation outside the three — is refused by name.
+- The status every record carries is `derive_status(…, status_rule=2)` over that
+  same claim: a survived bundle is one more location of its own relation, not one
+  more `exactMatch`, so a definition, construction or notation passage whose bundle
+  is `broadMatch` is `partial` (`references/vocabulary.md` §1.11).
+
+A target directory may hold a `/1` or a `/2` set: a re-export replaces either. The
+self-evidencing format the decision log once planned as `/2` takes the next number,
+`/3`, when it is built.
+
 `SEAL.json` lists every other file with its sha256; a consumer refuses a set
 whose files do not match. Its keys are exactly these, every one always present,
 and no other (`export.SEAL_KEYS`; a consumer refuses a seal with any other key,
@@ -2060,6 +2097,50 @@ the passage `formal_math` with no outcome and a `problem`, which the export
 refuses. The counts' `unresolved`
 is every answered passage with no status — the worker's and those a challenge
 left without a location that counts.
+
+**Under judgment rules 3** (the statement cut, `docs/proposals/statement-cut.md`
+§1.3–§1.5 and §5), only where a document wrote them, so a run of an earlier version
+yields the rows it always did: a location keeps its `conjunct_relation` and `tests`
+(`JUDGMENT_LOCATION_FIELDS`); a confirm's or applied downgrade's own `tests` replace
+the worker's, and its `conjunct_relation` the location's when it is not stronger
+(a stronger one is a `problem` and the location's is kept); a location left with a
+relation that does not take a field loses it (`tests` off a relation no longer
+strong, `conjunct_relation` off one no longer `hasPart`; a `convention` stays on a
+`hasPart` whose `conjunct_relation` is `closeMatch`); a coverage confirm's
+`part_relations` sit beside the claim as `coverage_part_relations`; a refute's
+`unstated` and `part_reasons` on `coverage_refuted`; and an uphold's `special_case`
+in `challenge_receipt`. A verdict on a record its challenge plan marked
+`conditional: "prominence"` (its `challenge-plan.json` row; `references/vocabulary.md`
+§1.11) counts only when the same challenge run overturned
+that passage's prominence to `subject` or `central`; otherwise it is named in the
+problems and ignored, as a verdict on any record the plan did not require is.
+
+**Status rule 2** (`run.yaml` `locate.status_rule: 2`, which `cf plan-locate`
+writes from the statement cut's flip on; a run.yaml without it is status rule 1,
+and one naming any other value is refused): every row also carries the passage's
+`statement`, `conjuncts` and `shape` from the frozen inventory (where it has them);
+its `coverage` carries `relation`, the bundle's (its weakest part's: each part's
+`conjunct_relation`, replaced by a confirm's `part_relations` entry, the weaker of
+the two kept), and `status` is `derive_status(…, status_rule=2)` over the claim's
+projection `{complete, parts, challenge, relation}`; a claim on a passage with no
+`conjuncts`, or whose weakest part is no bundle's relation (no `conjunct_relation`,
+or a `narrowMatch` of its conjuncts), no longer holds — it upgrades nothing and the
+row carries a `problem`; an `unresolved` passage keeps its `cut_flag`
+(`CUT_FLAGS`; another value is a `problem`); a challenge document's `fills` are
+applied — `{"outcome": "absent", "receipt"}` makes a passage its verdicts left with
+no location that counts `absent`, beside its `relatedMatch` locations, the absence
+the challenger's (`survived`), and `{"outcome": "located", "locations"}` puts the
+challenger's locations first (`survived`), as an overturn's; the row records `fill:
+{outcome, challenge_run}`, and a fill on any other passage is a `problem` and
+ignored — and a `located` passage the challenge still leaves with no location that
+counts and no absence is **owed a hunt**: `challenge: "challenge_pending"` (unless a
+record is owed outright), `owed: "hunt"` and a `problem`, so the export refuses it
+by name. The counts gain three keys, and a run of status rule 1 has none of them:
+`owed_hunt`, `by_cut_flag` (`{flag: n}` over the unresolved passages) and
+`bundles` (`{written, survived, by_relation}`: the claims locate wrote, standing or
+refuted; those `survived` that hold; and those by relation). Under status rule 1 a
+passage a challenge left with nothing that counts has no status and is exported,
+and a fill is named in the problems and not applied.
 The bench (`references/locate-bench.md` §8) joins runs to gold by the row's
 layer `span`, and reads it from the inventory documents when a row lacks it.
 

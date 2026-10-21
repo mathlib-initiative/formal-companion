@@ -47,6 +47,18 @@ passage with a coverage claim (the maintainer's decision D1), ``coverage:
   receipt referenced by sha256 and count, never inline;
 * :func:`unresolved_record` -- ``object: []`` and no status.
 
+A passage of a run of status rule 2 (``STATUS_RULE_BUNDLE``; docs/proposals/
+statement-cut.md section 2.4, ``cf-locate-recordset/2``) is built by
+:func:`passage_records` with ``status_rule=2``: every record's locate extension
+also carries the revision-free ``passage_key``, a location record's its
+``pair_key`` too (:func:`passage_key`, :func:`pair_key`, :func:`bundle_key`:
+``cflib.hashing``'s keys, restated here in lockstep because this module imports
+no cflib, as ``verify_findings`` restates ``finding_id``), and a coverage claim
+rides as a **bundle**, ``{complete, parts, challenge, relation, conjuncts: [{id,
+text, part}], bundle_key}`` (:func:`bundle_ext`).  The three builders take those
+as keywords, so every call of status rule 1 -- the gate's preview among them --
+builds the records it always did.
+
 The quote is capped (:func:`cap_quote`): at most ``QUOTE_WORDS`` words of
 ``exact`` from the passage start, at most ``CONTEXT_CHARS`` characters of
 ``prefix`` and ``suffix``, cut from the layer itself and widened only within
@@ -111,6 +123,15 @@ _QID = re.compile(r"Q[1-9][0-9]*\Z")
 #: article's QID
 SUBJECT = "subject"
 _SPACE = re.compile(r"\s")
+#: ``cflib.vocab.STATUS_RULE_D1`` / ``STATUS_RULE_BUNDLE``: the derivation a run's outcomes
+#: were derived under, which picks the record set's shapes (``cf-locate-recordset/1`` or
+#: ``/2``)
+STATUS_RULE_D1 = 1
+STATUS_RULE_BUNDLE = 2
+#: ``cflib.vocab.COVERAGE_RECORD_KEYS_BUNDLE`` and ``BUNDLE_RELATIONS``: a bundle as a record
+#: of status rule 2 carries it, and the relations it may have (its weakest part's)
+COVERAGE_KEYS_BUNDLE = COVERAGE_KEYS | {"relation", "conjuncts", "bundle_key"}
+BUNDLE_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
 
 
 class RecordError(ValueError):
@@ -119,6 +140,46 @@ class RecordError(ValueError):
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# --------------------------------------------------------------------------
+# the revision-free keys (cflib.hashing's, restated in lockstep: this module
+# imports no cflib; tests/test_locate_bundle_status.py holds the two together)
+# --------------------------------------------------------------------------
+
+def _key_part(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip() or "\n" in value:
+        raise RecordError(f"a key's {name} is a non-empty one-line string with no edge "
+                          f"whitespace, not {value!r}")
+    return value
+
+
+def _sha_part(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not _HEX64.match(value):
+        raise RecordError(f"a key's {name} is a 64-hex sha256, not {value!r}")
+    return value
+
+
+def passage_key(pageid: Any, span_sha: str) -> str:
+    """``sha256("<pageid>\\n<span_sha256>")`` (``cflib.hashing.passage_key``)."""
+    if isinstance(pageid, bool) or not isinstance(pageid, int) or pageid < 1:
+        raise RecordError(f"a pageid is a positive integer, not {pageid!r}")
+    return sha256_text(f"{pageid}\n{_sha_part(span_sha, 'span_sha256')}")
+
+
+def pair_key(passage: str, repository: str, declaration: str) -> str:
+    """``sha256("<passage_key>\\n<repository>\\n<declaration>")`` (``cflib.hashing.pair_key``)."""
+    return sha256_text("\n".join([_sha_part(passage, "passage_key"),
+                                  _key_part(repository, "repository"),
+                                  _key_part(declaration, "declaration")]))
+
+
+def bundle_key(passage: str, pair_keys: Iterable[str]) -> str:
+    """The passage key and the parts' pair keys, sorted, one per line (``cflib.hashing``)."""
+    keys = [_sha_part(k, "pair_key") for k in pair_keys]
+    if len(keys) < 2 or len(set(keys)) != len(keys):
+        raise RecordError(f"a bundle has at least two distinct parts, not {len(set(keys))}")
+    return sha256_text("\n".join([_sha_part(passage, "passage_key"), *sorted(keys)]))
 
 
 def canonical(obj: Any) -> str:
@@ -318,7 +379,8 @@ def record_id(source_id: str, item: str) -> str:
     return f"{source_id}::{item}"
 
 
-def _record_ext(passage: Mapping[str, Any], universe: Mapping[str, Any], **extra) -> dict:
+def _record_ext(passage: Mapping[str, Any], universe: Mapping[str, Any], *,
+                bundle: Mapping[str, Any] | None = None, **extra) -> dict:
     ext = {"item": str(passage["item"]), "universe": str(universe["id"]),
            "universe_sha256": str(universe["sha256"]), "challenge": passage_challenge(passage)}
     if isinstance(passage.get("section"), (list, tuple)):
@@ -327,31 +389,103 @@ def _record_ext(passage: Mapping[str, Any], universe: Mapping[str, Any], **extra
         ext["prominence"] = str(passage["prominence"])
     claim = passage.get("coverage")
     if claim:
-        ext["coverage"] = coverage_ext(claim)
+        # status rule 2's bundle (bundle_ext) when the caller built one, else D1's claim
+        ext["coverage"] = dict(bundle) if bundle is not None else coverage_ext(claim)
     ext.update({k: v for k, v in extra.items() if v is not None})
     return ext
 
 
-def coverage_ext(claim: Mapping[str, Any]) -> dict:
+def coverage_ext(claim: Mapping[str, Any], *, status_rule: int = STATUS_RULE_D1) -> dict:
     """A coverage claim as a record carries it: ``{complete, parts, challenge}``.
 
     Exactly the keys ``COVERAGE_KEYS`` -- the claim's ``note`` is not exported --
     with the parts' location keys in the claim's order.  The outcomes derive the
     passage's status from this same projection (``cflib.vocab.derive_status``), so
-    the status a record carries is the one its claim gives.
+    the status a record carries is the one its claim gives.  Under status rule 2 the
+    projection also carries the bundle's ``relation`` (its weakest part's, which the
+    outcomes computed): the one more key the derivation reads.  The exported bundle,
+    which adds the ``conjuncts`` and the ``bundle_key``, is :func:`bundle_ext`.
     """
-    return {"complete": True, "parts": [str(k) for k in claim["parts"]],
-            "challenge": str(claim.get("challenge"))}
+    out = {"complete": True, "parts": [str(k) for k in claim["parts"]],
+           "challenge": str(claim.get("challenge"))}
+    if status_rule == STATUS_RULE_BUNDLE:
+        out["relation"] = claim.get("relation")
+    return out
 
 
-def coverage_problem(passage: Mapping[str, Any]) -> str | None:
+def bundle_conjuncts(passage: Mapping[str, Any], claim: Mapping[str, Any]) -> list[dict]:
+    """``[{id, text, part}]``: each conjunct of the passage beside the part that states it.
+
+    docs/proposals/statement-cut.md section 2.4: the passage's conjuncts (from the
+    frozen inventory) in id order, each with the ``location_key`` of the one part of
+    the claim whose ``clauses`` name it.  A bundle stands only on a compound
+    statement whose conjuncts its parts partition (J3), so a passage with no
+    conjuncts, a conjunct no part names or one two parts name is refused.
+    """
+    conjuncts = passage.get("conjuncts")
+    if not isinstance(conjuncts, (list, tuple)) or not conjuncts:
+        raise RecordError(f"{passage.get('item')}: a bundle on a passage with no conjuncts "
+                          "(a coverage claim stands only on a compound statement)")
+    by_key = {str(loc.get("location_key")): loc for loc in passage.get("locations") or []}
+    out = []
+    for conjunct in conjuncts:
+        cid = conjunct.get("id") if isinstance(conjunct, Mapping) else None
+        stating = [str(k) for k in claim["parts"]
+                   if cid in ((by_key.get(str(k)) or {}).get("clauses") or [])]
+        if len(stating) != 1:
+            raise RecordError(f"{passage.get('item')}: conjunct {cid!r} is stated by "
+                              f"{len(stating)} part(s) of the bundle, not exactly one")
+        out.append({"id": str(cid), "text": str(conjunct.get("text") or ""),
+                    "part": stating[0]})
+    named = {c["part"] for c in out}
+    idle = [str(k) for k in claim["parts"] if str(k) not in named]
+    if idle:
+        raise RecordError(f"{passage.get('item')}: bundle part {idle[0][:12]} states no "
+                          "conjunct")
+    return out
+
+
+def bundle_ext(passage: Mapping[str, Any], claim: Mapping[str, Any], *, passage_key: str,
+               pair_keys: Mapping[str, str]) -> dict:
+    """A bundle as a record of status rule 2 carries it (``COVERAGE_KEYS_BUNDLE``).
+
+    ``{complete, parts, challenge, relation, conjuncts, bundle_key}``: the D1 keys of
+    :func:`coverage_ext`, the bundle's ``relation``, its conjuncts beside their parts
+    (:func:`bundle_conjuncts`) and its ``bundle_key`` over ``pair_keys`` (``{part's
+    location_key: its pair key}``).  A consumer shows a bundle's declarations each
+    beside its conjunct from the record set alone.
+    """
+    if claim.get("relation") not in BUNDLE_RELATIONS:
+        raise RecordError(f"{passage.get('item')}: a bundle's relation is one of "
+                          f"{', '.join(sorted(BUNDLE_RELATIONS))}, not "
+                          f"{claim.get('relation')!r}")
+    out = coverage_ext(claim, status_rule=STATUS_RULE_BUNDLE)
+    out["conjuncts"] = bundle_conjuncts(passage, claim)
+    out["bundle_key"] = bundle_key(passage_key, [pair_keys[str(k)] for k in claim["parts"]])
+    return out
+
+
+def coverage_problem(passage: Mapping[str, Any], *,
+                     status_rule: int = STATUS_RULE_D1) -> str | None:
     """Why a passage's coverage claim cannot ride on its records, or None.
 
     A claim (the maintainer's decision D1) names at least ``MIN_COVERAGE_PARTS``
     distinct parts, each the ``location_key`` of one of the passage's ``hasPart``
     locations, and carries its challenge value (hard rule 5), one of
     ``CHALLENGES``: a refuted claim is removed, never exported as ``refuted``.
+    Under status rule 2 it is a bundle and carries its ``relation`` too, one of
+    ``BUNDLE_RELATIONS``.
     """
+    claim = passage.get("coverage")
+    if claim and status_rule == STATUS_RULE_BUNDLE and isinstance(claim, Mapping) \
+            and claim.get("relation") not in BUNDLE_RELATIONS:
+        return (f"{passage.get('item')}: the bundle's relation {claim.get('relation')!r} is not "
+                f"one of {', '.join(sorted(BUNDLE_RELATIONS))}")
+    return _d1_coverage_problem(passage)
+
+
+def _d1_coverage_problem(passage: Mapping[str, Any]) -> str | None:
+    """:func:`coverage_problem`'s checks of decision D1, every status rule's."""
     claim = passage.get("coverage")
     if not claim:
         return None
@@ -429,7 +563,11 @@ def passage_challenge(passage: Mapping[str, Any]) -> str:
 def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                     location: Mapping[str, Any], library: Mapping[str, Any],
                     universe: Mapping[str, Any], quote: Mapping[str, str], *,
-                    span_sha256: str) -> dict:
+                    span_sha256: str, passage_key: str | None = None,
+                    pair_key: str | None = None,
+                    bundle: Mapping[str, Any] | None = None) -> dict:
+    """One location's record.  ``passage_key``, ``pair_key`` and ``bundle`` are status
+    rule 2's (:func:`passage_records`); without them the record is the one it always was."""
     challenge = location.get("challenge")
     if not challenge:
         raise RecordError(f"{passage.get('item')}: location {location.get('declaration')} has no "
@@ -444,9 +582,10 @@ def location_record(source: Mapping[str, Any], passage: Mapping[str, Any],
         "relation": str(location["relation"]),
         "kind": str(passage["passage_kind"]),
         "extensions": {EXTENSION: _record_ext(
-            passage, universe, location_key=str(location["location_key"]),
+            passage, universe, bundle=bundle, location_key=str(location["location_key"]),
             rank=int(location["rank"]) if location.get("rank") is not None else None,
-            confidence=location.get("confidence") or None)},
+            confidence=location.get("confidence") or None, passage_key=passage_key,
+            pair_key=pair_key)},
     }
     record["extensions"][EXTENSION]["challenge"] = str(challenge)
     if passage.get("status"):
@@ -478,7 +617,8 @@ def absence_ends(universe: Mapping[str, Any]) -> list[dict]:
 
 def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                    universe: Mapping[str, Any], quote: Mapping[str, str], *,
-                   span_sha256: str, receipt: Mapping[str, Any]) -> dict:
+                   span_sha256: str, receipt: Mapping[str, Any],
+                   passage_key: str | None = None) -> dict:
     """The checked absence; ``receipt`` is ``{sha256, queries, candidates}`` of the sidecar."""
     ends = absence_ends(universe)
     if not ends:
@@ -497,7 +637,8 @@ def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
         "relation": NO_MATCH,
         "status": NOT_FORMALIZED,
         "kind": str(passage["passage_kind"]),
-        "extensions": {EXTENSION: _record_ext(passage, universe, receipt=dict(receipt))},
+        "extensions": {EXTENSION: _record_ext(passage, universe, receipt=dict(receipt),
+                                              passage_key=passage_key)},
     }
     record["extensions"][EXTENSION]["challenge"] = str(challenge)
     return record
@@ -505,7 +646,7 @@ def absence_record(source: Mapping[str, Any], passage: Mapping[str, Any],
 
 def unresolved_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                       universe: Mapping[str, Any], quote: Mapping[str, str], *,
-                      span_sha256: str) -> dict:
+                      span_sha256: str, passage_key: str | None = None) -> dict:
     """An unresolved outcome: ``object: []`` and no status; counted, never not formalized."""
     return {
         "id": record_id(str(source["source_id"]), str(passage["item"])),
@@ -515,7 +656,7 @@ def unresolved_record(source: Mapping[str, Any], passage: Mapping[str, Any],
                                                      challenge=passage_challenge(passage)))],
         "object": [],
         "kind": str(passage["passage_kind"]),
-        "extensions": {EXTENSION: _record_ext(passage, universe)},
+        "extensions": {EXTENSION: _record_ext(passage, universe, passage_key=passage_key)},
     }
 
 
@@ -649,9 +790,18 @@ def receipt_document(source_id: str, item: str, receipt: Mapping[str, Any],
 
 
 def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer: str,
-                    universe: Mapping[str, Any]) -> tuple[list[dict], list[tuple[str, str]]]:
+                    universe: Mapping[str, Any], *, status_rule: int = STATUS_RULE_D1
+                    ) -> tuple[list[dict], list[tuple[str, str]]]:
     """Every record of one passage outcome, and the receipt sidecars they reference
-    (``(sha256, text)``); a location note that carries the source past the cap is refused."""
+    (``(sha256, text)``); a location note that carries the source past the cap is refused.
+
+    ``status_rule`` is the run's (``cf-locate-recordset/1`` for 1, ``/2`` for 2):
+    under status rule 2 every record carries the ``passage_key``, a location record
+    its ``pair_key``, and a coverage claim rides as its bundle (:func:`bundle_ext`),
+    each conjunct's text held to the quote cap a note is.
+    """
+    if type(status_rule) is not int or status_rule not in (STATUS_RULE_D1, STATUS_RULE_BUNDLE):
+        raise RecordError(f"status rule {status_rule!r} names no record-set format")
     start, end = passage_span(passage)
     if end > len(layer):
         raise RecordError(f"{passage.get('item')}: the span [{start}, {end}] leaves the layer "
@@ -671,9 +821,29 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
     if len(set(ranks)) != len(ranks):
         raise RecordError(f"{passage['item']}: two locations share a rank")
     passage_challenge(passage)
-    why = passage_problem(passage) or coverage_problem(passage)
+    why = passage_problem(passage) or coverage_problem(passage, status_rule=status_rule)
     if why:
         raise RecordError(why)
+    # status rule 2's revision-free keys and bundle (docs/proposals/statement-cut.md 2.4),
+    # each pair key needing its library's repository before the first record is built
+    pk: str | None = None
+    pairs: dict[str, str] = {}
+    bundle = None
+    if status_rule == STATUS_RULE_BUNDLE:
+        for loc in locations:
+            if loc["library"] not in libs:
+                raise RecordError(f"{passage['item']}: library {loc['library']} is not in the "
+                                  "universe")
+        pk = passage_key(source.get("pageid"), span_sha)
+        pairs = {str(loc["location_key"]): pair_key(pk, str(libs[loc["library"]]["repo"]),
+                                                    str(loc["declaration"]))
+                 for loc in locations}
+        claim = passage.get("coverage")
+        if claim:
+            bundle = bundle_ext(passage, claim, passage_key=pk, pair_keys=pairs)
+            for conjunct in bundle["conjuncts"]:
+                _free_text(str(passage["item"]), f"conjunct {conjunct['id']}'s text",
+                           conjunct["text"], layer)
     for loc in locations:
         if loc["library"] not in libs:
             raise RecordError(f"{passage['item']}: library {loc['library']} is not in the universe")
@@ -685,17 +855,19 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
         if why:
             raise RecordError(f"{passage['item']}: {why}")
         records.append(location_record(source, passage, loc, libs[loc["library"]], universe,
-                                       quote, span_sha256=span_sha))
+                                       quote, span_sha256=span_sha, passage_key=pk,
+                                       pair_key=pairs.get(str(loc["location_key"])),
+                                       bundle=bundle))
     if outcome == "absent":
         digest, text, ref = receipt_document(str(source["source_id"]), str(passage["item"]),
                                              (passage.get("absence") or {}).get("receipt")
                                              or passage.get("receipt") or {}, universe, layer)
         sidecars.append((digest, text))
         records.append(absence_record(source, passage, universe, quote, span_sha256=span_sha,
-                                      receipt=ref))
+                                      receipt=ref, passage_key=pk))
     elif not locations:
         records.append(unresolved_record(source, passage, universe, quote,
-                                         span_sha256=span_sha))
+                                         span_sha256=span_sha, passage_key=pk))
     return records, sidecars
 
 
