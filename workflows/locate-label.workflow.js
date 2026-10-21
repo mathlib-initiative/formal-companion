@@ -102,6 +102,32 @@ Inside a proof, each definition, theorem, equation or declarative statement is a
 the kind of what it states (an equation or a declarative statement that asserts a fact is a theorem, one that
 defines an object a definition); the proof as a whole is none.`
 
+// The statement cut's rules, the inventory mode's (docs/proposals/statement-cut.md section
+// 3.4): references/vocabulary.md section 1.11 ("How the inventory cuts") and the system's
+// inventory prompt carry the same lines word for word, and tests/test_locate_statement_cut.py
+// holds the three together, so the gold's passages are cut as the run's are.
+const SHAPES = ['existence_uniqueness', 'iff', 'cases', 'conclusions', 'equations']
+const CUT_RULES = `How to cut: one passage per statement, by the rules the system's inventory is given:
+- **The test.** A passage is one statement when one Lean declaration could state it whole, with nothing left that a reader would call a second result, even when a library states it in two lemmas. Otherwise cut it: a definition and a theorem about it, a fact and the reason the text gives for it, or two cases in two sentences are two passages, not one.
+- **Units.** A passage is one or more whole units: a sentence, or one of its independent clauses, with the displays that sentence introduces; or a list item. It never runs from one paragraph into the next, except inside a theorem box, into the displays its last sentence introduces, or, for a compound statement, over the items of one list.
+- **Displays.** A displayed formula is never cut and belongs to the sentence that introduces it. An equation chain (a = b = c) is one statement, its end-to-end equation; its middle terms are steps, not conjuncts. A display of several separate equations is one compound statement, shape \`equations\`.
+- **Inside a sentence.** Cut where an independent clause asserts a fact of its own, at one of ";", "since", "because", "so", "hence", "then", "moreover", ", and" (", and" only when a new subject follows). Never cut between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject. Each piece starts at a word, and the connective starts no piece.
+- **Lists.** A list whose items each state a fact is one passage per item. A list of the cases of one definition or law, or of the conditions of one equivalence, is one compound statement (shape \`cases\` or \`iff\`) that starts at its first item. Its lead-in sentence ("the following are equivalent:") is expository, unless it states a reason no neighbour states, which is a statement of its own.
+- **Proofs.** Proof narration and commentary is expository (PD5); each definition, theorem, equation or declarative statement inside a proof is a passage of its own, and the proof as a whole is none.
+- **Context.** A sentence that only sets up objects or hypotheses ("Let W be a finite widget.") states nothing of its own: it opens the first statement that uses it, since a statement is never cut from its hypothesis. Context from further away stays out of the span: \`statement\` carries the hypotheses and objects ("for a finite widget W, …"), so it reads on its own and the span stays tight.
+- **Conjuncts.** A compound statement is one of a closed list of shapes: \`existence_uniqueness\` (existence and uniqueness), \`iff\` (an equivalence, or the conditions of one), \`cases\` (the cases of one law or one definition, in one sentence, one display or one list), \`conclusions\` (several conclusions about one subject under one hypothesis) and \`equations\` (one display holding several equations). Write its \`conjuncts\`, 2 to 5 of them, and its \`shape\`; \`existence_uniqueness\` has exactly two. A simple statement has neither. Anything else that holds two results is two statements: cut it.
+- **The subject.** A lead that describes the subject rather than states it is expository; the subject marker, \`prominence: subject\`, goes on the passage that states the theorem or definition, which may be its theorem box. A passage not scoped \`formal_math\` is always \`supporting\`.
+
+A stated reason is cut by the maintainer's rule, in these words, which the cut follows wherever a PD9 line above
+says otherwise:
+- **PD9** — a stated reason ("it holds because X") is a passage of its own only when X is a declarative mathematical statement that no neighbouring passage already states; otherwise X is no passage and no clause.
+
+Quote the start of every passage these rules give, one quote per statement: the gold is the starts you quote,
+so a statement you give no start of is in no passage of it, and one start for two statements makes them one
+passage. Give a compound statement its
+\`conjuncts\` (\`{"id": "c1", "text": "..."}\` in order, each one line in your own words) and its \`shape\`
+(one of ${SHAPES.join(', ')}), and a simple statement neither; give every passage its \`statement\`.`
+
 const huntTools = `Hunt with tools the system under test does not use, all of them where you can:
   1. ripgrep over each pinned checkout (\`rg -n '<pattern>' <checkout>\`): names, docstrings, statement shapes;
   2. a type search at the pin${TOOLS.type_search ? ': ' + TOOLS.type_search : ' (#find / exact? in a scratch file against the pinned build, or a type-search service at that commit), if you have one'};
@@ -152,13 +178,21 @@ const LABEL_SCHEMA = {
     evidence: { type: 'string' },
   },
 }
+// a passage's statement, and a compound statement's conjuncts and shape (the cut rules)
+const CUT_FIELDS = {
+  statement: { type: 'string', description: 'the passage restated, reading on its own: its hypotheses and objects included' },
+  conjuncts: { type: 'array', minItems: 2, maxItems: 5, items: { type: 'object', required: ['id', 'text'],
+    additionalProperties: false,
+    properties: { id: { type: 'string', pattern: '^c[1-9]$' }, text: { type: 'string' } } } },
+  shape: { type: 'string', enum: SHAPES },
+}
 const ENUM_SCHEMA = {
   type: 'object', required: ['task_id', 'passages'],
   properties: {
     task_id: { type: 'string' },
-    passages: { type: 'array', items: { type: 'object', required: ['quote', 'passage_kind', 'scope'],
+    passages: { type: 'array', items: { type: 'object', required: ['quote', 'passage_kind', 'scope', 'statement'],
       properties: { quote: { type: 'object', properties: { exact: { type: 'string' }, prefix: { type: 'string' }, suffix: { type: 'string' } } },
-        passage_kind: { type: 'string', enum: KINDS }, scope: { type: 'string', enum: SCOPES } } } },
+        passage_kind: { type: 'string', enum: KINDS }, scope: { type: 'string', enum: SCOPES }, ...CUT_FIELDS } } },
   },
 }
 
@@ -254,13 +288,16 @@ async function inventory(t) {
   const finders = (t.finders || []).map(f => '  [' + f.finder + '] ' + JSON.stringify(f.excerpt || '').slice(0, 400)).join('\n')
   const enumerate = k => agent(`${RULES}
 
+${CUT_RULES}
+
 ${quoteRules}
 
 ${sourceBlock(t)}
 
 You are enumerator #${k + 1} of 2, working independently. List EVERY passage of the article that states something
 (a definition, a theorem, a conjecture, an example, a construction, a notation), however minor, each with its
-quote, kind and scope -- an exhaustive inventory, not a summary. By PD5, each statement inside a proof is its
+quote, kind, scope and statement, cut one passage per statement by the rules above -- an exhaustive inventory,
+not a summary. By PD5, each statement inside a proof is its
 own passage and a proof's narration is expository, never one formal_math passage for the whole proof. The deterministic finders proposed these, which
 you must also judge (keep each that is a passage):
 ${finders || '  (none)'}
@@ -274,13 +311,16 @@ Copy task_id "${t.task_id}" unchanged.`,
   }
   const merged = await agent(`${RULES}
 
+${CUT_RULES}
+
 ${quoteRules}
 
 ${sourceBlock(t)}
 
 Two independent enumerators listed the passages of this article (A and B), and the deterministic finders proposed
 the passages marked F. Adjudicate the UNION: keep every real passage once (merge two quotes of one passage), drop
-what is not a passage, fix kinds and scopes, and say which lists had it in \`from\` (A, B, F).
+what is not a passage, cut what holds two statements by the rules above, fix kinds, scopes, conjuncts and shapes,
+and say which lists had it in \`from\` (A, B, F).
 A: ${JSON.stringify(lists[0].passages || [])}
 B: ${JSON.stringify(lists[1].passages || [])}
 F:
@@ -289,9 +329,9 @@ Copy task_id "${t.task_id}" unchanged.`,
     { label: 'inventory:' + t.task_id, phase: 'Adjudicate', model: MODEL, effort: 'high', schema: {
       type: 'object', required: ['task_id', 'passages'],
       properties: { task_id: { type: 'string' }, passages: { type: 'array', items: { type: 'object',
-        required: ['quote', 'passage_kind', 'scope', 'from'],
+        required: ['quote', 'passage_kind', 'scope', 'statement', 'from'],
         properties: { quote: ENUM_SCHEMA.properties.passages.items.properties.quote,
-          passage_kind: { type: 'string', enum: KINDS }, scope: { type: 'string', enum: SCOPES },
+          passage_kind: { type: 'string', enum: KINDS }, scope: { type: 'string', enum: SCOPES }, ...CUT_FIELDS,
           from: { type: 'array', items: { type: 'string', enum: ['A', 'B', 'F'] } } } } } } } })
   return merged ? { task_id: t.task_id, source_id: t.source_id, enumerators: ['A', 'B'],
     passages: merged.passages || [] } : null

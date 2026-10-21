@@ -136,6 +136,11 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         "cut_connectives": ", ".join(f'"{c}"' for c in vocab.CUT_CONNECTIVES),
         "cut_flags": ", ".join(f"`{f}`" for f in sorted(vocab.CUT_FLAGS)),
         "simple_statement_clause": vocab.SIMPLE_STATEMENT_CLAUSE,
+        # the end rule the planner writes into this run's gate.json (`span_end_rule`,
+        # plan.gate_config): the inventory prompt says where its passage_ids.py ends a
+        # passage, and what gate rule 10 refuses, only for the run whose tool and gate
+        # do it -- the statement cut's flip writes version 2 and rule 10 together
+        "span_end_statement_cut": vocab.SPAN_END_RULE == vocab.SPAN_END_STATEMENT_CUT,
         "per_task": per_task,
         "batch": vocab.CHALLENGE_BATCH_RECORDS,
         "is_inventory": preset.mode == vocab.LOCATE_INVENTORY,
