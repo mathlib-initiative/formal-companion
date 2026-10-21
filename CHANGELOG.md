@@ -1806,6 +1806,14 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `cf bench anchor --transcribe` of gold of judgment rules 3 (`locate-label/6`) no longer aborts
+  when the labeler lists one `library:declaration` twice in a G3 span whose bundle stands: status
+  rule 2 keys a location by that pair, and `vocab.derive_status` refused it held twice, for the
+  whole transcription. `bench.gold._recheck` now keeps a declaration once: a repeat with the same
+  relation and `conjunct_relation` is dropped (the first kept), and listings that disagree are all
+  dropped, so a bundle naming that declaration does not stand, whatever the listings' order (it
+  stood or not by their order before). Each dropped listing is in the row's `dropped` with its
+  reason. Gold of earlier labelers is transcribed exactly as before, and no `/6` gold existed.
 - Corpus fixes from building a 48-library universe on the run host (the field
   defects D1-D12). **Host-driver changes**: a module whose name needs «»
   escaping (`Alpha/Problems/1.lean` is `Alpha.Problems.«1»`) is indexed instead

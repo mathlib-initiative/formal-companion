@@ -1505,6 +1505,83 @@ class TestTheStatementCutsGold(unittest.TestCase):
             self.assertEqual((row["bundle"], row["bundle_problem"]), (None, None))
             self.assertEqual(row["status"], "partial")
 
+    def test_a_declaration_listed_twice_is_kept_once_or_dropped_never_aborts(self):
+        """The flip verifier's probe: a G3 span whose bundle stands, its labeler listing
+        one ``library:declaration`` twice, aborted the whole ``--transcribe`` (status rule
+        2 keys a location by that pair, and ``derive_status`` refuses it held twice), and
+        whether the bundle stood depended on the listings' order.  A repeat with the same
+        relation is dropped and the first kept; listings that disagree are all dropped,
+        in any order, and the bundle naming them does not stand."""
+        self.labeler("locate-label/6", vocab.RULES_STATEMENT_CUT)
+        a, b = "Widget.conj_three", "Widget.spanning_zero"
+
+        def decl(name, relation, conjunct_relation=None):
+            d = {"library": "mathlib", "declaration": name, "relation": relation}
+            if conjunct_relation:
+                d["conjunct_relation"] = conjunct_relation
+            return d
+        bundle = [{"library": "mathlib", "declaration": a},
+                  {"library": "mathlib", "declaration": b}]
+        cases = [
+            # the verifier's first probe: the bundle stands on A once
+            [decl(a, "hasPart", "exactMatch"), decl(a, "hasPart", "exactMatch"),
+             decl(b, "hasPart", "broadMatch")],
+            # its second: B as an exactMatch and a hasPart, in both orders
+            [decl(b, "exactMatch"), decl(a, "hasPart", "exactMatch"),
+             decl(b, "hasPart", "broadMatch")],
+            [decl(b, "hasPart", "broadMatch"), decl(a, "hasPart", "exactMatch"),
+             decl(b, "exactMatch")],
+            # one declaration, two conjunct relations
+            [decl(a, "hasPart", "exactMatch"), decl(b, "hasPart", "broadMatch"),
+             decl(b, "hasPart", "closeMatch")],
+        ]
+
+        def labels_for(k):
+            return {"scope": "formal_math", "passage_kind": "theorem",
+                    "declarations": cases[k % len(cases)], "bundle": bundle,
+                    "evidence": "read at the pin", "hunters": []}
+        rows = self.transcribed(labels_for)
+        self.assertGreaterEqual(len(rows), len(cases))
+        stood, again, contradicted, conjuncts = rows[:len(cases)]
+        self.assertEqual([d["declaration"] for d in stood["declarations"]], [a, b])
+        self.assertEqual([(d["declaration"], d["reason"]) for d in stood["dropped"]],
+                         [(a, "listed 2 times with the same relation: the first is kept")])
+        self.assertEqual(stood["bundle"], {"parts": bundle, "relation": "broadMatch"})
+        self.assertIsNone(stood["bundle_problem"])
+        self.assertEqual(stood["status"], "formalized")
+        for row in (again, contradicted):
+            self.assertEqual([d["declaration"] for d in row["declarations"]], [a])
+            self.assertEqual([d["declaration"] for d in row["dropped"]], [b, b])
+            for d in row["dropped"]:
+                self.assertEqual(d["reason"], "listed 2 times with different relations "
+                                              "(exactMatch, hasPart (broadMatch)): a "
+                                              "declaration has one relation to a span")
+            self.assertIsNone(row["bundle"])
+            self.assertEqual(row["bundle_problem"],
+                             f"bundle part mathlib:{b} is none of the declarations kept at "
+                             f"the pin")
+            self.assertEqual(row["status"], "partial")
+        # the two orders transcribe alike, but for the listings' own order
+        self.assertEqual({k: v for k, v in again.items() if k not in ("gold_id", "span",
+                                                                      "dropped", "source_id",
+                                                                      "section", "pi_span",
+                                                                      "pi_article")},
+                         {k: v for k, v in contradicted.items()
+                          if k not in ("gold_id", "span", "dropped", "source_id", "section",
+                                       "pi_span", "pi_article")})
+        self.assertEqual([d["declaration"] for d in conjuncts["declarations"]], [a])
+        self.assertIn("(hasPart (broadMatch), hasPart (closeMatch))",
+                      conjuncts["dropped"][0]["reason"])
+        self.assertIsNone(conjuncts["bundle"])
+
+    def test_a_bundle_over_a_declaration_kept_twice_does_not_stand(self):
+        decls = [self.part("A", "exactMatch"), self.part("A", "exactMatch"),
+                 self.part("B", "broadMatch")]
+        bundle, why = gold_mod.gold_bundle(decls, self.named("A", "B"))
+        self.assertIsNone(bundle)
+        self.assertEqual(why, "bundle part mathlib:A is kept 2 times: a declaration has one "
+                              "relation to a span")
+
     def test_gold_of_an_earlier_labeler_is_transcribed_as_before(self):
         self.labeler("locate-label/5", vocab.RULES_PD5_PD9)
         rows = self.transcribed(self.label)

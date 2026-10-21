@@ -238,7 +238,11 @@ Gold of a labeler that labels by the statement cut's judgment rules (`locate-lab
 derived as a run of those rules is, under status rule 2 (`bench.gold.gold_status_rule`). A
 `hasPart` declaration keeps the `conjunct_relation` the labeler gave it (one of
 `CONJUNCT_RELATIONS`, or none for a span that states one claim; any other value drops the
-declaration with the reason), and no other relation carries one. The label names the span's
+declaration with the reason), and no other relation carries one. A declaration is kept once,
+since status rule 2 keys a span's locations by `library:declaration`: listed again with the same
+relation (and `conjunct_relation`) the repeat is dropped and the first kept, and listed with
+different ones every listing is dropped, whatever their order (`dropped` gives the reason for
+each; a declaration has one relation to a span). The label names the span's
 bundle (`bundle`, §6): its parts, `hasPart` declarations kept at the pin, each strong to its
 claims (`BUNDLE_RELATIONS`), that together state every claim, each claim by exactly one. A
 bundle of at least two distinct such parts stands as a survived bundle stands in a run: one
