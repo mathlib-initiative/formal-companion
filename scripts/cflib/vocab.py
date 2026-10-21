@@ -711,9 +711,10 @@ CANDIDATE_PART_PHRASES = ("only part", "part of the passage", "one clause",
 # a compound statement's conjuncts written by the inventory and cited by locate and the
 # challenge, a coverage claim only as a bundle on a compound statement, and a versioned
 # cut with a carry-over map.  These are the names the proposal's four packages build
-# against.  Until its flip (the proposal's section 7) nothing reads them: no planner
-# writes the versions below, so every run is planned, gated, tallied and exported as it
-# was before them.
+# against.  Until its flip (the proposal's section 7) nothing binds a run: the gate and
+# the planner read them, but each rule binds only a run whose gate.json or run.yaml
+# names its version, and no planner writes one before the flip, so every run is planned,
+# gated, tallied and exported as it was before them.
 #: The first judgment rules version of the statement cut (gate rule 9; the proposal's
 #: sections 1, 2 and 5): a passage's clause ids are the inventory's conjunct ids (or
 #: ``SIMPLE_STATEMENT_CLAUSE`` for a simple statement) and no document writes its own
@@ -810,6 +811,14 @@ COVERAGE_RECORD_KEYS_BUNDLE = COVERAGE_RECORD_KEYS | {"relation", "conjuncts", "
 #: never a convention).  A run of an earlier version is gated by the earlier list.
 CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT = CLOSE_MATCH_GENERALITY_PHRASES + (
     "table", "for all primes", "every point", "differentiable at")
+#: The naturals-for-integers tripwire under judgment rules 3 (the smoke-3 audit's fix 2b):
+#: a strong relation is refused when the passage's ``statement`` or a conjunct says one of
+#: ``NAT_FOR_INT_INTEGER_WORDS`` and every number-typed binder of the declaration is ℕ,
+#: unless a note says one of ``NAT_FOR_INT_NATURAL_WORDS``.  A word is matched as
+#: ``CLOSE_MATCH_GENERALITY_PHRASES`` are (whole words, case-folded, a trailing ``*`` any
+#: ending); a symbol (``ℤ``, ``ℕ``) anywhere, so "nℤ" and "ℕ-valued" are hits.
+NAT_FOR_INT_INTEGER_WORDS = ("integer", "integers", "ℤ")
+NAT_FOR_INT_NATURAL_WORDS = ("ℕ", "natural*")
 #: What a re-cut does to one passage of the old cut, by the carry-over map (the
 #: proposal's section 4; computed from spans and span text only): ``unchanged`` -- a
 #: passage of the new cut has the same ``passage_key`` (the same text on the same page);

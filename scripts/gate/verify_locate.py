@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The out-of-tree locate gate: rules 1-9 over one task's own documents.
+"""The out-of-tree locate gate: rules 1-10 over one task's own documents.
 
 New code, implementing docs/proposals/wikipedia-locate.md section 4 (gates,
 locate mode) over the formats of references/locate-documents.md sections 1-4
@@ -112,7 +112,37 @@ references/locate-documents.md sections 2-4 and 9):
    coverage claim, or a challenger's confirm of one, one of whose parts alone
    names every claim of the passage is refused (PD6: such a part is one location
    with its own relation), and ``junk_value`` is no convention (PD7), save on a
-   confirm that keeps a record's own, written under version 1.
+   confirm that keeps a record's own, written under version 1.  Under version 3
+   (the statement cut, docs/proposals/statement-cut.md sections 1.3, 1.4 and 5)
+   the clause ids are the frozen passage's conjunct ids, or ``c1`` for a simple
+   statement, and no document writes a claim list; a ``hasPart`` of a compound
+   statement gives its ``conjunct_relation``; a coverage claim is a bundle -- a
+   compound statement's conjuncts partitioned among strong parts, none stating
+   them all -- and a compound statement whose strong parts state every conjunct
+   writes one; a strong location writes ``tests`` and ``instantiation`` and
+   passes the naturals-for-integers tripwire, under the longer generality list,
+   and a part is held to all of it by its ``conjunct_relation`` (a strong one
+   is a strong location: the bundle takes its weakest part's relation); an
+   absence names its nearest ``special_case``; ``cut_flag`` sits on an
+   unresolved passage only; a challenge confirms a bundle with ``part_relations``
+   -- beside no verdict of its own that gives one part every conjunct (PD6) --
+   and refutes one with ``unstated`` and ``part_reasons``, a verdict that keeps
+   or leaves a strong relation (a part's by its conjunct relation) runs its own
+   ``tests``, an uphold names its special case, a document that empties a
+   located passage brings its ``fills`` (an absent one accepting no candidate),
+   and a prominence sample's conditional records are judged exactly when the
+   document overturns their passage to ``subject`` or ``central``;
+10. the statement cut (docs/proposals/statement-cut.md section 3.3), only for a
+   run whose ``gate.json`` names ``statement_cut_rule`` (with span-end rule 2,
+   which ends a passage without ``until`` at the earlier of its extent and the
+   next passage's start): the spans of an inventory are disjoint, one text one
+   passage; a span runs from one block into the next only inside a theorem box,
+   into the displays its last sentence introduces or over the items of one list
+   (a compound statement), and never ends inside a formula; ``conjuncts`` are
+   none or 2-5 with a ``shape`` of the closed list, on a ``formal_math`` passage;
+   and a passage scoped out is ``supporting``.  Rule 10 refuses nothing on a
+   passage's size: its counts of compound statements and their conjuncts,
+   sentences and displays are the harvest receipt's ``cut`` block.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -300,11 +330,46 @@ LOCATE_EXTENSION = "org.mathlib-initiative.formal-companion.locate"
 #: ``junk_value`` convention (PD7)
 JUDGMENT_RULES = 2
 RULES_PD5_PD9 = 2
-#: the span-end rule this gate knows (rule 2's end check; cflib.vocab.SPAN_END_RULE):
+#: the span-end rule the planner writes (rule 2's end check; cflib.vocab.SPAN_END_RULE):
 #: a gate.json names the version its run was planned under as ``span_end_rule``, and
 #: one without the key (a run planned before it, whose inventories ``passage_ids.py``
 #: wrote without ``until``) is gated without the end check
 SPAN_END_RULE = 1
+#: The statement cut's versions (docs/proposals/statement-cut.md section 2.2;
+#: cflib.vocab.RULES_STATEMENT_CUT, SPAN_END_STATEMENT_CUT, STATEMENT_CUT_RULE): judgment
+#: rules 3 (rule 9 against the inventory's conjunct ids: no claim list, a coverage claim
+#: only as a bundle, the smoke-3 audit's failure-mode rules), span-end rule 2 (the end
+#: at the earlier of the extent and the next passage's start) and statement-cut rule 1
+#: (rule 10, the inventory's cut).  This gate knows them; each binds a run only when its
+#: gate.json names it, which ``cf plan-locate`` does from the proposal's flip on
+RULES_STATEMENT_CUT = 3
+SPAN_END_STATEMENT_CUT = 2
+STATEMENT_CUT_RULE = 1
+#: the highest version of each rule this gate can hold a run to: a gate.json naming a
+#: higher one was planned by a newer planner than this gate directory (exit 3)
+KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_STATEMENT_CUT)
+KNOWN_SPAN_END_RULE = max(SPAN_END_RULE, SPAN_END_STATEMENT_CUT)
+KNOWN_STATEMENT_CUT_RULE = STATEMENT_CUT_RULE
+#: a compound statement's conjuncts (cflib.vocab's statement-cut block, inlined)
+COMPOUND_SHAPES = frozenset({"existence_uniqueness", "iff", "cases", "conclusions",
+                             "equations"})
+MIN_CONJUNCTS = 2
+MAX_CONJUNCTS = 5
+SHAPE_CONJUNCT_COUNTS = {"existence_uniqueness": 2}
+SIMPLE_STATEMENT_CLAUSE = "c1"
+CONJUNCT_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch", "narrowMatch"})
+BUNDLE_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
+TWO_WAY_TEST_KEYS = ("r2", "r3")
+CUT_FLAGS = frozenset({"not_a_statement", "several_statements"})
+#: the naturals-for-integers tripwire's words (fix 2b; cflib.vocab.NAT_FOR_INT_INTEGER_WORDS,
+#: NAT_FOR_INT_NATURAL_WORDS, matched by word_pattern)
+NAT_FOR_INT_INTEGER_WORDS = ("integer", "integers", "ℤ")
+NAT_FOR_INT_NATURAL_WORDS = ("ℕ", "natural*")
+#: what a passage not scoped formal_math is (rule 10 (f)): the one prominence nothing reads
+PROMINENCE_SUPPORTING = "supporting"
+#: the prominences an overturn reopens a supporting passage's records to, as
+#: refuted-by-default or hunted ones (A3; cflib.vocab.REFUTE_BY_DEFAULT_PROMINENCE)
+REFUTE_BY_DEFAULT_PROMINENCE = frozenset({"subject", "central"})
 #: the relations that say a declaration states the whole passage
 #: (cflib.vocab.STRONG_RELATIONS)
 STRONG_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
@@ -337,6 +402,10 @@ CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strengthen*", "weaker", "weaken*"
                                   "particular case", "broader", "narrower",
                                   "strict derivative*", "strict differentiab*",
                                   "strictly differentiab*")
+#: the list under judgment rules 3 (cflib.vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT:
+#: the smoke-3 audit's fix 2c)
+CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT = CLOSE_MATCH_GENERALITY_PHRASES + (
+    "table", "for all primes", "every point", "differentiable at")
 #: a judgment rule's one-line field (cflib.vocab.MAX_JUDGMENT_LINE_CHARS,
 #: MIN_JUDGMENT_LINE_WORDS)
 MAX_JUDGMENT_LINE_CHARS = 300
@@ -620,10 +689,19 @@ class GateConfig:
         self.vendor = data.get("vendor") if isinstance(data.get("vendor"), dict) else {}
         #: rule 9 binds a run planned under the judgment rules, and no other
         self.judgment_rules = _rule_version(data, "judgment_rules", "judgment rules",
-                                            JUDGMENT_RULES)
+                                            KNOWN_JUDGMENT_RULES)
         #: rule 2's end check binds a run planned under the span-end rule, and no other
         self.span_end_rule = _rule_version(data, "span_end_rule", "span-end rule",
-                                           SPAN_END_RULE)
+                                           KNOWN_SPAN_END_RULE)
+        #: rule 10 (the statement cut) binds a run planned under it, and no other
+        self.statement_cut_rule = _rule_version(data, "statement_cut_rule",
+                                                "statement-cut rule", KNOWN_STATEMENT_CUT_RULE)
+        if self.statement_cut_rule and self.span_end_rule < SPAN_END_STATEMENT_CUT:
+            # rule 10's disjointness rests on the end rule that stops a passage at the
+            # next one's start (docs/proposals/statement-cut.md section 2.2)
+            raise GateBroken(f"gate.json names statement_cut_rule {self.statement_cut_rule} "
+                             f"with span_end_rule {self.span_end_rule}: the statement cut "
+                             f"needs span-end rule {SPAN_END_STATEMENT_CUT} or later")
 
     @classmethod
     def load(cls, path: pathlib.Path) -> "GateConfig":
@@ -712,6 +790,7 @@ class SourceView:
             raise GateBroken(f"{source_id}: formulas.json does not fit the layer ({exc})") from None
         self.formulas = formulas
         self._paragraphs: list[dict] | None = None
+        self._blocks = None
         self._views: tuple[str, str] | None = None
 
     @property
@@ -770,6 +849,16 @@ class SourceView:
             pieces.append(self.layer[cursor:])
             self._views = (strip_format(self.layer), strip_format("".join(pieces)))
         return self._views
+
+    def blocks(self):
+        """``locate_text.Blocks`` of this source (paragraphs and formulas), built once.
+
+        What span-end rule 2 and rule 10 read (docs/proposals/statement-cut.md
+        section 3.1); a run planned before them never builds it.
+        """
+        if self._blocks is None:
+            self._blocks = lt.Blocks(self.layer, self.paragraphs(), self.formulas)
+        return self._blocks
 
     def paragraphs(self) -> list[dict]:
         if self._paragraphs is None:
@@ -1033,8 +1122,9 @@ def _span(value: Any, length: int) -> tuple[int, int] | None:
     return None
 
 
-def _end_problem(layer: str, paragraphs: list[dict], span: tuple[int, int], exact: str,
-                 until: Any) -> str:
+def _end_problem(layer: str, paragraphs: Any, span: tuple[int, int], exact: str,
+                 until: Any, *, rule: int = 1, next_start: int | None = None,
+                 formulas: list[dict] | None = None) -> str:
     """Why an inventory passage's end is not the one ``passage_ids.py``'s rule gives, or ''.
 
     ``locate_text.passage_end`` is the rule (references/locate-documents.md
@@ -1043,20 +1133,33 @@ def _end_problem(layer: str, paragraphs: list[dict], span: tuple[int, int], exac
     is the extent a consumer highlights, so any other end is refused: an
     offset edited by hand, one past the paragraph or into the next passage
     with no ``until`` that puts it there, or one counted in UTF-16 units.
+    ``rule`` is the gate.json's ``span_end_rule``: under 2 (the statement cut,
+    docs/proposals/statement-cut.md section 3.2) a passage without ``until`` ends
+    at the earlier of its extent and ``next_start``, the start of the document's
+    next passage, and ``paragraphs`` is the source's ``locate_text.Blocks``.
     """
     try:
-        want = lt.passage_end(layer, paragraphs, span[0], exact, until)
+        want = lt.passage_end(layer, paragraphs, span[0], exact, until, rule=rule,
+                              next_start=next_start, formulas=formulas)
     except lt.HeadError as exc:
         return f"{exc}; give the passage's last words exactly as the layer has them"
     if span[1] == want:
         return ""
     if until not in (None, ""):
-        rule = "the end of its `until`"
+        why = "the end of its `until`"
+    elif rule >= SPAN_END_STATEMENT_CUT:
+        bound = lt.Blocks.of(layer, paragraphs, formulas).extent(span[0])
+        if next_start is not None and (bound is None or next_start < bound):
+            why = "the start of the next passage"
+        elif bound is not None:
+            why = "the end of its block and of the displays its last sentence introduces"
+        else:
+            why = "the end of its quote"
     elif lt.paragraph_end(paragraphs, span[0]) is not None:
-        rule = "the end of the paragraph it starts in"
+        why = "the end of the paragraph it starts in"
     else:
-        rule = "the end of its quote"
-    return (f"the passage ends at {span[1]}, and passage_ids.py ends it at {want} ({rule}; "
+        why = "the end of its quote"
+    return (f"the passage ends at {span[1]}, and passage_ids.py ends it at {want} ({why}; "
             f"offsets count code points): run passage_ids.py again rather than edit an "
             f"offset, and give `until` to end it elsewhere")
 
@@ -1587,9 +1690,20 @@ def admits_missing_clause(note: Any) -> str | None:
     return None
 
 
-def says_generality(note: Any) -> str | None:
-    """The ``CLOSE_MATCH_GENERALITY_PHRASES`` phrase an exact or close note says."""
-    return _phrase_in(note, CLOSE_MATCH_GENERALITY_PHRASES)
+def says_generality(note: Any, phrases: Iterable[str] = CLOSE_MATCH_GENERALITY_PHRASES
+                    ) -> str | None:
+    """The ``CLOSE_MATCH_GENERALITY_PHRASES`` phrase an exact or close note says.
+
+    ``phrases`` is the list of the run's judgment rules: under rules 3 the longer
+    ``CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`` (:func:`generality_phrases`).
+    """
+    return _phrase_in(note, phrases)
+
+
+def generality_phrases(rules: int) -> tuple[str, ...]:
+    """The generality words an exact or close note may not say, under judgment rules ``rules``."""
+    return (CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT if rules >= RULES_STATEMENT_CUT
+            else CLOSE_MATCH_GENERALITY_PHRASES)
 
 
 def rejects_a_part(reason: Any) -> str | None:
@@ -1693,13 +1807,21 @@ def check_free_text(problems: Problems, where: str, texts: Iterable[tuple[str, A
             _verbatim(problems, where, what, text, source, raw=False)
 
 
-def check_generality(problems: Problems, where: str, relation: Any, note: Any) -> None:
-    """Rule 9 (R1-R3, FM4): an exactMatch or closeMatch note names no generality."""
+def check_generality(problems: Problems, where: str, relation: Any, note: Any, *,
+                     rules: int = 1, label: str | None = None) -> None:
+    """Rule 9 (R1-R3, FM4): an exactMatch or closeMatch note names no generality.
+
+    The words are those of the run's judgment rules (:func:`generality_phrases`):
+    rules 3 add the smoke-3 audit's four (fix 2c).  ``label`` names what is held
+    when it is not the location's own relation: a bundle part, held by its
+    ``conjunct_relation`` (:func:`held_label`).
+    """
     if not _one_of(relation, (EXACT_MATCH, CLOSE_MATCH)):
         return
-    word = says_generality(note)
+    word = says_generality(note, generality_phrases(rules))
     if word:
-        problems.add(9, where, f"the {relation} note says {word!r}: an exactMatch differs from "
+        subject = f"the {relation} note" if label is None else f"the note of a {label}"
+        problems.add(9, where, f"{subject} says {word!r}: an exactMatch differs from "
                                f"its passage by nothing and a closeMatch by a convention only "
                                f"(R1); a declaration stronger or more general is broadMatch "
                                f"(R2), a special case narrowMatch (R3), a weakening hasPart or "
@@ -2005,7 +2127,7 @@ def _gap_problem(phrase: str, relation: str, field: str) -> str:
 
 def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
                    location: dict, *, ids: list[str] | None, passage_kind: Any,
-                   source: Any) -> None:
+                   source: Any, row: dict | None = None) -> None:
     """Rule 9 over one location a document asserts: what it states of its passage.
 
     Its ``clauses`` (R4); a strong one's note and instantiation admit no gap; an
@@ -2020,6 +2142,18 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
     objects, and by which instance or hypothesis, the declaration applies (FM6).
     A declaration with no recorded signature is not held to the last: the gate
     cannot see its binders.
+
+    Under judgment rules 3 (the statement cut; ``row`` is the frozen passage, its
+    statement and conjuncts) a ``hasPart`` of a compound statement gives its
+    ``conjunct_relation`` and nothing else does (J2); a strong location writes
+    both instantiation ``tests`` and an ``instantiation`` whatever its binders,
+    and states no naturals for the passage's integers unanswered (fixes 2a, 2b);
+    and an exact or close note is held to the longer list of generality words
+    (fix 2c).  A part is held by its ``conjunct_relation`` (:func:`held_label`):
+    its convention, its generality words and fixes 2a-2b are a strong location's
+    when that relation is strong, since a bundle takes its weakest part's
+    relation (status rule 2).  The gap check stays the location's own: a part
+    states some conjuncts and not the rest by definition.
     """
     relation = location.get("relation")
     known = relation if _one_of(relation, LOCATE_RELATIONS) else None
@@ -2028,16 +2162,27 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
     given = check_line_field(problems, where, "instantiation", instantiation, source)
     if known is None:
         return
+    cut = cfg.judgment_rules >= RULES_STATEMENT_CUT
     check_step(problems, where, known, location.get("step"), source, passage_kind=passage_kind)
-    check_convention(problems, where, known, location.get("convention"),
+    held_to = (check_conjunct_relation(problems, where, known, location.get("conjunct_relation"),
+                                       row) if cut else known)
+    label = held_label(known, held_to)
+    check_convention(problems, where, held_to, location.get("convention"),
                      rules=cfg.judgment_rules)
-    check_generality(problems, where, known, location.get("note"))
+    check_generality(problems, where, held_to, location.get("note"), rules=cfg.judgment_rules,
+                     label=label)
     if known in STRONG_RELATIONS:
         for field in ("note", "instantiation"):
             phrase = admits_missing_clause(location.get(field))
             if phrase:
                 problems.add(9, where, _gap_problem(phrase, known, field))
                 break
+    if cut and held_to in STRONG_RELATIONS:
+        check_strong_location(cfg, ctx, problems, where, location, held_to, row, source,
+                              label=label)
+        return
+    if cut and location.get("tests") is not None:
+        check_tests(problems, where, location.get("tests"), source)
     if known != RELATED_MATCH and not given and _blank(instantiation):
         binders = _binders_needing(cfg, ctx, location)
         if binders:
@@ -2205,6 +2350,360 @@ def check_rejections(problems: Problems, where: str, receipt: dict) -> None:
                          f"located, not absent. If it states no claim, say which it misses")
 
 
+# --------------------------------------------------------------------------- #
+# rule 9 under judgment rules 3: the statement cut (docs/proposals/statement-cut.md
+# sections 1.3, 1.4 and 5)
+# --------------------------------------------------------------------------- #
+
+def clause_ids(row: dict, what: str) -> list[str]:
+    """The clause ids of a frozen passage (a task manifest's passage or challenge record).
+
+    Its conjuncts' ids, which the inventory's gate held to ``c1`` .. ``cN`` (rule
+    10), or ``[SIMPLE_STATEMENT_CLAUSE]`` for a simple statement.  Conjuncts of
+    another shape are an inconsistent frozen inventory: the gate cannot run.
+    """
+    conjuncts = row.get("conjuncts")
+    if conjuncts is None:
+        return [SIMPLE_STATEMENT_CLAUSE]
+    if not isinstance(conjuncts, list) or not (MIN_CONJUNCTS <= len(conjuncts) <= MAX_CONJUNCTS) \
+            or [c.get("id") if isinstance(c, dict) else None for c in conjuncts] != \
+            [f"c{k + 1}" for k in range(len(conjuncts))]:
+        raise GateBroken(f"{what} carries conjuncts that are not c1 .. cN: the frozen inventory "
+                         f"is inconsistent")
+    return [c["id"] for c in conjuncts]
+
+
+def _is_compound(row: dict | None) -> bool:
+    return isinstance((row or {}).get("conjuncts"), list) and bool(row["conjuncts"])
+
+
+def _passage_texts(row: dict | None) -> list[str]:
+    """What a frozen passage says in the inventory's words: its statement and conjuncts."""
+    row = row or {}
+    texts = [row.get("statement")]
+    texts += [c.get("text") for c in row.get("conjuncts") or [] if isinstance(c, dict)]
+    return [t for t in texts if isinstance(t, str)]
+
+
+def word_pattern(words: Iterable[str]) -> re.Pattern:
+    """A list of the tripwire's words as one pattern (cflib.vocab's ``NAT_FOR_INT_*_WORDS``).
+
+    A word is matched as a phrase list's is (:func:`phrase_pattern`: whole words, a
+    trailing ``*`` any ending); a symbol, any entry that is not ASCII, anywhere.
+    """
+    return re.compile("|".join(phrase_pattern(w).pattern if w.isascii() else re.escape(w)
+                               for w in words))
+
+
+#: the words by which a passage speaks of integers, and a note answers it (fix 2b)
+_INTEGER_WORDS = word_pattern(NAT_FOR_INT_INTEGER_WORDS)
+#: a binder's number type, as the index prints it, and the set it names
+_NUMBER_TYPES = {"ℕ": "ℕ", "Nat": "ℕ", "ℤ": "ℤ", "Int": "ℤ", "ℚ": "ℚ", "Rat": "ℚ",
+                 "ℝ": "ℝ", "Real": "ℝ", "ℂ": "ℂ", "Complex": "ℂ"}
+_NATURAL_WORDS = word_pattern(NAT_FOR_INT_NATURAL_WORDS)
+
+
+def numeric_binders(signature: Any) -> list[str]:
+    """The number type (``ℕ``, ``ℤ``, ``ℚ``, ``ℝ``, ``ℂ``) of every binder group typed by one."""
+    out = []
+    for group in binder_groups(signature):
+        _names, colon, typ = group[1:-1].partition(":")
+        if colon and typ.strip() in _NUMBER_TYPES:
+            out.append(_NUMBER_TYPES[typ.strip()])
+    return out
+
+
+def nat_for_int(cfg: GateConfig, ctx: Context, location: dict, row: dict | None,
+                notes: Iterable[Any]) -> str:
+    """The ℕ-for-ℤ tripwire (fix 2b): why a strong relation states naturals for integers, or ''.
+
+    The passage's ``statement`` or a conjunct says "integer", "integers" or ``ℤ``;
+    every number-typed binder group of the declaration's signature is ``ℕ``; and
+    no note names "ℕ" or "natural" to answer it.  A statement over ℕ for one over
+    ℤ is a special case (R3, PD2's ``narrowMatch``) unless the note says why the
+    passage's integers are naturals.  A declaration with no recorded signature,
+    or none of whose binders is number-typed, is not held to it.
+    """
+    if not any(_INTEGER_WORDS.search(fold_words(t)) for t in _passage_texts(row)):
+        return ""
+    library, name = location.get("library"), location.get("declaration")
+    if not (isinstance(library, str) and isinstance(name, str) and library in cfg.libraries):
+        return ""
+    numbers = numeric_binders(ctx.signature(library, name))
+    if not numbers or any(n != "ℕ" for n in numbers):
+        return ""
+    if any(_NATURAL_WORDS.search(fold_words(note)) for note in notes if isinstance(note, str)):
+        return ""
+    return (f"the passage speaks of integers and every number-typed binder of {library}:{name} "
+            f"is ℕ: a statement over ℕ for one over ℤ is a special case, narrowMatch (R3, PD2); "
+            f"if the passage's integers are naturals, say so in the note (name ℕ or the naturals)")
+
+
+def check_tests(problems: Problems, where: str, tests: Any, source: Any, *,
+                required: str = "") -> None:
+    """Fixes 2a and 2d: a strong relation's two instantiation tests, ``tests: {r2, r3}``.
+
+    ``r2`` says how the passage follows from the declaration, ``r3`` why the
+    declaration at the passage's objects needs nothing the passage does not give;
+    each is a one-line judgment field (:func:`check_line_field`).  ``required``
+    names what owes them ('' when they are optional: checked when given).
+    """
+    if tests is None:
+        if required:
+            problems.add(9, where, f"{required} writes both instantiation tests: tests: {{r2: "
+                                   f"<how the passage follows from the declaration>, r3: <why "
+                                   f"the declaration, at the passage's objects, needs nothing "
+                                   f"more>}} (R2, R3)")
+        return
+    if not isinstance(tests, dict) or set(tests) != set(TWO_WAY_TEST_KEYS):
+        problems.add(9, where, "tests is {r2: <one line>, r3: <one line>} and nothing else")
+        return
+    for key in TWO_WAY_TEST_KEYS:
+        if not check_line_field(problems, where, f"tests.{key}", tests[key], source) \
+                and _blank(tests[key]):
+            problems.add(9, where, f"tests.{key} is one line of your own: the test, as you ran it")
+
+
+def check_conjunct_relation(problems: Problems, where: str, relation: str, value: Any,
+                            row: dict | None) -> str:
+    """J2: a ``hasPart`` of a compound statement gives its ``conjunct_relation``; nothing else does.
+
+    Returns the relation the location's ``convention`` is held to: a part's
+    ``conjunct_relation`` (a ``closeMatch`` part names its convention), else the
+    location's own relation.
+    """
+    if relation == HAS_PART and _is_compound(row):
+        if not _one_of(value, CONJUNCT_RELATIONS):
+            problems.add(9, where, f"a hasPart of a compound statement says what it bears to "
+                                   f"the conjunct(s) it names: conjunct_relation, one of "
+                                   f"{', '.join(sorted(CONJUNCT_RELATIONS))}, judged against "
+                                   f"those conjuncts by R1-R3 and PD1-PD10")
+            return relation
+        return value
+    if value is not None:
+        problems.add(9, where, ("conjunct_relation belongs to a hasPart of a compound "
+                                "statement; a hasPart of a simple one names c1 and nothing more"
+                                if relation == HAS_PART else
+                                f"conjunct_relation belongs to a hasPart of a compound "
+                                f"statement, and a {relation} is none: drop it"))
+    return relation
+
+
+def held_label(relation: Any, held_to: Any) -> str | None:
+    """What a refusal calls a location held by another relation than its own, or None.
+
+    Under judgment rules 3 a ``hasPart`` of a compound statement is held by its
+    ``conjunct_relation`` (:func:`check_conjunct_relation`, a location verdict's
+    :func:`_judge_verdict_conjunct_relation`): the relation it bears to the
+    conjuncts it states, which is the relation a bundle takes from it (the
+    weakest part's, status rule 2).  A part whose ``conjunct_relation`` is strong
+    is held to every check a strong location is -- fixes 2a-2c and R1's words --
+    and the refusal names it as "a part whose conjunct_relation is <relation>".
+    """
+    return None if held_to == relation else f"part whose conjunct_relation is {held_to}"
+
+
+def check_strong_location(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
+                          location: dict, relation: str, row: dict | None, source: Any, *,
+                          label: str | None = None) -> None:
+    """Fixes 2a and 2b on a strong location: its ``tests``, its ``instantiation``, the ℕ tripwire.
+
+    ``relation`` is the strong relation it is held by: its own, or a part's
+    ``conjunct_relation``, which ``label`` then names (:func:`held_label`).
+    """
+    what = relation if label is None else label
+    check_tests(problems, where, location.get("tests"), source,
+                required=f"a {what}")
+    if _blank(location.get("instantiation")):
+        problems.add(9, where, f"a {what} says how the declaration is instantiated at the "
+                               f"passage's objects, whatever its binders (instantiation: <one "
+                               f"line>): which objects, and which instance or hypothesis makes "
+                               f"it apply")
+    why = nat_for_int(cfg, ctx, location, row, [location.get("note")])
+    if why:
+        problems.add(9, where, why)
+
+
+def check_special_case(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
+                       value: Any, source: Any, *, what: str) -> None:
+    """Fix 5b: an absence's nearest special case, ``special_case``, and why it fails R3/PD4.
+
+    ``{library, declaration, reason}`` -- the declaration in ``corpus.sqlite`` at
+    that library (rule 3) -- or ``{reason}`` when the search found none; the reason
+    is a one-line judgment field.
+    """
+    if value is None:
+        problems.add(9, where, f"an absence names the nearest special case you searched for and "
+                               f"why it fails R3 or PD4: {what}.special_case: {{library, "
+                               f"declaration, reason}}, or {{reason}} when there is none")
+        return
+    if not isinstance(value, dict) or set(value) not in ({"reason"},
+                                                         {"library", "declaration", "reason"}):
+        problems.add(9, where, f"{what}.special_case is {{library, declaration, reason}} or "
+                               f"{{reason}}, nothing else")
+        return
+    if "library" in value:
+        library, declaration = value["library"], value["declaration"]
+        if not _one_of(library, cfg.libraries):
+            problems.add(3, where, f"{what}.special_case names library {library!r}, which is "
+                                   f"not in universe {cfg.universe_id}")
+        elif not _nonempty_str(declaration):
+            problems.add(9, where, f"{what}.special_case names its declaration")
+        elif not ctx.exists(library, declaration):
+            problems.add(3, where, f"{what}.special_case {library}:{declaration} is not in "
+                                   f"corpus.sqlite (a phantom declaration)")
+    if not check_line_field(problems, where, f"{what}.special_case.reason", value["reason"],
+                            source) and _blank(value["reason"]):
+        problems.add(9, where, f"{what}.special_case.reason says, in one line of your own, why "
+                               f"the special case fails R3 or PD4 (or that none was found)")
+
+
+def check_cut_flag(problems: Problems, where: str, passage: dict, outcome: Any) -> None:
+    """J4: ``cut_flag`` -- what a worker says of a passage's cut -- on an unresolved one only."""
+    if "cut_flag" not in passage:
+        return
+    if outcome != "unresolved":
+        problems.add(9, where, "cut_flag belongs to an unresolved passage: what you say of a "
+                               "cut you could not judge a declaration against")
+    elif not _one_of(passage["cut_flag"], CUT_FLAGS):
+        problems.add(9, where, f"cut_flag is one of {', '.join(sorted(CUT_FLAGS))}")
+
+
+def _clauses_of(location: dict) -> set[str] | None:
+    clauses = location.get("clauses")
+    if not isinstance(clauses, list) or not clauses or not all(isinstance(c, str) for c in clauses):
+        return None
+    return set(clauses)
+
+
+def check_bundle(problems: Problems, where: str, coverage: dict, locations: list[dict],
+                 ids: list[str], row: dict | None) -> None:
+    """J3: a coverage claim is a bundle -- on a compound statement, its conjuncts partitioned.
+
+    Rule 1 has held the claim's object already (:func:`_check_coverage`).  Under
+    judgment rules 3 it stands only on a compound statement; its parts'
+    ``clauses`` are pairwise disjoint, together name every conjunct, and none
+    names them all (PD6); and every part's ``conjunct_relation`` is one of
+    ``BUNDLE_RELATIONS``, since a part that states only a special case of its
+    conjuncts leaves them unstated.  The bundle's relation is computed from its
+    parts, never written.
+    """
+    at = f"{where}: coverage"
+    if not _is_compound(row):
+        problems.add(9, at, "a coverage claim is a bundle, on a compound statement only: this "
+                            "passage is a simple statement, so one declaration states it or "
+                            "none does (a hasPart of it is partial)")
+        return
+    parts = coverage.get("parts")
+    if not isinstance(parts, list):
+        return
+    by_rank = {_rank_of(loc): loc for loc in locations if _rank_of(loc) is not None}
+    seen: dict[str, int] = {}
+    for rank in parts:
+        loc = by_rank.get(rank) if isinstance(rank, int) else None
+        if loc is None or loc.get("relation") != HAS_PART:
+            continue                       # rule 1 names it
+        named = _clauses_of(loc) or set()
+        if set(ids) <= named:
+            problems.add(9, at, f"part {rank} names every conjunct ({', '.join(ids)}): "
+                                f"{WHOLE_PART}")
+        for cid in sorted(named):
+            if cid in seen:
+                problems.add(9, at, f"parts {seen[cid]} and {rank} both name {cid}: each conjunct "
+                                    f"is stated by exactly one part")
+            else:
+                seen[cid] = rank
+        if not _one_of(loc.get("conjunct_relation"), BUNDLE_RELATIONS):
+            problems.add(9, at, f"part {rank} bears {loc.get('conjunct_relation')!r} to its "
+                                f"conjuncts; a bundle's part states them strongly "
+                                f"({', '.join(sorted(BUNDLE_RELATIONS))}): a special case of a "
+                                f"conjunct leaves it unstated, and the passage is partial")
+    missing = [c for c in ids if c not in seen]
+    if missing:
+        problems.add(9, at, f"no part states {', '.join(missing)}: a bundle's parts together "
+                            f"state every conjunct")
+
+
+def unclaimed_bundle(locations: list[dict], ids: list[str]) -> list[int] | None:
+    """Fix 4a: ranks of ``hasPart`` locations that state every conjunct strongly between them.
+
+    Two or more, pairwise disjoint in their ``clauses``, together naming every
+    conjunct, none naming them all, each with a ``conjunct_relation`` of
+    ``BUNDLE_RELATIONS``: the bundle a passage with no coverage claim leaves
+    unwritten.  None when there is no such set.
+    """
+    parts = [(_rank_of(loc), _clauses_of(loc)) for loc in locations
+             if loc.get("relation") == HAS_PART and _rank_of(loc) is not None
+             and _one_of(loc.get("conjunct_relation"), BUNDLE_RELATIONS)
+             and _clauses_of(loc) and not set(ids) <= _clauses_of(loc)]
+    parts = parts[:12]                     # max_locations is 5; a cap keeps this bounded
+    want = set(ids)
+    for mask in range(1, 1 << len(parts)):
+        chosen = [parts[k] for k in range(len(parts)) if mask >> k & 1]
+        if len(chosen) < MIN_COVERAGE_PARTS:
+            continue
+        union: set[str] = set()
+        disjoint = True
+        for _rank, named in chosen:
+            if union & named:
+                disjoint = False
+                break
+            union |= named
+        if disjoint and union == want:
+            return sorted(rank for rank, _named in chosen)
+    return None
+
+
+def judge_cut_passage(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
+                      p: dict, row: dict, locations: list[dict], receipt: dict, outcome: Any,
+                      source: Any) -> None:
+    """Rule 9 under judgment rules 3 over one passage of a locate document (J1-J4, section 5).
+
+    The clause ids are the frozen passage's (:func:`clause_ids`): ``claims`` is
+    refused (J1).  Each location is held to :func:`check_judgment` (J2, fixes
+    2a-2c); a coverage claim is a bundle (J3, :func:`check_bundle`), and a
+    compound statement whose strong parts state every conjunct between them
+    writes it (fix 4a); queries name the clause ids; an absence's receipt names
+    its nearest special case (fix 5b); and only an unresolved passage carries a
+    ``cut_flag`` (J4).
+    """
+    kind = row.get("passage_kind")
+    ids = clause_ids(row, f"task manifest passage {row.get('item')}")
+    if "claims" in p:
+        problems.add(9, where, "claims is the inventory's under the statement cut: the clause "
+                               "ids are the passage's conjunct ids (or c1 for a simple "
+                               "statement), so drop claims and name those")
+    for j, loc in enumerate(locations):
+        check_judgment(cfg, ctx, problems, f"{where}.locations[{j}]", loc, ids=ids,
+                       passage_kind=kind, source=source, row=row)
+    coverage = p.get("coverage") if isinstance(p.get("coverage"), dict) else None
+    if outcome == "located" and coverage is not None:
+        check_bundle(problems, where, coverage, locations, ids, row)
+    elif outcome == "located" and _is_compound(row) and "coverage" not in p:
+        ranks = unclaimed_bundle(locations, ids)
+        if ranks:
+            problems.add(9, where, f"the hasPart locations ranked "
+                                   f"{', '.join(map(str, ranks))} state every conjunct between "
+                                   f"them, each strongly: write the bundle (coverage: {{complete: "
+                                   f"true, parts: [{', '.join(map(str, ranks))}], note}}), or give "
+                                   f"the part that falls short the conjunct_relation it bears")
+    if outcome in ("located", "absent"):
+        check_query_clauses(problems, where, p.get("receipt"), ids, absent=outcome == "absent",
+                            passage_kind=kind)
+    if outcome == "absent":
+        check_rejections(problems, where, receipt)
+        check_special_case(cfg, ctx, problems, where,
+                           (p.get("receipt") or {}).get("special_case")
+                           if isinstance(p.get("receipt"), dict) else None,
+                           source, what="receipt")
+    check_cut_flag(problems, where, p, outcome)
+    check_free_text(problems, where, [
+        *(("a location's note", loc.get("note")) for loc in locations),
+        *(("a query", q) for q in receipt["queries"]),
+        *(("a candidate's reason", c.get("reason")) for c in receipt["candidates"]),
+        ("the coverage claim's note", (coverage or {}).get("note"))], source)
+
+
 def _curated(ctx: Context, source_id: str) -> list[tuple[str, str]]:
     data = ctx.candidates(source_id)
     if not data:
@@ -2240,11 +2739,17 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
         return stats
     layer = source.layer
     stats["passages"] = len(passages)
+    # under span-end rule 2 a passage without `until` ends no later than the next one's
+    # start, so every start is read before any end is checked
+    all_starts = sorted({sp[0] for sp in (_span(p.get("span"), len(layer)) for p in passages
+                                          if isinstance(p, dict)) if sp is not None})
     starts: list[int] = []
     rows: list[tuple[int, dict, int]] = []         # (index, passage, head start)
     spans: list[tuple[int, int]] = []
     span_starts: set[int] = set()
     seen_items: set[str] = set()
+    #: (index, passage, span) of every passage whose quote placed it: what rule 10 reads
+    placed: list[tuple[int, dict, tuple[int, int]]] = []
     for i, p in enumerate(passages):
         where = f"{name}: passages[{i}]"
         if not isinstance(p, dict):
@@ -2312,10 +2817,19 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
         # start is right here, so the passage still keys the others' ids below.  A
         # run planned before the span-end rule has no `until` to recompute it from
         # (its passage_ids.py dropped it), and keeps the bound above.
-        if cfg.span_end_rule:
+        if cfg.span_end_rule >= SPAN_END_STATEMENT_CUT:
+            later = bisect.bisect_right(all_starts, span[0])
+            end_problem = _end_problem(
+                layer, source.blocks(), span, exact, p.get("until"), rule=cfg.span_end_rule,
+                next_start=all_starts[later] if later < len(all_starts) else None,
+                formulas=source.formulas)
+            if end_problem:
+                problems.add(2, where, end_problem)
+        elif cfg.span_end_rule:
             end_problem = _end_problem(layer, source.paragraphs(), span, exact, p.get("until"))
             if end_problem:
                 problems.add(2, where, end_problem)
+        placed.append((i, p, span))
         try:
             head_start = source.map.to_head(span[0])
         except lt.HeadError as exc:
@@ -2411,6 +2925,8 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
     # what the floor's skips removed, for the harvest receipt (gate_corpus)
     stats["skipped"] = {"skips": len(skip_spans), "chars": _union_length(skip_spans),
                         "math_paragraphs": skipped_math, "finder_passages": skipped_finders}
+    if cfg.statement_cut_rule:
+        stats["cut"] = check_statement_cut(problems, name, passages, placed, source)
     # rule 4, inventory side
     curated = _curated(ctx, source_id)
     if curated:
@@ -2433,6 +2949,183 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                   f"({_hits(curated)}), so a passage of prominence subject is "
                                   f"kept, scoped formal_math")
     return stats
+
+
+# --------------------------------------------------------------------------- #
+# rule 10: the statement cut (docs/proposals/statement-cut.md section 3.3)
+# --------------------------------------------------------------------------- #
+
+def check_conjuncts(problems: Problems, where: str, passage: dict, source: Any) -> list[str] | None:
+    """Rule 10 (d): a passage's ``conjuncts`` and ``shape``; returns the conjunct ids, or None.
+
+    A simple statement carries neither (never ``[]``, never ``null``); a compound
+    one carries ``MIN_CONJUNCTS``-``MAX_CONJUNCTS`` entries of exactly ``{id,
+    text}``, the ids ``c1``, ``c2``, ... in order with no gap, each text held to
+    the claim rules (one line of at most ``MAX_CLAIM_CHARS`` characters, in the
+    worker's own words in every spelling of the source, alone and read one after
+    the other: a bundle's conjuncts are exported), and a ``shape`` of
+    ``COMPOUND_SHAPES``, with exactly the count ``SHAPE_CONJUNCT_COUNTS`` names
+    for it.  None for a simple statement or a list refused here.
+    """
+    has_conjuncts, has_shape = "conjuncts" in passage, "shape" in passage
+    if not has_conjuncts and not has_shape:
+        return None
+    if has_shape and not has_conjuncts:
+        problems.add(10, where, "a shape belongs to a compound statement, which writes its "
+                                "conjuncts: give both, or neither for a simple statement")
+        return None
+    conjuncts = passage["conjuncts"]
+    if not isinstance(conjuncts, list) or not (MIN_CONJUNCTS <= len(conjuncts) <= MAX_CONJUNCTS):
+        problems.add(10, where, f"conjuncts is absent on a simple statement, or a list of "
+                                f"{MIN_CONJUNCTS} to {MAX_CONJUNCTS} {{id, text}} on a compound "
+                                f"one (never [] or null): a statement holding more results "
+                                f"than that is several statements, cut apart")
+        return None
+    ids: list[str] = []
+    texts: list[str] = []
+    usable, copied = True, False
+    for k, conjunct in enumerate(conjuncts):
+        at = f"{where}.conjuncts[{k}]"
+        if not isinstance(conjunct, dict) or set(conjunct) != CLAIM_KEYS:
+            problems.add(10, at, "a conjunct is {id, text} and nothing else")
+            usable = False
+            continue
+        cid, text = conjunct["id"], conjunct["text"]
+        if cid != f"c{k + 1}":
+            problems.add(10, at, f"id {cid!r} is not c{k + 1}: the ids are c1, c2, ... in order")
+            usable = False
+        else:
+            ids.append(cid)
+        if not _nonempty_str(text):
+            problems.add(10, at, "text says the conjunct, in a short paraphrase")
+        elif not _one_line(text) or len(text) > MAX_CLAIM_CHARS:
+            problems.add(10, at, f"text is one line of at most {MAX_CLAIM_CHARS} characters")
+        else:
+            texts.append(text)
+            copied = _verbatim(problems, at, "the conjunct's text", text, source) or copied
+    if len(texts) > 1 and not copied:
+        _verbatim(problems, where, "the conjuncts, read one after the other,", " ".join(texts),
+                  source)
+    shape = passage.get("shape")
+    if not has_shape:
+        problems.add(10, where, f"a compound statement names its shape, one of "
+                                f"{', '.join(sorted(COMPOUND_SHAPES))}")
+    elif not _one_of(shape, COMPOUND_SHAPES):
+        problems.add(10, where, f"shape {shape!r} is not one of {', '.join(sorted(COMPOUND_SHAPES))} "
+                                f"(the closed list): anything else holding two results is two "
+                                f"statements")
+    elif shape in SHAPE_CONJUNCT_COUNTS and len(conjuncts) != SHAPE_CONJUNCT_COUNTS[shape]:
+        problems.add(10, where, f"a {shape} statement has exactly {SHAPE_CONJUNCT_COUNTS[shape]} "
+                                f"conjuncts, not {len(conjuncts)}")
+    return ids if usable else None
+
+
+def _items_of(rows: list[tuple[int, dict, tuple[int, int]]], k: int) -> str:
+    return str(rows[k][1].get("item") or f"passages[{rows[k][0]}]")
+
+
+def check_statement_cut(problems: Problems, name: str, passages: list,
+                        placed: list[tuple[int, dict, tuple[int, int]]], source: Any) -> dict:
+    """Rule 10 over an inventory document, under ``statement_cut_rule`` 1; returns its counts.
+
+    Refused (docs/proposals/statement-cut.md section 3.3): (a) two passages whose
+    spans share a character; (b) a span that ends past its extent
+    (``locate_text.extent``, compound when the passage has conjuncts: a passage
+    runs from one block into the next only inside a theorem box, into the
+    displays its last sentence introduces, or over the items of one list), or,
+    for a passage no block holds, into the next block; (c) a span that ends
+    strictly inside a formula; (d) conjuncts or a shape that are not a simple
+    statement's none or a compound one's 2-5 (:func:`check_conjuncts`); (e)
+    conjuncts on a passage not scoped ``formal_math``; (f) a passage not scoped
+    ``formal_math`` whose prominence is not ``supporting``; (g) two passages with
+    one span text.  Nothing is refused on a passage's size: the counts --
+    the compound statements and their conjuncts, and the sentences
+    (``locate_text.units``) and displays (``math`` blocks) of each ``formal_math``
+    passage -- are the harvest receipt's ``cut`` block.
+    """
+    layer = source.layer
+    blocks = source.blocks()
+    top_starts = [blk.start for blk in blocks.top]
+    counts = {"passages": len(passages), "formal": 0, "compound": 0, "conjuncts": 0,
+              "by_shape": {}, "sentences": 0, "displays": 0, "multi_sentence": 0,
+              "multi_display": 0}
+    # (d), (e), (f): every passage the document writes
+    for i, p in enumerate(passages):
+        if not isinstance(p, dict):
+            continue
+        where = f"{name}: passages[{i}]"
+        formal = _one_of(p.get("scope"), LOCATED_SCOPES)
+        ids = check_conjuncts(problems, where, p, source)
+        scoped_out = f"{'an' if str(p.get('scope'))[:1] in 'aeiou' else 'a'} {p.get('scope')}"
+        if not formal and ("conjuncts" in p or "shape" in p):
+            problems.add(10, where, f"conjuncts belong to a formal_math passage; {scoped_out} "
+                                    f"passage states nothing a library could state")
+        if not formal and _one_of(p.get("scope"), SCOPES) \
+                and p.get("prominence") != PROMINENCE_SUPPORTING:
+            problems.add(10, where, f"{scoped_out} passage is supporting, the one prominence "
+                                    f"nothing reads there; the subject marker goes on the "
+                                    f"passage that states the theorem, scoped formal_math")
+        if formal:
+            counts["formal"] += 1
+            if ids:
+                counts["compound"] += 1
+                counts["conjuncts"] += len(ids)
+                shape = p.get("shape")
+                if _one_of(shape, COMPOUND_SHAPES):
+                    counts["by_shape"][shape] = counts["by_shape"].get(shape, 0) + 1
+    rows = sorted(placed, key=lambda r: (r[2][0], r[2][1]))
+    # (a): spans of the source that share a character, swept by start
+    reach = -1
+    holder = -1
+    for k, (i, p, span) in enumerate(rows):
+        if span[0] < reach:
+            problems.add(10, f"{name}: passages[{i}]",
+                         f"{_items_of(rows, k)} {list(span)} shares text with "
+                         f"{_items_of(rows, holder)} {list(rows[holder][2])}: the spans of one "
+                         f"source are disjoint (a passage ends where the next one starts; give "
+                         f"`until` to end one sooner)")
+        if span[1] > reach:
+            reach, holder = span[1], k
+    # (g): one span text, one passage_key
+    by_text: dict[str, int] = {}
+    for k, (i, p, span) in enumerate(rows):
+        text = layer[span[0]:span[1]]
+        if text in by_text:
+            problems.add(10, f"{name}: passages[{i}]",
+                         f"{_items_of(rows, k)} has the same text as "
+                         f"{_items_of(rows, by_text[text])}: two passages with one span text "
+                         f"have one passage key, which no carry-over can tell apart")
+        else:
+            by_text[text] = k
+    # (b), (c), and the counts
+    for i, p, span in rows:
+        where = f"{name}: passages[{i}]"
+        compound = isinstance(p.get("conjuncts"), list) and bool(p.get("conjuncts"))
+        bound = blocks.extent(span[0], compound=compound)
+        if bound is None:
+            later = bisect.bisect_right(top_starts, span[0])
+            bound = top_starts[later] if later < len(top_starts) else len(layer)
+        if span[1] > bound:
+            problems.add(10, where, f"the passage ends at {span[1]}, past {bound}, where its "
+                                    f"block ends: a passage runs from one block into the next "
+                                    f"only inside a theorem box, into the displays its last "
+                                    f"sentence introduces, or -- a compound statement -- over "
+                                    f"the items of one list; cut the rest into passages of "
+                                    f"their own")
+        formula = blocks.formula_at(span[1])
+        if formula is not None and formula[0] < span[1]:
+            problems.add(10, where, f"the passage ends at {span[1]}, inside the formula at "
+                                    f"[{formula[0]}, {formula[1]}]: a display is never cut; end "
+                                    f"the passage after it")
+        if _one_of(p.get("scope"), LOCATED_SCOPES):
+            units = blocks.units(span)
+            sentences, displays = len(units["sentences"]), len(units["displays"])
+            counts["sentences"] += sentences
+            counts["displays"] += displays
+            counts["multi_sentence"] += sentences > 1
+            counts["multi_display"] += displays > 1
+    counts["by_shape"] = dict(sorted(counts["by_shape"].items()))
+    return counts
 
 
 def _hits(curated: list[tuple[str, str]], n: int = 3) -> str:
@@ -2524,7 +3217,10 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
         if "coverage" in p:
             _check_coverage(problems, where, p["coverage"], outcome=outcome,
                             locations=locations, layer=source.layer)
-        if cfg.judgment_rules:
+        if cfg.judgment_rules >= RULES_STATEMENT_CUT:
+            judge_cut_passage(cfg, ctx, problems, where, p, frozen[item], locations, receipt,
+                              outcome, source)
+        elif cfg.judgment_rules:
             kind = frozen[item].get("passage_kind")
             ids = check_claims(problems, where, p.get("claims"), source,
                                required=outcome in ("located", "absent"))
@@ -2601,6 +3297,18 @@ def _challenge_claims(cfg: GateConfig, problems: Problems, name: str, doc: dict,
     """
     if not cfg.judgment_rules:
         return {}
+    if cfg.judgment_rules >= RULES_STATEMENT_CUT:
+        # the statement cut: one list, the inventory's (docs/proposals/statement-cut.md 1.4)
+        if "claims" in doc:
+            problems.add(9, name, "claims is the inventory's under the statement cut: every "
+                                  "verdict names the record's clause ids (its passage's "
+                                  "conjunct ids, or c1 for a simple statement); drop claims")
+        out = {}
+        for rec in records.values():
+            item = rec.get("item")
+            if isinstance(item, str) and (item not in out or _is_compound(rec)):
+                out[item] = clause_ids(rec, f"challenge record {item}")
+        return out
     given = doc.get("claims")
     if given is None:
         return {}
@@ -2661,15 +3369,20 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
     relation, and an exact or close one's note says no generality.  A counting
     relation it keeps on a declaration with instance arguments, whose record names
     no instantiation (every record of a run planned before the rules), carries the
-    challenger's own.
+    challenger's own.  Under judgment rules 3 a verdict on a part of a compound
+    statement is held by the ``conjunct_relation`` it leaves the part
+    (:func:`held_label`): a strong one owes its own ``tests`` (fix 2d), the ℕ
+    tripwire (fix 2b) and the generality words (fix 2c, R1), as a verdict that
+    keeps a strong location does.
     """
     action, old = v.get("action"), rec.get("relation")
     result = old if action == "confirm" else v.get("relation") if action == "downgrade" else None
     if not _one_of(result, LOCATE_RELATIONS):
         return
+    cut = cfg.judgment_rules >= RULES_STATEMENT_CUT
     check_clauses(problems, where, result, v.get("clauses"), ids)
     worker = rec.get("claims")
-    if result in STRONG_RELATIONS and ids is not None and isinstance(worker, list) \
+    if not cut and result in STRONG_RELATIONS and ids is not None and isinstance(worker, list) \
             and len(ids) < len(worker):
         problems.add(9, where, f"a verdict that keeps a {result} states every clause, and your "
                                f"claim list of the passage has {len(ids)} claim(s) where the "
@@ -2678,17 +3391,31 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
     keeps_step = action == "confirm" and _nonempty_str(rec.get("step"))
     check_step(problems, where, result, v.get("step"), source,
                passage_kind=rec.get("passage_kind"), required=not keeps_step)
+    held_to = result
+    if cut:
+        held_to = _judge_verdict_conjunct_relation(problems, where, v, rec, result, action)
+    label = held_label(result, held_to)
     own = v.get("convention")
-    if result == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own):
+    if held_to == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own):
         own = rec.get("convention")
     # a confirm keeps the record's own convention when it names none or names it again;
     # one that names another relabels it, held to its own rules' list like a downgrade's
-    kept = (result == CLOSE_MATCH and action == "confirm" and _nonempty_str(own)
+    kept = (held_to == CLOSE_MATCH and action == "confirm" and _nonempty_str(own)
             and own == rec.get("convention"))
-    check_convention(problems, where, result, own, rules=cfg.judgment_rules, kept=kept)
+    check_convention(problems, where, held_to, own, rules=cfg.judgment_rules, kept=kept)
     note = (_challenger_note(v, rec, source, result) if action == "downgrade"
             else str(v.get("note") or ""))
-    check_generality(problems, where, result, note)
+    check_generality(problems, where, held_to, note, rules=cfg.judgment_rules, label=label)
+    if cut and held_to in STRONG_RELATIONS:
+        # fix 2d: the challenger's own two-way test, and the tripwire on what it leaves --
+        # a part's by the conjunct_relation the verdict leaves it (held_label)
+        check_tests(problems, where, v.get("tests"), source,
+                    required=f"a verdict that keeps or leaves a {label or held_to}")
+        why = nat_for_int(cfg, ctx, rec, rec, [v.get("note"), rec.get("note")])
+        if why:
+            problems.add(9, where, why)
+    elif cut and v.get("tests") is not None:
+        check_tests(problems, where, v.get("tests"), source)
     given = check_line_field(problems, where, "instantiation", v.get("instantiation"), source)
     if result in STRONG_RELATIONS:
         for field, text in (("note", note), ("instantiation", v.get("instantiation"))):
@@ -2701,6 +3428,125 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
         binders = _binders_needing(cfg, ctx, rec)
         if binders:
             problems.add(9, where, _instantiation_problem(rec, binders, challenger=True))
+
+
+def _judge_verdict_conjunct_relation(problems: Problems, where: str, v: dict, rec: dict,
+                                     result: str, action: Any) -> str:
+    """Rules 3: a location verdict's ``conjunct_relation``, never stronger than the record's.
+
+    Only a verdict that leaves a ``hasPart`` of a compound statement may give one
+    (one of ``CONJUNCT_RELATIONS``), and a challenge never raises a relation, so
+    it is no stronger (``RELATION_STRENGTH``) than the record's own.  Returns the
+    relation the verdict's convention is held to: the part's relation, the
+    verdict's or -- a confirm that gives none -- the record's.
+    """
+    given = v.get("conjunct_relation")
+    if result != HAS_PART or not _is_compound(rec):
+        if given is not None:
+            problems.add(9, where, "conjunct_relation belongs to a verdict that leaves a hasPart "
+                                   "of a compound statement: drop it")
+        return result
+    if given is None:
+        own = rec.get("conjunct_relation") if action == "confirm" else None
+        return own if _one_of(own, CONJUNCT_RELATIONS) else result
+    if not _one_of(given, CONJUNCT_RELATIONS):
+        problems.add(9, where, f"conjunct_relation is one of "
+                               f"{', '.join(sorted(CONJUNCT_RELATIONS))}")
+        return result
+    own = rec.get("conjunct_relation")
+    if _one_of(own, CONJUNCT_RELATIONS) and RELATION_STRENGTH[given] < RELATION_STRENGTH[own]:
+        problems.add(9, where, f"conjunct_relation {given} is stronger than the record's {own}: "
+                               f"a challenge never raises a relation; keep {own} or name a "
+                               f"weaker one")
+    return given
+
+
+def _part_keys(rec: dict) -> list[tuple[str, dict]]:
+    return [(str(part.get("location_key")), part) for part in rec.get("parts") or []
+            if isinstance(part, dict)]
+
+
+def _judge_bundle_confirm(problems: Problems, where: str, v: dict, rec: dict,
+                          source_id: str) -> None:
+    """Rules 3 (section 1.4): a coverage confirm gives each part's relation, ``part_relations``.
+
+    One entry for each part of the record and no other, each one of
+    ``BUNDLE_RELATIONS`` and no stronger than that part's own
+    ``conjunct_relation`` (a challenge never raises a relation); the bundle then
+    takes the weakest.  ``part_clauses`` is the claim list's and is refused: the
+    parts' conjuncts are the locate document's.
+    """
+    if "part_clauses" in v:
+        problems.add(9, where, "part_clauses is refused under the statement cut: the parts' "
+                               "conjuncts are the locate document's; give part_relations")
+    parts = _part_keys(rec)
+    given = v.get("part_relations")
+    if not isinstance(given, dict):
+        problems.add(9, where, f"a coverage confirm gives each part's relation to its "
+                               f"conjuncts: part_relations: {{<part's location_key>: <one of "
+                               f"{', '.join(sorted(BUNDLE_RELATIONS))}>}}, one entry for each "
+                               f"part")
+        return
+    keys = [key for key, _part in parts]
+    for key in sorted(set(given) - set(keys)):
+        problems.add(9, where, f"part_relations names {key[:12]!r}, which is no part of the claim")
+    for key, part in parts:
+        if key not in given:
+            problems.add(9, where, f"part_relations gives part {key[:12]} no relation: give it "
+                                   f"one, or refute the claim")
+            continue
+        value = given[key]
+        if not _one_of(value, BUNDLE_RELATIONS):
+            problems.add(9, where, f"part_relations[{key[:12]}] is {value!r}; a bundle's part "
+                                   f"states its conjuncts strongly "
+                                   f"({', '.join(sorted(BUNDLE_RELATIONS))}): a part that states "
+                                   f"less leaves its conjunct unstated, so refute the claim")
+            continue
+        own = part.get("conjunct_relation")
+        if not _one_of(own, CONJUNCT_RELATIONS):
+            raise GateBroken(f"challenge record coverage of {rec.get('item')} of {source_id} "
+                             f"has a part {key[:12]} with no conjunct_relation, so no "
+                             f"part_relations of it can be checked")
+        if RELATION_STRENGTH[value] < RELATION_STRENGTH[own]:
+            problems.add(9, where, f"part_relations[{key[:12]}] {value} is stronger than the "
+                                   f"part's own {own}: a challenge never raises a relation")
+
+
+def _judge_bundle_refute(problems: Problems, where: str, v: dict, rec: dict,
+                         ids: list[str] | None, source: Any) -> None:
+    """Rules 3 (fix 1a): a coverage refute names what no part states, and why, part by part.
+
+    ``unstated``: the conjunct ids (non-empty, distinct, the record's) that no part
+    states; ``part_reasons``: one line for every part and no other, saying why no
+    R1 convention reaches its conjunct -- "they state it after unfolding" is a
+    confirm.  A refute that names a part's own conjunct thus says why that part
+    fails (fix 1b).
+    """
+    unstated = v.get("unstated")
+    if not isinstance(unstated, list) or not unstated or not all(
+            isinstance(c, str) for c in unstated) or len(set(unstated)) != len(unstated):
+        problems.add(9, where, "a coverage refute names the conjuncts no part states: unstated: "
+                               "[c1, ...], non-empty and distinct")
+    elif ids is not None and [c for c in unstated if c not in ids]:
+        problems.add(9, where, f"unstated names {', '.join(c for c in unstated if c not in ids)}, "
+                               f"which are not the passage's clause ids ({', '.join(ids)})")
+    parts = _part_keys(rec)
+    reasons = v.get("part_reasons")
+    if not isinstance(reasons, dict):
+        problems.add(9, where, "a coverage refute says, for every part, why no R1 convention "
+                               "reaches its conjunct: part_reasons: {<part's location_key>: "
+                               "<one line>}")
+        return
+    keys = [key for key, _part in parts]
+    for key in sorted(set(reasons) - set(keys)):
+        problems.add(9, where, f"part_reasons names {key[:12]!r}, which is no part of the claim")
+    for key in keys:
+        if key not in reasons:
+            problems.add(9, where, f"part_reasons gives part {key[:12]} no reason: say why it "
+                                   f"fails, or confirm the claim")
+        elif not check_line_field(problems, where, f"part_reasons[{key[:12]}]", reasons[key],
+                                  source) and _blank(reasons[key]):
+            problems.add(9, where, f"part_reasons[{key[:12]}] is one line of your own")
 
 
 def _judge_coverage_confirm(problems: Problems, where: str, v: dict, rec: dict,
@@ -2797,18 +3643,26 @@ def check_verdict(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
     held to rule 1's cap in every spelling of the source.
     """
     target, action, item = v.get("target"), v.get("action"), v.get("item")
-    ids = claims_of.get(item)
-    if target in CLAIMED_TARGETS and item not in claims_of:
+    cut = cfg.judgment_rules >= RULES_STATEMENT_CUT
+    ids = claims_of.get(item) if not cut else clause_ids(rec, f"challenge record {item}")
+    if not cut and target in CLAIMED_TARGETS and item not in claims_of:
         article = "an" if target[0] in "aeiou" else "a"
         problems.add(9, where, f"a verdict on {article} {target} rests on your own claim list of "
                                f"the passage: write it under claims first (claims: {{<item>: "
                                f"[{{id, text}}, ...]}}), then judge against it")
     if target == "location":
         _judge_location_verdict(cfg, ctx, problems, where, v, rec, ids, source)
+    elif target == "coverage" and action == "confirm" and cut:
+        _judge_bundle_confirm(problems, where, v, rec, source.source_id if source else "")
+    elif target == "coverage" and action == "refute" and cut:
+        _judge_bundle_refute(problems, where, v, rec, ids, source)
     elif target == "coverage" and action == "confirm":
         _judge_coverage_confirm(problems, where, v, rec, ids, rules=cfg.judgment_rules)
     elif target in ("absence", "unresolved") and action == "uphold":
         _judge_uphold(cfg, problems, where, v, rec, ids, source)
+        if cut:
+            check_special_case(cfg, ctx, problems, where, v.get("special_case"), source,
+                               what="verdict")
     texts = [("the verdict's note", v.get("note"))]
     if target == "location" and action == "downgrade" and v.get("relation") == CLOSE_MATCH \
             and not str(rec.get("note") or "").strip() and not _nonempty_str(v.get("note")):
@@ -2916,7 +3770,7 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                 for j, loc in enumerate(locations):
                     check_judgment(cfg, ctx, problems, f"{where}.locations[{j}]", loc,
                                    ids=claims_of.get(v.get("item")),
-                                   passage_kind=rec.get("passage_kind"), source=source)
+                                   passage_kind=rec.get("passage_kind"), source=source, row=rec)
                 check_free_text(problems, where, [("a location's note", loc.get("note"))
                                                   for loc in locations], source)
             span = _span(rec.get("span"), len(source.layer)) if source is not None else None
@@ -2934,6 +3788,14 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
     # parts it names: the claim then names a location that is no longer a hasPart one
     changed = {v.get("location_key") for v in verdicts if isinstance(v, dict)
                and v.get("target") == "location" and v.get("action") in ("refute", "downgrade")}
+    #: the conjunct relations this document's location verdicts give (judgment rules 3)
+    weakened = {str(v.get("location_key")): v.get("conjunct_relation") for v in verdicts
+                if isinstance(v, dict) and v.get("target") == "location"
+                and v.get("conjunct_relation") is not None}
+    #: the clause ids this document's location verdicts say each record states (rules 3)
+    stated = {str(v.get("location_key")): _clauses_of(v) for v in verdicts
+              if isinstance(v, dict) and v.get("target") == "location"
+              and _clauses_of(v) is not None}
     for i, v in enumerate(verdicts):
         if not (isinstance(v, dict) and v.get("target") == "coverage"
                 and v.get("action") == "confirm"):
@@ -2946,11 +3808,209 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                          f"confirms the coverage claim of {v.get('item')} and refutes or "
                          f"downgrades its part(s) {', '.join(k[:12] for k in hit)}: a claim "
                          f"stands only while every part is a hasPart location; refute it")
-    owed = [k for k in records if k not in judged]
+        if cfg.judgment_rules >= RULES_STATEMENT_CUT and isinstance(v.get("part_relations"), dict):
+            # a part's relation in the confirm is no stronger than the conjunct_relation the
+            # same document gives that part's own record (docs/proposals/statement-cut.md 1.4)
+            for key, given in sorted(weakened.items()):
+                said = v["part_relations"].get(key)
+                if _one_of(said, BUNDLE_RELATIONS) and (
+                        not _one_of(given, BUNDLE_RELATIONS)
+                        or RELATION_STRENGTH[said] < RELATION_STRENGTH[given]):
+                    problems.add(9, f"{name}: verdicts[{i}]",
+                                 f"part_relations[{key[:12]}] {said} is stronger than the "
+                                 f"conjunct_relation {given} this document gives that part's "
+                                 f"record: give the part the weaker relation, or refute the "
+                                 f"claim when it is no strong one")
+        if cfg.judgment_rules >= RULES_STATEMENT_CUT:
+            # PD6, which rules 2 held through a confirm's part_clauses: a part this
+            # document's own verdict says states every conjunct is one location, no part
+            ids = claims_of.get(v.get("item")) or []
+            for key, _part in _part_keys(rec):
+                named = stated.get(key)
+                if ids and named is not None and set(ids) <= named:
+                    problems.add(9, f"{name}: verdicts[{i}]",
+                                 f"your verdict on part {key[:12]} names every conjunct "
+                                 f"({', '.join(ids)}): {WHOLE_PART}, so the claim stands on "
+                                 f"no such part; refute it, and judge that part's own record "
+                                 f"on its own")
+    unowed: set[tuple] = set()
+    if cfg.judgment_rules >= RULES_STATEMENT_CUT:
+        unowed = check_conditional(problems, name, verdicts, records)
+        check_fills(cfg, ctx, problems, name, doc, verdicts, records, source, source_id)
+    owed = [k for k in records if k not in judged and k not in unowed]
     if owed:
         problems.add(1, name, f"{len(owed)} record(s) of this task have no verdict "
                               f"({', '.join(str(k[0]) + ' ' + str(k[1]) for k in owed[:3])})")
     return stats
+
+
+def check_conditional(problems: Problems, name: str, verdicts: list,
+                      records: dict[tuple, dict]) -> set[tuple]:
+    """Rules 3 (anomaly A3): the conditional records of a prominence sample.
+
+    The challenge plan puts a sampled ``supporting`` passage's unrequired records
+    in the task of its prominence record, each ``conditional: "prominence"``.  A
+    prominence overturn of the passage to ``subject`` or ``central`` makes them
+    refuted-by-default or hunted records, so the same document judges every one
+    of them (a record left out is owed, as any record is); without such an
+    overturn none is owed, and a verdict on one is refused.  Returns the keys of
+    the conditional records this document does not owe.
+    """
+    reopened = {v.get("item") for v in verdicts if isinstance(v, dict)
+                and v.get("target") == "prominence" and v.get("action") == "overturn"
+                and v.get("prominence") in REFUTE_BY_DEFAULT_PROMINENCE}
+    conditional = {k for k, rec in records.items() if rec.get("conditional")}
+    for i, v in enumerate(verdicts):
+        if not isinstance(v, dict):
+            continue
+        key = (v.get("item"), v.get("target"),
+               v.get("location_key") if v.get("target") == "location" else None)
+        if key in conditional and v.get("item") not in reopened:
+            problems.add(1, f"{name}: verdicts[{i}]",
+                         f"{v.get('item')} {v.get('target')} is a conditional record: it is "
+                         f"judged only beside a prominence overturn of its passage to subject "
+                         f"or central in this document, which none is")
+    return {k for k in conditional if k[0] not in reopened}
+
+
+def _verdict_by_key(verdicts: list) -> dict[tuple, dict]:
+    out: dict[tuple, dict] = {}
+    for v in verdicts:
+        if isinstance(v, dict):
+            key = (v.get("item"), v.get("target"),
+                   v.get("location_key") if v.get("target") == "location" else None)
+            out.setdefault(key, v)
+    return out
+
+
+def emptied_passages(verdicts: list, records: dict[tuple, dict]) -> dict[str, dict]:
+    """Rules 3 (anomalies A1, A2): located passages these verdicts leave with no counting location.
+
+    ``{item: a record of the passage}``: a ``located`` passage whose judged
+    location records -- a confirm keeps the relation, a downgrade leaves the one
+    it names, a refute removes it -- and whose other locations of the run (each
+    location record's ``passage_locations``, judged elsewhere by no task) together
+    hold no relation but ``relatedMatch``.
+    """
+    by_key = _verdict_by_key(verdicts)
+    left: dict[str, dict[str, Any]] = {}
+    rows: dict[str, dict] = {}
+    for key, rec in records.items():
+        item, target, lkey = key
+        if target != "location" or rec.get("outcome") != "located":
+            continue
+        rows.setdefault(item, rec)
+        mine = left.setdefault(item, {})
+        v = by_key.get(key)
+        relation = rec.get("relation")
+        if v is not None and v.get("action") == "refute":
+            relation = None
+        elif v is not None and v.get("action") == "downgrade":
+            relation = v.get("relation")
+        mine[str(lkey)] = relation
+        for other in rec.get("passage_locations") or []:
+            if isinstance(other, dict) and str(other.get("location_key")) not in mine \
+                    and (item, "location", other.get("location_key")) not in records:
+                mine[str(other.get("location_key"))] = other.get("relation")
+    return {item: rows[item] for item, mine in left.items()
+            if not any(_one_of(r, LOCATE_RELATIONS) and r != RELATED_MATCH
+                       for r in mine.values())}
+
+
+def check_fills(cfg: GateConfig, ctx: Context, problems: Problems, name: str, doc: dict,
+                verdicts: list, records: dict[tuple, dict], source: Any, source_id: str) -> None:
+    """Rules 3 (anomalies A1, A2): what replaces a located passage's last counting location.
+
+    A document whose verdicts leave a ``located`` passage with no counting
+    location (:func:`emptied_passages`) gives ``fills[<item>]``: ``{outcome:
+    absent, receipt}``, held to an absence's checks (the queries, a query of its
+    own per clause, the rejections, the special case, the export's receipt), or
+    ``{outcome: located, locations}``, held to an overturn's.  ``fills`` on any
+    other item is refused: the passage keeps what it had.
+    """
+    emptied = emptied_passages(verdicts, records)
+    fills = doc.get("fills", {})
+    if not isinstance(fills, dict):
+        problems.add(9, name, "fills is {<item>: {outcome: absent, receipt} | {outcome: located, "
+                              "locations}}")
+        fills = {}
+    for item in sorted(emptied):
+        if item not in fills:
+            problems.add(9, name, f"your verdicts leave {item}, a located passage, with no "
+                                  f"location whose relation counts: give fills[{item}], an "
+                                  f"absence with its hunt ({{outcome: absent, receipt}}) or the "
+                                  f"location that replaces them ({{outcome: located, "
+                                  f"locations}})")
+    for item, fill in sorted(fills.items()):
+        where = f"{name}: fills[{item}]"
+        if item not in emptied:
+            problems.add(9, where, "a fill replaces what your verdicts take from a located "
+                                   "passage, and they leave this one a location that counts (or "
+                                   "it is no located passage of this task): drop it")
+            continue
+        rec = emptied[item]
+        ids = clause_ids(rec, f"challenge record {item}")
+        if not isinstance(fill, dict) or fill.get("outcome") not in ("absent", "located") \
+                or set(fill) != {"outcome", "receipt" if fill.get("outcome") == "absent"
+                                 else "locations"}:
+            problems.add(9, where, "a fill is {outcome: absent, receipt} or {outcome: located, "
+                                   "locations}")
+            continue
+        span = _span(rec.get("span"), len(source.layer)) if source is not None else None
+        if span is None:
+            raise GateBroken(f"challenge record {item} of {source_id} has no span on the layer")
+        try:
+            quote = capped_quote(source.layer, span)
+        except lr.RecordError as exc:
+            raise GateBroken(f"challenge record {item} of {source_id} cannot be quoted by the "
+                             f"export ({exc})") from None
+        kind = rec.get("passage_kind")
+        if fill["outcome"] == "absent":
+            receipt = _check_receipt(cfg, ctx, problems, where, fill["receipt"])
+            distinct = {_normal_query(q) for q in receipt["queries"] if q.strip()}
+            if len(distinct) < cfg.min_absence_queries:
+                problems.add(5, where, f"an absence lists {len(distinct)} distinct quer"
+                                       f"{'y' if len(distinct) == 1 else 'ies'}; at least "
+                                       f"{cfg.min_absence_queries}")
+            check_query_clauses(problems, where, fill["receipt"], ids, absent=True,
+                                passage_kind=kind)
+            check_rejections(problems, where, receipt)
+            # rule 4's reading, as a locate document's absence is held to it (check_locate):
+            # an accepted candidate is one of the passage's counting locations, and an
+            # absent fill leaves the passage none
+            for cand in receipt["candidates"]:
+                if cand.get("verdict") == "accepted":
+                    problems.add(1, where, f"accepted candidate {cand.get('library')}:"
+                                           f"{cand.get('declaration')} is not one of this "
+                                           f"passage's locations with a relation that counts: "
+                                           f"an absent fill leaves it none, so locate it "
+                                           f"(outcome: located), or reject it with a reason")
+            check_special_case(cfg, ctx, problems, where,
+                               fill["receipt"].get("special_case")
+                               if isinstance(fill["receipt"], dict) else None,
+                               source, what="receipt")
+            check_free_text(problems, where, [
+                *(("a query", q) for q in receipt["queries"]),
+                *(("a candidate's reason", c.get("reason")) for c in receipt["candidates"])],
+                source)
+            check_records(cfg, problems, where, source_id=source_id, layer=source.layer,
+                          span=span, quote=quote, item=item, passage_kind=kind,
+                          outcome="absent", locations=[], receipt=receipt)
+            continue
+        locations = _check_locations(cfg, ctx, problems, where, fill["locations"])
+        if locations is None:
+            continue
+        if not [loc for loc in locations if loc.get("relation") != RELATED_MATCH]:
+            problems.add(1, where, "a located fill gives a location whose relation counts")
+        for j, loc in enumerate(locations):
+            check_judgment(cfg, ctx, problems, f"{where}.locations[{j}]", loc, ids=ids,
+                           passage_kind=kind, source=source, row=rec)
+        check_free_text(problems, where, [("a location's note", loc.get("note"))
+                                          for loc in locations], source)
+        if locations:
+            check_records(cfg, problems, where, source_id=source_id, layer=source.layer,
+                          span=span, quote=quote, item=item, passage_kind=kind,
+                          outcome="located", locations=locations)
 
 
 CHECKS = {LOCATE_INVENTORY: check_inventory, LOCATE: check_locate,

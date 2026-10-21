@@ -230,6 +230,10 @@ def run(args) -> int:
     preset = lp.get(args.preset)
     run_id = args.run_id or f"{preset.name}-{_dt.date.today().isoformat()}"
     _check_run_id(paths, args, run_id, preset)
+    # from the statement cut's flip on, a plan over an inventory or locate run of the
+    # earlier flow is refused (docs/proposals/statement-cut.md section 2.2)
+    lplan.check_cut_inputs(paths, preset.mode, inventory_run=args.inventory_run,
+                           challenged_runs=list(args.challenge_of))
     manifest = inputs.manifest(paths, args.sourceset, args.manifest_version)
     universe = inputs.load_universe(paths, args.universe)
     db_path = paths.corpus_db(args.universe)
@@ -439,6 +443,11 @@ def run(args) -> int:
         },
         "warnings": warnings,
     }
+    # the derivation a locate run's outcomes take (docs/proposals/statement-cut.md
+    # section 2.2): named from the statement cut's flip on, absent (rule 1) before it
+    status = lplan.status_rule() if preset.mode == vocab.LOCATE else None
+    if status is not None:
+        run_doc["locate"]["status_rule"] = status
     # `cf campaign plan` stamped this shard; a re-plan (of the same preset:
     # _check_run_id) keeps the stamp, so the export still seals it
     # under its campaign rather than as `run:<id>` (export.campaign_token), the

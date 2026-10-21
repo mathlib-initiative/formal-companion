@@ -469,6 +469,83 @@ list the worker writes: a list that drops a clause, with an `exactMatch` naming
 every claim on it, passes the gate, and only the challenge, which writes its own
 list, re-checks it.
 
+**Under judgment rules 3** (`RULES_STATEMENT_CUT`, the statement cut:
+`docs/proposals/statement-cut.md` §1.3 and §5), which bind a run whose `gate.json`
+names `judgment_rules: 3` — none is planned before the proposal's flip (§9) — the
+inventory owns the clause list, and everything above is checked against it:
+
+```json
+{"item": "In-text #0000c0de", "outcome": "located",
+ "locations": [
+   {"library": "alpha", "declaration": "Widget.exists_spanning_gadget", "relation": "hasPart",
+    "rank": 1, "confidence": "high", "clauses": ["c1"], "conjunct_relation": "broadMatch",
+    "step": "a spanning gadget for every widget, finite or not",
+    "instantiation": "…", "tests": {"r2": "…", "r3": "…"}, "note": "", "witness": "…"},
+   {"library": "alpha", "declaration": "Widget.spanning_gadget_unique", "relation": "hasPart",
+    "rank": 2, "confidence": "high", "clauses": ["c2"], "conjunct_relation": "exactMatch",
+    "step": "two spanning gadgets of a finite widget coincide",
+    "instantiation": "…", "tests": {"r2": "…", "r3": "…"}, "note": "", "witness": "…"}],
+ "coverage": {"complete": true, "parts": [1, 2],
+              "note": "existence holds for every widget and uniqueness for finite ones"},
+ "receipt": {"queries": ["…"], "candidates": [], "query_clauses": {"…": ["c1"]}}}
+```
+
+- **No claim list (J1).** `claims` is refused on every passage. The clause ids are
+  the task manifest passage's conjunct ids (`conjuncts`, which the planner copies
+  from the frozen inventory with its `statement` and `shape`, §9), or `["c1"]`
+  (`SIMPLE_STATEMENT_CLAUSE`) for a simple statement; `clauses` and
+  `query_clauses` name them as they name claims above — a strong relation every
+  id, a `relatedMatch` none. A manifest whose conjuncts are not `c1` … `cN` is an
+  inconsistent frozen inventory (exit 3).
+- **A part's relation (J2).** A `hasPart` of a compound statement names the
+  conjuncts it states and gives `conjunct_relation`, one of `CONJUNCT_RELATIONS`
+  (`exactMatch`, `closeMatch`, `broadMatch`, `narrowMatch`): its relation to the
+  conjunction of those conjuncts by R1–R3 and PD1–PD10. A `closeMatch` part names
+  its `convention` from the rules-2 list (no `junk_value`), and any other part
+  names none; `step` stays required. A `hasPart` of a simple statement names `c1`
+  and carries no `conjunct_relation`; nothing else carries one.
+- **A bundle (J3).** `coverage` keeps its object and rule 1's checks, and is
+  refused on a simple statement. Its parts' `clauses` are pairwise disjoint,
+  together name every conjunct, and none names them all (PD6); every part's
+  `conjunct_relation` is one of `BUNDLE_RELATIONS` (`exactMatch`, `closeMatch`,
+  `broadMatch`): a part that states only a special case of its conjuncts leaves
+  them unstated. The bundle's relation is its weakest part's, computed by the
+  outcomes and never written. **Fix 4a**: a compound statement with no coverage
+  claim whose `hasPart` locations of a strong `conjunct_relation` partition the
+  conjuncts (at least two, pairwise disjoint, every conjunct, none naming all) is
+  refused — write the bundle, or give the part that falls short the relation it
+  bears.
+- **A strong location (fixes 2a–2c).** An `exactMatch`, `closeMatch` or
+  `broadMatch` writes both instantiation tests, `tests: {"r2": <how the passage
+  follows from the declaration>, "r3": <why the declaration, at the passage's
+  objects, needs nothing more>}` (`TWO_WAY_TEST_KEYS`, each a one-line judgment
+  field), and an `instantiation` whatever its binders. **The ℕ-for-ℤ tripwire**:
+  when the passage's `statement` or a conjunct says "integer", "integers" or `ℤ`
+  (`NAT_FOR_INT_INTEGER_WORDS`; the symbol anywhere, as in "nℤ")
+  and every number-typed binder group of the declaration's signature
+  (`verify_locate.numeric_binders`: `(n : ℕ)`, `{m k : ℤ}` …, as `binder_groups`
+  reads the telescope) is `ℕ`, the strong relation is refused unless its `note`
+  names `ℕ` or the naturals (`NAT_FOR_INT_NATURAL_WORDS`; a statement over ℕ for
+  one over ℤ is `narrowMatch`, R3); a declaration with no recorded signature, or
+  no number-typed binder, is not held to it. An exact or close note is held to
+  `CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`, the list above with "table",
+  "for all primes", "every point" and "differentiable at". `tests` on another
+  relation is checked when given. **A part is held by its `conjunct_relation`**:
+  a `hasPart` of a compound statement whose `conjunct_relation` is `exactMatch`,
+  `closeMatch` or `broadMatch` is a strong location here — its `tests`, its
+  `instantiation`, the tripwire, and the generality words when it is exact or
+  close — since a bundle takes its weakest part's relation; a `narrowMatch` part
+  owes none of them. The gap check stays the location's own: a part states some
+  conjuncts and not the rest by definition.
+- **An absence's special case (fix 5b).** An absence's receipt names the nearest
+  special-case candidate it found and why it fails R3 or PD4:
+  `receipt.special_case: {library, declaration, reason}` — the declaration in
+  `corpus.sqlite` at that library (rule 3) — or `{reason}` when there is none,
+  `reason` a one-line judgment field.
+- **A cut flag (J4).** An `unresolved` passage may carry `cut_flag`, one of
+  `CUT_FLAGS` (`not_a_statement`, `several_statements`): what a worker who cannot
+  re-cut a passage says of its cut. It is refused on any other outcome.
+
 ## 4. Challenge document (`mode: locate-challenge`)
 
 ```json
@@ -551,6 +628,82 @@ a confirm — written before it judges (the FM7 rule, `references/vocabulary.md`
   `example` passage — with a query of its own, as an absence's receipt (§3).
 
 A `claims` entry for a passage the task does not judge is refused.
+
+**Under judgment rules 3** (the statement cut, `docs/proposals/statement-cut.md`
+§1.4 and §5) the challenger writes no claim list either: `claims` is refused, and
+every verdict's `clauses`, `query_clauses` and `unstated` name the record's clause
+ids — its passage's conjunct ids, which the task manifest's record carries
+(`conjuncts`, with `statement` and `shape`, §9), or `c1`. The rule that a strong
+relation rests on a list at least as long as the worker's is void: there is one
+list. Then:
+
+```json
+{"…header…": "…",
+ "verdicts": [
+   {"item": "In-text #0000c0de", "target": "coverage", "action": "confirm",
+    "part_relations": {"<part 1's location_key>": "broadMatch",
+                       "<part 2's location_key>": "exactMatch"}, "witness": "…"},
+   {"item": "In-text #0000beef", "target": "coverage", "action": "refute",
+    "unstated": ["c2"],
+    "part_reasons": {"<part 1's location_key>": "states existence only, for any widget",
+                     "<part 2's location_key>": "bounds the size of a gadget, not its uniqueness"},
+    "witness": "…"},
+   {"item": "In-text #0000f00d", "target": "location", "location_key": "<sha>",
+    "action": "confirm", "clauses": ["c1"],
+    "tests": {"r2": "the passage is the declaration at W, by instantiation",
+              "r3": "at a finite widget the declaration needs no extra hypothesis"},
+    "witness": "…"},
+   {"item": "In-text #0000d00d", "target": "location", "location_key": "<sha>",
+    "action": "refute", "witness": "…"}],
+ "fills": {"In-text #0000d00d": {"outcome": "absent",
+                                 "receipt": {"queries": ["…", "…", "…"], "candidates": [],
+                                             "query_clauses": {"…": ["c1"]},
+                                             "special_case": {"reason": "…"}}}}}
+```
+
+- A coverage **confirm** gives `part_relations`, one entry for each part of the
+  record and no other, each one of `BUNDLE_RELATIONS` and no stronger
+  (`RELATION_STRENGTH`) than that part's own `conjunct_relation` (the record's
+  `parts` carry each part's `clauses` and `conjunct_relation`), nor than a
+  `conjunct_relation` the same document gives the part's own record: a challenge
+  never raises a relation. `part_clauses` is refused. A part with no
+  `conjunct_relation` in the manifest cannot be checked (exit 3). PD6, which
+  rules 2 held through `part_clauses`, is held through the same document's
+  verdicts on the parts: a confirm beside a verdict whose `clauses` name every
+  conjunct of the passage is refused, since that part is one location, no part.
+- A coverage **refute** names in `unstated` the conjunct ids, non-empty and
+  distinct, that no part states, and gives `part_reasons`, one line for every
+  part and no other, saying why no R1 convention reaches its conjunct (fix 1a;
+  "the parts state it after unfolding" is a confirm). A refute that names a part's
+  own conjunct thus says why that part fails (fix 1b).
+- A verdict that keeps or leaves a strong relation runs the challenger's own two
+  tests, `tests: {r2, r3}` (fix 2d), and passes the ℕ-for-ℤ tripwire (§3),
+  answered by its note or the record's; the generality words are the longer list.
+  A verdict that leaves a `hasPart` of a compound statement may give a
+  `conjunct_relation`, never stronger than the record's; no other verdict gives
+  one. Such a verdict is held by the `conjunct_relation` it leaves the part (its
+  own, else the record's on a confirm): a strong one is a strong relation kept,
+  with its `tests`, the tripwire and the generality words.
+- An `uphold` of an absence or an unresolved outcome gives `special_case` beside
+  its queries (fix 5b), as an absence's receipt does.
+- **Fills (anomalies A1, A2).** A document whose verdicts leave a `located`
+  passage with no location whose relation counts — its judged location records (a
+  confirm keeps the relation, a downgrade leaves the one it names, a refute
+  removes it) and the passage's other locations of the run (`passage_locations`,
+  which no task judges) together — gives `fills[<item>]`: `{outcome: absent,
+  receipt}`, held to an absence's checks (at least `min_absence_queries` distinct
+  queries, a query of its own per clause, no rejection of a part, the special
+  case, no `accepted` candidate — an accepted candidate is one of the passage's
+  counting locations, and an absent fill leaves it none, as on a locate absence
+  (rule 1) — the export's receipt), or `{outcome: located, locations}`, held to an
+  overturn's. `fills` on any other item is refused.
+- **Conditional records (anomaly A3).** A record the challenge plan marks
+  `conditional: "prominence"` — a sampled `supporting` passage's unrequired
+  location, absence or unresolved record, in the task of its prominence record —
+  is judged exactly when the same document overturns that passage's prominence to
+  `subject` or `central`: then every one is owed (a refuted-by-default or hunted
+  record); without such an overturn none is owed, and a verdict on one is refused
+  (rule 1).
 
 - `target` ∈ {`location`, `absence`, `unresolved`, `scope`, `prominence`,
   `coverage`}.
@@ -1627,6 +1780,56 @@ like a faithfulness run:
   ends their own run's gate accepted. Exit 3 for a bad value, as for
   `judgment_rules`.
 
+  **The statement cut's versions** (`docs/proposals/statement-cut.md` §2.2) are
+  written from the proposal's flip on, and bind only a gate.json that names them,
+  so every run planned before it is re-gated, tallied and exported as it was. The
+  gate knows them before the planner writes them: `judgment_rules` 3 (§3 and §4,
+  "Under judgment rules 3"), `span_end_rule` 2 and `statement_cut_rule` 1, its own
+  key, written in every mode. `span_end_rule` 2 ends an inventory passage that
+  gives no `until` at the earlier of its **extent** — its block, the whole of a
+  theorem box, and the displays its last sentence introduces
+  (`locate_text.extent`, the proposal's §3.1) — and the start of the document's
+  next passage, never before its quote's end (`locate_text.passage_end(...,
+  rule=2)`); `until` ends it as before. `statement_cut_rule` 1 is **rule 10**, over
+  an inventory document after rules 2 and 8 (§3.3), refusing: (a) two passages
+  whose spans share a character; (b) a span that ends past its extent, read with
+  `compound` when the passage has `conjuncts` (a passage runs from one block into
+  the next only inside a theorem box, into the displays its last sentence
+  introduces, or — a compound statement — over the items of one list; one that
+  starts in no block may not run into one); (c) a span that ends strictly inside a
+  formula; (d) `conjuncts` that are not absent (never `[]` or `null`) or 2–5
+  entries of exactly `{id, text}`, ids `c1` … `cN` in order, each text one line of
+  at most `MAX_CLAIM_CHARS` characters in the worker's own words alone and read
+  one after the other (a bundle's conjuncts are exported), with a `shape` of
+  `COMPOUND_SHAPES` present exactly when they are, `existence_uniqueness` with
+  exactly two; (e) `conjuncts` on a passage not scoped `formal_math`; (f) a passage
+  not scoped `formal_math` whose prominence is not `supporting`; (g) two passages
+  with one span text, which would share a `passage_key`. A gate.json naming
+  `statement_cut_rule` with a `span_end_rule` below 2 is exit 3 (rule 10's
+  disjointness rests on the new end), as is a version above the gate's own. Rule
+  10 refuses nothing on a passage's size: the harvest receipt's gate block gains
+  `cut: {passages, formal, compound, conjuncts, by_shape, sentences, displays,
+  multi_sentence, multi_display, by_source}` — every passage, the `formal_math`
+  ones, the compound ones, their conjuncts and their shapes (the cut's clauses
+  are `conjuncts + formal − compound`, one for each simple statement), and, over
+  the formal ones, their
+  sentences (`locate_text.units`: a `.`, `!` or `?` before whitespace and an
+  upper-case letter or a formula, not after an abbreviation), their displays
+  (`math` blocks inside the span) and how many hold more than one of each — only
+  for a run whose gate.json names the rule.
+
+  From the flip, too, the planner copies into a locate task manifest's passage the
+  frozen inventory's `statement`, and a compound statement's `conjuncts` and
+  `shape`; into a challenge task's record the same three and `conditional`
+  (anomaly A3: a prominence sample's other records, judged only beside an overturn
+  of their passage); writes `locate.status_rule` (`STATUS_RULE`, 2) into a locate
+  run's `run.yaml`, exactly when its `judgment_rules` is 3; and refuses `--preset
+  locate` over an inventory run whose gate.json names no `statement_cut_rule`
+  (inventory the sources again) and `--preset locate-challenge` of a locate run
+  judged under `judgment_rules` below 3, whose documents carry their own claim
+  lists. A planned run is never touched by either refusal. Before the flip
+  (`locate.plan.statement_cut_planned`) every manifest and run.yaml is what it was.
+
   Three pins hold what the gate reads to the bytes the plan read; each is exit 3
   on a mismatch. `corpus_db.sha256`, the sha256 of the CHECK database when the
   run was planned, is compared when the gate first opens the database (rule 3:
@@ -1760,7 +1963,9 @@ like a faithfulness run:
   challenged_runs, arm, skill_commit, gate_files, config_shas, per_task,
   subject_only, seed, sample_rate, strong_sample_rate, absence_sample_rate,
   documents, passages, source_ids, skipped}` (the three rates null outside a
-  challenge run; a run planned before the two later rates records neither).
+  challenge run; a run planned before the two later rates records neither), and
+  `status_rule` on a locate run planned under the statement cut (above; absent
+  is status rule 1).
   `arm` is `blind` with `--blind`, else `assisted`, and a locate plan whose
   inventory run, or a challenge plan whose challenged runs, are of another arm
   is refused; so is a challenge plan whose tools database is not the one its

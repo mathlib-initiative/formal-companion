@@ -487,7 +487,49 @@ def _gate_locate_with(vl, dest: str | Path, cfg_path: Path, gate_code: dict) -> 
            "gate_code": gate_code}
     if cfg.mode == vl.LOCATE_INVENTORY:
         out["skipped"] = skipped_summary(result.get("stats") or [])
+        # the statement cut's counts, only for a run whose gate.json names rule 10 (and a
+        # gate that knows it): a corpus of an earlier run gets the receipt it always got
+        if getattr(cfg, "statement_cut_rule", 0):
+            out["cut"] = cut_summary(result.get("stats") or [])
     return out
+
+
+#: the counts of the receipt's ``cut`` block (docs/proposals/statement-cut.md section 3.3)
+CUT_COUNTS = ("passages", "formal", "compound", "conjuncts", "sentences", "displays",
+              "multi_sentence", "multi_display")
+
+
+def cut_summary(stats: list[dict]) -> dict:
+    """What an inventory corpus's cut looks like, under ``statement_cut_rule`` (gate rule 10).
+
+    Totals and, by source, the passages, the ``formal_math`` ones, the compound
+    statements, their conjuncts and their shapes (``by_shape``), and over the
+    formal passages their sentences and displays (``locate_text.units``; ``math``
+    blocks) and how many hold more than one of each.  A formal passage's clauses
+    are its conjuncts, or one for a simple statement, so the clauses of the cut
+    are ``conjuncts + formal - compound``.  Reported, never a refusal: rule 10
+    refuses nothing on a passage's size, and these are what the inventory pilot
+    measures.
+    """
+    total: dict = {k: 0 for k in CUT_COUNTS}
+    total["by_shape"] = {}
+    by_source: dict[str, dict] = {}
+    for row in stats:
+        got = row.get("cut") if isinstance(row, dict) else None
+        if not isinstance(got, dict):
+            continue
+        mine = by_source.setdefault(str(row.get("source_id") or ""),
+                                    {**{k: 0 for k in CUT_COUNTS}, "by_shape": {}})
+        for k in CUT_COUNTS:
+            value = int(got.get(k) or 0)
+            mine[k] += value
+            total[k] += value
+        for shape, n in sorted((got.get("by_shape") or {}).items()):
+            for into in (mine, total):
+                into["by_shape"][shape] = into["by_shape"].get(shape, 0) + int(n or 0)
+    for into in (total, *by_source.values()):
+        into["by_shape"] = dict(sorted(into["by_shape"].items()))
+    return {**total, "by_source": dict(sorted(by_source.items()))}
 
 
 def skipped_summary(stats: list[dict]) -> dict:
@@ -533,6 +575,13 @@ def render(result: dict, max_named: int = 12) -> str:
         lines.append(f"  skips: {skipped['skips']} cover {skipped['chars']} character(s), "
                      f"{skipped['math_paragraphs']} math paragraph(s) and "
                      f"{skipped['finder_passages']} finder passage(s) that no passage keeps")
+    cut = result.get("cut") or {}
+    if cut:
+        lines.append(f"  cut: {cut['formal']} formal passage(s) of {cut['passages']}, "
+                     f"{cut['compound']} compound of {cut.get('conjuncts', 0)} conjunct(s); "
+                     f"{cut['sentences']} sentence(s) and "
+                     f"{cut['displays']} display(s), {cut['multi_sentence']} passage(s) of "
+                     f"several sentences and {cut['multi_display']} of several displays")
     for problem in result["problems"][:max_named]:
         lines.append("  - " + problem)
     if len(result["problems"]) > max_named:
