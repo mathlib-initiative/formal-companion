@@ -135,10 +135,11 @@ references/locate-documents.md sections 2-4 and 9):
 10. the statement cut (docs/proposals/statement-cut.md section 3.3), only for a
    run whose ``gate.json`` names ``statement_cut_rule`` (with span-end rule 2,
    which ends a passage without ``until`` at the earlier of its extent and the
-   next passage's start): the spans of an inventory are disjoint, one text one
-   passage; a span runs from one block into the next only inside a theorem box,
-   into the displays its last sentence introduces or over the items of one list
-   (a compound statement), and never ends inside a formula; ``conjuncts`` are
+   next passage's start, less the separator before it): the spans of an
+   inventory are disjoint, one text one passage; a span runs from one block
+   into the next only inside a theorem box, into the displays its last
+   sentence introduces or over the items of one list (a compound statement),
+   and never ends inside a formula; ``conjuncts`` are
    none or 2-5 with a ``shape`` of the closed list, on a ``formal_math`` passage;
    and a passage scoped out is ``supporting``.  Rule 10 refuses nothing on a
    passage's size: its counts of compound statements and their conjuncts,
@@ -1136,7 +1137,9 @@ def _end_problem(layer: str, paragraphs: Any, span: tuple[int, int], exact: str,
     ``rule`` is the gate.json's ``span_end_rule``: under 2 (the statement cut,
     docs/proposals/statement-cut.md section 3.2) a passage without ``until`` ends
     at the earlier of its extent and ``next_start``, the start of the document's
-    next passage, and ``paragraphs`` is the source's ``locate_text.Blocks``.
+    next passage, less the separator before that start
+    (``locate_text.Blocks.separator_start``) when it is the earlier, and
+    ``paragraphs`` is the source's ``locate_text.Blocks``.
     """
     try:
         want = lt.passage_end(layer, paragraphs, span[0], exact, until, rule=rule,
@@ -1150,7 +1153,7 @@ def _end_problem(layer: str, paragraphs: Any, span: tuple[int, int], exact: str,
     elif rule >= SPAN_END_STATEMENT_CUT:
         bound = lt.Blocks.of(layer, paragraphs, formulas).extent(span[0])
         if next_start is not None and (bound is None or next_start < bound):
-            why = "the start of the next passage"
+            why = "the start of the separator before the next passage"
         elif bound is not None:
             why = "the end of its block and of the displays its last sentence introduces"
         else:

@@ -198,11 +198,11 @@ is enough.
   that describes the subject rather than states it is `expository`, and
   `prominence: subject` — with it the article's QID on the passage's records —
   goes on the passage that states the theorem, which may be its theorem box.
-  Gate rule 10 (the proposal's §3.3) is *not built yet*: `verify_locate.py`
-  reads no `statement_cut_rule` and gates an inventory as before, the planner
-  writes none before the flip, and the inventory prompt describes the rule
-  only to a run planned under end rule 2 (its `span_end_statement_cut` slot). Once
-  built, it refuses, over the document: two passages whose spans share
+  Gate rule 10 (the proposal's §3.3; §9 below) binds only a run whose
+  `gate.json` names `statement_cut_rule`, which the planner writes from the
+  flip on, and the inventory prompt describes the cut's end only to a run
+  planned under end rule 2 (its `span_end_statement_cut` slot). It refuses,
+  over the document: two passages whose spans share
   a character; a span that ends past its extent (`locate_text.extent`, with
   `compound` when the passage has `conjuncts`, so a compound statement may run
   over the items of one list, its run of `li` or `dd` items); a span that ends
@@ -211,7 +211,8 @@ is enough.
   not scoped `formal_math`; a passage not scoped `formal_math` whose prominence
   is not `supporting`; and two passages with the same span text. It refuses
   nothing on a passage's size: the harvest receipt counts each passage's
-  sentences and displays (`locate_text.units`). `passage_ids.py` writes
+  sentences and displays (`locate_text.units`) and the compound statements'
+  conjuncts (its `cut` block, §9). `passage_ids.py` writes
   `conjuncts` and `shape` back as it found them.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
@@ -1837,7 +1838,8 @@ like a faithfulness run:
   gives no `until` at the earlier of its **extent** — its block, the whole of a
   theorem box, and the displays its last sentence introduces
   (`locate_text.extent`, the proposal's §3.1) — and the start of the document's
-  next passage, never before its quote's end (`locate_text.passage_end(...,
+  next passage, less the separator before that start when it is the earlier
+  (§2), never before its quote's end (`locate_text.passage_end(...,
   rule=2)`); `until` ends it as before. `statement_cut_rule` 1 is **rule 10**, over
   an inventory document after rules 2 and 8 (§3.3), refusing: (a) two passages
   whose spans share a character; (b) a span that ends past its extent, read with
