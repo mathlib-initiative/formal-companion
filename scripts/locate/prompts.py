@@ -85,6 +85,19 @@ def finish_block(preset: Preset) -> str:
             f"committing:\n\n{shape}\n\n{status}\n")
 
 
+def judgment_rules_statement_cut() -> bool:
+    """Whether a run planned now is judged under the statement cut (judgment rules 3).
+
+    ``vocab.JUDGMENT_RULES`` is what the planner writes into every gate.json it
+    plans (``judgment_rules``), so the locate and challenge prompts render the
+    statement cut's flow -- no claim list, the inventory's conjunct ids, the bundle,
+    the five prompt rules of docs/proposals/statement-cut.md section 5 -- exactly
+    when the run's gate holds its documents to it, and before the proposal's flip
+    a plan renders the text it rendered before (section 6).
+    """
+    return vocab.JUDGMENT_RULES >= vocab.RULES_STATEMENT_CUT
+
+
 def phrase_list(phrases) -> str:
     """A judgment-rule phrase list as a prompt says it: quoted, ``*`` written as ``…``."""
     return ", ".join(f'"{p[:-1]}…"' if p.endswith("*") else f'"{p}"' for p in phrases)
@@ -130,6 +143,11 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         # inventory, locate and challenge prompts list what cflib.vocab defines
         "generality_phrases_statement_cut": phrase_list(
             vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT),
+        # the judgment rules the planner writes into this run's gate.json
+        # (`judgment_rules`, plan.gate_config): the locate and challenge prompts describe
+        # the statement cut's flow only to a run its gate holds to it, and a plan made
+        # before the flip renders the prompts it rendered before
+        "judgment_rules_statement_cut": judgment_rules_statement_cut(),
         "compound_shapes": ", ".join(f"`{s}`" for s in vocab.COMPOUND_SHAPE_ORDER),
         "min_conjuncts": vocab.MIN_CONJUNCTS,
         "max_conjuncts": vocab.MAX_CONJUNCTS,

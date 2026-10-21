@@ -1518,7 +1518,9 @@ like a faithfulness run:
   prominence record is `required` and which it did not require itself: its
   `planned` value is unchanged, its `task_id` is that prominence record's task, and
   a verdict on it counts only beside an overturn of that prominence to `subject`
-  or `central` in the same document (§4, §10). A plan made before has no such key,
+  or `central` in the same challenge run (§10; the gate holds the two to one
+  document, §4, and a conditional record sits in its prominence record's task, so
+  they agree). A plan made before has no such key,
   and the outcomes read it as they always did.
   A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
   for an absence, unresolved outcome, scope, prominence or coverage claim. The outcomes read it
@@ -2107,13 +2109,17 @@ is every answered passage with no status — the worker's and those a challenge
 left without a location that counts.
 
 **Under judgment rules 3** (the statement cut, `docs/proposals/statement-cut.md`
-§1.3–§1.5 and §5), only where a document wrote them, so a run of an earlier version
-yields the rows it always did: a location keeps its `conjunct_relation` and `tests`
-(`JUDGMENT_LOCATION_FIELDS`); a confirm's or applied downgrade's own `tests` replace
-the worker's, and its `conjunct_relation` the location's when it is not stronger
-(a stronger one is a `problem` and the location's is kept); a location left with a
-relation that does not take a field loses it (`tests` off a relation no longer
-strong, `conjunct_relation` off one no longer `hasPart`; a `convention` stays on a
+§1.3–§1.5 and §5), on a run of status rule 2 only — whose challenges are judged
+under rules 3 — and only where a document wrote them; a run of status rule 1
+yields the rows it always did, whatever keys its documents carry: a location keeps
+its `conjunct_relation` and `tests` (`outcomes.CUT_LOCATION_FIELDS`, the last two of
+`JUDGMENT_LOCATION_FIELDS`); a confirm's or applied downgrade's own `tests` replace
+the worker's, and its `conjunct_relation` the location's when it is one of
+`CONJUNCT_RELATIONS` and not stronger (another is a `problem` and the location's is
+kept); a location left with a relation that does not take a field loses it
+(`tests` off a location no longer held to a strong relation — its own, or a
+`hasPart`'s `conjunct_relation`, `outcomes.held_relation`, so a strong part keeps
+them — `conjunct_relation` off one no longer `hasPart`; a `convention` stays on a
 `hasPart` whose `conjunct_relation` is `closeMatch`); a coverage confirm's
 `part_relations` sit beside the claim as `coverage_part_relations`; a refute's
 `unstated` and `part_reasons` on `coverage_refuted`; and an uphold's `special_case`
@@ -2127,9 +2133,9 @@ problems and ignored, as a verdict on any record the plan did not require is.
 writes from the statement cut's flip on; a run.yaml without it is status rule 1,
 and one naming any other value is refused): every row also carries the passage's
 `statement`, `conjuncts` and `shape` from the frozen inventory (where it has them);
-its `coverage` carries `relation`, the bundle's (its weakest part's: each part's
-`conjunct_relation`, replaced by a confirm's `part_relations` entry, the weaker of
-the two kept), and `status` is `derive_status(…, status_rule=2)` over the claim's
+its `coverage` carries `relation`, the bundle's (its weakest part's: the weaker of
+each part's `conjunct_relation` and a confirm's `part_relations` entry for it, a
+challenge never raising a relation), and `status` is `derive_status(…, status_rule=2)` over the claim's
 projection `{complete, parts, challenge, relation}`; a claim on a passage with no
 `conjuncts`, or whose weakest part is no bundle's relation (no `conjunct_relation`,
 or a `narrowMatch` of its conjuncts), no longer holds — it upgrades nothing and the

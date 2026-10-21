@@ -516,20 +516,28 @@ slip, not a search miss), in the challenge prompt word for word:
 Until the statement cut (judgment rules 3) the challenger wrote a claim list of its own and the
 rule read "check the record against your claim list of the passage"; under rules 3 the
 inventory owns the one list, the passage's conjuncts (`docs/proposals/statement-cut.md` §1.4), so
-a challenge prompt planned from this text says the words above.
+a challenge prompt planned under rules 3 says the words above. The locate and challenge prompts
+render the statement cut's text only for a plan whose `judgment_rules` is 3 (the slot
+`judgment_rules_statement_cut` of `locate.prompts`, read from `JUDGMENT_RULES`, which the
+planner writes into the run's gate.json): a plan of rules 2, before the proposal's flip,
+renders the text it rendered before — the claim lists, this rule's earlier words and PD9's
+("a stated reason … makes X a claim only when …") — byte for byte, so its prompts never
+contradict its gate.
 
 **The statement cut's prompt rules** (the smoke-3 audit's §5 fixes 2a, 2e, 3a, 4b and 5a, as
 `docs/proposals/statement-cut.md` §5 names them), in both locate prompts and the bench's
 labeler word for word. They are judgment, which the challenge re-checks; the gate holds only
-their mechanical halves (a strong location's `tests` and `instantiation`, an absence's
-`special_case`):
+their mechanical halves (a strong location's `tests` and `instantiation`, a `hasPart`'s by its
+`conjunct_relation`, an absence's `special_case`):
 
 - **Fix 2a** — every `exactMatch`, `closeMatch` or `broadMatch` writes both instantiation tests,
   one line each, as its `tests`: `r2`, how the passage follows from the declaration (by
   instantiation, or by one of R2's weakenings), and `r3`, why the declaration, at the passage's
   own objects, needs nothing the passage does not give (no stronger hypothesis, no extra instance
-  argument). A `closeMatch` stands only when both hold with a named convention and nothing else
-  differs; when either fails, the relation is weaker.
+  argument). A bundle takes its weakest part's relation, so a `hasPart` whose
+  `conjunct_relation` is one of the three writes both too, of the conjuncts it states in place
+  of the passage. A `closeMatch` stands only when both hold with a named convention and nothing
+  else differs; when either fails, the relation is weaker.
 - **Fix 2e** — when the declaration is defined beyond the passage's domain, its `instantiation`
   line states PD7's three-way test: whether it agrees with the passage on the passage's domain,
   and whether each case outside that domain is trivial (a junk or default value the passage's
@@ -780,8 +788,9 @@ bundle acts as one more location of **its own relation**, where status rule 1 ma
 
 The bundle's relation is computed, never written (`outcomes.bundle_relation`): each part's
 `conjunct_relation` as its locate document wrote it (or a verdict on the part weakened it),
-replaced, once a challenger confirms the claim, by that confirm's `part_relations` entry for the
-part, the weaker of the two kept; then the weakest over the parts (the greatest
+and, once a challenger confirms the claim, that confirm's `part_relations` entry for the part
+where it is weaker: a challenge never raises a relation, so an entry stronger than the part's
+own (which the gate refuses) changes nothing; then the weakest over the parts (the greatest
 `RELATION_STRENGTH`). A bundle of an `exactMatch` and a `broadMatch` part is a `broadMatch`
 bundle. A bundle whose relation is no bundle's — a part with no conjunct relation, or a part
 that states only a special case of its conjuncts (`narrowMatch`) — or one on a passage the
@@ -885,7 +894,7 @@ passage becomes absent beside its `relatedMatch` locations, the absence the chal
 | `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one of its own under the judgment rules (each claim, and `general`, matched to a distinct query) |
 | `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules. `LEGACY_CLOSE_MATCH_CONVENTIONS` is the list under judgment rules 1, with `junk_value` (`CONVENTION_JUNK_VALUE`), which PD7 took off it: a run planned under rules 1 is gated by it, and its records keep the value. `encoding` covers one notion under two definitions that a library lemma links (PD10) |
 | `CLOSE_MATCH_GENERALITY_PHRASES` | `stronger` · `strengthen*` · `weaker` · `weaken*` · `more general*` · `generali*` · `special case` · `particular case` · `broader` · `narrower` · `strict derivative*` · `strict differentiab*` · `strictly differentiab*` — words an `exactMatch` or `closeMatch` note may not say (`says_generality`: whole words, case-folded, a trailing `*` any ending of the word, so "more generally" and "generalisation" are hits); each describes a `broadMatch`, a `narrowMatch` or a weakening. "strict" and "strictly" alone are not on it: a strict inequality or a strictly increasing list is no strengthening. The prompts render the list from this tuple |
-| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` · `conjunct_relation` · `tests` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only; the last two are judgment rules 3's, a `conjunct_relation` a `hasPart`'s of a compound statement and `tests` a strong location's, and a verdict that gives them replaces the location's (a `conjunct_relation` never with a stronger one), the outcomes dropping each from a location whose relation no longer takes it |
+| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` · `conjunct_relation` · `tests` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only; the last two are judgment rules 3's, which the outcomes keep only on a run of status rule 2: a `conjunct_relation` a `hasPart`'s of a compound statement and `tests` a strong location's (and a `hasPart`'s whose `conjunct_relation` is strong), and a verdict that gives them replaces the location's (a `conjunct_relation` never with a stronger one), the outcomes dropping each from a location whose relation no longer takes it |
 | `STEP_RELATIONS` | `hasPart` · `narrowMatch` — the relations whose location says, in its `step`, what the declaration alone entails of the passage (on a proof the displayed step, on any other passage the clause) |
 | `CANDIDATE_PART_PHRASES` | `only part` · `part of the passage` · `one clause` · `one of the clauses` · `not the whole` · `not the full` · `special case` · `not the worked example` · `not the example` · `partially` · `more general*` · `generali*` — what an absence's rejected candidate may not be rejected as (`rejects_a_part`, matched as `CLOSE_MATCH_GENERALITY_PHRASES` are): a declaration that states a clause, a case or a generalisation of the passage is a location, and the absence is refused under the judgment rules |
 | `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |

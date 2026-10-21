@@ -183,9 +183,11 @@ manifest's clause ids instead of a written claim list.
 
 `locate.outcomes` rows (`references/locate-documents.md` §10) of a run of status rule 2 carry the
 passage's `statement`, `conjuncts` and `shape` from the frozen inventory; each location keeps the
-`conjunct_relation` and `tests` its document wrote; `coverage` carries `relation` (the bundle's,
-§2.1); a passage owed a hunt carries `owed: "hunt"` (§2.5); an unresolved passage keeps its
-`cut_flag`. A run of status rule 1 writes exactly the rows it writes today.
+`conjunct_relation` and `tests` its document wrote (a verdict's own replacing them, and `tests`
+kept while the location is held to a strong relation, a part by its `conjunct_relation`; §9);
+`coverage` carries `relation` (the bundle's, §2.1); a passage owed a hunt carries `owed: "hunt"`
+(§2.5); an unresolved passage keeps its `cut_flag`. A run of status rule 1 writes exactly the rows
+it writes today, whatever keys its documents carry.
 
 ## 2. The bundle and the version keys
 
@@ -195,9 +197,11 @@ Under rules 3 a coverage claim is a bundle or nothing: J3 admits it only on a co
 with every conjunct stated by exactly one part. Its relation is the **weakest part's** (the
 maintainer's answer to question 9): the part relation of greatest `RELATION_STRENGTH` among
 
-- each part's `conjunct_relation`, as the locate document wrote it; then, once a challenger
-  confirms the claim,
-- each part's `part_relations` entry of that confirm, which replaces it.
+- each part's `conjunct_relation`, as the locate document wrote it (or a verdict on the part
+  weakened it); then, once a challenger confirms the claim,
+- each part's `part_relations` entry of that confirm, where it is weaker: a challenge never
+  raises a relation, so the weaker of the two stands (§9). The gate refuses an entry stronger
+  than the part's own, so on a document it admits the entry is the part's relation.
 
 So a bundle of an `exactMatch` and a `broadMatch` part is a `broadMatch` bundle. The outcomes
 compute it and put it on the claim as `relation`; no document writes it.
@@ -565,8 +569,10 @@ new behaviour is reached only through the new versions, which its own tests set 
 (gate.json keys, `run.yaml` `locate.status_rule`, `derive_status(status_rule=2)`). Merge order:
 cut, then gate (it calls cut's `locate_text` functions), then fixes and carry in either order,
 then the flip (§7). No run is planned between a merge and the flip (this round spends nothing),
-so a prompt may describe the new flow before the planner writes its versions; the flip is what a
-run of the new flow needs.
+and the flip is what a run of the new flow needs. A prompt that describes the new flow renders
+it only for a plan of the new versions: the locate and challenge prompts by the slot
+`judgment_rules_statement_cut` (`vocab.JUDGMENT_RULES`, which the planner writes into gate.json),
+so a plan made before the flip renders the prompts it rendered before.
 
 ### 6.1 Built here
 
@@ -733,6 +739,16 @@ Readings the maintainer may overrule (each is one change here and in the package
 - **A bundle's conjuncts are exported** (§2.4), so a ballot shows each declaration beside its
   conjunct from the record set alone. They are the inventory worker's paraphrases, held to the
   export's cap.
+- **A confirm's `part_relations` entry counts only where it is weaker** than the part's own
+  `conjunct_relation` (§2.1). A challenge never raises a relation, so the outcomes keep the
+  weaker of the two; "replaces", read literally, would let a confirm the gate did not admit
+  raise a part. On every document the gate admits the two readings agree, and the literal one
+  is a one-line change to `outcomes.bundle_relation`.
+- **A challenger's `tests` replace the worker's** on the location its confirm or downgrade
+  leaves (fix 2d), as its `step`, `convention` and `instantiation` do: the outcome row keeps one
+  pair, the verdict's, and the worker's stay in its locate document. A location keeps `tests`
+  while it is held to a strong relation — its own, or a part's `conjunct_relation` — and loses
+  them when a verdict leaves it weaker. Keeping both pairs would be a new key on the row.
 - **`cf-locate-recordset/2`** is the status rule's format; the self-evidencing format planned under
   that number becomes `/3`.
 - **No new run of the old flow**: after the flip a locate run needs an inventory of the cut, and a
