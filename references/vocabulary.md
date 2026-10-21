@@ -993,7 +993,14 @@ token grammars (`references/locate-documents.md` §6, the consumer's own): `RECO
 machinery's: `MAX_TASKS_PER_ROOT` (500 tasks in one tend root; a larger plan is campaign
 shards), `LOCATE_ATTEMPT_CAP` (3: the genuine reviewer rejection that reaches it writes the
 `UNRESOLVED` document), `SESSION_SLOTS` (15 `flock` slots, one below the account's 16 sessions)
-and `AGENT_TIMEOUT` (`45m` per agent call), and `GATE_CALLERS`, what a locate gate log line's
+and `AGENT_TIMEOUT` (`45m` per agent call, the bridge's default), with the bounds of a timeout a
+plan sets, `AGENT_TIMEOUT_MIN` (`5m`: below it a call cannot finish a task) and
+`AGENT_TIMEOUT_MAX` (`3h`: past it a hung session runs on, and the spend watchdog prices a call
+that left no envelope only when it ends) — `cf plan-locate --agent-timeout` stages its value as
+`CF_AGENT_TIMEOUT` in the run's two wrappers and records it in `run.yaml` (`locate.agent_timeout`,
+`locate.config_shas.agents.agent_timeout`); a plan without it stages and records none, and its
+calls run under the launching environment's `CF_AGENT_TIMEOUT`, else `AGENT_TIMEOUT` —, and
+`GATE_CALLERS`, what a locate gate log line's
 `caller` says the call was (`references/locate-documents.md` §9): `validation` (tend's
 `--changed-files` call, the only one the log's readers count as an attempt) · `pre_merge`
 (`--changed-files --pre-merge`) · `findings_check` (an agent's or the bridge's own

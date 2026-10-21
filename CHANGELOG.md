@@ -1194,6 +1194,18 @@ release has something to say.
   zero-cost baseline is no longer a pass.
 
 ### Added
+- `cf plan-locate --agent-timeout <duration>`: a plan sets the agent timeout for its run. tend
+  runs in the environment of the session that launches it, so the plan stages
+  `export CF_AGENT_TIMEOUT=<duration>` into the run's two wrappers (`bin/worker-agent.sh`,
+  `bin/reviewer-agent.sh`), which overrides that environment's value for every call
+  `agent_call.py` makes. The value is one the bridge reads (`100m`, `90s`, `2h` or seconds, no
+  space) within `cflib.vocab.AGENT_TIMEOUT_MIN` (`5m`) and `AGENT_TIMEOUT_MAX` (`3h`), else the
+  plan is refused before anything is written; `run.yaml` records it as `locate.agent_timeout`
+  (null without the option) and `locate.config_shas.agents.agent_timeout`, so a run planned with
+  it is no A/A replicate of one planned without. The default is unchanged (`AGENT_TIMEOUT`,
+  `45m`), and a plan without the option stages the same wrappers and pins the same
+  `config_shas` as before it; no gate file, bridge or helper changed, so every run planned
+  before re-gates, re-tallies and re-exports as it did.
 - `cf locate carry --from <inventory run> --to <inventory run>` and `cf bench carry`, the
   statement cut's carry-over map (`docs/proposals/statement-cut.md` §4): a re-cut is a routine
   operation, and what was judged on the old cut carries wherever its passage's text is unchanged.

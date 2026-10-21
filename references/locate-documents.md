@@ -2012,12 +2012,19 @@ like a faithfulness run:
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256, tools_corpus_db: {kind, sha256}}, inventory_run,
-  challenged_runs, arm, skill_commit, gate_files, config_shas, per_task,
+  challenged_runs, arm, agent_timeout, skill_commit, gate_files, config_shas, per_task,
   subject_only, seed, sample_rate, strong_sample_rate, absence_sample_rate,
   documents, passages, source_ids, skipped}` (the three rates null outside a
   challenge run; a run planned before the two later rates records neither), and
   `status_rule` on a locate run planned under the statement cut (above; absent
   is status rule 1).
+  `agent_timeout` is the `CF_AGENT_TIMEOUT` the plan staged into both wrappers
+  (`--agent-timeout`, a duration the bridge reads, `100m`, `90s`, `2h` or seconds,
+  within `cflib.vocab.AGENT_TIMEOUT_MIN` and `AGENT_TIMEOUT_MAX`, refused otherwise
+  before anything is written), or null: the wrappers export none, and every call
+  runs under the environment that launches tend, else the bridge's `45m`
+  (`AGENT_TIMEOUT`); a run planned before the option records no key, which means
+  the same.
   `arm` is `blind` with `--blind`, else `assisted`, and a locate plan whose
   inventory run, or a challenge plan whose challenged runs, are of another arm
   is refused; so is a challenge plan whose tools database is not the one its
@@ -2032,7 +2039,7 @@ like a faithfulness run:
   of the run's own id and paths: `{prompts: {<templates/prompts/ file the plan
   rendered>: sha256 of its bytes}, gate_files: {<path as in gate_files>:
   sha256}, agents: {agent_host, model, allow_sandbox_bypass, agentbox_profile,
-  attempt_cap, merge_target}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
+  attempt_cap, merge_target[, agent_timeout]}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
   the `bin/*-agent.sh` wrappers and any staged file whose bytes name one of the
   run's paths, and whose `agents` is what those wrappers run with that names no
   run, as the planner decided it (never read back from the wrappers): the
@@ -2041,7 +2048,9 @@ like a faithfulness run:
   (`CF_ALLOW_SANDBOX_BYPASS`, `--allow-sandbox-bypass`), the agentbox profile
   they run under (`CF_AGENTBOX_PROFILE`, the workspace's `hosts.agentbox_profile`;
   null when the plan exports none and the bridge takes the host user's), the
-  attempt cap (`CF_ATTEMPT_CAP`) and the merge target (`CF_MERGE_TARGET`). Two plans of one
+  attempt cap (`CF_ATTEMPT_CAP`), the merge target (`CF_MERGE_TARGET`), and the
+  agent timeout (`CF_AGENT_TIMEOUT`) only when `--agent-timeout` staged one, so a
+  plan without it pins the map it pinned before the option. Two plans of one
   configuration that differ only in run id
   record equal `config_shas` — what the bench's A/A check compares, so a run whose
   agents ran with the bypass is no replicate of one whose agents did not, while the
@@ -2141,7 +2150,9 @@ no `changed_files`, from a gate older than the field, counts for neither), and
 the per-user slot directory the bridge's 15-slot
 `flock` semaphore uses. The bridges (`scripts/run/agent_call.py` and
 `scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
-`~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
+`~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`; exported by the
+wrappers only when the plan set `--agent-timeout`, which then overrides the launching
+environment's),
 `CF_ATTEMPT_CAP` (unset or 0 is off; a locate run sets 3, and the bridge refuses 1 or 2
 with exit 78 before any agent call: the gate accepts a `by: attempt_cap` document at no
 count under `cflib.vocab.LOCATE_ATTEMPT_CAP`), `CF_TASK_MANIFESTS`

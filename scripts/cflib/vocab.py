@@ -896,6 +896,12 @@ LOCATE_ATTEMPT_CAP = 3
 SESSION_SLOTS = 15
 #: every agent call runs under ``timeout`` this long; expiry is infrastructure
 AGENT_TIMEOUT = "45m"
+#: the bounds of a timeout a plan sets (``cf plan-locate --agent-timeout``, staged as
+#: ``CF_AGENT_TIMEOUT`` in the run's two wrappers): below the floor a call cannot finish a
+#: task, so every call would be an expiry tend retries; past the ceiling a hung session runs
+#: on, and the spend watchdog prices a call that left no envelope only when it ends
+AGENT_TIMEOUT_MIN = "5m"
+AGENT_TIMEOUT_MAX = "3h"
 #: which call a locate gate log line was (its ``caller``): tend's validation command
 #: (``--changed-files``, the only call the log's readers count as an attempt), its
 #: pre-merge command (``--changed-files --pre-merge``), an agent's or the bridge's own

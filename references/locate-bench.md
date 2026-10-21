@@ -628,7 +628,8 @@ stale `canaries.txt` looked for something else).
 configuration -- `gate_files` (the sha of its `locate.config_shas.gate_files` map), `prompts`
 (its `locate.config_shas.prompts`, the template shas) and `agents` (its
 `locate.config_shas.agents`: the agent CLI, the model, the sandbox bypass, the agentbox profile,
-the attempt cap and the merge target its wrappers ran with), each `unrecorded` for a plan that
+the attempt cap and the merge target its wrappers ran with, and the agent timeout when its plan
+set one), each `unrecorded` for a plan that
 records no `config_shas`
 (and `agents` for one that records none of it), and `planning` (its `run.yaml`
 `locate.{per_task, subject_only, sample_rate}`, null where the run's mode has none, and

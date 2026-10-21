@@ -53,6 +53,7 @@ from cflib.yamlio import read_yaml, write_yaml
 from locate import export as lexport, inputs, plan as lplan, presets as lp
 from locate import prompts as lprompts, state as ss_state, tend_root as ltr
 from plan import models as models_mod
+from plan.make_tend_root import check_agent_timeout
 from run import manifest as manifest_mod
 
 NAME = "plan-locate"
@@ -126,6 +127,13 @@ def register(subparsers) -> None:
                    help="the host's owner agreed to this run; recorded in run.yaml")
     p.add_argument("--allow-sandbox-bypass", action="store_true",
                    help="stage CF_ALLOW_SANDBOX_BYPASS=1: the agents run with approvals off")
+    p.add_argument("--agent-timeout", default=None, metavar="DURATION",
+                   help="stage CF_AGENT_TIMEOUT=DURATION into the run's two wrappers, so every "
+                        "agent call runs under it rather than the bridge's default "
+                        f"({vocab.AGENT_TIMEOUT}) or whatever the environment that launches "
+                        "tend sets: a number with s, m or h, or bare seconds, from "
+                        f"{vocab.AGENT_TIMEOUT_MIN} to {vocab.AGENT_TIMEOUT_MAX}; recorded in "
+                        "run.yaml (locate.agent_timeout, locate.config_shas.agents)")
 
 
 def _check_mode_flags(args) -> None:
@@ -227,6 +235,7 @@ def run(args) -> int:
     ws = from_args(args)
     paths = ws.paths
     _check_mode_flags(args)
+    agent_timeout = check_agent_timeout(args.agent_timeout)
     preset = lp.get(args.preset)
     run_id = args.run_id or f"{preset.name}-{_dt.date.today().isoformat()}"
     _check_run_id(paths, args, run_id, preset)
@@ -357,6 +366,7 @@ def run(args) -> int:
         layout_host=layouts["host"], layout_local=layouts["local"], preset=preset,
         run_id=run_id, gate_config=gate_remote, prompts=prompts, tasks=tasks, model=model,
         agent=agent, allow_sandbox_bypass=bool(args.allow_sandbox_bypass),
+        agent_timeout=agent_timeout,
         context={"sourceset_pin": f"{manifest.sourceset_id} v{manifest.version} "
                                   f"{manifest.sha256[:12]}",
                  "universe_pin": f"{universe.id} {universe.sha256[:12]}",
@@ -421,6 +431,9 @@ def run(args) -> int:
             "inventory_run": args.inventory_run,
             "challenged_runs": list(args.challenge_of),
             "arm": arm,
+            # the CF_AGENT_TIMEOUT the wrappers export, or null: they export none, and a
+            # call runs under the launching environment's, else vocab.AGENT_TIMEOUT
+            "agent_timeout": agent_timeout,
             "skill_commit": lexport.skill_commit(),
             "gate_files": built_root["gate_files"],
             "config_shas": config_shas(
@@ -472,6 +485,8 @@ def run(args) -> int:
     print(f"  model    : {model or '(bridge default)'} (from {model_source})")
     print(f"  limits   : {limits['workers']} workers ({limits['source']['workers']}), "
           f"{limits['reviewers']} reviewers ({limits['source']['reviewers']})")
+    if agent_timeout:
+        print(f"  timeout  : CF_AGENT_TIMEOUT={agent_timeout} in both wrappers (bin/*-agent.sh)")
     if skipped:
         print(f"  skipped  : {len(skipped)} source(s) — listed in run.yaml locate.skipped")
     if not consent and args.host != lplan.LOCAL:
@@ -492,8 +507,9 @@ def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
     task manifests, the ``bin/*-agent.sh`` wrappers, and any staged file whose
     bytes name one of ``run_paths``; ``agents`` is what those wrappers run with
     that names no run (``locate.tend_root.agent_settings``: the agent host, the
-    model, the sandbox bypass, the agentbox profile, the attempt cap and the
-    merge target), as the plan decided it: the wrappers' own shas name the run, so
+    model, the sandbox bypass, the agentbox profile, the attempt cap, the
+    merge target, and the agent timeout when ``--agent-timeout`` set one), as the
+    plan decided it: the wrappers' own shas name the run, so
     without this map a run whose agents ran with the sandbox bypass would pass for
     a replicate of one whose agents did not.  Two plans of one configuration that
     differ only in run id record equal maps, which is what the bench's A/A
