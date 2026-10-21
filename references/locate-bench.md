@@ -24,6 +24,7 @@ benches/<id>/gold/g1-resolved.json    G1 before anchoring
 benches/<id>/gold/g1.jsonl g3.jsonl gx.jsonl g4.jsonl    label files, a canary in every row
 benches/<id>/gold/calibration.json    h, the hunters' recall
 benches/<id>/gold/planted/            P: ablation.json and the module-ablated corpus.sqlite
+benches/<id>/gold/carry-<n>.json      gold version n across a re-cut (§7, `cf bench carry`)
 benches/<id>/labeler/args-<mode>.json, results/   the labeler's args and copied results
 benches/<id>/gold-manifest-<n>.json   gold version n, never rewritten
 benches/<id>/spend.json               benchmark-construction spend, its own receipt
@@ -358,6 +359,60 @@ a run's.
   then passes gate rule 3 (the full database holds it) and lands in the outcome rows as a
   location, which the score counts as `E-MEMORY`. Hypothesis mutations as synthetic sources are
   *not implemented*.
+- **Gold across a re-cut** (`docs/proposals/statement-cut.md` §4.4; `scripts/bench/carry.py`).
+  `cf bench carry <id> --from <old inventory run> --to <new inventory run>` computes the
+  carry-over map between the two cuts (`references/locate-documents.md` §12) and writes
+  `gold/carry-<n>.json` (`cf-bench-carry/1`) for the newest frozen gold version *n*, after
+  checking every frozen file as `cf bench score` does (a bench that is not frozen, or whose gold
+  changed after freeze, is refused). A gold row is labelled on a span and joined to a run's
+  passages by the words they share (§8, the join), so a label stays what it was exactly when
+  the passages over its span do. One row per gold row of every frozen tier that has a `span`:
+
+  ```json
+  {"tier": "G3", "gold_id": "g3-…", "source_id": "enwiki-1001-2002", "span": [120, 380],
+   "state": "relabel", "anchor": null,
+   "passages": [{"passage_key": "<old key>", "item": "In-text #0000c0de", "span": [120, 380],
+                 "fate": "split"}],
+   "into": [{"passage_key": "<new key>", "item": "In-text #0000c0de", "span": [120, 241]},
+            {"passage_key": "<new key>", "item": "In-text #0000a11d", "span": [243, 380]}],
+   "reason": "the old passage In-text #0000c0de over it is split"}
+  ```
+
+  `passages` are the old cut's passages that share a character with the span, each with its
+  fate, and `into` the new cut's over it (on another layer, over where the span was placed, or,
+  when it was not placed, where its old passages went). The old cut must be on the layer the gold is
+  labelled on (the frame article's `layer_sha256`); `state` is one of
+  `cflib.vocab.GOLD_CARRY_STATES`:
+
+  - `carried` — the new cut is on that layer too, every passage over the span is `unchanged`,
+    and the new passages over it are exactly those, at the same spans. A span over several
+    passages, or over none, is carried when none of them moved. For a span inside one old
+    passage this is **stricter than the proposal's letter** ("carried when that passage is
+    unchanged"), on purpose: a new passage nested inside the unchanged one, or the unchanged
+    text's twin cut at another place on the page, changes the run passages the label is joined
+    against, so the row is relabelled;
+  - `reanchor` — the same holds on a new cut on another layer (a new revision or rendering):
+    every old passage over the span is `unchanged` and moved by one offset d (over no passage, d
+    puts the span on the one occurrence of its text in the new layer, overlapping occurrences
+    counted), the new layer holds the span's text at `[start + d, end + d)`, and the new passages
+    over that are exactly the old ones, moved by d. Its labels stand (the maintainer's answer of
+    2026-10-21: gold carries wherever its text is unchanged) and `anchor` is `{source_id,
+    layer_sha256, span}` on the new layer, `reason` saying so; the bench scores only runs on the
+    layers it pins (§2, §8), so the move is a new gold version on a frame of the new layer, which
+    no tool writes yet;
+  - `relabel` — anything else, with its `reason`: a passage over it that moved, a new passage
+    over it, passages that moved apart or text that changed on the new layer, its page refused by
+    the map or held by one run only, or an old cut on another layer than the gold's.
+
+  A label is kept only while the labeler that labels it is the same: when the gold manifest's
+  `labeler.version` is not this checkout's `LABELER_VERSION` (`labeler: {gold, current,
+  bumped}`), every row is `relabel` and `note` says so — the flip's bump to `locate-label/6`
+  relabels all gold, and the report is for the re-cuts after it. A row without a span (a G1
+  entry at article level) joins no passage, so no cut moves it; `counts` (per tier and `total`:
+  `rows`, `carried`, `reanchor`, `relabel`, `no_span`) counts it apart. The report also names
+  both runs with their rules (`from`, `to`) and the map's `map_sha256`. **It edits no label
+  file**: a relabel is a new gold version (`cf bench anchor`, then `cf bench freeze
+  --supersede`), and a re-run over the same gold and the same runs writes the same bytes.
 
 ## 8. The score document
 
@@ -575,8 +630,8 @@ for that article, as is a document naming no `layer_sha256` or `renderer`),
 `challenge-plan.json` sha of each challenge run that required nothing), `price_table_sha256` and
 `challenge_runs`. `--pin` fills a version no `run.yaml` records, and is refused when it
 contradicts one. `measurement_id` is `cflib.hashing.sha256_json(pins)`. The scorer's own code
-is **not** a pin: `scorer: {sha256, files}` (a sha over `scripts/bench/*.py`, names and bytes)
-sits beside it, so re-scoring an unchanged run with any checkout writes the same file, and
+is **not** a pin: `scorer: {sha256, files}` (a sha over `scripts/bench/*.py`, names and bytes,
+leaving out `bench.score.NOT_SCORING` — `carry.py`, which computes no score) sits beside it, so re-scoring an unchanged run with any checkout writes the same file, and
 `cf bench compare` refuses two scores of different scorers.
 
 **Refusals**: a receipt that is not `complete`, not gated or has no `cost` block; a run without
@@ -760,6 +815,7 @@ its reader (`scripts/bench/inputs.py` re-implements none):
 | `reports/locate-tally.<run>.json` (§10) | the bench | `challenge_runs`, `gates.<run>.receipt_sha256` |
 | `runs/<run>/challenge-plan.json` (§9) | `locate.outcomes.challenge_values` | each challenge run's `required` records of the locate run |
 | `corpus/<run>/<task-id>/<source-id>.json` (§1–§3, §10) | `locate.outcomes.inventory` (inventory runs), `locate.inputs.harvested_documents` (any run) | inventory documents' `layer_sha256`, `unresolved`, `passages[].{item, span, scope, passage_kind}`; locate documents' `passages[].receipt.candidates[].{library, declaration, verdict}` |
+| two inventory runs' documents, `run.yaml`, `gate.json` and pinned sourceset (§12) | `locate.carry.load` (`cf bench carry`), which reads them through `locate.inputs` and `locate.outcomes.run_yaml` | `run.yaml` `locate.{mode, sourceset}`; `gate.json` `span_end_rule`, `statement_cut_rule`; documents' `mode`, `source_id`, `layer_sha256`, `unresolved`, `passages[].{item, span, scope, conjuncts}`; each source's `layer.txt` (and `formulas.json`, which the view requires) |
 | `runs/<run>/tend-root/gate/tasks/*.json` (§9) | `locate.outcomes.task_manifests` | the inventory run's `documents[].source_id` (inventory coverage); any run's, for its cost share when `run.yaml` names no `source_ids` |
 | `runs/<run>/run.yaml`, `runs/<run>/gate.json` (§9) | `locate.outcomes.run_yaml` (a locate block required) | `prompts`, `versions`, `locate.{mode, arm, inventory_run, source_ids, subject_only, per_task, sample_rate, strong_sample_rate, absence_sample_rate, seed, skill_commit, gate_files, config_shas.{prompts, gate_files, agents}, sourceset, universe.{id, sha256, corpus_db_sha256, tools_corpus_db.{kind, sha256}}}`; the gate's sha |
 | `corpus/<run>/RECEIPT.json` | `locate.inputs.require_gated` | `complete`, `gate.ok`, `cost.{usd, tokens, messages_by_model, price_table_sha256}` |

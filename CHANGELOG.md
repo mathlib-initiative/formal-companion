@@ -1126,6 +1126,34 @@ release has something to say.
   zero-cost baseline is no longer a pass.
 
 ### Added
+- `cf locate carry --from <inventory run> --to <inventory run>` and `cf bench carry`, the
+  statement cut's carry-over map (`docs/proposals/statement-cut.md` §4): a re-cut is a routine
+  operation, and what was judged on the old cut carries wherever its passage's text is unchanged.
+  The map (`scripts/locate/carry.py`, `cf-locate-carry/1` in `references/locate-documents.md`
+  §12) keys every passage of both runs' cuts of a page by `passage_key` and gives each old passage
+  its fate from spans and span text only (`unchanged`, `end_moved`, `split`, `merged`,
+  `reshaped`, `removed`, or `changed` when a new revision does not hold its text exactly once) and
+  lists the new passages, refusing a page whose cut holds one text twice or whose document was
+  made on another layer; it is written to `reports/locate-carry/<from>/<to>.json`, the same bytes
+  on a re-run, and `--rows` copies rows keyed by `passage_key` (known answers, a verdict export)
+  with each one's fate and whether it carries (`locate.carry.carries`, the proposal's §4.4: the
+  passage unchanged, the new passage `formal_math`, and the same conjuncts unless the row says
+  `"reads_conjuncts": false`). `cf bench carry` writes `gold/carry-<n>.json` (`cf-bench-carry/1`,
+  `references/locate-bench.md` §7), each frozen gold row `carried`, `reanchor` or `relabel`
+  (`vocab.GOLD_CARRY_STATES`): carried when the passages over its span did not move (every one
+  unchanged and still the passages there, which for a span inside one old passage is stricter
+  than the proposal's letter, since a nested new passage changes what the score joins it
+  against), re-anchored when the same holds on a new revision or rendering, its labels kept and
+  its span moved to the report's `anchor`, and relabelled otherwise and across a labeler bump; no
+  label file is edited, and `bench.score.scorer()` leaves `carry.py` out of the scorer's identity
+  (`NOT_SCORING`), though the edits to `__init__.py`, `layout.py` and `score.py` change its sha
+  once: re-score both sides of a `cf bench compare` made across this change.
+  `tests/data/locate/carry-parity.json` holds the hand-written cases a consumer's port runs.
+  Nothing else reads the map, so every run plans, gates, tallies and exports as before. The
+  proposal's status line, §4, §6.2 and §9 say what of the carry package is built, the readings
+  it took (gold carried more strictly than §4.4's letter, `reanchor` with no tool yet writing the
+  new frame, no `state.json` record), and that its `scripts/bench/gold.py` share waits for the
+  fixes package's `derive_status(…, status_rule=2)`.
 - The statement cut's specification, `docs/proposals/statement-cut.md` (the maintainer's answers
   of 2026-10-21 on statement-level extraction: one passage per statement, a coverage claim only
   as a bundle on a compound statement taking its weakest part's relation, the smoke-3 audit's
