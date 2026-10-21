@@ -119,7 +119,10 @@ def before_the_flip():
 
     A context manager over ``cflib.vocab`` (:data:`BEFORE_THE_FLIP`): a test of how a run
     planned before the flip is gated, tallied, re-planned or exported plans its runs in it,
-    since a run planned now names the statement cut's versions and refuses that flow.
+    since a run planned now names the statement cut's versions and refuses that flow.  What
+    it reproduces is the run's gate.json and run.yaml; its prompts are the statement cut's,
+    since the templates keep no pre-flip text (a run planned before the flip keeps the
+    prompts it rendered then), and no gate, tally or export reads a prompt.
     """
     from unittest import mock
 

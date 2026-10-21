@@ -518,13 +518,14 @@ slip, not a search miss), in the challenge prompt word for word:
 Until the statement cut (judgment rules 3) the challenger wrote a claim list of its own and the
 rule read "check the record against your claim list of the passage"; under rules 3 the
 inventory owns the one list, the passage's conjuncts (`docs/proposals/statement-cut.md` §1.4), so
-a challenge prompt planned under rules 3 says the words above. The locate and challenge prompts
-render the statement cut's text only for a plan whose `judgment_rules` is 3 (the slot
-`judgment_rules_statement_cut` of `locate.prompts`, read from `JUDGMENT_RULES`, which the
-planner writes into the run's gate.json): a plan of rules 2, before the proposal's flip,
-renders the text it rendered before — the claim lists, this rule's earlier words and PD9's
-("a stated reason … makes X a claim only when …") — byte for byte, so its prompts never
-contradict its gate.
+a challenge prompt planned under rules 3 says the words above. Every plan made since the
+proposal's flip names rules 3 (`JUDGMENT_RULES`, which the planner writes into the run's
+gate.json) and renders the statement cut's text; a plan of rules 2, made before the flip,
+rendered the text of its rules — the claim lists, this rule's earlier words and PD9's ("a
+stated reason … makes X a claim only when …") — and its run keeps those prompts
+(`runs/<run>/prompts/`), so they never contradict its gate. The templates keep the statement
+cut's text only: the earlier text sat behind the slot `judgment_rules_statement_cut`, which no
+plan made since the flip could render, and went with it.
 
 **The statement cut's prompt rules** (the smoke-3 audit's §5 fixes 2a, 2e, 3a, 4b and 5a, as
 `docs/proposals/statement-cut.md` §5 names them), in both locate prompts and the bench's

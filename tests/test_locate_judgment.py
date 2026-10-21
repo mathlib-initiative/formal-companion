@@ -1483,16 +1483,14 @@ class TestTheOutcomesKeepWhatFitsTheRelation(unittest.TestCase):
 # the prompts say each rule the gate holds
 # --------------------------------------------------------------------------- #
 
-def render_locate_prompts(rules: int) -> dict[str, dict[str, str]]:
-    """``{mode: {prompt name: text}}`` as a plan of judgment ``rules`` renders them.
+def render_locate_prompts() -> dict[str, dict[str, str]]:
+    """``{mode: {prompt name: text}}`` as a plan made now renders them.
 
-    The prompts read the judgment rules the planner writes into a run's gate.json
-    (``vocab.JUDGMENT_RULES``; ``locate.prompts.judgment_rules_statement_cut``), so a
-    plan of rules 3 -- the statement cut's flip -- is rendered with that constant at
-    ``RULES_STATEMENT_CUT``, and a plan made now with it as it is.
+    The templates describe the versions the planner writes into every gate.json,
+    judgment rules 3 and span-end rule 2 (``locate.prompts``' docstring): the text a
+    plan made before the statement cut's flip rendered went with the two slots that
+    chose it, which no plan made since could render.
     """
-    from unittest import mock
-
     from locate import inputs, plan as lplan, presets as lp, prompts as lprompts
 
     rendered = {}
@@ -1502,12 +1500,11 @@ def render_locate_prompts(rules: int) -> dict[str, dict[str, str]]:
     db = {"path": str(paths.corpus_db(F.U)), "sha256": "1" * 64, "kind": "full"}
     layout = lplan.host_layout(paths, host="examplebox", run_id="r1", sourceset_id=F.SS,
                                universe_id=F.U, tools_db=db, remote_root="/srv/cf")["host"]
-    with mock.patch.object(vocab, "JUDGMENT_RULES", rules):
-        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE, vocab.LOCATE_INVENTORY):
-            preset = lp.get(mode)
-            ctx = lprompts.build_context(preset, run_id="r1", host=layout,
-                                         universe=inputs.load_universe(paths, F.U), per_task=8)
-            rendered[mode] = lprompts.render_prompts(preset, ctx)
+    for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE, vocab.LOCATE_INVENTORY):
+        preset = lp.get(mode)
+        ctx = lprompts.build_context(preset, run_id="r1", host=layout,
+                                     universe=inputs.load_universe(paths, F.U), per_task=8)
+        rendered[mode] = lprompts.render_prompts(preset, ctx)
     case.doCleanups()
     return rendered
 
@@ -1520,12 +1517,11 @@ def json_example(prompt: str) -> dict:
 
 class TestThePrompts(unittest.TestCase):
     """The locate prompts as a plan made now renders them: judgment rules 3, from the
-    statement cut's flip on; :class:`TestThePromptsBeforeTheFlip` renders them as a plan
-    made before it did."""
+    statement cut's flip on (:class:`TestThePromptsAreTheFlipsOnly`)."""
 
     @classmethod
     def setUpClass(cls):
-        cls.rendered = render_locate_prompts(vocab.JUDGMENT_RULES)
+        cls.rendered = render_locate_prompts()
 
     def test_a_plan_made_now_is_of_rules_3(self):
         self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
@@ -2233,95 +2229,56 @@ class TestThePrompts(unittest.TestCase):
 
 
 
-class TestThePromptsBeforeTheFlip(unittest.TestCase):
-    """A plan made before the statement cut's flip renders the prompts it rendered before.
+class TestThePromptsAreTheFlipsOnly(unittest.TestCase):
+    """The flip's reading F4: the prompts keep no pre-flip text.
 
-    Its gate.json names judgment rules 2 (``vocab.RULES_PD5_PD9``, what
-    ``vocab.JUDGMENT_RULES`` was until the flip), whose documents carry their own claim
-    lists, so its locate and challenge prompts say so: the statement cut's text (no
-    claim list, conjunct ids, the bundle, fixes 2a-5a, PD9's rewording) is rendered only
-    for a plan of rules 3 (``judgment_rules_statement_cut``; the proposal's section 6),
-    and a challenge re-planned over an old run never told its worker what its gate
-    refuses.  The words below are what the prompts said, and these tests held, before
-    the statement cut; no plan made now renders them (the planner writes rules 3 and
-    refuses a run of the earlier flow, the proposal's section 2.2).
+    Until the statement cut's flip the locate and challenge prompts held judgment
+    rules 2's text (each passage's claim list, a challenger's own) behind the slot
+    ``judgment_rules_statement_cut``, and the inventory prompt version 1's end
+    paragraph behind ``span_end_statement_cut``, so a plan made before the flip
+    rendered what it rendered before.  From the flip on every plan names judgment
+    rules 3 and span-end rule 2, and a plan over a run of the earlier flow is
+    refused, so no plan could render that text; it went with both slots.  A plan
+    made before keeps the prompts it rendered (``runs/<run>/prompts/``, their shas in
+    its run.yaml), and no re-gate, tally or export renders a prompt.
     """
 
-    @classmethod
-    def setUpClass(cls):
-        cls.rendered = render_locate_prompts(vocab.RULES_PD5_PD9)
+    TEMPLATES = ("locate.md.tmpl", "locate-challenge.md.tmpl", "locate-inventory.md.tmpl",
+                 "locate-worker-system.md.tmpl", "locate-reviewer.md.tmpl",
+                 "locate-reviewer-system.md.tmpl")
 
-    def text(self, mode, name="worker.md") -> str:
-        return self.rendered[mode][name]
-
-    def test_the_slot_reads_the_rules_the_planner_writes(self):
-        from unittest import mock
-
-        from locate import plan as lplan, prompts as lprompts
+    def test_the_templates_describe_the_versions_the_planner_writes(self):
+        # a change of either constant is a change to the templates (locate.prompts)
         self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
-        self.assertTrue(lprompts.judgment_rules_statement_cut())
-        with mock.patch.object(vocab, "JUDGMENT_RULES", vocab.RULES_PD5_PD9):
-            self.assertFalse(lprompts.judgment_rules_statement_cut())
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT)
+        from locate import plan as lplan
         source = Path(lplan.__file__).read_text(encoding="utf-8")
         self.assertIn('"judgment_rules": vocab.JUDGMENT_RULES,', source)
 
-    def test_the_worker_writes_its_claim_list(self):
-        worker = self.text(vocab.LOCATE)
-        for needle in ("**write its claim list first**",
-                       '{"id": "c1", "text": "<the clause, paraphrased in a few words>"}',
-                       "use one only when its `clauses` name every claim",
-                       '"clauses": ["c1", "c2"]', "their `clauses` together name every claim",
-                       "**a query of its own for every claim**",
-                       "**Check every candidate against each claim before you reject it.**",
-                       "makes X a claim only when X is a declarative mathematical statement that "
-                       "no neighbouring passage already states (PD9)"):
-            with self.subTest(needle=needle):
-                self.assertIn(needle, worker)
-        system = self.text(vocab.LOCATE, "worker-system.md")
-        self.assertIn("a located or absent passage without its claim list (`claims`)", system)
-        self.assertIn("or whose `part_clauses` give one part every claim", system)
+    def test_no_template_keeps_a_slot_of_the_flip(self):
+        from locate import prompts as lprompts
+        tdir = HERE.parent / "templates" / "prompts"
+        for name in self.TEMPLATES:
+            text = (tdir / name).read_text(encoding="utf-8")
+            for slot in ("judgment_rules_statement_cut", "span_end_statement_cut"):
+                with self.subTest(template=name, slot=slot):
+                    self.assertNotIn(slot, text)
+        self.assertFalse(hasattr(lprompts, "judgment_rules_statement_cut"))
 
-    def test_the_challenger_writes_its_own_claim_list(self):
-        challenger = self.text(vocab.LOCATE_CHALLENGE)
-        for needle in ("**First, write the claim list of each passage you judge**",
-                       "the worker may have listed too few clauses",
-                       "with a query of its own for every clause of your claim list",
-                       "your list has at least as many claims as the worker's", "`part_clauses`",
-                       ' "claims": {"<item>": [', "check the record against your claim list"):
-            with self.subTest(needle=needle):
-                self.assertIn(needle, challenger)
-
-    def test_nothing_of_the_statement_cut_is_rendered(self):
-        rules_3 = ("you write no claim list", "conjunct_relation", "part_relations",
-                   "part_reasons", "special_case", "cut_flag", '"fills"', "conditional",
-                   "**Fix 2a**", "**Fix 5a**", "a passage of its own only when X",
-                   "is held by its `conjunct_relation`", "any `claims` list")
-        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
-            for name in ("worker.md", "worker-system.md"):
-                text = self.text(mode, name)
-                for needle in rules_3:
-                    with self.subTest(mode=mode, prompt=name, needle=needle):
+    def test_no_prompt_renders_the_earlier_flows_text(self):
+        rendered = render_locate_prompts()
+        rules_2 = ("**write its claim list first**", "use one only when its `clauses` name "
+                   "every claim", "**First, write the claim list of each passage you judge**",
+                   "check the record against your claim list",
+                   "a located or absent passage without its claim list (`claims`)",
+                   "makes X a claim only when X is a declarative mathematical statement that "
+                   "no neighbouring passage already states (PD9)")
+        for mode, prompts in rendered.items():
+            for name, text in prompts.items():
+                for needle in rules_2:
+                    with self.subTest(mode=mode, prompt=name, needle=needle[:30]):
                         self.assertNotIn(needle, text)
                 self.assertNotRegex(text, r"\{\{")
-        # the generality words are the earlier list's: none of fix 2c's four
-        for phrase in set(vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT) - set(
-                vocab.CLOSE_MATCH_GENERALITY_PHRASES):
-            for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
-                self.assertNotIn(f'"{phrase}"', self.text(mode))
-
-    def test_the_two_renders_share_everything_outside_the_judgment_rules(self):
-        """The slot changes the judgment text and nothing else: the reviewer's prompts and the
-        inventory's are one text, and the universe, tools and gate lines are in both."""
-        after = render_locate_prompts(vocab.JUDGMENT_RULES)
-        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE, vocab.LOCATE_INVENTORY):
-            for name in ("reviewer-system.md", "reviewer.md"):
-                self.assertEqual(self.text(mode, name), after[mode][name])
-        self.assertEqual(self.rendered[vocab.LOCATE_INVENTORY], after[vocab.LOCATE_INVENTORY])
-        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
-            for needle in ("## How to judge a relation: rules R1–R7", "## Before you commit, run "
-                           "the gate", "VALIDATION FAILED"):
-                self.assertIn(needle, self.text(mode))
-                self.assertIn(needle, after[mode]["worker.md"])
 
 
 if __name__ == "__main__":

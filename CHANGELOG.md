@@ -42,6 +42,18 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The locate prompts keep no pre-flip text (reading F4's consequence, `docs/proposals/
+  statement-cut.md` §9). The rules-2 branches of the locate, challenge and worker-system
+  templates (`{{#unless judgment_rules_statement_cut}}`) and the inventory prompt's version-1 end
+  paragraph (`{{#unless span_end_statement_cut}}`) are deleted, with both slots and the `if`
+  blocks around the statement cut's text: no plan made since the flip could render them, and no
+  re-gate, tally or export renders a prompt. A plan made now renders its four prompts byte for
+  byte as before (every combination of the templates' other slots, and the e2e's runs, checked);
+  the template files' shas move, so `locate.config_shas.prompts` differs for a run planned after
+  this change. A run planned before the flip keeps the prompts it rendered. The tests that held
+  the deleted text (`TestThePromptsBeforeTheFlip`, the rules-2 coverage words, version 1's end
+  paragraph) go with it; `TestThePromptsAreTheFlipsOnly` holds the templates to the versions the
+  planner writes. `references/vocabulary.md` §1.11 says this in the past tense.
 - `SKILL.md`'s locate workflow says what a run planned now is held to: step 4 named each
   passage's claim list and a challenger's own one under gate rule 9, which a gate of judgment
   rules 3 refuses; it now describes the statement cut's inventory (rule 10, span-end rule 2) and
