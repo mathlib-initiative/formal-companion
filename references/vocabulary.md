@@ -544,6 +544,30 @@ A bridge lemma named in a `broadMatch`'s `instantiation` cannot be told from the
 hypotheses the line names by right (`Fact p.Prime`, a ring instance, the declaration's own
 name), and a `hasPart` naming every claim outside a coverage claim may be a weakening credited
 with its clause or a claim list too coarse to show the part, so neither is refused.
+Under judgment rules 3 (`RULES_STATEMENT_CUT`, the statement cut below; bound by a gate.json
+that names it, and none is planned before the proposal's flip) the claim list is the
+inventory's: R4 is checked against the frozen passage's conjunct ids (or `c1`), and no locate
+or challenge document writes `claims`. Mechanically, then: a `hasPart` of a compound statement
+gives its `conjunct_relation` (a `closeMatch` part its convention) and nothing else does; a
+coverage claim is a bundle — on a compound statement only, its parts' clauses partitioning the
+conjuncts, none naming them all, each part's `conjunct_relation` strong — and a compound
+statement whose strong parts partition its conjuncts without one is refused (the audit's fix
+4a); every strong location writes its two `tests` and an `instantiation`, and is refused when
+the passage speaks of integers and every number-typed binder of the declaration is ℕ, unless
+its note names ℕ or the naturals; the generality words are
+`CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`; an absence, an uphold and an absent fill name
+their nearest `special_case`; a `cut_flag` sits on an unresolved passage only; a challenger's
+bundle confirm gives `part_relations` no stronger than each part's own, a bundle refute
+`unstated` and a reason for every part, a verdict that keeps or leaves a strong relation its own
+`tests`, a document that leaves a located passage with no counting location its `fills`, and a
+prominence sample's conditional records are judged exactly beside an overturn of their passage
+to subject or central. Gate rule 10 (`statement_cut_rule`, with `span_end_rule` 2) holds the
+inventory's cut: disjoint spans, one text one passage; no run from one block into the next but
+inside a theorem box, into the displays a sentence introduces, or over the items of one list of
+a compound statement; no end inside a formula; conjuncts none or 2–5 of a closed shape, on a
+`formal_math` passage; a passage scoped out `supporting`. What one statement is, where a
+sentence is cut, chains, proofs and PD9's stated reasons stay judgment: rule 10 counts each
+formal passage's sentences and displays into the harvest receipt and refuses nothing on them.
 
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,

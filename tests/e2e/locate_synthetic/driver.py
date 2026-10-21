@@ -20,6 +20,11 @@ the shipped producer, not a fixture of the next stage's format:
     L3b        cf plan-locate --preset locate over the frozen inventory; the
                staged gate over good and bad documents; cf harvest
     L5         cf plan-locate --preset locate-challenge; verdicts; gate; harvest
+    cut        the statement cut's gate (docs/proposals/statement-cut.md): each staged
+               gate copied with a gate.json naming the cut's versions and manifests
+               carrying the inventory's conjuncts, as a run planned after the flip has
+               them; a good cut, locate and challenge document passes, and bad ones are
+               refused under rule 10, rule 2's end rule 2 and rule 9's rules 3
     L6         cf tally --locate, cf export literature-links (sealed, checked)
     bench      cf bench build / anchor / freeze / score over the same runs
     A/A        loc-2 planned exactly as loc-1, run, challenged as chl-1 was,
@@ -893,6 +898,332 @@ class Pipeline:
         self.harvest(run_id, out)
         return bad_upholds
 
+    # ------------------------------------------------------------- the cut
+    #: the version keys of a run planned after the statement cut's flip
+    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 2, "statement_cut_rule": 1}
+    #: the widget theorem's conjuncts, as the cut's inventory writes them (synthetic)
+    BOX_CONJUNCTS = [{"id": "c1", "text": "each finite widget has a spanning gadget"},
+                     {"id": "c2", "text": "that gadget's size divides the order"}]
+    TESTS = {"r2": "the passage is the declaration read at its widget",
+             "r3": "a finite widget meets every hypothesis the declaration has"}
+    SPECIAL = {"reason": "no library states it for a special widget either"}
+
+    def cut_gate(self, run_id: str, manifest_fn=None) -> Path:
+        """``run_id``'s staged gate, as the same run planned under the cut would stage it.
+
+        A copy of the host gate directory whose gate.json names the cut's versions
+        (:data:`CUT_KEYS`) and whose task manifests ``manifest_fn`` rewrites (the
+        inventory's statement, conjuncts and shape, which the planner copies from the
+        flip on, docs/proposals/statement-cut.md section 1.2).
+        """
+        cut = self.made / "host" / f"{run_id}-gate-cut"
+        if cut.is_dir():
+            shutil.rmtree(cut)
+        shutil.copytree(self.host_gate(run_id), cut)
+        gate = self.read_json(cut / "gate.json")
+        gate.update(self.CUT_KEYS, tasks_dir=str(cut / "tasks"), log_dir=str(cut / "log"))
+        self.write_json(cut / "gate.json", gate)
+        for path in sorted((cut / "tasks").glob("*.json")):
+            manifest = self.read_json(path)
+            if manifest_fn is not None:
+                manifest_fn(manifest)
+            self.write_json(path, manifest)
+        return cut
+
+    def gate_cut(self, gate_dir: Path, document: Path) -> tuple[int, str]:
+        """The cut gate copy over one document, run as the host runs a staged gate."""
+        cwd = self.made / "cwd"
+        cwd.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run([sys.executable, "-I", str(gate_dir / "verify_locate.py"),
+                               "--gate-config", str(gate_dir / "gate.json"),
+                               "--findings", str(document)], capture_output=True, text=True,
+                              cwd=str(cwd), env={"PATH": "/usr/bin:/bin", "HOME": str(cwd),
+                                                 "TEND_TASK_ID": ""})
+        return proc.returncode, proc.stdout + proc.stderr
+
+    def statement_cut(self) -> None:
+        self._cut_inventory()
+        self._cut_locate()
+        self._cut_challenge()
+
+    def _cut_inventory(self) -> None:
+        """A cut of the widget lemma under rule 10 and the end rule 2, and its bad twins."""
+        from gate import locate_text as lt
+
+        paths = cf_main_paths(self.ws)
+        source_dir = paths.sourceset_source_dir(SS, WIDGET)
+        layer = (source_dir / "layer.txt").read_text(encoding="utf-8")
+        paragraphs = self.read_json(source_dir / "paragraphs.json")
+        formulas = self.read_json(source_dir / "formulas.json")
+        good = self.read_json(self.inventory_docs[WIDGET])
+        doc = json.loads(json.dumps(good))
+        starts = sorted(p["span"][0] for p in doc["passages"])
+        for p in doc["passages"]:
+            p.pop("until", None)
+            start = p["span"][0]
+            later = [s for s in starts if s > start]
+            end = lt.passage_end(layer, paragraphs, start, "", rule=2,
+                                 next_start=later[0] if later else None, formulas=formulas)
+            p["span"] = [start, end]
+            p["quote"]["exact"] = layer[start:end] if len(p["quote"]["exact"]) > end - start \
+                else p["quote"]["exact"]
+            if p["finder"] == "theorem_box":
+                p.update(conjuncts=json.loads(json.dumps(self.BOX_CONJUNCTS)), shape="conclusions")
+            elif p["passage_kind"] == "other" and "Let " in layer[start:end]:
+                p.update(scope="expository")          # a context sentence states nothing
+        gate_dir = self.cut_gate("inv-1")
+        task_id = good["task_id"]
+        path = self.write_json(self.made / "inv-cut" / "good" / task_id / f"{WIDGET}.json", doc)
+        code, text = self.gate_cut(gate_dir, path)
+        check(code == 0, f"the cut gate refused the good cut of {WIDGET}:\n{text}")
+        # the inventory the run's own gate accepted -- its display passage's quote runs
+        # on over the next passage, the smoke-3 audit's FM9 -- is refused under the cut
+        code, text = self.gate_cut(gate_dir, self.inventory_docs[WIDGET])
+        self.refused(code, text, "the earlier cut's nesting", "rule 10")
+        check("shares text with" in text, f"the earlier cut was refused, but not for its "
+                                          f"nesting:\n{text}")
+        lead = next(i for i, p in enumerate(doc["passages"]) if p["prominence"] == "subject")
+        box = next(i for i, p in enumerate(doc["passages"]) if p["finder"] == "theorem_box")
+        context = next(i for i, p in enumerate(doc["passages"]) if p["scope"] == "expository")
+        display = next(i for i, p in enumerate(doc["passages"])
+                       if layer[p["span"][0]:p["span"][1]].startswith("|"))
+
+        def mutate(fn):
+            bad = json.loads(json.dumps(doc))
+            fn(bad["passages"])
+            return bad
+
+        def overlap(ps):                     # the lead runs on over the context sentence
+            ps[lead]["until"] = "of order n{\\displaystyle n}."
+            ps[lead]["span"][1] = layer.index("of order n{\\displaystyle n}.") + len(
+                "of order n{\\displaystyle n}.")
+
+        def run_on(ps):                      # ... with the context sentence no passage
+            overlap(ps)
+            del ps[context]
+
+        def cut_display(ps):                 # a display cut inside its formula
+            ps[display]["until"] = "|S|"
+            ps[display]["span"][1] = layer.index("|S|", ps[display]["span"][0]) + 3
+            ps[display]["quote"]["exact"] = layer[ps[display]["span"][0]:ps[display]["span"][1]]
+
+        def one_conjunct(ps):
+            ps[box]["conjuncts"] = ps[box]["conjuncts"][:1]
+
+        def shapeless(ps):
+            ps[box]["shape"] = "lemma_with_corollary"
+
+        def scoped_out_conjuncts(ps):
+            ps[context].update(conjuncts=json.loads(json.dumps(self.BOX_CONJUNCTS)),
+                               shape="conclusions")
+
+        def scoped_out_central(ps):
+            ps[context]["prominence"] = "central"
+
+        def end_moved(ps):
+            ps[lead]["span"][1] -= 1
+
+        cases = {"rule 10 overlap": (overlap, "shares text with"),
+                 "rule 10 run on": (run_on, "only inside a theorem box"),
+                 "rule 10 display": (cut_display, "inside the formula"),
+                 "rule 10 conjuncts": (one_conjunct, "a list of 2 to 5"),
+                 "rule 10 shape": (shapeless, "the closed list"),
+                 "rule 10 scope": (scoped_out_conjuncts, "belong to a formal_math passage"),
+                 "rule 10 prominence": (scoped_out_central, "the subject marker goes"),
+                 "rule 2 end rule 2": (end_moved, "passage_ids.py ends it")}
+        for name, (fn, needle) in cases.items():
+            path = self.write_json(self.made / "inv-cut" / name.replace(" ", "-") / task_id
+                                   / f"{WIDGET}.json", mutate(fn))
+            code, text = self.gate_cut(gate_dir, path)
+            self.refused(code, text, name, " ".join(name.split()[:2]))
+            check(needle in text, f"the {name} violation was refused, but not for "
+                                  f"{needle!r}:\n{text}")
+
+    def _cut_manifests(self, items: dict) -> callable:
+        """A manifest rewriter: each passage or record gains its inventory statement, and the
+        widget theorem box its conjuncts (``items``: ``{item: inventory row}``)."""
+        def rewrite(manifest: dict) -> None:
+            for d in manifest["documents"]:
+                for row in d.get("passages") or d.get("records") or []:
+                    inv = items.get(row["item"]) or {}
+                    row["statement"] = inv.get("statement") or "a synthetic restatement"
+                    if inv.get("finder") == "theorem_box":
+                        row.update(conjuncts=json.loads(json.dumps(self.BOX_CONJUNCTS)),
+                                   shape="conclusions")
+        return rewrite
+
+    def _inventory_items(self) -> dict:
+        return {p["item"]: p for path in self.inventory_docs.values()
+                for p in self.read_json(path)["passages"]}
+
+    def _cut_locate(self) -> None:
+        """The widget's locate document under judgment rules 3, and its bad twins."""
+        items = self._inventory_items()
+        gate_dir = self.cut_gate("loc-1", self._cut_manifests(items))
+        task_id, _path, good = self._widget_locate()
+        doc = json.loads(json.dumps(good))
+        for p in doc["passages"]:
+            p.pop("claims", None)
+            compound = (items.get(p["item"]) or {}).get("finder") == "theorem_box"
+            for loc in p["locations"]:
+                if loc["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
+                    loc.update(clauses=["c1", "c2"] if compound else ["c1"],
+                               tests=dict(self.TESTS),
+                               instantiation=loc.get("instantiation")
+                               or "at the passage's finite widget, no instance needed")
+                elif loc["relation"] == "hasPart":
+                    loc["clauses"] = ["c2"] if compound else ["c1"]
+                    if compound:
+                        loc["conjunct_relation"] = "exactMatch"
+            if p["outcome"] == "absent":
+                p["receipt"]["special_case"] = dict(self.SPECIAL)
+        path = self.write_json(self.made / "loc-cut" / "good" / task_id / f"{WIDGET}.json", doc)
+        code, text = self.gate_cut(gate_dir, path)
+        check(code == 0, f"the cut gate refused the good rules-3 locate document:\n{text}")
+        code, text = self.gate("loc-1", path)       # rules 2 want the claim lists back
+        self.refused(code, text, "a rules-3 document under rules 2", "rule 9")
+        subject = next(i for i, p in enumerate(doc["passages"]) if p["outcome"] == "located"
+                       and p["locations"][0]["relation"] == "exactMatch")
+        box = next(i for i, p in enumerate(doc["passages"])
+                   if (items.get(p["item"]) or {}).get("finder") == "theorem_box")
+        absent = next(i for i, p in enumerate(doc["passages"]) if p["outcome"] == "absent")
+
+        def mutate(fn):
+            bad = json.loads(json.dumps(doc))
+            fn(bad["passages"])
+            return bad
+
+        def claims(ps):
+            ps[subject]["claims"] = [{"id": "c1", "text": "a synthetic clause"}]
+
+        def no_tests(ps):
+            ps[subject]["locations"][0].pop("tests")
+
+        def no_instantiation(ps):
+            ps[subject]["locations"][0].pop("instantiation")
+
+        def general(ps):
+            ps[subject]["locations"][0]["note"] = "it holds at every point of the widget"
+
+        def no_conjunct_relation(ps):
+            ps[box]["locations"][0].pop("conjunct_relation")
+
+        def simple_bundle(ps):
+            loc = ps[subject]["locations"][0]
+            ps[subject]["locations"] = [
+                dict(loc, relation="hasPart", rank=1, step="the existence of the gadget"),
+                dict(self._location("alpha", "Widget.card_dvd", "hasPart", 2),
+                     step="the divisibility of the gadget's size")]
+            for part in ps[subject]["locations"]:
+                part.pop("tests", None)
+            ps[subject]["coverage"] = {"complete": True, "parts": [1, 2],
+                                       "note": "two lemmas give the statement"}
+
+        def unclaimed(ps):
+            ps[box]["locations"].append(dict(
+                self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 2,
+                               clauses=("c1",)), conjunct_relation="exactMatch",
+                step="the existence of a spanning gadget"))
+
+        def no_special_case(ps):
+            ps[absent]["receipt"].pop("special_case")
+
+        def flagged(ps):
+            ps[subject]["cut_flag"] = "several_statements"
+
+        cases = {"J1 claims": (claims, "claims is the inventory's"),
+                 "2a tests": (no_tests, "writes both instantiation tests"),
+                 "2b instantiation": (no_instantiation, "whatever its binders"),
+                 "2c generality": (general, "every point"),
+                 "J2 conjunct relation": (no_conjunct_relation, "says what it bears"),
+                 "J3 bundle": (simple_bundle, "on a compound statement only"),
+                 "4a unclaimed bundle": (unclaimed, "write the bundle"),
+                 "5b special case": (no_special_case, "nearest special case"),
+                 "J4 cut flag": (flagged, "belongs to an unresolved passage")}
+        for name, (fn, needle) in cases.items():
+            path = self.write_json(self.made / "loc-cut" / name.replace(" ", "-") / task_id
+                                   / f"{WIDGET}.json", mutate(fn))
+            code, text = self.gate_cut(gate_dir, path)
+            self.refused(code, text, f"rules-3 {name}", "rule 9")
+            check(needle in text, f"the rules-3 {name} violation was refused, but not for "
+                                  f"{needle!r}:\n{text}")
+
+    def _cut_challenge(self) -> None:
+        """The widget's challenge document under judgment rules 3, and its bad twins."""
+        items = self._inventory_items()
+        gate_dir = self.cut_gate("chl-1", self._cut_manifests(items))
+        manifests = self._manifests("chl-1")
+        task_id, d = next((t, d) for t, m in manifests.items() for d in m["documents"]
+                          if d["source_id"] == WIDGET)
+        verdicts = []
+        for rec in d["records"]:
+            compound = (items.get(rec["item"]) or {}).get("finder") == "theorem_box"
+            ids = ["c1", "c2"] if compound else ["c1"]
+            v = {"item": rec["item"], "target": rec["target"],
+                 "witness": "re-read the signature at the pin (synthetic)"}
+            if rec["target"] == "location":
+                v.update(location_key=rec["location_key"], action="confirm")
+                if rec["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
+                    v.update(clauses=ids, tests=dict(self.TESTS))
+                elif rec["relation"] != "relatedMatch":
+                    v["clauses"] = [c for c in rec.get("clauses") or [] if c in ids] or ids[:1]
+            elif rec["target"] in ("absence", "unresolved"):
+                queries = [f"synthetic hunt {n} for {rec['item'][-8:]}" for n in range(3)]
+                v.update(action="uphold", queries=queries,
+                         query_clauses={q: [ids[n % len(ids)]] for n, q in enumerate(queries)},
+                         special_case=dict(self.SPECIAL))
+            else:
+                v["action"] = "uphold"
+            verdicts.append(v)
+        doc = self._header("locate-challenge", "chl-1", task_id, d, universe=True)
+        doc["verdicts"] = verdicts
+        path = self.write_json(self.made / "chl-cut" / "good" / task_id / f"{WIDGET}.json", doc)
+        code, text = self.gate_cut(gate_dir, path)
+        check(code == 0, f"the cut gate refused the good rules-3 challenge document:\n{text}")
+        strong = next(i for i, v in enumerate(verdicts) if v.get("tests"))
+        upheld = next(i for i, v in enumerate(verdicts) if v.get("special_case"))
+
+        def mutate(fn):
+            bad = json.loads(json.dumps(doc))
+            fn(bad)
+            return bad
+
+        def claims(bad):
+            bad["claims"] = {verdicts[strong]["item"]: [{"id": "c1", "text": "a clause"}]}
+
+        def no_tests(bad):
+            bad["verdicts"][strong].pop("tests")
+
+        def no_special_case(bad):
+            bad["verdicts"][upheld].pop("special_case")
+
+        def emptied(bad):                    # the subject's only location refuted, no fill
+            bad["verdicts"][strong] = {"item": verdicts[strong]["item"], "target": "location",
+                                       "location_key": verdicts[strong]["location_key"],
+                                       "action": "refute", "witness": "states another widget"}
+
+        cases = {"no claims": (claims, "claims is the inventory's"),
+                 "2d tests": (no_tests, "a verdict that keeps or leaves a"),
+                 "5b special case": (no_special_case, "nearest special case"),
+                 "A1 fills": (emptied, "give fills[")}
+        for name, (fn, needle) in cases.items():
+            path = self.write_json(self.made / "chl-cut" / name.replace(" ", "-") / task_id
+                                   / f"{WIDGET}.json", mutate(fn))
+            code, text = self.gate_cut(gate_dir, path)
+            self.refused(code, text, f"rules-3 challenge {name}", "rule 9")
+            check(needle in text, f"the rules-3 challenge {name} violation was refused, but not "
+                                  f"for {needle!r}:\n{text}")
+        # the fill that answers the emptied passage: an absence with its hunt
+        filled = mutate(emptied)
+        queries = ["synthetic fill hunt a", "synthetic fill hunt b", "synthetic fill hunt c"]
+        filled["fills"] = {verdicts[strong]["item"]: {"outcome": "absent", "receipt": {
+            "queries": queries, "candidates": [], "query_clauses": {q: ["c1"] for q in queries},
+            "special_case": dict(self.SPECIAL)}}}
+        path = self.write_json(self.made / "chl-cut" / "filled" / task_id / f"{WIDGET}.json",
+                               filled)
+        code, text = self.gate_cut(gate_dir, path)
+        check(code == 0, f"the cut gate refused an emptied passage's fill:\n{text}")
+
     # ------------------------------------------------------------------- L6
     def export(self) -> None:
         paths = cf_main_paths(self.ws)
@@ -1094,7 +1425,7 @@ def cf_main_paths(ws: Path):
 
 
 STAGES = ("workspace", "universe", "sourceset", "candidates", "inventory", "locate",
-          "challenge", "export", "bench", "aa", "aa_refusal")
+          "challenge", "statement_cut", "export", "bench", "aa", "aa_refusal")
 
 
 def run(root: Path, stages=STAGES) -> Pipeline:

@@ -42,6 +42,31 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The statement cut's gate (`docs/proposals/statement-cut.md`, its gate package), bound only by a
+  gate.json that names its versions, which no planner writes before the proposal's flip, so every
+  run planned before it gates, tallies and exports as it did (re-gating every workspace run and
+  re-tallying and re-exporting smoke 2 and 3 gives identical results on the base and here). The
+  gate knows `judgment_rules` 3, `span_end_rule` 2 and the new `statement_cut_rule` 1, and refuses
+  a gate.json naming the cut with an earlier end rule. **Span-end rule 2** ends an inventory
+  passage without `until` at the earlier of its extent and the next passage's start
+  (`locate_text.Blocks`, `passage_end(..., rule=2)`: the cut package's, whose `locate_text.py`
+  this branch carries unchanged so that the gate is built against it). **Rule 10**
+  refuses an inventory's overlapping spans, a span run from one block into the next outside a
+  theorem box, the displays its sentence introduces or a compound statement's list, an end inside
+  a formula, conjuncts other than none or 2-5 of a closed shape, conjuncts on a passage scoped
+  out, a passage scoped out that is not `supporting`, and two passages of one text; it counts each
+  formal passage's sentences and displays into the harvest receipt's new `cut` block and refuses
+  nothing on them. **Rule 9 under judgment rules 3** checks locate and challenge documents
+  against the inventory's conjunct ids (no `claims`), a part's `conjunct_relation`, a coverage
+  claim as a bundle on a compound statement (one part per conjunct, none stating them all, each
+  strong), the audit's fixes 1a, 2a-2d, 4a and 5b, a `cut_flag` on an unresolved passage, a
+  challenge's `part_relations`, `unstated` and `part_reasons`, `fills` for a located passage its
+  verdicts empty (A1, A2) and a prominence sample's conditional records (A3). The planner writes
+  `statement_cut_rule` beside the other keys, `locate.status_rule` into a locate run's run.yaml,
+  the inventory's statement, conjuncts and shape into the manifests, and refuses a locate plan over
+  an inventory without the cut and a challenge of a locate run of earlier rules, all from the flip
+  on (`locate.plan.statement_cut_planned`). The e2e driver gates good and bad documents under the
+  cut's versions.
 - Locate judgment rules: PD10's exception. A link that is itself what the passage asserts is no
   encoding: when the lemma that links the two notions is the passage's own theorem, a
   declaration stated with the notion whose definition already contains that theorem's claim
