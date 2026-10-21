@@ -75,7 +75,7 @@ class JudgedLocate(G.GateTestCase):
 
     def setUp(self):
         self.fx = G.Fixture(self, "locate")
-        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
         self.fx.write_gate()
         self.fx.manifest(self.TASK, G.locate_manifest_doc(self.fx))
 
@@ -89,7 +89,7 @@ class JudgedLocate(G.GateTestCase):
         try:
             return self.run_body(body)
         finally:
-            self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+            self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
             self.fx.write_gate()
 
     def assertRefusedOnlyUnderTheRules(self, body: dict, needle: str, rule: int = 9):
@@ -539,7 +539,7 @@ class TestAChallengersPartNamesItsStep(G.GateTestCase):
 
     def setUp(self):
         self.fx = G.Fixture(self, "locate-challenge")
-        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
         self.fx.write_gate()
 
     def records(self, relation, kind="other", **extra):
@@ -698,7 +698,7 @@ class TestAChallengersCloseMatchNamesItsConvention(G.GateTestCase):
 
     def setUp(self):
         self.fx = G.Fixture(self, "locate-challenge")
-        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
         self.fx.write_gate()
 
     def records(self, relation, **extra):
@@ -794,7 +794,7 @@ class TestTheRulesOfPD5ToPD9(JudgedLocate):
         try:
             return self.run_body(body)
         finally:
-            self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+            self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
             self.fx.write_gate()
 
     def assertRefusedOnlyUnderPD(self, body: dict, needle: str):
@@ -814,7 +814,9 @@ class TestTheRulesOfPD5ToPD9(JudgedLocate):
         return body
 
     def test_the_version_is_cflibs(self):
-        self.assertEqual((vocab.JUDGMENT_RULES, vocab.RULES_PD5_PD9), (2, 2))
+        # a run planned now names rules 3 (the statement cut's flip); these tests gate the
+        # documents of a run planned under rules 2, which the gate still holds to them
+        self.assertEqual((vocab.JUDGMENT_RULES, vocab.RULES_PD5_PD9), (3, 2))
         self.assertEqual(vl.RULES_PD5_PD9, vocab.RULES_PD5_PD9)
         self.assertEqual(self.fx.gate_cfg().judgment_rules, 2)
 
@@ -871,7 +873,7 @@ class TestAChallengerUnderPD5ToPD9(G.GateTestCase):
 
     def setUp(self):
         self.fx = G.Fixture(self, "locate-challenge")
-        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
         self.fx.write_gate()
 
     def under(self, version: int, body: dict) -> dict:
@@ -880,7 +882,7 @@ class TestAChallengerUnderPD5ToPD9(G.GateTestCase):
         try:
             return self.fx.run(self.fx.document(self.TASK, body))
         finally:
-            self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+            self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
             self.fx.write_gate()
 
     def records(self, *records: dict) -> None:
@@ -1066,7 +1068,7 @@ class TestTheChallengersClaims(G.GateTestCase):
 
     def setUp(self):
         self.fx = G.Fixture(self, "locate-challenge")
-        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
         self.fx.write_gate()
         self.records(note="")
 
@@ -1174,7 +1176,7 @@ class TestTheChallengersClaims(G.GateTestCase):
             with self.subTest(verdict=verdict):
                 self.assertRule(self.run_body(body), 9, "rests on your own claim list")
                 self.assertOk(self.unruled(body))
-                self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+                self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
                 self.fx.write_gate()
         body = self.body()
         del body["claims"][G.LEAD_ITEM]
@@ -1210,7 +1212,7 @@ class TestTheChallengersClaims(G.GateTestCase):
                                "witness": "nothing states it"}
         self.assertRule(self.run_body(body), 9, "an uphold lists the queries you ran")
         self.assertOk(self.unruled(body))
-        self.fx.gate["judgment_rules"] = vocab.JUDGMENT_RULES
+        self.fx.gate["judgment_rules"] = vocab.RULES_PD5_PD9
         self.fx.write_gate()
         body["verdicts"][1].update(copy.deepcopy(self.SEARCH))
         self.assertOk(self.run_body(body))
@@ -1517,12 +1519,16 @@ def json_example(prompt: str) -> dict:
 
 
 class TestThePrompts(unittest.TestCase):
-    """The locate prompts as a plan of judgment rules 3 renders them (the statement cut's
-    flip); :class:`TestThePromptsBeforeTheFlip` renders them as a plan made now does."""
+    """The locate prompts as a plan made now renders them: judgment rules 3, from the
+    statement cut's flip on; :class:`TestThePromptsBeforeTheFlip` renders them as a plan
+    made before it did."""
 
     @classmethod
     def setUpClass(cls):
-        cls.rendered = render_locate_prompts(vocab.RULES_STATEMENT_CUT)
+        cls.rendered = render_locate_prompts(vocab.JUDGMENT_RULES)
+
+    def test_a_plan_made_now_is_of_rules_3(self):
+        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
 
     def worker(self, mode=vocab.LOCATE) -> str:
         return self.rendered[mode]["worker.md"]
@@ -1746,10 +1752,12 @@ class TestThePrompts(unittest.TestCase):
             with self.subTest(rule=name):
                 self.assertIn(line, rules)
         self.assertIn(f"const LABELER_VERSION = '{gold_mod.LABELER_VERSION}'", text)
-        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/5")
+        # the statement cut's flip bumped the labeler to /6, which labels by rules 3
+        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/6")
         self.assertEqual(gold_mod.LABELER_RULES[gold_mod.LABELER_VERSION], vocab.JUDGMENT_RULES)
         self.assertEqual(gold_mod.labeler_rules("locate-label/4"), 1)
         self.assertEqual(gold_mod.labeler_rules("locate-label/5"), 2)
+        self.assertEqual(gold_mod.labeler_rules("locate-label/6"), vocab.RULES_STATEMENT_CUT)
         self.assertEqual(gold_mod.labeler_rules(None), 0)
         # PD7: the labeler's closeMatch line lists no junk value either
         self.assertNotIn("junk_value", text)
@@ -2024,10 +2032,11 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("(PD8; R2's weakenings are no instantiation, and a lemma that only links two "
                       "definitions of one notion is no bridge but an encoding, PD10, unless that "
                       "link is itself what the passage asserts)", labeler)
-        # PD10 is judgment: it adds no gate check, so the rules stay version 2 and the labeler
-        # /5 (a /6 would label by the same judgment rules, LABELER_RULES)
-        self.assertEqual(vocab.JUDGMENT_RULES, 2)
-        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/5")
+        # PD10 is judgment: it added no gate check, so the rules stayed version 2 and the
+        # labeler /5 (a /6 would have labelled by the same judgment rules, LABELER_RULES);
+        # the statement cut's flip, which did add checks, moved both (rules 3, /6)
+        self.assertEqual(vocab.RULES_PD5_PD9, 2)
+        self.assertEqual(gold_mod.labeler_rules("locate-label/5"), vocab.RULES_PD5_PD9)
         self.assertEqual(gold_mod.labeler_rules(gold_mod.LABELER_VERSION), vocab.JUDGMENT_RULES)
         vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
                               .read_text(encoding="utf-8").split())
@@ -2227,18 +2236,20 @@ class TestThePrompts(unittest.TestCase):
 class TestThePromptsBeforeTheFlip(unittest.TestCase):
     """A plan made before the statement cut's flip renders the prompts it rendered before.
 
-    Its gate.json names judgment rules 2 (``vocab.JUDGMENT_RULES``), whose documents carry
-    their own claim lists, so its locate and challenge prompts say so: the statement
-    cut's text (no claim list, conjunct ids, the bundle, fixes 2a-5a, PD9's rewording)
-    is rendered only for a plan of rules 3 (``judgment_rules_statement_cut``; the
-    proposal's section 6), and a challenge re-planned over an old run never tells its
-    worker what its gate refuses.  The words below are what the prompts said, and these
-    tests held, before the statement cut.
+    Its gate.json names judgment rules 2 (``vocab.RULES_PD5_PD9``, what
+    ``vocab.JUDGMENT_RULES`` was until the flip), whose documents carry their own claim
+    lists, so its locate and challenge prompts say so: the statement cut's text (no
+    claim list, conjunct ids, the bundle, fixes 2a-5a, PD9's rewording) is rendered only
+    for a plan of rules 3 (``judgment_rules_statement_cut``; the proposal's section 6),
+    and a challenge re-planned over an old run never told its worker what its gate
+    refuses.  The words below are what the prompts said, and these tests held, before
+    the statement cut; no plan made now renders them (the planner writes rules 3 and
+    refuses a run of the earlier flow, the proposal's section 2.2).
     """
 
     @classmethod
     def setUpClass(cls):
-        cls.rendered = render_locate_prompts(vocab.JUDGMENT_RULES)
+        cls.rendered = render_locate_prompts(vocab.RULES_PD5_PD9)
 
     def text(self, mode, name="worker.md") -> str:
         return self.rendered[mode][name]
@@ -2247,10 +2258,10 @@ class TestThePromptsBeforeTheFlip(unittest.TestCase):
         from unittest import mock
 
         from locate import plan as lplan, prompts as lprompts
-        self.assertLess(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
-        self.assertFalse(lprompts.judgment_rules_statement_cut())
-        with mock.patch.object(vocab, "JUDGMENT_RULES", vocab.RULES_STATEMENT_CUT):
-            self.assertTrue(lprompts.judgment_rules_statement_cut())
+        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
+        self.assertTrue(lprompts.judgment_rules_statement_cut())
+        with mock.patch.object(vocab, "JUDGMENT_RULES", vocab.RULES_PD5_PD9):
+            self.assertFalse(lprompts.judgment_rules_statement_cut())
         source = Path(lplan.__file__).read_text(encoding="utf-8")
         self.assertIn('"judgment_rules": vocab.JUDGMENT_RULES,', source)
 
@@ -2301,7 +2312,7 @@ class TestThePromptsBeforeTheFlip(unittest.TestCase):
     def test_the_two_renders_share_everything_outside_the_judgment_rules(self):
         """The slot changes the judgment text and nothing else: the reviewer's prompts and the
         inventory's are one text, and the universe, tools and gate lines are in both."""
-        after = render_locate_prompts(vocab.RULES_STATEMENT_CUT)
+        after = render_locate_prompts(vocab.JUDGMENT_RULES)
         for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE, vocab.LOCATE_INVENTORY):
             for name in ("reviewer-system.md", "reviewer.md"):
                 self.assertEqual(self.text(mode, name), after[mode][name])

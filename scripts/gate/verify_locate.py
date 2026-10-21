@@ -323,29 +323,29 @@ ATTEMPT_CAP_REASON = re.compile(r"attempt_cap: ([0-9]+) genuine reviewer rejecti
 MAX_LOCATIONS_PER_PASSAGE = 5
 MIN_ABSENCE_QUERIES = 3
 LOCATE_EXTENSION = "org.mathlib-initiative.formal-companion.locate"
-#: the judgment rules this gate knows (rule 9; cflib.vocab.JUDGMENT_RULES): a
-#: gate.json names the version its run was planned under as ``judgment_rules``,
-#: and one without the key (a run planned before them) is gated without rule 9.
-#: Version 1 is R1-R7; version 2 (cflib.vocab.RULES_PD5_PD9) adds PD5-PD9's two
-#: mechanical checks: no coverage part that alone names every claim (PD6), and no
-#: ``junk_value`` convention (PD7)
-JUDGMENT_RULES = 2
+#: the judgment rules this gate knows (rule 9): a gate.json names the version its run
+#: was planned under as ``judgment_rules``, and one without the key (a run planned
+#: before them) is gated without rule 9.  Version 1 is R1-R7; version 2
+#: (cflib.vocab.RULES_PD5_PD9) adds PD5-PD9's two mechanical checks: no coverage part
+#: that alone names every claim (PD6), and no ``junk_value`` convention (PD7)
 RULES_PD5_PD9 = 2
-#: the span-end rule the planner writes (rule 2's end check; cflib.vocab.SPAN_END_RULE):
-#: a gate.json names the version its run was planned under as ``span_end_rule``, and
-#: one without the key (a run planned before it, whose inventories ``passage_ids.py``
-#: wrote without ``until``) is gated without the end check
-SPAN_END_RULE = 1
 #: The statement cut's versions (docs/proposals/statement-cut.md section 2.2;
 #: cflib.vocab.RULES_STATEMENT_CUT, SPAN_END_STATEMENT_CUT, STATEMENT_CUT_RULE): judgment
 #: rules 3 (rule 9 against the inventory's conjunct ids: no claim list, a coverage claim
 #: only as a bundle, the smoke-3 audit's failure-mode rules), span-end rule 2 (the end
 #: at the earlier of the extent and the next passage's start) and statement-cut rule 1
-#: (rule 10, the inventory's cut).  This gate knows them; each binds a run only when its
-#: gate.json names it, which ``cf plan-locate`` does from the proposal's flip on
+#: (rule 10, the inventory's cut).  Each binds a run only when its gate.json names it,
+#: which ``cf plan-locate`` does from the proposal's flip on
 RULES_STATEMENT_CUT = 3
 SPAN_END_STATEMENT_CUT = 2
 STATEMENT_CUT_RULE = 1
+#: the versions the planner writes (cflib.vocab.JUDGMENT_RULES and SPAN_END_RULE, the
+#: statement cut's from its flip on): a gate.json names the version its run was planned
+#: under as ``judgment_rules`` and ``span_end_rule``, and one without ``span_end_rule``
+#: (a run planned before it, whose inventories ``passage_ids.py`` wrote without
+#: ``until``) is gated without the end check
+JUDGMENT_RULES = RULES_STATEMENT_CUT
+SPAN_END_RULE = SPAN_END_STATEMENT_CUT
 #: the highest version of each rule this gate can hold a run to: a gate.json naming a
 #: higher one was planned by a newer planner than this gate directory (exit 3)
 KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_STATEMENT_CUT)

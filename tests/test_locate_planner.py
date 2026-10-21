@@ -118,9 +118,20 @@ def ablate(source: Path, planted: Path, *modules: tuple[str, str]) -> set[str]:
 
 
 class Campaign(unittest.TestCase):
-    """A workspace with a rendered sourceset, a universe, candidates and inventory ``inv-1``."""
+    """A workspace with a rendered sourceset, a universe, candidates and inventory ``inv-1``.
+
+    ``BEFORE_THE_FLIP``: every run of the class is planned as the planner planned before
+    the statement cut's flip (``F.before_the_flip``), for a test of how a run of the
+    earlier flow -- every run of an operator's workspace so far -- is tallied and exported.
+    """
+
+    BEFORE_THE_FLIP = False
 
     def setUp(self):
+        if self.BEFORE_THE_FLIP:
+            patch = F.before_the_flip()
+            patch.start()
+            self.addCleanup(patch.stop)
         self.root = scratch(self)
         self.paths = F.campaign(self, self.root)
 
@@ -558,8 +569,9 @@ class TestPlanInventory(Campaign):
             "tools_corpus_db", "sourceset", "sources", "candidates_dir", "blind", "inventory",
             "challenged_runs", "findings_dir", "tasks_dir", "log_dir", "orchestrator_db",
             "max_locations", "min_absence_queries", "judgment_rules", "span_end_rule",
-            "vendor", "candidates_sha256"})
+            "statement_cut_rule", "vendor", "candidates_sha256"})
         self.assertEqual(gate["schema"], "cf-gate-locate/1")
+        self.assertEqual(gate["statement_cut_rule"], vocab.STATEMENT_CUT_RULE)
         self.assertEqual(gate["judgment_rules"], vocab.JUDGMENT_RULES)
         self.assertEqual(gate["span_end_rule"], vocab.SPAN_END_RULE)
         self.assertEqual(gate["kinds"], ["PASSAGE", "UNRESOLVED"])
@@ -1358,8 +1370,10 @@ class TestPlanLocate(Campaign):
         w1 = w1_doc["passages"]
         self.assertEqual(len(w1), 3)                     # the expository paragraph is out
         self.assertEqual([p["span"][0] for p in w1], sorted(p["span"][0] for p in w1))
+        # and, from the statement cut's flip on, the inventory's statement (its conjuncts and
+        # shape on a compound statement, which this inventory has none of)
         self.assertEqual(set(w1[0]), {"item", "span", "head_words", "prominence", "passage_kind",
-                                      "text_span", "section", "quote"})
+                                      "text_span", "section", "quote", "statement"})
         gate = read_json(self.paths.gate_json("loc-1"))
         self.assertEqual(gate["inventory"], {"run_id": "inv-1"})      # seam #80: no dir
         self.assertEqual(gate["kinds"], ["ABSENCE", "LOCATION", "UNRESOLVED"])
@@ -2057,8 +2071,9 @@ class TestTheChallengePlanReachesStrongRecords(Campaign):
         drawn = self.by_declaration(self.plan("--strong-sample-rate", "1", "--sample-rate", "0"))
         self.assertEqual(drawn[("Widget.card_dvd", "closeMatch")]["planned"], "required")
         default = self.plan(run_id="chl-2")
+        # the supporting-absence rate is 0.5 from the statement cut's flip on (fix 5c)
         self.assertEqual((default["strong_sample_rate"], default["sample_rate"],
-                          default["absence_sample_rate"]), (0.5, 0.2, 0.25))
+                          default["absence_sample_rate"]), (0.5, 0.2, 0.5))
         # 0.5 of a one-record stratum is one record: at least one per non-empty stratum
         self.assertEqual(self.by_declaration(default)[("Widget.card_dvd", "closeMatch")]
                          ["planned"], "required")
@@ -2280,6 +2295,10 @@ class TestRecords(unittest.TestCase):
 
 
 class TestExport(Campaign):
+    """The record set of a run planned before the statement cut's flip, ``/1``: its documents
+    write their own claim lists (tests/test_locate_bundle_status.py has ``/2``'s)."""
+
+    BEFORE_THE_FLIP = True
 
     def setUp(self):
         super().setUp()
@@ -2775,7 +2794,13 @@ class TestTheReviewOfThePlan(Campaign):
 
 
 class TestTheReviewOfTheOutcomes(Campaign):
-    """Review #7, #16-#20, #22-#28, #30, #33, #36: outcomes refuse what is not theirs."""
+    """Review #7, #16-#20, #22-#28, #30, #33, #36: outcomes refuse what is not theirs.
+
+    Over runs planned before the statement cut's flip, whose documents these are (status
+    rule 1: a passage whose every location a challenge refutes is downgraded, where status
+    rule 2 owes it a hunt, tests/test_locate_fm_fixes.py)."""
+
+    BEFORE_THE_FLIP = True
 
     def setUp(self):
         super().setUp()

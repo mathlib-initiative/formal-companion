@@ -1807,7 +1807,8 @@ like a faithfulness run:
   is gated, also at harvest, by the rules it ran under. Version 1 is R1–R7;
   version 2, written since the maintainer's PD5–PD9 (2026-10-20), adds PD6's
   whole part and PD7's junk value (§3, §4), so a run that names 1 is gated, also
-  by the checkout's gate, without them. The bench holds its gold to the same
+  by the checkout's gate, without them; version 3, written from the statement
+  cut's flip on, is that proposal's (below). The bench holds its gold to the same
   version (`references/locate-bench.md` §8). A version above the gate's own, or a
   value that is not a non-negative integer, is exit 3.
 

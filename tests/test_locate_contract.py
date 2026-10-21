@@ -104,7 +104,7 @@ class TestTheDocumentValues(unittest.TestCase):
         self.assertEqual(vocab.STRONG_RELATIONS, {"exactMatch", "closeMatch", "broadMatch"})
         self.assertEqual(vocab.STRONG_RELATIONS | vocab.WEAK_RELATIONS, vocab.LOCATE_RELATIONS)
         self.assertEqual((vocab.CHALLENGE_SAMPLE_RATE, vocab.CHALLENGE_STRONG_SAMPLE_RATE,
-                          vocab.CHALLENGE_ABSENCE_SAMPLE_RATE), (0.2, 0.5, 0.25))
+                          vocab.CHALLENGE_ABSENCE_SAMPLE_RATE), (0.2, 0.5, 0.5))
         self.assertEqual(vocab.CHALLENGE_PLANNED, {"required", "sampled_out", "not_required"})
         self.assertEqual(vocab.INDEX_FLAGS, {"is_prop_unknown", "published_status"})
         for name in ("MAX_TASKS_PER_ROOT", "LOCATE_ATTEMPT_CAP", "SESSION_SLOTS", "AGENT_TIMEOUT",

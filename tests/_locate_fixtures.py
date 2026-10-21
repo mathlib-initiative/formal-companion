@@ -36,7 +36,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import cf as cf_main  # noqa: E402
-from cflib import hashing  # noqa: E402
+from cflib import hashing, vocab  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
 from corpus import build_db  # noqa: E402
 from corpus.universe import Universe  # noqa: E402
@@ -103,6 +103,27 @@ ARTICLES = {
             "</div>"),
     },
 }
+
+
+#: what the planner wrote before the statement cut's flip (docs/proposals/statement-cut.md
+#: section 7): judgment rules 2, span-end rule 1, no statement_cut_rule and no status_rule,
+#: and the supporting-absence sample at 0.25 -- what every run of an operator's workspace
+#: planned so far names, and so what these fixtures' documents, which write their own claim
+#: lists, are written for
+BEFORE_THE_FLIP = {"JUDGMENT_RULES": vocab.RULES_PD5_PD9, "SPAN_END_RULE": 1,
+                   "CHALLENGE_ABSENCE_SAMPLE_RATE": 0.25}
+
+
+def before_the_flip():
+    """Plan as the planner did before the statement cut's flip: a run of the earlier flow.
+
+    A context manager over ``cflib.vocab`` (:data:`BEFORE_THE_FLIP`): a test of how a run
+    planned before the flip is gated, tallied, re-planned or exported plans its runs in it,
+    since a run planned now names the statement cut's versions and refuses that flow.
+    """
+    from unittest import mock
+
+    return mock.patch.multiple(vocab, **BEFORE_THE_FLIP)
 
 
 def cf(*argv: str) -> tuple[int, str, str]:

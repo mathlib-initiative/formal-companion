@@ -1839,20 +1839,21 @@ class TestAPolicyChangeRelabelsTheGold(unittest.TestCase):
         for tier in ("G1", "G3"):
             rows = gold_mod.read_labels(layout_of(world), tier)
             self.assertEqual({r["labeler_version"] for r in rows}, {gold_mod.LABELER_VERSION})
-        self.assertEqual(manifest_of(world)["labeler"]["version"], "locate-label/5")
+        self.assertEqual(manifest_of(world)["labeler"]["version"], gold_mod.LABELER_VERSION)
         world = self.frozen_under("locate-label/4")
         self.assertEqual(manifest_of(world)["labeler"]["version"], "locate-label/4")
 
     def test_label_4_gold_never_scores_a_run_judged_under_pd5_to_pd9(self):
         world = self.frozen_under("locate-label/4")
-        eval_run(world)                                  # planned now: judgment rules 2
+        eval_run(world)                                  # planned now: judgment rules 3
         with self.assertRaises(CfError) as ctx:
             score(world)
         message = str(ctx.exception)
         self.assertIn("gold is labelled by locate-label/4 (judgment rules 1)", message)
-        self.assertIn("inv1 was judged under rules 2", message)
-        self.assertIn("loc1 was judged under rules 2", message)
-        self.assertIn("relabel the gold under locate-label/5", ctx.exception.hint or "")
+        self.assertIn(f"inv1 was judged under rules {vocab.JUDGMENT_RULES}", message)
+        self.assertIn(f"loc1 was judged under rules {vocab.JUDGMENT_RULES}", message)
+        self.assertIn(f"relabel the gold under {gold_mod.LABELER_VERSION}",
+                      ctx.exception.hint or "")
         self.assertIn("--supersede", ctx.exception.hint or "")
         # a run of the rules the gold was labelled by is scored, and so is one planned before
         # the rules (0 and 1 were compared before this check, and still are)
@@ -1863,7 +1864,7 @@ class TestAPolicyChangeRelabelsTheGold(unittest.TestCase):
                 self.assertEqual(score(world, rid)["run"], rid)
 
     def test_label_5_gold_never_scores_a_run_planned_before_them(self):
-        world = frozen(self)
+        world = self.frozen_under("locate-label/5")
         for rid, rules, inventory_rules, names in (
                 ("loc1", 1, 1, ("inv1", "loc1")), ("loc2", 2, 1, ("inv-loc2",)),
                 ("loc3", None, None, ("inv-loc3", "loc3"))):
@@ -1874,8 +1875,33 @@ class TestAPolicyChangeRelabelsTheGold(unittest.TestCase):
             for name in names:
                 self.assertIn(f"{name} was judged under rules", str(ctx.exception))
             self.assertIn("score runs planned under judgment rules 2", ctx.exception.hint or "")
-        eval_run(world, run_id="loc4", inventory_run="inv-loc4")
+        eval_run(world, run_id="loc4", inventory_run="inv-loc4", judgment_rules=2,
+                 inventory_rules=2)
         self.assertEqual(score(world, "loc4")["run"], "loc4")
+        # nor one planned after the statement cut's flip (judgment rules 3): relabel
+        eval_run(world, run_id="loc5", inventory_run="inv-loc5")
+        with self.assertRaises(CfError) as ctx:
+            score(world, "loc5")
+        self.assertIn("loc5 was judged under rules 3", str(ctx.exception))
+        self.assertIn(f"relabel the gold under {gold_mod.LABELER_VERSION}",
+                      ctx.exception.hint or "")
+
+    def test_label_6_gold_never_scores_a_run_planned_before_the_flip(self):
+        """The statement cut's flip (docs/proposals/statement-cut.md section 7): gold of
+        locate-label/6 labels by judgment rules 3, so a run of rules 2 -- every run planned
+        before the flip -- is scored only against gold of /5."""
+        world = frozen(self)
+        self.assertEqual(manifest_of(world)["labeler"]["version"], "locate-label/6")
+        eval_run(world, run_id="loc1", inventory_run="inv1", judgment_rules=2,
+                 inventory_rules=2)
+        with self.assertRaises(CfError) as ctx:
+            score(world, "loc1")
+        self.assertIn("gold is labelled by locate-label/6 (judgment rules 3)",
+                      str(ctx.exception))
+        self.assertIn("loc1 was judged under rules 2", str(ctx.exception))
+        self.assertIn("score runs planned under judgment rules 3", ctx.exception.hint or "")
+        eval_run(world, run_id="loc2", inventory_run="inv-loc2")      # planned now
+        self.assertEqual(score(world, "loc2")["run"], "loc2")
 
     def test_a_challenge_is_held_to_the_gold_unless_it_judged_nothing(self):
         world = frozen(self)
@@ -1941,7 +1967,8 @@ class TestAPolicyChangeRelabelsTheGold(unittest.TestCase):
         restamp(world, "G1", labeler_version="locate-label/4", labeler_sha256="e" * 64)
         with self.assertRaises(CfError) as ctx:
             cf(world, "bench", "freeze", "b1")
-        self.assertIn("anchor locate-label/4, label locate-label/5", str(ctx.exception))
+        self.assertIn(f"anchor locate-label/4, label {gold_mod.LABELER_VERSION}",
+                      str(ctx.exception))
         self.assertIn("one gold, one labeler version", str(ctx.exception))
         # a hand-edited version is refused by name, never a traceback
         restamp(world, "G1", labeler_version=["locate-label/5"])

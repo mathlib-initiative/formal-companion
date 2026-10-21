@@ -14,18 +14,29 @@ the shipped producer, not a fixture of the next stage's format:
                not this renderer's layer is refused by render
                (references/locate-documents.md section 7)
     L2         cf locate candidates with a synthetic 1000.yaml-shaped list
-    L3a        cf plan-locate --preset locate-inventory; a worker's documents
-               filled by the staged passage_ids.py; the STAGED gate (out of
+
+    Every run is planned under the statement cut (docs/proposals/statement-cut.md,
+    from its flip on: judgment rules 3, span-end rule 2, statement-cut rule 1, and a
+    locate run's status rule 2), and its documents take its shapes:
+
+    L3a        cf plan-locate --preset locate-inventory; a worker's documents cut
+               one passage per statement (a compound statement's conjuncts and
+               shape), filled by the staged passage_ids.py; the STAGED gate (out of
                tree, from the tend root) over good and bad documents; cf harvest
-    L3b        cf plan-locate --preset locate over the frozen inventory; the
-               staged gate over good and bad documents; cf harvest
-    L5         cf plan-locate --preset locate-challenge; verdicts; gate; harvest
-    cut        the statement cut's gate (docs/proposals/statement-cut.md): each staged
-               gate copied with a gate.json naming the cut's versions and manifests
-               carrying the inventory's conjuncts, as a run planned after the flip has
-               them; a good cut, locate and challenge document passes, and bad ones are
-               refused under rule 10, rule 2's end rule 2 and rule 9's rules 3
-    L6         cf tally --locate, cf export literature-links (sealed, checked)
+    L3b        cf plan-locate --preset locate over the frozen inventory; documents
+               citing the inventory's clause ids (no claim list), strong locations
+               with their tests, a bundle on the compound statement, absences with
+               their nearest special case; the staged gate over good and bad
+               documents; cf harvest
+    L5         cf plan-locate --preset locate-challenge; verdicts (the bundle's
+               part relations, a strong verdict's tests); gate; harvest
+    cut        the statement cut's rules over those runs' documents: bad ones refused
+               under rule 10, rule 2's end rule 2 and rule 9's rules 3, by the run's
+               own staged gate or a copy of it where a case needs another version,
+               database or record
+    L6         cf tally --locate (status rule 2: the bundle's weakest part's
+               relation), cf export literature-links (cf-locate-recordset/2, sealed,
+               checked)
     bench      cf bench build / anchor / freeze / score over the same runs
     A/A        loc-2 planned exactly as loc-1, run, challenged as chl-1 was,
                tallied and scored; cf bench compare --aa answers "aa ok", with
@@ -34,6 +45,9 @@ the shipped producer, not a fixture of the next stage's format:
     A/A refusal  loc-3 planned as loc-1 but challenged at another
                --strong-sample-rate: cf bench compare --aa refuses it, naming
                the planning key
+    carry      inv-2, a re-cut of the same revisions; cf locate carry from inv-1's
+               cut to it (a split, an end moved, the rest unchanged; --rows carried
+               by their passages' fates) and cf bench carry over the frozen gold
 
 Nothing touches the network or a model.  Every check reads an artifact, never
 a log line.  Run it on its own with ``python3 tests/e2e/locate_synthetic/driver.py
@@ -494,52 +508,101 @@ class Pipeline:
         self.cf("plan-locate", "--preset", "locate-inventory", "--sourceset", SS,
                 "--universe", U, "--run-id", "inv-1", "--max-cost", "50")
         paths = cf_main_paths(self.ws)
-        tend = paths.tend_root("inv-1")
+        local = self.read_json(self._run_dir("inv-1") / "gate.local.json")
+        check({k: local.get(k) for k in self.CUT_KEYS} == self.CUT_KEYS,
+              f"inv-1 was not planned under the statement cut: its gate.local.json names "
+              f"{ {k: local.get(k) for k in self.CUT_KEYS} }")
         out = self.made / "inv-1" / "findings"
-        self.inventory_docs: dict[str, Path] = {}
-        for task_id, manifest in self._manifests("inv-1").items():
+        self.inventory_docs = self._inventory_documents("inv-1", out)
+        for sid, path in self.inventory_docs.items():
+            code, text = self.gate("inv-1", path)
+            check(code == 0, f"the staged gate refused the good inventory of {sid}:\n{text}")
+        self._inventory_refusals(paths)
+        self.harvest("inv-1", out)
+
+    def _inventory_documents(self, run_id: str, out: Path, *,
+                             more_starts: dict[str, list[tuple[int, str]]] | None = None,
+                             untils: dict[str, dict[int, str]] | None = None
+                             ) -> dict[str, Path]:
+        """An inventory worker's documents for ``run_id``, cut one passage per statement.
+
+        The finders' passages, then one "model" passage per math paragraph the finders
+        left uncovered (the coverage floor, gate rule 8), and a re-cut's ``more_starts``
+        (``{source: [(start, scope)]}``) and ``untils`` (``{source: {start: until}}``).
+        Each quote stops before the passage's end, since under the span-end rule 2 a
+        passage ends at the next passage's start, or its ``until``, and never before its
+        quote's end; the widget theorem box is a compound statement (its conjuncts, shape
+        ``conclusions``), and a sentence that only sets up its objects ("Let ...") states
+        nothing and is scoped ``expository``, as the cut rules say
+        (docs/proposals/statement-cut.md section 3.4).  ``passage_ids.py`` places and
+        ends every passage, by the end rule of the gate.json beside it.
+        """
+        from gate import locate_text as lt
+
+        paths = cf_main_paths(self.ws)
+        docs: dict[str, Path] = {}
+        for task_id, manifest in self._manifests(run_id).items():
             for d in manifest["documents"]:
                 sid = d["source_id"]
                 source_dir = paths.sourceset_source_dir(SS, sid)
                 layer = (source_dir / "layer.txt").read_text(encoding="utf-8")
-                passages, seen = [], set()
-                # the finders' passages, then one "model" passage per math paragraph the
-                # finders left uncovered: the coverage floor (gate rule 8) the prompt states
-                proposals = [dict(f) for f in d.get("finders") or []]
                 paragraphs = self.read_json(source_dir / "paragraphs.json")
+                formulas = self.read_json(source_dir / "formulas.json")
+                proposals = [dict(f) for f in d.get("finders") or []]
                 for para in paragraphs:
                     a, b = para["span"]
                     if para.get("math") and not any(f["span"][0] <= a < f["span"][1]
                                                     for f in proposals):
                         proposals.append({"finder": "model", "start": a, "span": [a, b],
                                           "section": para.get("section") or []})
+                for start, scope in (more_starts or {}).get(sid, []):
+                    proposals.append({"finder": "model", "start": start, "scope": scope,
+                                      "span": [start, start], "section": []})
+                until_at = (untils or {}).get(sid, {})
+                chosen, seen = [], set()
                 for f in sorted(proposals, key=lambda f: f["start"]):
-                    if f["start"] in seen:
-                        continue                  # one passage, two finders: one start
-                    seen.add(f["start"])
+                    if f["start"] not in seen:          # one passage, two finders: one start
+                        seen.add(f["start"])
+                        chosen.append(f)
+                starts = [f["start"] for f in chosen]
+                passages = []
+                for n, f in enumerate(chosen):
                     kind, prominence, scope = self.LABELS[f["finder"]]
+                    scope = f.get("scope") or scope
                     if passages and prominence == "subject":
                         prominence = "supporting"
-                    exact = self._layer_words(layer, f["start"])
-                    prefix = layer[max(0, f["start"] - 24):f["start"]]
-                    passages.append({"item": "", "head_words": 0, "span": None,
-                                     "quote": {"exact": exact, "prefix": prefix, "suffix": ""},
-                                     "section": f.get("section") or [], "fragment": None,
-                                     "passage_kind": kind, "prominence": prominence,
-                                     "scope": scope, "concept": None, "finder": f["finder"],
-                                     "statement": f"synthetic restatement of {exact[:30]}"})
-                doc = self._header("locate-inventory", "inv-1", task_id, d)
+                    start = f["start"]
+                    until = until_at.get(start)
+                    end = lt.passage_end(layer, paragraphs, start, "", until, rule=2,
+                                         next_start=starts[n + 1] if n + 1 < len(starts)
+                                         else None, formulas=formulas)
+                    exact = self._layer_words(layer, start)
+                    if len(exact) > end - start:
+                        exact = layer[start:end]
+                    passage = {"item": "", "head_words": 0, "span": None,
+                               "quote": {"exact": exact,
+                                         "prefix": layer[max(0, start - 24):start],
+                                         "suffix": ""},
+                               "section": f.get("section") or [], "fragment": None,
+                               "passage_kind": kind, "prominence": prominence,
+                               "scope": scope, "concept": None, "finder": f["finder"],
+                               "statement": f"synthetic restatement of {exact[:30]}"}
+                    if until is not None:
+                        passage["until"] = until
+                    if f["finder"] == "theorem_box":
+                        passage.update(conjuncts=json.loads(json.dumps(self.BOX_CONJUNCTS)),
+                                       shape="conclusions")
+                    elif kind == "other" and layer[start:end].startswith("Let "):
+                        passage["scope"] = "expository"
+                    passages.append(passage)
+                doc = self._header("locate-inventory", run_id, task_id, d)
                 doc.update(passages=passages, skips=[], notes="")
                 path = self.write_json(out / task_id / f"{sid}.json", doc)
-                proc = self.isolated("inv-1", "passage_ids.py", "--source-dir", str(source_dir),
+                proc = self.isolated(run_id, "passage_ids.py", "--source-dir", str(source_dir),
                                      "--document", str(path), "--write")
                 check(proc.returncode == 0, f"passage_ids.py on {sid}: {proc.stderr}")
-                self.inventory_docs[sid] = path
-        for sid, path in self.inventory_docs.items():
-            code, text = self.gate("inv-1", path)
-            check(code == 0, f"the staged gate refused the good inventory of {sid}:\n{text}")
-        self._inventory_refusals(paths)
-        self.harvest("inv-1", out)
+                docs[sid] = path
+        return docs
 
     def _inventory_refusals(self, paths) -> None:
         """Bad inventory documents the staged gate must refuse, each for its own rule."""
@@ -589,25 +652,44 @@ class Pipeline:
               f"the moved end was refused, but not by the span-end rule:\n{text}")
 
     # ------------------------------------------------------------------ L3b
-    #: the claim lists this run's worker writes (the judgment rules: references/
-    #: vocabulary.md section 1.11), synthetic paraphrases
-    SUBJECT_CLAIMS = [{"id": "c1", "text": "each finite widget has a spanning gadget"}]
-    THEOREM_CLAIMS = [{"id": "c1", "text": "the gadget exists"},
-                      {"id": "c2", "text": "no smaller gadget spans"}]
-    OTHER_CLAIMS = [{"id": "c1", "text": "the paragraph's one formal clause"}]
+    #: the version keys of a run planned after the statement cut's flip
+    #: (docs/proposals/statement-cut.md section 7), which every run here is
+    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 2, "statement_cut_rule": 1}
+    #: the widget theorem's conjuncts, as the cut's inventory writes them (synthetic)
+    BOX_CONJUNCTS = [{"id": "c1", "text": "each finite widget has a spanning gadget"},
+                     {"id": "c2", "text": "that gadget's size divides the order"}]
+    #: a strong location's two instantiation tests (fix 2a), and an absence's nearest
+    #: special case (fix 5b), synthetic
+    TESTS = {"r2": "the passage is the declaration read at its widget",
+             "r3": "a finite widget meets every hypothesis the declaration has"}
+    SPECIAL = {"reason": "no library states it for a special widget either"}
 
-    @staticmethod
-    def _location(lib: str, decl: str, relation: str = "exactMatch", rank: int = 1,
-                  note: str = "", clauses=("c1",)) -> dict:
+    def _location(self, lib: str, decl: str, relation: str = "exactMatch", rank: int = 1,
+                  note: str = "", clauses=("c1",), *, conjunct_relation: str | None = None,
+                  step: str | None = None) -> dict:
+        """One location under judgment rules 3: the clause ids are the manifest's (the
+        inventory's conjunct ids, else ``c1``); a strong one, or a part whose
+        ``conjunct_relation`` is strong, writes its ``instantiation`` and both ``tests``."""
         loc = {"library": lib, "declaration": decl, "relation": relation, "rank": rank,
                "confidence": "high", "note": note,
                "witness": "the signature states the passage (synthetic)"}
         if relation != "relatedMatch":
             loc["clauses"] = list(clauses)
+        if conjunct_relation is not None:
+            loc["conjunct_relation"] = conjunct_relation
+        if step is not None:
+            loc["step"] = step
+        if relation in ("exactMatch", "closeMatch", "broadMatch") or conjunct_relation in (
+                "exactMatch", "closeMatch", "broadMatch"):
+            loc.update(instantiation="W is the passage's finite widget, Fintype by finiteness",
+                       tests=dict(self.TESTS))
         return loc
 
     def _answer(self, sid: str, passage: dict, curated: list[dict]) -> dict:
-        """A worker's answer for one passage: the widget lemma's are located, the rest absent."""
+        """A worker's answer for one passage under judgment rules 3: the widget lemma's
+        are located, the rest absent.  No document writes a claim list: the clause ids
+        are the inventory's conjunct ids (the widget theorem box: ``c1``, ``c2``), or
+        ``c1`` for a simple statement."""
         receipt = {"queries": ["widget spanning gadget", "finite widget gadget", "Widget.exists"],
                    "candidates": [{"library": c["library"], "declaration": c["declaration"],
                                    "verdict": "accepted" if passage.get("prominence") == "subject"
@@ -615,33 +697,43 @@ class Pipeline:
                                    "reason": "" if passage.get("prominence") == "subject"
                                    else "states the subject passage, not this one"}
                                   for c in curated]}
+        ids = [c["id"] for c in passage.get("conjuncts") or []] or ["c1"]
         if sid == WIDGET and passage.get("prominence") == "subject":
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
-                    "claims": self.SUBJECT_CLAIMS,
                     "locations": [self._location("alpha", "Widget.exists_spanning_gadget")]}
         if sid == WIDGET and passage.get("passage_kind") == "theorem":
-            # one clause of two: a hasPart, never an exactMatch (R4)
-            part = self._location("alpha", "Widget.card_dvd", "hasPart")
-            part.update(instantiation="W is the passage's finite widget, Fintype by finiteness",
-                        step="the divisibility of the gadget's size by the order")
+            # a compound statement (the cut): one part per conjunct, claimed together as a
+            # bundle (J3), whose relation is its weakest part's (status rule 2)
+            check(ids == ["c1", "c2"], f"the widget theorem's manifest passage carries "
+                                       f"no conjuncts: {passage}")
+            size = self._location("alpha", "Widget.card_dvd", "hasPart", 1, clauses=("c2",),
+                                  conjunct_relation="exactMatch",
+                                  step="the divisibility of the gadget's size by the order")
+            exists = self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 2,
+                                    clauses=("c1",), conjunct_relation="broadMatch",
+                                    step="a spanning gadget for every widget, finite or not")
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
-                    "claims": self.THEOREM_CLAIMS, "locations": [part]}
+                    "locations": [size, exists],
+                    "coverage": {"complete": True, "parts": [1, 2],
+                                 "note": "existence for every widget, the size bound exactly"}}
         if sid == WIDGET and passage.get("passage_kind") == "other" and not self.proof_part:
-            # the widget's first remark paragraph, read as a proof: a hasPart of it names
-            # the displayed step it states (the judgment rules, FM3)
+            # the widget's display, a step of the theorem's proof: a hasPart of a simple
+            # statement names c1 and carries no conjunct relation (the judgment rules, FM3)
             self.proof_part = passage["item"]
-            step = self._location("alpha", "Widget.card_dvd", "hasPart")
-            step.update(instantiation="W is the remark's widget, a Fintype",
-                        step="the displayed divisibility of the gadget's size")
+            step = self._location("alpha", "Widget.card_dvd", "hasPart",
+                                  step="the displayed divisibility of the gadget's size")
+            step["instantiation"] = "W is the display's widget, a Fintype"
             return {"item": passage["item"], "outcome": "located", "receipt": receipt,
-                    "claims": self.OTHER_CLAIMS, "locations": [step]}
-        # an absence searched for every claim, each query tagged with the one it targets;
-        # a worked example's also for its general theorem (the judgment rules, FM5)
-        receipt["query_clauses"] = {q: ["c1"] for q in receipt["queries"]}
+                    "locations": [step]}
+        # an absence searched for every clause, each query tagged with the one it targets,
+        # and the nearest special case it found none of (fix 5b); a worked example's also
+        # for its general theorem (the judgment rules, FM5)
+        receipt["query_clauses"] = {q: [ids[n % len(ids)]]
+                                    for n, q in enumerate(receipt["queries"])}
         if passage.get("passage_kind") == "example":
-            receipt["query_clauses"][receipt["queries"][-1]] = ["c1", "general"]
-        return {"item": passage["item"], "outcome": "absent", "locations": [], "receipt": receipt,
-                "claims": self.OTHER_CLAIMS}
+            receipt["query_clauses"][receipt["queries"][-1]] = [ids[0], "general"]
+        receipt["special_case"] = dict(self.SPECIAL)
+        return {"item": passage["item"], "outcome": "absent", "locations": [], "receipt": receipt}
 
     #: how every locate run of the campaign is planned (the A/A stage plans loc-2 so too)
     LOCATE_PLAN = ("--preset", "locate", "--sourceset", SS, "--universe", U,
@@ -698,11 +790,13 @@ class Pipeline:
             doc["passages"][located]["locations"][0]["proof_status"] = "proved"
         def commit(doc):
             doc["passages"][located]["locations"][0]["commit"] = "f" * 40
+        box = next(i for i, p in enumerate(good["passages"]) if p.get("coverage"))
         def few_queries(doc):
             p = doc["passages"][located]
             p.update(outcome="absent", locations=[])
             p["receipt"]["queries"] = ["widget", "Widget "]
             p["receipt"]["query_clauses"] = {"widget": ["c1"]}
+            p["receipt"]["special_case"] = dict(self.SPECIAL)
         def close_without_convention(doc):
             doc["passages"][located]["locations"][0].update(
                 relation="closeMatch", note="the gadget is written as a subset")
@@ -721,6 +815,7 @@ class Pipeline:
         def untagged_absence(doc):
             p = doc["passages"][located]
             p.update(outcome="absent", locations=[])
+            p["receipt"]["special_case"] = dict(self.SPECIAL)
             for cand in p["receipt"]["candidates"]:
                 cand.update(verdict="rejected", reason="states the subject, not this")
         def too_many(doc):
@@ -733,31 +828,25 @@ class Pipeline:
         def curated_ignored(doc):
             for p in doc["passages"]:
                 p.update(outcome="absent", locations=[])
+                p.pop("coverage", None)
                 p["receipt"]["candidates"] = []
         def close_without_note(doc):
             doc["passages"][located]["locations"][0]["relation"] = "closeMatch"
-        def no_claims(doc):
-            del doc["passages"][located]["claims"]
+        def claims_written(doc):
+            # J1: the inventory owns the clause list, so no locate document writes one
+            doc["passages"][located]["claims"] = [{"id": "c1", "text": "a synthetic clause"}]
         def junk_value(doc):
-            # PD7 (judgment rules 2, which this plan's gate.json names): no convention
+            # PD7 (from judgment rules 2 on; this plan's gate.json names 3): no convention
             doc["passages"][located]["locations"][0].update(
                 relation="closeMatch", convention="junk_value",
                 note="Lean returns 0 where the passage leaves the value undefined")
         def whole_part(doc):
-            # PD6: a coverage part that names every claim alone is one location, no part
-            p = doc["passages"][located]
-            ids = [c["id"] for c in p["claims"]]
-            step = "the whole widget statement, as the declaration states it"
-            p["locations"] = [
-                dict(self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 1,
-                                    clauses=ids), step=step),
-                dict(self._location("alpha", "Widget.card_dvd", "hasPart", 2,
-                                    clauses=ids[:1]), step=step)]
-            p["coverage"] = {"complete": True, "parts": [1, 2],
-                             "note": "the two lemmas together give the widget statement"}
+            # PD6, under rules 3 part of J3: a part of the widget theorem's bundle that
+            # names every conjunct alone is one location, no part
+            doc["passages"][box]["locations"][1]["clauses"] = ["c1", "c2"]
         def strong_missing_a_clause(doc):
-            p = doc["passages"][located]
-            p["claims"] = p["claims"] + [{"id": "c2", "text": "a second synthetic clause"}]
+            # a strong location names the passage's clause ids, the manifest's, and no other
+            doc["passages"][located]["locations"][0]["clauses"] = ["c1", "c2"]
         layer = (cf_main_paths(self.ws).sourceset_source_dir(SS, WIDGET) / "layer.txt"
                  ).read_text(encoding="utf-8")
         verbatim = " ".join(layer.split()[:14])     # past the export's twelve-word cap
@@ -766,6 +855,7 @@ class Pipeline:
         def query_verbatim(doc):
             p = doc["passages"][located]
             p.update(outcome="absent", locations=[])
+            p["receipt"]["special_case"] = dict(self.SPECIAL)
             p["receipt"]["queries"][0] = verbatim
             p["receipt"]["query_clauses"] = {q: ["c1"] for q in p["receipt"]["queries"]}
             for cand in p["receipt"]["candidates"]:
@@ -774,12 +864,13 @@ class Pipeline:
                  "rule 3 commit": commit, "rule 5": few_queries, "rule 6 count": too_many,
                  "rule 6 rank": duplicate_rank, "rule 4": curated_ignored,
                  "closeMatch note": close_without_note,
-                 # the judgment rules (rule 9): the claim list, and every clause on a strong one
-                 "rule 9 claims": no_claims, "rule 9 clauses": strong_missing_a_clause,
+                 # the judgment rules (rule 9): no claim list of the document's own, and the
+                 # manifest's clause ids on a strong one
+                 "rule 9 claims": claims_written, "rule 9 clauses": strong_missing_a_clause,
                  "rule 9 queries": untagged_absence, "rule 9 instantiation": uninstantiated,
                  "rule 9 step": stepless, "rule 9 convention": close_without_convention,
                  "rule 9 generality": close_and_general,
-                 # PD5-PD9's mechanical part, rule 9 version 2
+                 # PD5-PD9's mechanical part, from rule 9 version 2 on
                  "rule 9 junk value": junk_value, "rule 9 whole part": whole_part,
                  # the export's verbatim-source cap, applied by the gate (rule 1)
                  "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
@@ -851,37 +942,8 @@ class Pipeline:
         for task_id, manifest in self._manifests(run_id).items():
             for d in manifest["documents"]:
                 doc = self._header("locate-challenge", run_id, task_id, d, universe=True)
-                verdicts, claims = [], {}
-                for rec in d["records"]:
-                    v = {"item": rec["item"], "target": rec["target"],
-                         "witness": "re-read the signature at the pin (synthetic)"}
-                    if rec["target"] in ("location", "coverage", "absence", "unresolved"):
-                        # the challenger's own claim list (the judgment rules), under every
-                        # verdict on a passage's records; here the worker's, which it checked
-                        mine = claims.setdefault(rec["item"], rec.get("claims")
-                                                 or self.OTHER_CLAIMS)
-                        ids = [c["id"] for c in mine]
-                    if rec["target"] == "location":
-                        # a strong relation names every claim
-                        v.update(location_key=rec["location_key"], action="confirm")
-                        if rec["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
-                            v["clauses"] = ids
-                        elif rec["relation"] != "relatedMatch":
-                            v["clauses"] = rec.get("clauses") or ids[:1]
-                    elif rec["target"] in ("absence", "unresolved"):
-                        # an uphold lists the challenger's own search, a query of its own
-                        # for each claim (the judgment rules, FM5)
-                        queries = [f"synthetic hunt {n} for {rec['item'][-8:]}" for n in range(3)]
-                        tags = {q: [ids[n % len(ids)]] for n, q in enumerate(queries)}
-                        if rec.get("passage_kind") == "example":
-                            tags[queries[-1]] = tags[queries[-1]] + ["general"]
-                        v.update(action="uphold", queries=queries, query_clauses=tags)
-                    else:
-                        v["action"] = "uphold"
-                    verdicts.append(v)
+                verdicts = self._verdicts(d["records"])
                 doc["verdicts"] = verdicts
-                if claims:
-                    doc["claims"] = claims
                 path = self.write_json(out / task_id / f"{d['source_id']}.json", doc)
                 code, text = self.gate(run_id, path)
                 check(code == 0, f"the gate refused a good {run_id} challenge document:\n{text}")
@@ -899,35 +961,73 @@ class Pipeline:
         self.harvest(run_id, out)
         return bad_upholds
 
+    def _verdicts(self, records: list[dict]) -> list[dict]:
+        """A challenger's verdicts under judgment rules 3: every record confirmed or upheld.
+
+        No claim list: a verdict's clause ids are the record's, the inventory's
+        conjunct ids or ``c1``.  A verdict that keeps a strong relation -- a part's by
+        its ``conjunct_relation`` -- gives its own ``tests`` (fix 2d); a bundle's confirm
+        gives each part's relation, no stronger than its own (``part_relations``); an
+        uphold lists the challenger's own search, a query for each clause, and the
+        nearest special case (FM5, fix 5b).  A conditional record (anomaly A3) is owed a
+        verdict only beside an overturn of its passage's prominence, which this
+        challenger never makes, so it gets none.
+        """
+        strong = ("exactMatch", "closeMatch", "broadMatch")
+        verdicts = []
+        for rec in records:
+            if rec.get("conditional"):
+                continue
+            ids = [c["id"] for c in rec.get("conjuncts") or []] or ["c1"]
+            v = {"item": rec["item"], "target": rec["target"],
+                 "witness": "re-read the signature at the pin (synthetic)"}
+            if rec["target"] == "location":
+                v.update(location_key=rec["location_key"], action="confirm")
+                if rec["relation"] in strong:
+                    v.update(clauses=ids, tests=dict(self.TESTS))
+                elif rec["relation"] != "relatedMatch":
+                    v["clauses"] = [c for c in rec.get("clauses") or [] if c in ids] or ids[:1]
+                    if rec.get("conjunct_relation") in strong:
+                        v["tests"] = dict(self.TESTS)    # a strong part, held as strong
+            elif rec["target"] == "coverage":
+                v.update(action="confirm", part_relations={
+                    part["location_key"]: part["conjunct_relation"] for part in rec["parts"]})
+            elif rec["target"] in ("absence", "unresolved"):
+                queries = [f"synthetic hunt {n} for {rec['item'][-8:]}" for n in range(3)]
+                tags = {q: [ids[n % len(ids)]] for n, q in enumerate(queries)}
+                if rec.get("passage_kind") == "example":
+                    tags[queries[-1]] = tags[queries[-1]] + ["general"]
+                v.update(action="uphold", queries=queries, query_clauses=tags,
+                         special_case=dict(self.SPECIAL))
+            else:
+                v["action"] = "uphold"
+            verdicts.append(v)
+        return verdicts
+
     # ------------------------------------------------------------- the cut
-    #: the version keys of a run planned after the statement cut's flip
-    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 2, "statement_cut_rule": 1}
-    #: the widget theorem's conjuncts, as the cut's inventory writes them (synthetic)
-    BOX_CONJUNCTS = [{"id": "c1", "text": "each finite widget has a spanning gadget"},
-                     {"id": "c2", "text": "that gadget's size divides the order"}]
-    TESTS = {"r2": "the passage is the declaration read at its widget",
-             "r3": "a finite widget meets every hypothesis the declaration has"}
-    SPECIAL = {"reason": "no library states it for a special widget either"}
 
     def cut_gate(self, run_id: str, manifest_fn=None, *, suffix: str = "",
-                 signatures: dict[str, str] | None = None) -> Path:
-        """``run_id``'s staged gate, as the same run planned under the cut would stage it.
+                 signatures: dict[str, str] | None = None, keys: dict | None = None) -> Path:
+        """A copy of ``run_id``'s staged gate, for a case its own gate cannot hold.
 
-        A copy of the host gate directory whose gate.json names the cut's versions
-        (:data:`CUT_KEYS`) and whose task manifests ``manifest_fn`` rewrites (the
-        inventory's statement, conjuncts and shape, which the planner copies from the
-        flip on, docs/proposals/statement-cut.md section 1.2).  ``signatures``
-        (``{declaration: signature}``) gives this copy its own corpus.sqlite with
-        those signatures, pinned by its gate.json as a planner pins the database it
-        planned with: the synthetic universe has no number-typed binder, which the
-        naturals-for-integers tripwire reads.
+        The run is planned under the statement cut (its gate.json names
+        :data:`CUT_KEYS`, and its manifests carry the inventory's statement,
+        conjuncts and shape, docs/proposals/statement-cut.md section 1.2).  The copy's
+        task manifests are what ``manifest_fn`` rewrites them to (a record the plan did
+        not make), its gate.json names ``keys`` over the run's own (another version),
+        and ``signatures`` (``{declaration: signature}``) gives it its own
+        corpus.sqlite with those signatures, pinned by its gate.json as a planner pins
+        the database it planned with: the synthetic universe has no number-typed
+        binder, which the naturals-for-integers tripwire reads.
         """
         cut = self.made / "host" / f"{run_id}-gate-cut{suffix}"
         if cut.is_dir():
             shutil.rmtree(cut)
         shutil.copytree(self.host_gate(run_id), cut)
         gate = self.read_json(cut / "gate.json")
-        gate.update(self.CUT_KEYS, tasks_dir=str(cut / "tasks"), log_dir=str(cut / "log"))
+        check({k: gate.get(k) for k in self.CUT_KEYS} == self.CUT_KEYS,
+              f"{run_id}'s staged gate does not name the statement cut's versions: {gate}")
+        gate.update(keys or {}, tasks_dir=str(cut / "tasks"), log_dir=str(cut / "log"))
         if signatures:
             db = cut / "corpus.sqlite"
             shutil.copy2(gate["corpus_db"]["path"], db)
@@ -963,7 +1063,7 @@ class Pipeline:
         self._cut_challenge()
 
     def _cut_inventory(self) -> None:
-        """A cut of the widget lemma under rule 10 and the end rule 2, and its bad twins."""
+        """inv-1's cut of the widget lemma, held by rule 10 and the end rule 2: its bad twins."""
         from gate import locate_text as lt
 
         paths = cf_main_paths(self.ws)
@@ -973,28 +1073,19 @@ class Pipeline:
         formulas = self.read_json(source_dir / "formulas.json")
         good = self.read_json(self.inventory_docs[WIDGET])
         doc = json.loads(json.dumps(good))
-        starts = sorted(p["span"][0] for p in doc["passages"])
-        for p in doc["passages"]:
-            p.pop("until", None)
-            start = p["span"][0]
-            later = [s for s in starts if s > start]
-            end = lt.passage_end(layer, paragraphs, start, "", rule=2,
-                                 next_start=later[0] if later else None, formulas=formulas)
-            p["span"] = [start, end]
-            p["quote"]["exact"] = layer[start:end] if len(p["quote"]["exact"]) > end - start \
-                else p["quote"]["exact"]
-            if p["finder"] == "theorem_box":
-                p.update(conjuncts=json.loads(json.dumps(self.BOX_CONJUNCTS)), shape="conclusions")
-            elif p["passage_kind"] == "other" and "Let " in layer[start:end]:
-                p.update(scope="expository")          # a context sentence states nothing
         gate_dir = self.cut_gate("inv-1")
         task_id = good["task_id"]
-        path = self.write_json(self.made / "inv-cut" / "good" / task_id / f"{WIDGET}.json", doc)
+        # the same starts ended by the span-end rule 1 -- each at its paragraph's end, never
+        # before its quote's, so the display passage's quote runs on over the next
+        # passage (the smoke-3 audit's FM9) -- are refused under the cut
+        nested = json.loads(json.dumps(doc))
+        for p in nested["passages"]:
+            start = p["span"][0]
+            p["quote"]["exact"] = self._layer_words(layer, start)
+            p["span"][1] = lt.passage_end(layer, paragraphs, start, p["quote"]["exact"], rule=1)
+        path = self.write_json(self.made / "inv-cut" / "rule-1-ends" / task_id
+                               / f"{WIDGET}.json", nested)
         code, text = self.gate_cut(gate_dir, path)
-        check(code == 0, f"the cut gate refused the good cut of {WIDGET}:\n{text}")
-        # the inventory the run's own gate accepted -- its display passage's quote runs
-        # on over the next passage, the smoke-3 audit's FM9 -- is refused under the cut
-        code, text = self.gate_cut(gate_dir, self.inventory_docs[WIDGET])
         self.refused(code, text, "the earlier cut's nesting", "rule 10")
         check("shares text with" in text, f"the earlier cut was refused, but not for its "
                                           f"nesting:\n{text}")
@@ -1073,48 +1164,21 @@ class Pipeline:
             check(needle in text, f"the {name} violation was refused, but not for "
                                   f"{needle!r}:\n{text}")
 
-    def _cut_manifests(self, items: dict) -> callable:
-        """A manifest rewriter: each passage or record gains its inventory statement, and the
-        widget theorem box its conjuncts (``items``: ``{item: inventory row}``)."""
-        def rewrite(manifest: dict) -> None:
-            for d in manifest["documents"]:
-                for row in d.get("passages") or d.get("records") or []:
-                    inv = items.get(row["item"]) or {}
-                    row["statement"] = inv.get("statement") or "a synthetic restatement"
-                    if inv.get("finder") == "theorem_box":
-                        row.update(conjuncts=json.loads(json.dumps(self.BOX_CONJUNCTS)),
-                                   shape="conclusions")
-        return rewrite
-
     def _inventory_items(self) -> dict:
         return {p["item"]: p for path in self.inventory_docs.values()
                 for p in self.read_json(path)["passages"]}
 
     def _cut_locate(self) -> None:
-        """The widget's locate document under judgment rules 3, and its bad twins."""
+        """loc-1's widget document under judgment rules 3: its bad twins, refused by rule 9."""
         items = self._inventory_items()
-        gate_dir = self.cut_gate("loc-1", self._cut_manifests(items))
-        task_id, _path, good = self._widget_locate()
+        gate_dir = self.cut_gate("loc-1")
+        task_id, path, good = self._widget_locate()
         doc = json.loads(json.dumps(good))
-        for p in doc["passages"]:
-            p.pop("claims", None)
-            compound = (items.get(p["item"]) or {}).get("finder") == "theorem_box"
-            for loc in p["locations"]:
-                if loc["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
-                    loc.update(clauses=["c1", "c2"] if compound else ["c1"],
-                               tests=dict(self.TESTS),
-                               instantiation=loc.get("instantiation")
-                               or "at the passage's finite widget, no instance needed")
-                elif loc["relation"] == "hasPart":
-                    loc["clauses"] = ["c2"] if compound else ["c1"]
-                    if compound:          # a strong part is held as a strong location is
-                        loc.update(conjunct_relation="exactMatch", tests=dict(self.TESTS))
-            if p["outcome"] == "absent":
-                p["receipt"]["special_case"] = dict(self.SPECIAL)
-        path = self.write_json(self.made / "loc-cut" / "good" / task_id / f"{WIDGET}.json", doc)
         code, text = self.gate_cut(gate_dir, path)
-        check(code == 0, f"the cut gate refused the good rules-3 locate document:\n{text}")
-        code, text = self.gate("loc-1", path)       # rules 2 want the claim lists back
+        check(code == 0, f"the cut gate refused loc-1's own rules-3 locate document:\n{text}")
+        # a run's own versions bind it: a gate.json of judgment rules 2 wants claim lists
+        older = self.cut_gate("loc-1", suffix="-rules-2", keys={"judgment_rules": 2})
+        code, text = self.gate_cut(older, path)
         self.refused(code, text, "a rules-3 document under rules 2", "rule 9")
         subject = next(i for i, p in enumerate(doc["passages"]) if p["outcome"] == "located"
                        and p["locations"][0]["relation"] == "exactMatch")
@@ -1153,12 +1217,8 @@ class Pipeline:
             ps[subject]["coverage"] = {"complete": True, "parts": [1, 2],
                                        "note": "two lemmas give the statement"}
 
-        def unclaimed(ps):
-            ps[box]["locations"].append(dict(
-                self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 2,
-                               clauses=("c1",)), conjunct_relation="exactMatch",
-                step="the existence of a spanning gadget", tests=dict(self.TESTS),
-                instantiation="at the passage's finite widget, no instance needed"))
+        def unclaimed(ps):                    # the bundle's parts, its claim left out
+            ps[box].pop("coverage")
 
         def no_special_case(ps):
             ps[absent]["receipt"].pop("special_case")
@@ -1188,36 +1248,22 @@ class Pipeline:
                      subject: int) -> None:
         """The widget theorem's bundle under judgment rules 3, its bad twins, and fix 2b.
 
-        The theorem box is a compound statement; its two strong hasPart parts, one
-        per conjunct, claimed together, are a bundle (J3).  Each part is held by its
-        conjunct_relation, as a strong location is (fixes 2a-2c): under status rule 2
+        The theorem box is a compound statement; loc-1's worker claims its two strong
+        hasPart parts, one per conjunct, together as a bundle (J3).  Each part is held by
+        its conjunct_relation, as a strong location is (fixes 2a-2c): under status rule 2
         the bundle takes its weakest part's relation.
         """
+        check(doc["passages"][box].get("coverage"), "loc-1's widget theorem claims no bundle")
+
+        def on_parts(fn):
+            def apply(ps):
+                fn(ps[box]["locations"])
+            return apply
+
         def mutate(fn):
             bad = json.loads(json.dumps(doc))
             fn(bad["passages"])
             return bad
-
-        def bundle(ps):
-            ps[box]["locations"].append(dict(
-                self._location("alpha", "Widget.exists_spanning_gadget", "hasPart", 2,
-                               clauses=("c1",)), conjunct_relation="exactMatch",
-                step="the existence of a spanning gadget", tests=dict(self.TESTS),
-                instantiation="at the passage's finite widget, no instance needed"))
-            ps[box]["coverage"] = {"complete": True, "parts": [1, 2],
-                                   "note": "existence and the size bound, one part each"}
-
-        good = mutate(bundle)
-        path = self.write_json(self.made / "loc-cut" / "bundle" / task_id / f"{WIDGET}.json",
-                               good)
-        code, text = self.gate_cut(gate_dir, path)
-        check(code == 0, f"the cut gate refused the widget theorem's bundle:\n{text}")
-
-        def on_bundle(fn):
-            def both(ps):
-                bundle(ps)
-                fn(ps[box]["locations"])
-            return both
 
         def partition(locs):
             locs[1]["clauses"] = ["c2"]
@@ -1232,7 +1278,7 @@ class Pipeline:
             locs[0].pop("tests")
 
         def part_generality(locs):
-            locs[1]["note"] = "a stronger statement than the conjunct"
+            locs[0]["note"] = "a stronger statement than the conjunct"
 
         cases = {"J3 one part per conjunct": (partition, "both name c2"),
                  "J3 a strong part": (special_case_part, "a bundle's part states them strongly"),
@@ -1244,7 +1290,7 @@ class Pipeline:
                                                              "says 'stronger'")}
         for name, (fn, needle) in cases.items():
             path = self.write_json(self.made / "loc-cut" / name.replace(" ", "-") / task_id
-                                   / f"{WIDGET}.json", mutate(on_bundle(fn)))
+                                   / f"{WIDGET}.json", mutate(on_parts(fn)))
             code, text = self.gate_cut(gate_dir, path)
             self.refused(code, text, f"rules-3 {name}", "rule 9")
             check(needle in text, f"the rules-3 {name} violation was refused, but not for "
@@ -1252,12 +1298,10 @@ class Pipeline:
         # fix 2b: the naturals-for-integers tripwire, on a whole location and on a part;
         # the gate copies differ in which passage speaks of integers
         nat = {"Widget.exists_spanning_gadget": "∀ (n : ℕ) (w : Widget), ∃ g, g.Spans w"}
-        rewrite = self._cut_manifests(items)
-        for which, at, body in (("whole", subject, doc), ("part", box, good)):
+        for which, at in (("whole", subject), ("part", box)):
             item = doc["passages"][at]["item"]
 
             def integers(manifest, item=item):
-                rewrite(manifest)
                 for d in manifest["documents"]:
                     for row in d.get("passages") or []:
                         if row["item"] == item:
@@ -1265,13 +1309,13 @@ class Pipeline:
 
             nat_dir = self.cut_gate("loc-1", integers, suffix=f"-nat-{which}", signatures=nat)
             path = self.write_json(self.made / "loc-cut" / f"2b-nat-{which}" / task_id
-                                   / f"{WIDGET}.json", body)
+                                   / f"{WIDGET}.json", doc)
             code, text = self.gate_cut(nat_dir, path)
             self.refused(code, text, f"rules-3 2b naturals for integers ({which})", "rule 9")
             check(f"{item}.locations[" in text and "every number-typed binder" in text,
                   f"the naturals-for-integers violation ({which}) was refused, but not on "
                   f"{item}'s location for its binders:\n{text}")
-            answered = json.loads(json.dumps(body))
+            answered = json.loads(json.dumps(doc))
             for loc in answered["passages"][at]["locations"]:
                 if loc["declaration"] in nat:
                     loc["note"] = "the orders are natural numbers here"
@@ -1281,87 +1325,35 @@ class Pipeline:
             check(code == 0, f"the cut gate refused an answered naturals-for-integers "
                              f"({which}):\n{text}")
 
-    #: the second part of the widget theorem's bundle, as a challenge plan of the cut would
-    #: hand it over (a synthetic location key)
-    PART_KEY = hashlib.sha256(b"e2e: the widget theorem's existence part").hexdigest()
+    def _conditional_manifests(self) -> callable:
+        """chl-1's manifests with a conditional absence of the sampled supporting passage.
 
-    def _cut_challenge_manifests(self, items: dict) -> callable:
-        """The challenge manifests as a challenge plan of the cut would write them.
-
-        The inventory's statement and conjuncts on every record (:meth:`_cut_manifests`);
-        the widget theorem's bundle -- its hasPart record states c2 exactly, a second part
-        states c1 broadly, and their coverage claim -- and a conditional absence of the
-        sampled supporting passage, which the plan puts in its prominence record's task
-        (anomaly A3; docs/proposals/statement-cut.md section 5).
+        A challenge plan of judgment rules 3 puts a supporting passage's unrequired
+        records in the task of its required prominence record, ``conditional:
+        "prominence"`` (anomaly A3; docs/proposals/statement-cut.md section 5).  chl-1's
+        plan drew none, so this copy of its manifests adds one, as such a plan writes it.
         """
-        base = self._cut_manifests(items)
-
         def rewrite(manifest: dict) -> None:
-            base(manifest)
             for d in manifest["documents"]:
                 if d["source_id"] != WIDGET:
                     continue
                 recs = d["records"]
-                part = next(r for r in recs if r["target"] == "location" and r.get("conjuncts"))
-                part.update(clauses=["c2"], conjunct_relation="exactMatch")
-                other = dict(json.loads(json.dumps(part)), location_key=self.PART_KEY,
-                             key=self.PART_KEY, declaration="Widget.exists_spanning_gadget",
-                             rank=2, clauses=["c1"], conjunct_relation="broadMatch",
-                             step="the existence of a spanning gadget")
-                part["passage_locations"] = [{"location_key": self.PART_KEY,
-                                              "relation": "hasPart"}]
-                other["passage_locations"] = [{"location_key": part["location_key"],
-                                               "relation": "hasPart"}]
-                coverage = {k: v for k, v in part.items() if k not in (
-                    "location_key", "key", "library", "declaration", "relation", "rank",
-                    "clauses", "conjunct_relation", "step", "instantiation",
-                    "passage_locations", "claims")}
-                coverage.update(target="coverage", note="existence and the size bound", parts=[
-                    {k: r[k] for k in ("location_key", "library", "declaration", "relation",
-                                       "rank", "clauses", "conjunct_relation")}
-                    for r in (part, other)])
                 sampled = next(r for r in recs if r["target"] == "prominence"
                                and r.get("prominence") == "supporting")
-                conditional = dict(json.loads(json.dumps(sampled)), target="absence",
-                                   conditional="prominence")
-                recs.extend([other, coverage, conditional])
+                recs.append(dict(json.loads(json.dumps(sampled)), target="absence",
+                                 conditional="prominence"))
         return rewrite
 
     def _cut_challenge(self) -> None:
-        """The widget's challenge document under judgment rules 3, and its bad twins."""
-        items = self._inventory_items()
-        gate_dir = self.cut_gate("chl-1", self._cut_challenge_manifests(items))
+        """chl-1's widget document under judgment rules 3: the bundle's confirm, and the bad
+        twins refused by rule 9 (or rule 1)."""
+        gate_dir = self.cut_gate("chl-1", self._conditional_manifests())
         manifests = {p.stem: self.read_json(p) for p in sorted((gate_dir / "tasks").glob("*.json"))}
         task_id, d = next((t, d) for t, m in manifests.items() for d in m["documents"]
                           if d["source_id"] == WIDGET)
-        verdicts = []
-        for rec in d["records"]:
-            compound = (items.get(rec["item"]) or {}).get("finder") == "theorem_box"
-            ids = ["c1", "c2"] if compound else ["c1"]
-            v = {"item": rec["item"], "target": rec["target"],
-                 "witness": "re-read the signature at the pin (synthetic)"}
-            if rec.get("conditional"):
-                continue                      # owed only beside an overturn (A3)
-            if rec["target"] == "location":
-                v.update(location_key=rec["location_key"], action="confirm")
-                if rec["relation"] in ("exactMatch", "closeMatch", "broadMatch"):
-                    v.update(clauses=ids, tests=dict(self.TESTS))
-                elif rec["relation"] != "relatedMatch":
-                    v["clauses"] = [c for c in rec.get("clauses") or [] if c in ids] or ids[:1]
-                    if rec.get("conjunct_relation") in ("exactMatch", "closeMatch",
-                                                        "broadMatch"):
-                        v["tests"] = dict(self.TESTS)    # a strong part, held as strong
-            elif rec["target"] == "coverage":
-                v.update(action="confirm", part_relations={
-                    part["location_key"]: part["conjunct_relation"] for part in rec["parts"]})
-            elif rec["target"] in ("absence", "unresolved"):
-                queries = [f"synthetic hunt {n} for {rec['item'][-8:]}" for n in range(3)]
-                v.update(action="uphold", queries=queries,
-                         query_clauses={q: [ids[n % len(ids)]] for n, q in enumerate(queries)},
-                         special_case=dict(self.SPECIAL))
-            else:
-                v["action"] = "uphold"
-            verdicts.append(v)
+        check(any(r["target"] == "coverage" for r in d["records"]),
+              "chl-1's plan holds no record of the widget theorem's bundle")
+        verdicts = self._verdicts(d["records"])
         doc = self._header("locate-challenge", "chl-1", task_id, d, universe=True)
         doc["verdicts"] = verdicts
         path = self.write_json(self.made / "chl-cut" / "good" / task_id / f"{WIDGET}.json", doc)
@@ -1423,7 +1415,10 @@ class Pipeline:
         bundle = next(i for i, v in enumerate(verdicts) if v["target"] == "coverage")
         part = next(i for i, v in enumerate(verdicts)
                     if v.get("location_key") == box_part["location_key"])
-        other = next(i for i, v in enumerate(verdicts) if v.get("location_key") == self.PART_KEY)
+        broad = next(r for r in records if r["target"] == "location"
+                     and r.get("conjunct_relation") == "broadMatch")
+        other = next(i for i, v in enumerate(verdicts)
+                     if v.get("location_key") == broad["location_key"])
         sampled = next(i for i, v in enumerate(verdicts) if v["target"] == "prominence"
                        and v["item"] == conditional["item"])
         queries = [f"synthetic hunt {n} for {conditional['item'][-8:]}" for n in range(3)]
@@ -1450,7 +1445,7 @@ class Pipeline:
                          f"record:\n{text}")
 
         def stronger(bad):
-            bad["verdicts"][bundle]["part_relations"][self.PART_KEY] = "exactMatch"
+            bad["verdicts"][bundle]["part_relations"][broad["location_key"]] = "exactMatch"
 
         def part_clauses(bad):
             bad["verdicts"][bundle]["part_clauses"] = {
@@ -1522,14 +1517,25 @@ class Pipeline:
         subject = [r for r in rows if r["source_id"] == WIDGET and r.get("prominence") == "subject"]
         check(subject and subject[0]["status"] == "formalized",
               f"the widget lemma's subject passage is not formalized: {subject}")
-        check(subject[0].get("claims") == self.SUBJECT_CLAIMS
-              and subject[0]["locations"][0].get("clauses") == ["c1"],
-              f"the outcomes lost the worker's claim list or clauses: {subject[0]}")
+        # status rule 2 (run.yaml locate.status_rule): the row carries the inventory's
+        # statement, a strong location its clause ids and its tests, and no claim list
+        check("claims" not in subject[0] and subject[0].get("statement")
+              and subject[0]["locations"][0].get("clauses") == ["c1"]
+              and subject[0]["locations"][0].get("tests") == self.TESTS,
+              f"the outcomes lost the inventory's statement, a clause id or the tests: "
+              f"{subject[0]}")
         check(all(r.get("challenge") is not None for r in rows if r.get("outcome")),
               "a passage still owes its challenge after the challenge run")
         theorem = [r for r in rows if r["source_id"] == WIDGET and r.get("passage_kind") == "theorem"
                    and r.get("prominence") == "central"]
-        check(theorem and theorem[0]["status"] == "partial", f"the hasPart theorem: {theorem}")
+        # the confirmed bundle takes its weakest part's relation, broadMatch, which formalizes
+        # a theorem (docs/proposals/statement-cut.md section 2.3)
+        check(theorem and theorem[0]["status"] == "formalized"
+              and (theorem[0].get("coverage") or {}).get("relation") == "broadMatch"
+              and (theorem[0].get("coverage") or {}).get("challenge") == "survived"
+              and theorem[0].get("conjuncts") == self.BOX_CONJUNCTS
+              and theorem[0].get("shape") == "conclusions",
+              f"the widget theorem's bundle: {theorem}")
         proof = [r for r in rows if r["item"] == self.proof_part]
         check(proof and proof[0]["status"] == "partial"
               and proof[0]["locations"][0].get("step"),
@@ -1555,11 +1561,38 @@ class Pipeline:
             check(len((quote.get("exact") or "").split()) <= 12, "an exported quote is over 12 words")
         statuses = {r.get("status") for r in records}
         check("formalized" in statuses, f"no formalized record exported: {statuses}")
+        # a run of status rule 2 exports cf-locate-recordset/2 (the statement cut's section
+        # 2.4): the seal names the rule, every record its passage_key, a location record
+        # its pair_key, and the bundle rides on its passage's records with its relation,
+        # its conjuncts each beside its part, and its bundle_key
+        seal = self.read_json(set_dir / "SEAL.json")
+        check(seal.get("schema") == "cf-locate-recordset/2" and seal.get("status_rule") == 2,
+              f"loc-1's record set is not status rule 2's: {seal.get('schema')}, "
+              f"status_rule {seal.get('status_rule')}")
+        exts = [self._locate_ext(record) for record in records]
+        check(all(isinstance(ext.get("passage_key"), str) and len(ext["passage_key"]) == 64
+                  for ext in exts), "an exported record carries no passage_key")
+        located = [ext for ext in exts if ext.get("location_key")]
+        check(located and all(len(str(ext.get("pair_key") or "")) == 64 for ext in located),
+              "an exported location record carries no pair_key")
+        bundles = [ext["coverage"] for ext in exts if (ext.get("coverage") or {}).get("bundle_key")]
+        check(bundles and all(b["relation"] == "broadMatch"
+                              and [c["id"] for c in b["conjuncts"]] == ["c1", "c2"]
+                              and {c["part"] for c in b["conjuncts"]} == set(b["parts"])
+                              for b in bundles),
+              f"the widget theorem's bundle was not exported with its relation, conjuncts and "
+              f"key: {bundles}")
         # idempotent: the same inputs seal the same bytes
         before = (set_dir / "SEAL.json").read_bytes()
         self.cf("export", "literature-links", "--run", "loc-1", "--challenge-run", "chl-1",
                 "--set-id", "set-1")
         check((set_dir / "SEAL.json").read_bytes() == before, "a re-export changed the seal")
+
+    @staticmethod
+    def _locate_ext(record: dict) -> dict:
+        """A record's locate extension (``references/locate-documents.md`` section 6)."""
+        from cflib import vocab
+        return (record.get("extensions") or {}).get(vocab.LOCATE_EXTENSION) or {}
 
     # ---------------------------------------------------------------- bench
     def _label_result(self, mode: str, make) -> Path:
@@ -1707,13 +1740,103 @@ class Pipeline:
         check("aa ok" not in out and "aa FAILS" not in out,
               f"a refused A/A was answered anyway:\n{out}")
 
+    # ---------------------------------------------------------------- carry
+    #: the re-cut: the widget lead's second sentence, which names the lemma and states
+    #: nothing, becomes an expository passage of its own (splitting the lead), and the
+    #: corollary item ends at an ``until`` short of its stop (its end moved)
+    RECUT_SPLIT = "It is named after"
+    RECUT_UNTIL = "Every two spanning gadgets"
+
+    def carry(self) -> None:
+        """A re-cut of the sourceset (inv-2) and the carry-over map from inv-1's cut to it.
+
+        ``cf locate carry`` (docs/proposals/statement-cut.md section 4) keys every passage
+        of both cuts by its text, and says what the re-cut did to each of inv-1's: the
+        lead is split, the corollary's end moved, the rest unchanged; with ``--rows`` a
+        row keyed by an old passage key carries only where its passage is unchanged, and
+        a row that read the conjuncts only while they are the same.  ``cf bench carry``
+        then says which frozen gold rows the re-cut carries and which it relabels.
+        """
+        from cflib import vocab
+
+        paths = cf_main_paths(self.ws)
+        self.cf("plan-locate", "--preset", "locate-inventory", "--sourceset", SS,
+                "--universe", U, "--run-id", "inv-2", "--max-cost", "50")
+        layer = self.layer_widget
+        corollary = layer.index(self.RECUT_UNTIL)
+        out = self.made / "inv-2" / "findings"
+        docs = self._inventory_documents(
+            "inv-2", out, more_starts={WIDGET: [(layer.index(self.RECUT_SPLIT), "expository")]},
+            untils={WIDGET: {corollary: self.RECUT_UNTIL}})
+        for sid, path in docs.items():
+            code, text = self.gate("inv-2", path)
+            check(code == 0, f"the staged gate refused the re-cut inventory of {sid}:\n{text}")
+        self.harvest("inv-2", out)
+        self.cf("locate", "carry", "--from", "inv-1", "--to", "inv-2")
+        report = self.read_json(paths.root / "reports" / "locate-carry" / "inv-1" / "inv-2.json")
+        check(report.get("schema") == "cf-locate-carry/1" and not report.get("refused"),
+              f"the carry-over map is no cf-locate-carry/1 map of every page: {report}")
+        check((report["old"]["span_end_rule"], report["old"]["statement_cut_rule"],
+               report["new"]["span_end_rule"], report["new"]["statement_cut_rule"])
+              == (2, 1, 2, 1), f"the map does not name the two cuts' rules: {report['old']}, "
+                               f"{report['new']}")
+        page = next(pg for pg in report["pages"] if pg["new"]["source_id"] == WIDGET)
+        check(page["same_layer"] is True, "the re-cut of one revision is on another layer")
+        fates = {p["span"][0]: p["fate"] for p in page["passages"]}
+        lead = next(p for p in page["passages"] if p["span"][0] == layer.index("In widget theory"))
+        box = next(p for p in page["passages"] if p["scope"] == "formal_math"
+                   and layer[p["span"][0]:].startswith("Widget lemma"))
+        check(lead["fate"] == "split" and len(lead["into"]) == 2, f"the lead was not split: {lead}")
+        check(fates.get(corollary) == "end_moved",
+              f"the corollary's end did not move: {page['passages']}")
+        check(box["fate"] == "unchanged" and not box["conjuncts_changed"],
+              f"the widget theorem box did not carry: {box}")
+        check(set(fates.values()) == {"split", "end_moved", "unchanged"}, f"fates: {fates}")
+        # the rows a consumer keys by passage_key: a known answer on the split lead, the
+        # bundle verdict on the theorem box (it read the conjuncts), the moved corollary's
+        rows = self.made / "carry-rows.jsonl"
+        rows.write_text("".join(json.dumps(row) + "\n" for row in (
+            {"passage_key": lead["passage_key"], "known": "the widget lemma"},
+            {"passage_key": box["passage_key"], "reads_conjuncts": True, "verdict": "bundle"},
+            {"passage_key": next(p["passage_key"] for p in page["passages"]
+                                 if p["span"][0] == corollary), "known": "a corollary"})),
+            encoding="utf-8")
+        carried = self.made / "carry-rows-out.jsonl"
+        self.cf("locate", "carry", "--from", "inv-1", "--to", "inv-2", "--rows", str(rows),
+                "--rows-out", str(carried))
+        out_rows = [json.loads(line) for line in carried.read_text(encoding="utf-8").splitlines()
+                    if line.strip()]
+        check([(r["carry"]["fate"], r["carried"]) for r in out_rows]
+              == [("split", False), ("unchanged", True), ("end_moved", False)],
+              f"the rows did not carry by their passages' fates: {out_rows}")
+        self.carry_report = report
+        # the bench's frozen gold across the same re-cut: the anchored lead's row relabels
+        from bench.layout import BenchLayout
+        layout = BenchLayout.of(paths, "b0")
+        before = {p.name: p.read_bytes() for p in (layout.root / "gold").glob("*.jsonl")}
+        self.cf("bench", "carry", "b0", "--from", "inv-1", "--to", "inv-2")
+        (path,) = sorted((layout.root / "gold").glob("carry-*.json"))
+        bench = self.read_json(path)
+        check(bench.get("schema") == "cf-bench-carry/1", f"cf bench carry wrote {bench}")
+        states = {(r["tier"], r["state"]) for r in bench["rows"]}
+        check(all(state in vocab.GOLD_CARRY_STATES for _tier, state in states),
+              f"a gold row's state is none of GOLD_CARRY_STATES: {states}")
+        g1 = [r for r in bench["rows"] if r["tier"] == "G1"]
+        check(g1 and all(r["state"] == "relabel" and r["passages"][0]["fate"] == "split"
+                         for r in g1), f"the anchored lead's gold did not relabel: {g1}")
+        check(any(state == "carried" for _tier, state in states),
+              f"no gold row carried across a re-cut that left most passages: {states}")
+        check({p.name: p.read_bytes() for p in (layout.root / "gold").glob("*.jsonl")} == before,
+              "cf bench carry edited a label file")
+
+
 def cf_main_paths(ws: Path):
     from cflib.paths import WorkspacePaths
     return WorkspacePaths(Path(ws))
 
 
 STAGES = ("workspace", "universe", "sourceset", "candidates", "inventory", "locate",
-          "challenge", "statement_cut", "export", "bench", "aa", "aa_refusal")
+          "challenge", "statement_cut", "export", "bench", "aa", "aa_refusal", "carry")
 
 
 def run(root: Path, stages=STAGES) -> Pipeline:

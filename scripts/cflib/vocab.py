@@ -559,6 +559,14 @@ COVERAGE_ACTIONS = frozenset({"confirm", "refute"})
 COVERAGE_RECORD_KEYS = frozenset({"complete", "parts", "challenge"})
 #: an absence's receipt lists at least this many distinct queries (gate rule 5)
 MIN_ABSENCE_QUERIES = 3
+#: the first judgment rules version that holds PD5-PD9 (see ``JUDGMENT_RULES``)
+RULES_PD5_PD9 = 2
+#: The first judgment rules version of the statement cut (gate rule 9; the proposal's
+#: sections 1, 2 and 5): a passage's clause ids are the inventory's conjunct ids (or
+#: ``SIMPLE_STATEMENT_CLAUSE`` for a simple statement) and no document writes its own
+#: claim list; a coverage claim is a bundle; and the smoke-3 audit's failure-mode gate
+#: rules bind.  ``JUDGMENT_RULES`` is this from the proposal's flip on.
+RULES_STATEMENT_CUT = 3
 #: The judgment rules (gate rule 9; references/vocabulary.md section 1.11, rules
 #: R1-R7 and the policy defaults, and references/locate-documents.md sections 3
 #: and 4): the version a run's ``gate.json`` names as ``judgment_rules``.  ``cf
@@ -570,23 +578,29 @@ MIN_ABSENCE_QUERIES = 3
 #: 2026-10-20, whose mechanical part is two checks: a coverage claim one of whose
 #: parts alone names every claim of the passage is refused (PD6), and a junk value
 #: is no ``closeMatch`` convention (PD7: ``CONVENTION_JUNK_VALUE`` leaves
-#: ``CLOSE_MATCH_CONVENTIONS``).
-JUDGMENT_RULES = 2
-#: the first judgment rules version that holds PD5-PD9 (see ``JUDGMENT_RULES``)
-RULES_PD5_PD9 = 2
+#: ``CLOSE_MATCH_CONVENTIONS``); version 3 (``RULES_STATEMENT_CUT``) is the statement
+#: cut's, written from its flip on (docs/proposals/statement-cut.md section 7).
+JUDGMENT_RULES = RULES_STATEMENT_CUT
+#: The first span-end rule version of the statement cut (gate rule 2's end check; the
+#: proposal's section 3): a passage that gives no ``until`` ends at the earlier of its
+#: extent (its block, and the displays its last sentence introduces) and the next
+#: passage's start.  ``SPAN_END_RULE`` is this from the proposal's flip on.
+SPAN_END_STATEMENT_CUT = 2
 #: The span-end rule (gate rule 2's end check; references/locate-documents.md
 #: sections 2 and 9): the version a run's ``gate.json`` names as
 #: ``span_end_rule``.  Under it an inventory passage ends where ``passage_ids.py``
-#: ends it (``locate_text.passage_end``: its ``until``, else its paragraph, else
-#: its quote), and the gate refuses any other end.  ``cf plan-locate`` writes it
-#: into every gate.json it plans, as it does ``JUDGMENT_RULES``, so the check binds
-#: the inventory documents of a run planned with this code; a ``gate.json``
-#: without the key -- a run planned before it, whose ``passage_ids.py`` dropped
-#: ``until`` after placing the end -- is gated, also at a harvest's re-gate, with
-#: the end held only inside the layer and after the quote, as it always was.  A
-#: locate or challenge document carries no span of its own (the gate takes each
-#: passage's span from the task manifest), so in those modes the key binds nothing.
-SPAN_END_RULE = 1
+#: ends it (``locate_text.passage_end``: its ``until``, else -- version 1 -- its
+#: paragraph, or -- version 2 -- the earlier of its extent and the next passage's
+#: start, else its quote), and the gate refuses any other end.  ``cf plan-locate``
+#: writes it into every gate.json it plans, as it does ``JUDGMENT_RULES``, so the
+#: check binds the inventory documents of a run planned with this code; a
+#: ``gate.json`` without the key -- a run planned before it, whose
+#: ``passage_ids.py`` dropped ``until`` after placing the end -- is gated, also at a
+#: harvest's re-gate, with the end held only inside the layer and after the quote,
+#: as it always was, and one naming version 1 by version 1.  A locate or challenge
+#: document carries no span of its own (the gate takes each passage's span from the
+#: task manifest), so in those modes the key binds nothing.
+SPAN_END_RULE = SPAN_END_STATEMENT_CUT
 #: A passage's claim list (rule R4; the smoke-2 audit's FM1): before it judges any
 #: declaration, the worker writes the passage's formal clauses as short
 #: paraphrases, each with an id ``c1``, ``c2``, ... (``CLAIM_ID``), at most
@@ -711,21 +725,12 @@ CANDIDATE_PART_PHRASES = ("only part", "part of the passage", "one clause",
 # a compound statement's conjuncts written by the inventory and cited by locate and the
 # challenge, a coverage claim only as a bundle on a compound statement, and a versioned
 # cut with a carry-over map.  These are the names the proposal's four packages build
-# against.  Until its flip (the proposal's section 7) nothing binds a run: the gate and
-# the planner read them, but each rule binds only a run whose gate.json or run.yaml
-# names its version, and no planner writes one before the flip, so every run is planned,
-# gated, tallied and exported as it was before them.
-#: The first judgment rules version of the statement cut (gate rule 9; the proposal's
-#: sections 1, 2 and 5): a passage's clause ids are the inventory's conjunct ids (or
-#: ``SIMPLE_STATEMENT_CLAUSE`` for a simple statement) and no document writes its own
-#: claim list; a coverage claim is a bundle; and the smoke-3 audit's failure-mode gate
-#: rules bind.  ``JUDGMENT_RULES`` becomes this at the flip.
-RULES_STATEMENT_CUT = 3
-#: The first span-end rule version of the statement cut (gate rule 2's end check; the
-#: proposal's section 3): a passage that gives no ``until`` ends at the earlier of its
-#: extent (its block, and the displays its last sentence introduces) and the next
-#: passage's start.  ``SPAN_END_RULE`` becomes this at the flip.
-SPAN_END_STATEMENT_CUT = 2
+# against; its first judgment rules and span-end rule (``RULES_STATEMENT_CUT``,
+# ``SPAN_END_STATEMENT_CUT``) are defined beside ``JUDGMENT_RULES`` and
+# ``SPAN_END_RULE`` above.  From its flip (the proposal's section 7) the planner writes
+# its versions into every run it plans; each rule binds only a run whose gate.json or
+# run.yaml names its version, so every run planned before the flip is gated, tallied
+# and exported as it was before them.
 #: The statement-cut rule (gate rule 10, the inventory's cut checks; the proposal's
 #: section 3): the version a gate.json names as ``statement_cut_rule``.  ``cf
 #: plan-locate`` writes it into every gate.json from the flip on; a gate.json without
@@ -916,10 +921,12 @@ CHALLENGE_RULES = frozenset({CHALLENGE_RULE_REFUTE, CHALLENGE_RULE_HUNT, CHALLEN
 #: ``--absence-sample-rate``; run.yaml records the ones a plan used): the scope
 #: and ``supporting`` demotions and the weak relations; the strong relations of
 #: a ``supporting`` passage other than its basis; a ``supporting`` passage's
-#: absence, which the challenger hunts
+#: absence, which the challenger hunts (0.5 from the statement cut's flip, the
+#: smoke-3 audit's fix 5c, docs/proposals/statement-cut.md section 5; 0.25 before,
+#: and a plan made then records the 0.25 it drew at)
 CHALLENGE_SAMPLE_RATE = 0.2
 CHALLENGE_STRONG_SAMPLE_RATE = 0.5
-CHALLENGE_ABSENCE_SAMPLE_RATE = 0.25
+CHALLENGE_ABSENCE_SAMPLE_RATE = 0.5
 #: a record the plan put in a challenge task: its verdict is owed
 CHALLENGE_REQUIRED = "required"
 CHALLENGE_PLANNED = frozenset({CHALLENGE_REQUIRED, CHALLENGE_SAMPLED_OUT,

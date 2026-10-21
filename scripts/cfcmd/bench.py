@@ -699,7 +699,8 @@ def _row_version(mode: str, rows: list[dict], sha: str, last: dict | None) -> st
             return str(frozen["version"])
         raise CfError(f"the {mode} labels name no labeler version, and their labeler "
                       f"({str(sha)[:12]}…) is neither this checkout's nor one a frozen manifest "
-                      f"records: they were labelled before {gold_mod.LABELER_VERSION}",
+                      f"records: they were labelled before {gold_mod.LABELER_VERSION_NAMED_FROM}, "
+                      f"the first version whose rows name it",
                       hint=f"a policy change relabels the gold: re-emit the {mode} args, run the "
                            f"labeler on every task and transcribe the full result")
     if None in named or len(named) != 1:

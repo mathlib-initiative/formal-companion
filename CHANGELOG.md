@@ -42,6 +42,41 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- **The statement cut's flip** (`docs/proposals/statement-cut.md` §7). What changes for a run
+  planned now:
+  - its `gate.json` names `judgment_rules` 3, `span_end_rule` 2 and `statement_cut_rule` 1 in
+    every mode (`cflib.vocab.JUDGMENT_RULES = RULES_STATEMENT_CUT`, `SPAN_END_RULE =
+    SPAN_END_STATEMENT_CUT`), and a locate run's `run.yaml` names `locate.status_rule` 2;
+  - an inventory is cut one passage per statement and held to gate rule 10, its passages ending,
+    without `until`, at the next passage's start or their extent (span-end rule 2), as its
+    prompt now says;
+  - a locate or challenge task's manifest carries the inventory's `statement`, `conjuncts` and
+    `shape`, and its prompts and gate are judgment rules 3's: no claim list, the inventory's
+    conjunct ids, a coverage claim only as a bundle on a compound statement, the smoke-3 audit's
+    fixes (`tests`, `instantiation`, the ℕ-for-ℤ tripwire, `special_case`, `fills`, conditional
+    records, `cut_flag`);
+  - its outcomes are derived under status rule 2 (a survived bundle is one more location of its
+    weakest part's relation; a located passage the challenge leaves with nothing that counts is
+    owed a hunt) and it exports `cf-locate-recordset/2`;
+  - a challenge samples supporting absences at 0.5 by default (`--absence-sample-rate`, fix 5c;
+    a plan made before recorded the 0.25 it drew at);
+  - `cf plan-locate --preset locate` refuses an inventory whose `gate.json` names no
+    `statement_cut_rule`, and `--preset locate-challenge` a locate run of `judgment_rules`
+    below 3: inventory again and locate again, since no new run of the earlier flow is offered;
+  - the bench labeler is `locate-label/6`, which `bench.gold.LABELER_RULES` maps to 3, so gold
+    of `/5` scores no run planned from now on until it is relabelled, and gold of `/6` no run
+    planned before (its label rows keep a `hasPart`'s `conjunct_relation` and the labeler's
+    bundle, its statuses status rule 2's);
+  - `config_shas.gate_files` moves (the gate's inlined versions) and the prompts it renders are
+    rules 3's, so a run planned now is no A/A replicate of one planned before.
+  Nothing a run planned before the flip names changes: every workspace run re-gates with its own
+  `gate.local.json`, and smoke 2 and 3 re-tally and re-export, byte for byte on the base and here.
+  Tests of the earlier flow plan their runs as the planner did before the flip
+  (`tests/_locate_fixtures.before_the_flip`); the synthetic e2e driver runs the new flow end to
+  end (a compound statement, a bundle confirmed part by part, the record set `/2`) and re-cuts
+  its sourceset for `cf locate carry` and `cf bench carry`. A frozen gold row with no
+  `labeler_version` is refused as labelled before `locate-label/5`, the first version whose rows
+  name it, rather than before this checkout's version.
 - The statement cut's bench gold (`docs/proposals/statement-cut.md` §6.2, the carry package's
   `scripts/bench/gold.py` share, which needed the fixes package's `derive_status(…,
   status_rule=2)`). Gold of a labeler that labels by judgment rules 3 is transcribed as a run of

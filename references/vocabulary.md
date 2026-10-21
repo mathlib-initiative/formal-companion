@@ -449,8 +449,8 @@ PD7's test for "trivial" are the maintainer's later answers that day):
 joined them later the same day. An override bumps the labeler's version (the paragraph above);
 these did not, because what a version decides in the bench is the judgment rules
 `bench.gold.LABELER_RULES` maps it to, which the score holds gold and runs to, and they add no
-gate check: `JUDGMENT_RULES` stays 2, so a `/6` would map to 2 too and the score would refuse
-nothing it does not refuse now. `/5` had labelled no gold when they joined it, and the labeler's
+gate check: `JUDGMENT_RULES` stayed 2, so a `/6` would have mapped to 2 too and the score would
+have refused nothing it did not refuse then. `/5` had labelled no gold when they joined it, and the labeler's
 file sha moved with them, so the transcriber refuses a result of args emitted from the earlier
 text and gold of `/5` is labelled by this one. Once gold has been labelled under a version, a
 change to the rules it carries bumps it. What neither version nor rules can hold is a run of
@@ -459,7 +459,9 @@ exception): the score holds a run to its `judgment_rules`, and pins its prompts'
 (`config_shas.prompts`) in the measurement without comparing them with the gold's labeler, so it
 would score such a run against gold of this text, and a `/6` would not refuse it either. None had
 been planned when these rules joined; one planned from a checkout of the earlier text is planned
-again from this one before it is scored.
+again from this one before it is scored. The statement cut's flip, which adds gate checks
+(judgment rules 3), is the bump: the labeler is `locate-label/6`, which
+`bench.gold.LABELER_RULES` maps to 3, so gold of `/5` scores no run planned from the flip on.
 
 **PD7 in the maintainer's words** (2026-10-20), verbatim:
 
@@ -596,7 +598,7 @@ hypotheses the line names by right (`Fact p.Prime`, a ring instance, the declara
 name), and a `hasPart` naming every claim outside a coverage claim may be a weakening credited
 with its clause or a claim list too coarse to show the part, so neither is refused.
 Under judgment rules 3 (`RULES_STATEMENT_CUT`, the statement cut below; bound by a gate.json
-that names it, and none is planned before the proposal's flip) the claim list is the
+that names it, which every run planned from the proposal's flip on does) the claim list is the
 inventory's: R4 is checked against the frozen passage's conjunct ids (or `c1`), and no locate
 or challenge document writes `claims`. Mechanically, then: a `hasPart` of a compound statement
 gives its `conjunct_relation` (a `closeMatch` part its convention) and nothing else does; a
@@ -842,11 +844,13 @@ there), run beside `tests/data/locate/status-parity.json`, which stays the test 
 compound statement's conjuncts are the inventory's, cited by locate and the challenge; a
 coverage claim is a **bundle**, allowed only on a compound statement, whose relation is its
 weakest part's; and a re-cut is a routine, versioned operation with a carry-over map. Its names
-are defined in `cflib.vocab`'s statement-cut block and `cflib.hashing`, and **nothing binds a run
-until the proposal's flip** (its §7): the gate and the planner read them, but each rule binds only
-a run whose gate.json or `run.yaml` names its version, no planner writes one before the flip, and
-so every run is planned, gated, tallied and exported as before. The proposal's §1–§5 are
-normative for the
+are defined in `cflib.vocab`'s statement-cut block and `cflib.hashing`, and **from the
+proposal's flip** (its §7) `cf plan-locate` writes its versions into every run it plans —
+`judgment_rules` 3, `span_end_rule` 2 and `statement_cut_rule` 1 in gate.json, and a locate
+run's `locate.status_rule` 2 in `run.yaml` — and refuses a run of the earlier flow (a locate run
+over an inventory without the cut, a challenge of a locate run of earlier rules). Each rule
+binds only a run whose gate.json or `run.yaml` names its version, so every run planned before
+the flip is gated, tallied and exported as before. The proposal's §1–§5 are normative for the
 packages that build it; each package extends this paragraph in its own section (§6 of the
 proposal says which).
 
@@ -954,8 +958,8 @@ passage becomes absent beside its `relatedMatch` locations, the absence the chal
 | `UNRESOLVED_BY` | `worker` (`UNRESOLVED_BY_WORKER`: the worker could not decide) · `attempt_cap` (the bridge, at the cap) — an `UNRESOLVED` document's `unresolved.by` |
 | `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, every coverage claim, a strong location whose own note admits a clause it does not state, `admits_missing_clause`, and every `subject` passage's prominence, stratum `prominence:subject`, since its records carry the article's QID) · `hunt` (an absence or unresolved outcome on one) · `basis` (`CHALLENGE_RULE_BASIS`: a location that sets a `supporting` passage's derived status on its own — every such one, not only the best-ranked — when its relation is one of `STRONG_RELATIONS`; required) · `sample` (the stratified sample's frame: scope demotions and `supporting` demotions and weak relations, at `sample_rate`; a `supporting` passage's other strong locations, one stratum per relation, at `strong_sample_rate`; a `supporting` passage's absence, stratum `outcome:absent`, at `absence_sample_rate`, hunted when drawn) · `none` (a `supporting` passage's unresolved outcome) — why the challenge plan put a record where it did |
 | `CHALLENGE_PLANNED` | `required` (`CHALLENGE_REQUIRED`: the record is in a challenge task and its verdict is owed) · `sampled_out` · `not_required` — what the challenge plan says a record is owed, before any verdict |
-| `JUDGMENT_RULES` | `2`: the version of the judgment rules (gate rule 9, R1–R7 and the policy defaults above) a run's `gate.json` names as `judgment_rules`; `cf plan-locate` writes it into every run it plans, and the gate holds a run to the version it names: `1` R1–R7, `2` (`RULES_PD5_PD9`) PD5–PD9 too (PD6's whole part and PD7's junk value refused). A `gate.json` without it (a run planned before the rules) is gated without rule 9 |
-| `SPAN_END_RULE` | `1`: the version of the span-end rule (gate rule 2's end check: an inventory passage ends where `passage_ids.py` ends it, `locate_text.passage_end`) a run's `gate.json` names as `span_end_rule`; `cf plan-locate` writes it into every run it plans, and a `gate.json` without it (a run planned before the rule, whose `passage_ids.py` dropped `until`) is gated with the end held inside the layer and after the quote only. A locate or challenge document carries no span of its own, so there the key binds nothing (references/locate-documents.md §2 and §9) |
+| `JUDGMENT_RULES` | `3` (`RULES_STATEMENT_CUT`, from the statement cut's flip; `2` before it): the version of the judgment rules (gate rule 9, R1–R7 and the policy defaults above) a run's `gate.json` names as `judgment_rules`; `cf plan-locate` writes it into every run it plans, and the gate holds a run to the version it names: `1` R1–R7, `2` (`RULES_PD5_PD9`) PD5–PD9 too (PD6's whole part and PD7's junk value refused), `3` the statement cut's (the inventory's conjunct ids for clause ids, a coverage claim only as a bundle, the smoke-3 audit's failure-mode rules; the statement-cut paragraph below). A `gate.json` without it (a run planned before the rules) is gated without rule 9 |
+| `SPAN_END_RULE` | `2` (`SPAN_END_STATEMENT_CUT`, from the statement cut's flip; `1` before it): the version of the span-end rule (gate rule 2's end check: an inventory passage ends where `passage_ids.py` ends it, `locate_text.passage_end`; `1` its `until`, else its paragraph, `2` its `until`, else the earlier of its extent and the next passage's start) a run's `gate.json` names as `span_end_rule`; `cf plan-locate` writes it into every run it plans, and a `gate.json` without it (a run planned before the rule, whose `passage_ids.py` dropped `until`) is gated with the end held inside the layer and after the quote only. A locate or challenge document carries no span of its own, so there the key binds nothing (references/locate-documents.md §2 and §9) |
 | `CLAIM_ID` | `c1`, `c2`, … (`c[1-9][0-9]?`): the id of a passage's claim, one formal clause of its claim list (`claims` of a locate or challenge document, references/locate-documents.md §3–§4), which a location's `clauses` name |
 | `CLAUSE_GAP_PHRASES` | `does not state` · `do not state` · `not stated` · `not part of` · `not a part of` · `rather than asserting` · `rather than stating` · `rather than proving` · `only the existence` · `only existence` · `only proves` · `only states` · `proves only` · `states only` · `only one direction` · `one direction only` · `not the converse` · `converse is not` · `without the converse` · `without uniqueness` · `uniqueness is not` · `does not cover` · `do not cover` · `not covered` · `not asserted` · `not included` · `omits` · `omitted` · `leaves out` · `left out` · `does not prove` · `does not assert` · `does not establish` — the closed list by which a strong record's note or instantiation admits a clause its declaration does not state (`admits_missing_clause`: whole words, case-folded, the apostrophe folded and a contraction spelled out, so "doesn't state" is "does not state"; a hit is set aside when negated — "not only the existence" —, when the passage is its subject — "the passage does not cover n = 0", "not part of the passage" — or in a relative clause on what an "unlike …" clause names); the gate refuses such a record under the judgment rules, and the challenge plan refutes it by default. A tripwire, not a parser: a note it misreads is reworded to say what the declaration does |
 | `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one of its own under the judgment rules (each claim, and `general`, matched to a distinct query) |
@@ -976,9 +980,10 @@ carry a letter),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
 task), the challenge plan's default sampling rates `CHALLENGE_SAMPLE_RATE` (0.2: scope and
 `supporting` demotions, weak relations), `CHALLENGE_STRONG_SAMPLE_RATE` (0.5: a `supporting`
-passage's strong locations beside its basis) and `CHALLENGE_ABSENCE_SAMPLE_RATE` (0.25: a
-`supporting` passage's absence; `cf plan-locate --sample-rate`, `--strong-sample-rate`,
-`--absence-sample-rate`, each recorded in `run.yaml`), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
+passage's strong locations beside its basis) and `CHALLENGE_ABSENCE_SAMPLE_RATE` (0.5 from the
+statement cut's flip, the smoke-3 audit's fix 5c, 0.25 before: a `supporting` passage's
+absence; `cf plan-locate --sample-rate`, `--strong-sample-rate`, `--absence-sample-rate`, each
+recorded in `run.yaml`, so a plan made before the flip records the 0.25 it drew at), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
 `EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), the record set's
 token grammars (`references/locate-documents.md` §6, the consumer's own): `RECORDSET_TOKEN`
 (letters, digits and `._:-`, at most 128, a letter or digit first: a seal's `set_id`, its

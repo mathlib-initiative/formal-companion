@@ -457,6 +457,10 @@ def _records(out_dir: Path) -> list[dict]:
 class _Covered(Campaign):
     """``loc-1`` with Widget lemma's central theorem stated by two hasPart parts."""
 
+    #: a run of the earlier flow (its documents write their own claim lists), as the
+    #: planner planned it before the statement cut's flip
+    BEFORE_THE_FLIP = True
+
     SECOND = "Widget.exists_spanning_gadget"
 
     def setUp(self):
@@ -584,6 +588,10 @@ class TestAConfirmedClaimConfirmsItsParts(Campaign):
     sample rate 0 neither part is drawn (``sampled_out``) and only the claim is
     required.
     """
+
+    #: a run of the earlier flow (its documents write their own claim lists), as the
+    #: planner planned it before the statement cut's flip
+    BEFORE_THE_FLIP = True
 
     PARTS = ("Widget.Spanning", "Widget.card_dvd")
 
@@ -842,16 +850,17 @@ class TestTheBatches(unittest.TestCase):
 class TestThePrompts(unittest.TestCase):
     """When to claim coverage, and how a challenger checks a claim: adversarially.
 
-    Rendered as a plan of judgment rules 3 (the statement cut's flip) renders them, a
-    claim a bundle; a plan made now renders the claim-list text, held at the end.
+    Rendered as a plan made now renders them (judgment rules 3, from the statement cut's
+    flip on), a claim a bundle; a plan made before the flip rendered the claim-list text,
+    held at the end.
     """
 
     @classmethod
     def setUpClass(cls):
         from test_locate_judgment import render_locate_prompts
 
-        cls.rendered = render_locate_prompts(vocab.RULES_STATEMENT_CUT)
-        cls.before = render_locate_prompts(vocab.JUDGMENT_RULES)
+        cls.rendered = render_locate_prompts(vocab.JUDGMENT_RULES)
+        cls.before = render_locate_prompts(vocab.RULES_PD5_PD9)
 
     def test_the_worker_is_told_when_to_claim(self):
         worker = self.rendered[vocab.LOCATE]["worker.md"]
@@ -888,9 +897,9 @@ class TestThePrompts(unittest.TestCase):
                 self.assertNotRegex(text, r"\{\{")
 
     def test_a_plan_made_before_the_flip_claims_coverage_over_its_claim_list(self):
-        """Judgment rules 2's words, as a run planned now is gated: a claim's parts together
-        state every clause of the worker's claim list, and the challenger refutes it unless
-        every clause of its own list is stated by a part."""
+        """Judgment rules 2's words, as a run planned before the flip was gated: a claim's
+        parts together state every clause of the worker's claim list, and the challenger
+        refutes it unless every clause of its own list is stated by a part."""
         worker = self.before[vocab.LOCATE]["worker.md"]
         self.assertIn("**together** state **every** clause", worker)
         self.assertIn("Never put `coverage` on an `absent` or `unresolved` passage", worker)
