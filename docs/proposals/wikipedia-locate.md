@@ -574,7 +574,8 @@ re-runs forty-nine others:
   `hasPart`) at the plan's `sample_rate` (default 0.2); of a `supporting`
   passage's other strong locations, one stratum per relation, at its
   `strong_sample_rate` (default 0.5); and of the `supporting` passages'
-  absences, hunted, at its `absence_sample_rate` (default 0.25);
+  absences, hunted, at its `absence_sample_rate` (default 0.5 from the
+  statement cut's flip, 0.25 before; each plan records the rate it drew at);
 - everything else is `not_required` or `sampled_out`, and says so — except a
   part of a coverage claim the challenge confirmed, which is `survived` with
   the claim (§2.6); a passage whose prominence the challenge overturned to
