@@ -26,7 +26,20 @@ file into the gate directory together with the vendored packages:
 4. **The end** of a passage: :func:`passage_end`, the rule ``passage_ids.py``
    fills a span with and gate rule 2 re-computes (references/locate-documents.md
    section 2), so the extent a reader highlights is the tool's and never a
-   hand-counted offset.
+   hand-counted offset.  It has two versions, the ``span_end_rule`` a run's
+   ``gate.json`` names: version 1 ends a passage that gives no ``until`` at the
+   end of its paragraph; version 2, the statement cut's
+   (docs/proposals/statement-cut.md section 3.2), at the earlier of its
+   *extent* and the next passage's start.
+5. **The blocks** the statement cut reads (the same proposal, section 3.1):
+   :class:`Blocks` over ``paragraphs.json`` and ``formulas.json`` gives each
+   offset its outermost block, a block the next one, and the definitions the
+   end rule and gate rule 10 rest on -- a display block, a block whose last
+   sentence introduces what follows, the displays a sentence introduces
+   (:meth:`Blocks.chain`), a run of list items and the extent;
+   :func:`units` counts a passage's sentences and displays for the harvest
+   receipt.  Rule 1 reads none of it, so a run planned before the statement cut
+   ends, gates and counts as it did.
 
 The vendored ``formal_companion_annotations.ids`` is imported from
 ``vendor/`` of the skill checkout, or from ``vendor/`` beside this file in a
@@ -323,25 +336,403 @@ def paragraph_end(paragraphs: Sequence[dict], start: int) -> int | None:
     return None
 
 
-def passage_end(layer: str, paragraphs: Sequence[dict], start: int, exact: str,
-                until: object = None) -> int:
+def passage_end(layer: str, paragraphs: "Sequence[dict] | Blocks", start: int, exact: str,
+                until: object = None, *, rule: int = 1, next_start: int | None = None,
+                formulas: Sequence[dict] | None = None) -> int:
     """The layer offset a passage that starts at ``start`` with quote ``exact`` ends at.
 
-    The one rule ``passage_ids.py`` writes and gate rule 2 re-computes: with an
-    ``until`` (the passage's last words), the end of the first occurrence of it
-    at or after the start; else the end of the paragraph the passage starts in;
-    else the end of the quote -- and never before the end of the quote.  An
-    empty or null ``until`` is none; one that is not a string, or is not on the
-    layer after the start, is a :class:`HeadError`.  Offsets are code points of
-    the layer, like every span (a UTF-16 count of an astral character is not
-    one).
+    The one rule ``passage_ids.py`` writes and gate rule 2 re-computes, in the
+    version ``rule`` names (a run's ``span_end_rule``).  With an ``until`` (the
+    passage's last words), both end at the first occurrence of it at or after
+    the start.  Without one,
+
+    * **rule 1** ends it at the end of the paragraph the passage starts in
+      (:func:`paragraph_end`), else at the end of the quote;
+    * **rule 2** (``SPAN_END_STATEMENT_CUT``, docs/proposals/statement-cut.md
+      section 3.2) ends it at the earlier of its extent
+      (:meth:`Blocks.extent`, ``compound=False``: its block, and the displays
+      its last sentence introduces; the quote's end when no block holds the
+      start) and ``next_start``, the start of the document's next passage --
+      so two passages of one paragraph never nest.
+
+    Neither ever ends before the end of the quote.  Rule 1 reads neither
+    ``next_start`` nor ``formulas``; rule 2 needs the source's ``formulas``
+    (``formulas.json``, or ``()`` for a source that has none), and
+    ``paragraphs`` may be a :class:`Blocks` built once for the source.  An empty
+    or null ``until`` is none; one that is not a string, or is not on the layer
+    after the start, is a :class:`HeadError`.  Offsets are code points of the
+    layer, like every span (a UTF-16 count of an astral character is not one).
     """
+    if rule not in SPAN_END_RULES:
+        raise ValueError(f"span-end rule {rule!r} is not one of {SPAN_END_RULES}")
     end = start + len(exact)
     if until is None or until == "":
-        return max(end, paragraph_end(paragraphs, start) or end)
+        if rule == 1:
+            table = paragraphs.paragraphs if _is_blocks(paragraphs) else paragraphs
+            return max(end, paragraph_end(table, start) or end)
+        if next_start is not None and (isinstance(next_start, bool)
+                                       or not isinstance(next_start, int)
+                                       or next_start <= start):
+            raise ValueError(f"next_start {next_start!r} is not a passage start after {start}")
+        blocks = Blocks.of(layer, paragraphs, formulas)
+        stop = blocks.extent(start, compound=False)
+        stop = end if stop is None else stop
+        if next_start is not None:
+            stop = min(stop, next_start)
+        return max(end, stop)
     if not isinstance(until, str):
         raise HeadError(f"`until` is a {type(until).__name__}, not the passage's last words")
     at = layer.find(until, start)
     if at < 0:
         raise HeadError(f"`until` {until[:40]!r} is not on the layer after the passage's start")
     return max(end, at + len(until))
+
+
+# --------------------------------------------------------------------------
+# the statement cut's blocks (docs/proposals/statement-cut.md section 3.1)
+# --------------------------------------------------------------------------
+
+#: the span-end rules this file knows (``cflib.vocab.SPAN_END_RULE``'s versions; a
+#: test pins them): 1 ends a passage at its paragraph's end, 2 -- the statement cut's,
+#: ``cflib.vocab.SPAN_END_STATEMENT_CUT`` -- at the earlier of its extent and the next
+#: passage's start
+SPAN_END_STATEMENT_CUT = 2
+SPAN_END_RULES = (1, SPAN_END_STATEMENT_CUT)
+#: ``paragraphs.json``'s ``block`` names the cut reads (references/locate-documents.md
+#: section 7: ``sources.render_html`` writes them)
+BLOCK_THEOREM_BOX = "theorem_box"
+BLOCK_MATH = "math"
+LIST_BLOCKS = ("li", "dd")
+#: what ends a sentence, and the TeX spacing a formula's alttext may end with after
+#: its last character (``\qquad`` before ``\quad``, so the longer one is read first);
+#: ``\right.`` is a null delimiter, not a full stop
+SENTENCE_STOPS = frozenset(".!?")
+TEX_SPACING = ("\\qquad", "\\quad", "\\,", "\\;", "\\:", "\\!", "~")
+TEX_NULL_DELIMITER = "\\right."
+#: the words a full stop does not end a sentence after (``locate_records.
+#: _ABBREVIATIONS``, restated: that module imports this one; a test pins the two)
+ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
+
+
+def formula_stop(alttext: str) -> str:
+    """The last character of a formula's normalised alttext, its trailing TeX spacing
+    (and a trailing ``\\right.`` null delimiter) set aside; '' when nothing is left.
+
+    It is what a formula that ends a block or a sentence ends it with: a display
+    ``a = b.\\,`` ends its sentence with a full stop, one ending ``,`` runs on.
+    """
+    text = normalize_alttext(alttext)
+    while True:
+        before = text
+        text = text.rstrip()
+        for tail in (TEX_NULL_DELIMITER, *TEX_SPACING):
+            if text.endswith(tail):
+                text = text[:-len(tail)]
+                break
+        if text == before:
+            return text[-1:] if text else ""
+
+
+class Block:
+    """One span of ``paragraphs.json``: every entry with exactly that span, in table order.
+
+    ``kinds`` holds each entry's ``block`` (a theorem box and its one paragraph
+    may share a span, and so may a ``dd`` and the display it holds); ``kind`` is
+    the first one's.
+    """
+
+    __slots__ = ("start", "end", "kind", "kinds")
+
+    def __init__(self, start: int, end: int, kind: str):
+        self.start, self.end, self.kind = start, end, kind
+        self.kinds = [kind]
+
+    @property
+    def span(self) -> tuple[int, int]:
+        return self.start, self.end
+
+    @property
+    def theorem_box(self) -> bool:
+        return BLOCK_THEOREM_BOX in self.kinds
+
+    @property
+    def list_kind(self) -> str | None:
+        """``li`` or ``dd`` when the block is a list item, else None."""
+        return next((k for k in self.kinds if k in LIST_BLOCKS), None)
+
+    def __repr__(self) -> str:
+        return f"Block({self.start}, {self.end}, {'/'.join(self.kinds)})"
+
+
+class Blocks:
+    """The blocks of one source, with its layer and formulas: the definitions of
+    docs/proposals/statement-cut.md section 3.1, which the end rule (version 2)
+    and gate rule 10 read.
+
+    ``paragraphs`` is ``paragraphs.json``: an entry without a readable non-empty
+    span is passed over, as :func:`paragraph_end` passes it over.  The table is
+    read in its own order with an outer block before the ones it holds
+    (``sources.render_html`` sorts it by start, then the longer first), so the
+    first block holding an offset is the outermost one, :func:`paragraph_end`'s
+    choice.  ``formulas`` is ``formulas.json``.
+    """
+
+    #: what :func:`_is_blocks` reads: this file is imported under two names (``gate.
+    #: locate_text`` in the skill, ``locate_text`` beside the gate), so a class check
+    #: would tell one module's Blocks from the other's
+    _locate_text_blocks = True
+
+    def __init__(self, layer: str, paragraphs: Sequence[dict], formulas: Sequence[dict]):
+        self.layer = str(layer)
+        #: the table as given: what rule 1 reads (:func:`paragraph_end`)
+        self.paragraphs = list(paragraphs or ())
+        rows: list[tuple[int, int, int, str]] = []
+        for index, para in enumerate(self.paragraphs):
+            try:
+                a, b = (int(x) for x in para["span"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if a < b:
+                rows.append((a, -b, index, str(para.get("block") or "")))
+        rows.sort()
+        self.blocks: list[Block] = []
+        for a, negative_b, _index, kind in rows:
+            if self.blocks and self.blocks[-1].span == (a, -negative_b):
+                self.blocks[-1].kinds.append(kind)
+            else:
+                self.blocks.append(Block(a, -negative_b, kind))
+        #: the blocks no other block holds, in layer order: what next() returns
+        self.top: list[Block] = []
+        reach = -1
+        for block in self.blocks:
+            if block.end > reach:
+                self.top.append(block)
+                reach = block.end
+        self._top_starts = [b.start for b in self.top]
+        spans: list[tuple[int, int, str]] = []
+        for formula in formulas or ():
+            try:
+                fa, fb = (int(x) for x in formula["span"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            spans.append((fa, fb, str(formula.get("alttext") or "")))
+        spans.sort()
+        self.formulas = spans
+        self._formula_starts = [f[0] for f in spans]
+
+    @classmethod
+    def of(cls, layer: str, paragraphs: "Sequence[dict] | Blocks",
+           formulas: Sequence[dict] | None = None) -> "Blocks":
+        """``paragraphs`` itself when it is already a :class:`Blocks`, else one built.
+
+        The cut reads the formulas (a display block, a sentence a display ends),
+        so building one takes them: ``()`` for a source that has none, never a
+        forgotten argument.
+        """
+        if _is_blocks(paragraphs):
+            return paragraphs
+        if formulas is None:
+            raise TypeError("the statement cut reads the source's formulas: pass formulas.json")
+        return cls(layer, paragraphs, formulas)
+
+    # -- formulas ----------------------------------------------------------
+
+    def formula_at(self, offset: int) -> tuple[int, int, str] | None:
+        """The formula whose layer span holds ``offset``, else None."""
+        i = bisect_right(self._formula_starts, offset) - 1
+        if i >= 0 and self.formulas[i][0] <= offset < self.formulas[i][1]:
+            return self.formulas[i]
+        return None
+
+    def formulas_in(self, start: int, end: int) -> list[tuple[int, int, str]]:
+        """The formulas whose whole layer span lies in ``[start, end)``."""
+        i = bisect_right(self._formula_starts, start - 1)
+        out = []
+        while i < len(self.formulas) and self.formulas[i][0] < end:
+            if self.formulas[i][1] <= end:
+                out.append(self.formulas[i])
+            i += 1
+        return out
+
+    # -- the definitions of section 3.1 -------------------------------------
+
+    def block_at(self, offset: int) -> Block | None:
+        """block(x): the outermost block holding ``offset``, else None."""
+        for block in self.top:
+            if block.start > offset:
+                break
+            if offset < block.end:
+                return block
+        return None
+
+    def next(self, block: Block) -> Block | None:
+        """next(B): the first block no other holds that starts at or after B's end
+        with only whitespace between, else None."""
+        i = bisect_right(self._top_starts, block.end - 1)
+        if i >= len(self.top):
+            return None
+        following = self.top[i]
+        if not all(_is_white(ch) for ch in self.layer[block.end:following.start]):
+            return None
+        return following
+
+    def is_display(self, block: Block) -> bool:
+        """A display block: it holds a formula, and its text outside its formulas
+        holds no letter (a display, or a ``dd`` holding only one)."""
+        inside = self.formulas_in(block.start, block.end)
+        if not inside:
+            return False
+        cursor = block.start
+        for fa, fb, _alt in inside:
+            if any(ch.isalpha() for ch in self.layer[cursor:fa]):
+                return False
+            cursor = fb
+        return not any(ch.isalpha() for ch in self.layer[cursor:block.end])
+
+    def last_character(self, start: int, end: int) -> str:
+        """The last non-space character of ``[start, end)``, a trailing formula read as
+        :func:`formula_stop` of its alttext; '' when there is none."""
+        i = end - 1
+        while i >= start:
+            if _is_white(self.layer[i]):
+                i -= 1
+                continue
+            formula = self.formula_at(i)
+            if formula is None:
+                return self.layer[i]
+            stop = formula_stop(formula[2])
+            if stop:
+                return stop
+            i = formula[0] - 1
+        return ""
+
+    def introduces(self, block: Block) -> bool:
+        """introduces(B): B's last non-space character is no full stop, so its last
+        sentence runs on into what follows."""
+        last = self.last_character(block.start, block.end)
+        return bool(last) and last not in SENTENCE_STOPS
+
+    def chain(self, block: Block) -> list[Block]:
+        """chain(B): B, then the display blocks its last sentence introduces."""
+        out = [block]
+        while self.introduces(out[-1]):
+            following = self.next(out[-1])
+            if following is None or not self.is_display(following):
+                break
+            out.append(following)
+        return out
+
+    def list_run(self, block: Block) -> list[Block]:
+        """list run(B): an ``li`` or ``dd`` and the next() blocks of its kind after it."""
+        kind = block.list_kind
+        out = [block]
+        if kind is None:
+            return out
+        while True:
+            following = self.next(out[-1])
+            if following is None or kind not in following.kinds:
+                return out
+            out.append(following)
+
+    def extent(self, start: int, *, compound: bool = False) -> int | None:
+        """extent(s, compound): the furthest a passage that starts at ``start`` may run.
+
+        None when no block holds the start; a theorem box's end when the start's
+        block is one; else the end of the last block of chain(L), L the last
+        item of the start's list run when ``compound`` (a compound statement
+        over the items of one list), and the start's own block otherwise.
+        """
+        block = self.block_at(start)
+        if block is None:
+            return None
+        if block.theorem_box:
+            return block.end
+        last = self.list_run(block)[-1] if compound and block.list_kind else block
+        return self.chain(last)[-1].end
+
+    # -- units (section 3.3, the receipt's counts) ---------------------------
+
+    def units(self, span: Sequence[int]) -> dict[str, list[list[int]]]:
+        """The sentences and displays of the passage at ``span``: :func:`units`."""
+        start, end = int(span[0]), int(span[1])
+        layer = self.layer
+        stops: list[int] = []          # offsets just past a sentence's last character
+        i = start
+        while i < end:
+            formula = self.formula_at(i)
+            if formula is not None:
+                if formula_stop(formula[2]) in SENTENCE_STOPS and formula[1] <= end:
+                    stops.append(formula[1])
+                i = max(formula[1], i + 1)
+                continue
+            if layer[i] in SENTENCE_STOPS and not _abbreviation(layer, start, i):
+                stops.append(i + 1)
+            i += 1
+        sentences: list[list[int]] = []
+        cursor = start
+        block_starts = {b.start for b in self.blocks}
+        for stop in stops:
+            j = stop
+            if j >= end:
+                continue
+            if _is_white(layer[j]):
+                while j < end and _is_white(layer[j]):
+                    j += 1
+                if j >= end:
+                    continue
+            elif j not in block_starts:
+                # glued to the next word: no sentence ends here, unless a block does
+                continue
+            if not (layer[j].isupper() or self.formula_starts_at(j)):
+                continue
+            sentences.append([cursor, stop])
+            cursor = j
+        tail = end
+        while tail > cursor and _is_white(layer[tail - 1]):
+            tail -= 1
+        if tail > cursor:
+            sentences.append([cursor, tail])
+        displays = [list(b.span) for b in self.blocks
+                    if BLOCK_MATH in b.kinds and start <= b.start and b.end <= end]
+        return {"sentences": sentences, "displays": displays}
+
+    def formula_starts_at(self, offset: int) -> bool:
+        i = bisect_right(self._formula_starts, offset) - 1
+        return i >= 0 and self.formulas[i][0] == offset
+
+
+def _is_blocks(value: object) -> bool:
+    """Is ``value`` a :class:`Blocks`, of this module or of its twin under another name?"""
+    return getattr(type(value), "_locate_text_blocks", False) is True
+
+
+def _abbreviation(layer: str, start: int, stop: int) -> bool:
+    """Is the full stop at ``stop`` the end of an abbreviation (``ABBREVIATIONS``)?"""
+    i = stop
+    while i > start and not _is_white(layer[i - 1]):
+        i -= 1
+    return layer[i:stop + 1].lstrip("([{'\"").lower() in ABBREVIATIONS
+
+
+def extent(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,
+           start: int, *, compound: bool = False) -> int | None:
+    """:meth:`Blocks.extent` of one source: what gate rule 10 (b) holds an end to."""
+    return Blocks.of(layer, paragraphs, formulas).extent(start, compound=compound)
+
+
+def units(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,
+          span: Sequence[int]) -> dict[str, list[list[int]]]:
+    """``{"sentences": [[a, b], …], "displays": [[a, b], …]}`` of the passage at ``span``.
+
+    A sentence ends at a ``.``, ``!`` or ``?`` before whitespace and an
+    upper-case letter or a formula, not after one of ``ABBREVIATIONS`` and
+    never inside a formula; a formula whose alttext ends with one
+    (:func:`formula_stop`: ``a = b.``) ends a sentence too, and so does one
+    that ends a block when the next block starts with no whitespace between
+    (two paragraphs of a theorem box are glued in the layer).  Each sentence is
+    its span, trailing whitespace left out.  The displays are the ``math``
+    blocks of ``paragraphs.json`` inside the span.  The statement cut's harvest
+    receipt counts both per passage (docs/proposals/statement-cut.md section
+    3.3), and refuses nothing on them.
+    """
+    return Blocks.of(layer, paragraphs, formulas).units(span)

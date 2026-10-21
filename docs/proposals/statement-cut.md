@@ -309,14 +309,17 @@ All offsets are layer code points (`references/locate-documents.md` §2). The bl
 `theorem_box`, `math` (a display formula).
 
 - **block(x)** — the outermost block holding the offset x (`locate_text.paragraph_end`'s choice;
-  the table lists an outer block before the ones it holds). None when no block holds x.
+  the table lists an outer block before the ones it holds). None when no block holds x. Entries
+  with one span are one block of every kind they name: a theorem box that holds one paragraph has
+  that paragraph's span, and the renderer lists the `p` first (`locate_text.Blocks`).
 - **next(B)** — the first block not held by another that starts at or after B's end with only
   whitespace between; none otherwise.
 - **display block** — a block holding at least one formula of `formulas.json` whose head text,
   every formula token removed, holds no letter: a display, or a `dd` holding only one.
 - **introduces(B)** — B's last non-space character, reading a trailing formula token as the last
   character of its normalised alttext after TeX spacing (`\,` `\;` `\:` `\!` `\quad` `\qquad`
-  `~`), is none of `.`, `!`, `?`: B's last sentence runs on into what follows.
+  `~`) and a `\right.` null delimiter (`locate_text.formula_stop`), is none of `.`, `!`, `?`: B's
+  last sentence runs on into what follows.
 - **chain(B)** — B, then while the last block introduces and its next() is a display block, that
   block: the displays B's last sentence introduces, which belong to it.
 - **list run(B)** — when B is an `li` or a `dd`: B and the next() blocks of the same `block` after
@@ -364,7 +367,9 @@ It refuses nothing on a passage's size. The harvest receipt's gate block gains `
 formal, compound, by_shape, sentences, displays, multi_sentence, multi_display, by_source}`:
 sentences are counted per passage (`locate_text.units`: a `.`, `!` or `?` before whitespace and
 an upper-case letter or a formula token, not after an abbreviation of
-`locate_records._ABBREVIATIONS`), displays as the `math` blocks inside it. It reports them.
+`locate_records._ABBREVIATIONS`; a formula whose alttext ends with one, by `formula_stop`, is one
+too, and a block that starts right after one stands in for the whitespace), displays as the
+`math` blocks inside it. It reports them.
 
 ### 3.4 The prompt's rules (the inventory prompt and the labeler's inventory mode)
 

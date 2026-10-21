@@ -42,6 +42,26 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The statement cut's inventory side (`docs/proposals/statement-cut.md` §3, the "cut" package):
+  the end rule's version 2 and the cut rules. `locate_text.passage_end(…, rule=2, next_start=…,
+  formulas=…)` ends a passage that gives no `until` at the earlier of its extent and the next
+  passage's start, and `locate_text.Blocks` gives the definitions the end rule and gate rule 10
+  read (an offset's outermost block, the next block, a display block, a block whose last
+  sentence introduces what follows, the displays it introduces, a run of list items, the
+  extent), with `locate_text.units` for the receipt's sentence and display counts.
+  `passage_ids.py` places every passage before it ends any and ends them by the `span_end_rule`
+  of the `gate.json` beside it (else `--span-end-rule`, default 1), writing `conjuncts` and
+  `shape` back as it found them. The inventory prompt and the bench labeler's inventory mode
+  carry the cut rules word for word with `references/vocabulary.md` §1.11 ("How the inventory
+  cuts": the test, units, displays and chains, the connectives inside a sentence, lists,
+  proofs, context in `statement`, conjuncts and the closed list of shapes, the subject marker on
+  the stating passage) and PD9 in its new words; the labeler's passages carry `statement`,
+  `conjuncts` and `shape`. `references/locate-documents.md` §2 documents both end rules and the
+  inventory passage's two new fields. Rule 1 is today's function, unchanged: no run names
+  `span_end_rule` 2 until the proposal's flip, so every run places, gates, tallies and exports
+  as before (every workspace run re-gated and smoke 2 and 3 re-tallied and re-exported, byte
+  for byte, on the base and on this change). The labeler's file sha moves; its version stays
+  `locate-label/5` until the flip.
 - Locate judgment rules: PD10's exception. A link that is itself what the passage asserts is no
   encoding: when the lemma that links the two notions is the passage's own theorem, a
   declaration stated with the notion whose definition already contains that theorem's claim
