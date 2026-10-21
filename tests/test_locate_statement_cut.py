@@ -863,6 +863,21 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
         self.assertEqual(LABELER.count("required: ['quote', 'passage_kind', 'scope', 'statement'"),
                          2)
 
+    def test_the_labelers_bundle_says_the_vocabularys_relations(self):
+        """The flip verifier: the label schema's ``bundle`` description names the relations
+        a bundle's parts bear in words, and nothing held them to ``BUNDLE_RELATIONS``, which
+        the transcriber enforces (``bench.gold.gold_bundle``); a part's enum is
+        ``CONJUNCT_RELATIONS``."""
+        conjunct = re.search(r"const CONJUNCT_RELATIONS = \[(.*?)\]", LABELER).group(1)
+        self.assertEqual(set(re.findall(r"'(\w+)'", conjunct)), set(vocab.CONJUNCT_RELATIONS))
+        schema = LABELER[LABELER.index("const LABEL_SCHEMA"):LABELER.index("const CUT_FIELDS")]
+        description = re.search(r"bundle: \{.*?description: \"(.*?)\" \}", schema, re.S).group(1)
+        strong = sorted(vocab.BUNDLE_RELATIONS, key=vocab.RELATION_STRENGTH.__getitem__)
+        self.assertIn(f"each with a conjunct_relation of {', '.join(strong[:-1])} or "
+                      f"{strong[-1]},", description)
+        named = {w for w in re.findall(r"\b(\w+Match|hasPart)\b", description)}
+        self.assertEqual(named, set(vocab.BUNDLE_RELATIONS) | {vocab.HAS_PART})
+
     def test_the_lists_rule_asks_for_nothing_the_labeler_cannot_give(self):
         """The labeler's passages have no `until` (gold is anchored on its quote), so the
         shared Lists rule names none; the prompt's end paragraph says when to give one."""
