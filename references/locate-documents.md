@@ -83,7 +83,16 @@ is enough.
     "passage_kind": "theorem", "prominence": "central", "scope": "formal_math",
     "statement": "<informal restatement, one or two sentences>",
     "concept": null,
-    "finder": "theorem_box"}],
+    "finder": "theorem_box"},
+   {"item": "In-text #0000c0de", "head_words": 12, "span": [10613, 10734],
+    "quote": {"exact": "Every finite widget has a spanning gadget", "prefix": "", "suffix": ""},
+    "section": ["Theorems"], "fragment": "Theorems",
+    "passage_kind": "theorem", "prominence": "supporting", "scope": "formal_math",
+    "statement": "For a finite widget W: W has a spanning gadget, and any two spanning gadgets of W are equal.",
+    "conjuncts": [{"id": "c1", "text": "a finite widget has a spanning gadget"},
+                  {"id": "c2", "text": "two spanning gadgets of one finite widget are equal"}],
+    "shape": "existence_uniqueness",
+    "concept": null, "finder": "model"}],
  "skips": [{"span": [200, 900], "reason": "infobox"}],
  "notes": "free text, at most 2,000 characters"}
 ```
@@ -109,11 +118,28 @@ is enough.
   unique where the exported one is not, and the refusal comes while the start
   can still move, not at `cf export literature-links`.
 - **The end**: `span[1]` is where `passage_ids.py` ends the passage
-  (`locate_text.passage_end`), and gate rule 2 recomputes it: the end of the
+  (`locate_text.passage_end`), and gate rule 2 recomputes it, by the span-end
+  rule the run's `gate.json` names (`span_end_rule`, §9; `passage_ids.py` reads
+  it from the `gate.json` beside it in the gate directory): the end of the
   first occurrence of the passage's `until` (its last words, as the layer has
-  them) at or after its start when it gives one, else the end of the outermost
-  `paragraphs.json` block it starts in, else the end of its quote, and never
-  before the end of its quote. The export carries the span, so the end is the
+  them) at or after its start when it gives one; else, under **version 1**, the
+  end of the outermost `paragraphs.json` block it starts in, else the end of
+  its quote; else, under **version 2** (the statement cut's,
+  `docs/proposals/statement-cut.md` §3.2), the earlier of its **extent** and the
+  start of the document's next passage (the quote's end when no block holds the
+  start); and never before the end of its quote. The extent
+  (`locate_text.Blocks.extent`, the proposal's §3.1) is the end of the outermost
+  block the passage starts in when that block is a theorem box (or shares its
+  span with one, as a box holding one paragraph does), and otherwise the end of
+  that block followed by the display blocks its last sentence introduces: while
+  the last block's last character — a trailing formula read as the last
+  character of its normalised alttext after TeX spacing (`\,` `\;` `\:` `\!`
+  `\quad` `\qquad` `~`) and a `\right.` null delimiter — is none of `.`, `!`,
+  `?`, and the next block (the first one no other block holds, after only
+  whitespace) holds a formula and no letter outside its formulas, that block
+  joins. Version 2 places every passage before it ends any, so no passage needs
+  an `until` to stop where the next one begins, and two passages of one
+  paragraph never nest. The export carries the span, so the end is the
   extent a reader highlights, and any other end is refused under rule 2: an
   offset edited by hand, an end past the paragraph or into the next kept
   passage with no `until` that puts it there, or an end counted in UTF-16 units
@@ -121,14 +147,50 @@ is enough.
   astral-plane characters a UTF-16 count runs further). `until` stays in the
   document, so the end can be recomputed, and a second run of the tool places
   the same spans; an `until` that is not a string or is not on the layer after
-  the start is refused. Two passages of one paragraph may overlap: each runs to
-  the paragraph's end unless its `until` ends it sooner. The end check binds a
+  the start is refused. Under version 1 two passages of one paragraph may
+  overlap: each runs to the paragraph's end unless its `until` ends it sooner.
+  The end check binds a
   run whose `gate.json` names `span_end_rule` (§9) — every run `cf
   plan-locate` plans now — and no other: the `passage_ids.py` of a run planned
   before it placed an end by its `until` and then dropped the `until`, so the
   end cannot be recomputed, and such an inventory is gated, also at a harvest's
   re-gate by either gate, with its end held inside the layer and after its
-  quote, as it was when it ran.
+  quote, as it was when it ran. A run planned before the statement cut's flip
+  names version 1 or no version, so a re-gate recomputes its ends by version 1,
+  or holds them only to the layer and the quote, exactly as before.
+- **The statement cut** (`statement_cut_rule` 1 in `gate.json`; the
+  proposal's §1.1 and §3; no run is planned under it before the proposal's
+  flip, and one whose `gate.json` names no `statement_cut_rule` is gated as
+  before). A passage is one statement, cut by the rules of
+  `references/vocabulary.md` §1.11 ("How the inventory cuts"), which the
+  inventory prompt gives word for word. Two fields join the row, on a compound
+  statement only, and there is no new scope and no new passage kind:
+  `conjuncts`, absent on a simple statement (never `[]` and never `null`), else
+  2 to 5 objects with exactly the keys `id` and `text`, the ids `c1`, `c2`, … in
+  order with no gap, each `text` one line of at most 300 characters in the
+  worker's own words with no more than twelve consecutive words of the source
+  (a bundle's conjuncts are exported); and `shape`, present exactly when
+  `conjuncts` is, one of `cflib.vocab.COMPOUND_SHAPES` (`existence_uniqueness`
+  with exactly two conjuncts, `iff`, `cases`, `conclusions`, `equations`). Only
+  a `formal_math` passage carries them. `statement` stays required and is the
+  passage's context: it reads on its own, naming the hypotheses and objects the
+  tight span leaves to its neighbours. A stated reason is a passage of its own
+  when it is a declarative statement no neighbouring passage states (PD9), and
+  no passage otherwise; no field links it to the statement it supports. A lead
+  that describes the subject rather than states it is `expository`, and
+  `prominence: subject` — with it the article's QID on the passage's records —
+  goes on the passage that states the theorem, which may be its theorem box.
+  Gate rule 10 then refuses, over the document: two passages whose spans share
+  a character; a span that ends past its extent (`locate_text.extent`, with
+  `compound` when the passage has `conjuncts`, so a compound statement may run
+  over the items of one list, its run of `li` or `dd` items); a span that ends
+  strictly inside a formula;
+  `conjuncts` and `shape` that break the rules above; `conjuncts` on a passage
+  not scoped `formal_math`; a passage not scoped `formal_math` whose prominence
+  is not `supporting`; and two passages with the same span text. It refuses
+  nothing on a passage's size: the harvest receipt counts each passage's
+  sentences and displays (`locate_text.units`). `passage_ids.py` writes
+  `conjuncts` and `shape` back as it found them.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
   deterministic passage of the task is dropped only with a skip whose span
