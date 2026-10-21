@@ -377,6 +377,27 @@ class TestTheInlinedVocabularyIsCflibs(unittest.TestCase):
         self.assertEqual(set(vl.CHALLENGE_COMBOS), vocab.CHALLENGE_TARGETS)
         self.assertEqual(vl.CHALLENGE_COMBOS[vocab.COVERAGE_TARGET], vocab.COVERAGE_ACTIONS)
 
+    def test_the_statement_cuts_names(self):
+        """The statement cut's names the gate inlines (docs/proposals/statement-cut.md 6.1)."""
+        pairs = {
+            "RULES_STATEMENT_CUT": vocab.RULES_STATEMENT_CUT,
+            "SPAN_END_STATEMENT_CUT": vocab.SPAN_END_STATEMENT_CUT,
+            "STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_RULE,
+            "COMPOUND_SHAPES": vocab.COMPOUND_SHAPES, "MIN_CONJUNCTS": vocab.MIN_CONJUNCTS,
+            "MAX_CONJUNCTS": vocab.MAX_CONJUNCTS,
+            "SHAPE_CONJUNCT_COUNTS": vocab.SHAPE_CONJUNCT_COUNTS,
+            "SIMPLE_STATEMENT_CLAUSE": vocab.SIMPLE_STATEMENT_CLAUSE,
+            "CONJUNCT_RELATIONS": vocab.CONJUNCT_RELATIONS,
+            "BUNDLE_RELATIONS": vocab.BUNDLE_RELATIONS,
+            "TWO_WAY_TEST_KEYS": vocab.TWO_WAY_TEST_KEYS, "CUT_FLAGS": vocab.CUT_FLAGS,
+            "CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT":
+                vocab.CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT,
+            "PROMINENCE_SUPPORTING": vocab.PROMINENCE_SUPPORTING,
+        }
+        for name, theirs in pairs.items():
+            with self.subTest(name=name):
+                self.assertEqual(getattr(vl, name), theirs)
+
     def test_the_gate_imports_no_cflib(self):
         import ast
 
