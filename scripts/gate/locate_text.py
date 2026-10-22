@@ -39,7 +39,12 @@ file into the gate directory together with the vendored packages:
    (:meth:`Blocks.chain`), a run of list items and the extent;
    :func:`units` counts a passage's sentences and displays for the harvest
    receipt.  Rule 1 reads none of it, so a run planned before the statement cut
-   ends, gates and counts as it did.
+   ends, gates and counts as it did.  The same section defines the *continued*
+   extent -- the paragraph that finishes a sentence after its display
+   (:meth:`Blocks.continuation`), which ``chain`` and ``extent`` join only
+   when asked (``continued=True``) -- and the connectives inside a span
+   (:meth:`Blocks.cut_points`); no span-end or statement-cut version reads
+   either yet, so every end and every gate verdict is the one it was.
 
 The vendored ``formal_companion_annotations.ids`` is imported from
 ``vendor/`` of the skill checkout, or from ``vendor/`` beside this file in a
@@ -433,6 +438,21 @@ CUT_CONNECTIVES = (";", "since", "because", "so", "hence", "then", "moreover", "
 #: what else separates two pieces of one sentence: the comma or semicolon before a
 #: connective or the next piece
 SEPARATOR_MARKS = frozenset(",;")
+#: the one block a sentence continues into after its display: a plain paragraph, never a
+#: list item, a ``dd``, a quotation or a theorem box (docs/proposals/statement-cut.md
+#: section 3.1, continuation(D))
+CONTINUATION_BLOCK = "p"
+#: the blocks a continuation may leave, beside a display block: a paragraph, a ``dd``
+#: and a display.  A container (a ``blockquote``, a theorem box, a list item) is a unit,
+#: and its sentence never runs on out of it
+CONTINUED_FROM = frozenset({"p", "dd", BLOCK_MATH})
+#: the opening brackets and quotes read past to a paragraph's first word ("(that is, …");
+#: never ``[``, which opens a footnote mark
+OPENING_MARKS = frozenset("(\"'\u2018\u201c")
+#: a word that labels an item rather than going on with a sentence: a run of one to
+#: four letters closed by a bracket ("(ii)", "a)")
+_ITEM_LABEL = re.compile(r"[^\W\d_]{1,4}\)")
+_LETTERS = re.compile(r"[^\W\d_]*")
 #: the words a full stop does not end a sentence after (``locate_records.
 #: _ABBREVIATIONS``, restated: that module imports this one; a test pins the two)
 ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
@@ -511,7 +531,8 @@ class Block:
 class Blocks:
     """The blocks of one source, with its layer and formulas: the definitions of
     docs/proposals/statement-cut.md section 3.1, which the end rule (version 2)
-    and gate rule 10 read.
+    and gate rule 10 read, and the continued chain and the cut points the same
+    section defines, which no version reads yet.
 
     ``paragraphs`` is ``paragraphs.json``: an entry without a readable non-empty
     span is passed over, as :func:`paragraph_end` passes it over.  The table is
@@ -553,6 +574,9 @@ class Blocks:
                 self.top.append(block)
                 reach = block.end
         self._top_starts = [b.start for b in self.top]
+        #: the display formulas (``math`` blocks), by start: what ends_with_display() reads
+        self._math = [b for b in self.blocks if BLOCK_MATH in b.kinds]
+        self._math_starts = [b.start for b in self._math]
         spans: list[tuple[int, int, str]] = []
         for formula in formulas or ():
             try:
@@ -676,21 +700,110 @@ class Blocks:
         last, stops = self._last(block.start, block.end)
         return bool(last) and not stops
 
-    def chain(self, block: Block) -> list[Block]:
+    def ends_with_display(self, block: Block) -> bool:
+        """ends_with_display(D): D is a display block, or a paragraph or ``dd``
+        (``CONTINUED_FROM``) whose last content is a display formula -- a ``math``
+        block inside it with only whitespace after it to D's end.
+
+        A container (a ``blockquote``, a theorem box, a list item) that ends with a
+        display does not: it is a unit, and its sentence never runs on out of it.
+        A footnote mark after a nested display makes this false too (its text is
+        not whitespace), a known false negative.
+        """
+        if self.is_display(block):
+            return True
+        if not set(block.kinds) <= CONTINUED_FROM:
+            return False
+        i = bisect_right(self._math_starts, block.end - 1) - 1
+        if i < 0:
+            return False
+        shown = self._math[i]
+        if shown.start < block.start or shown.end > block.end or shown.span == block.span:
+            return False
+        return all(_is_white(ch) for ch in self.layer[shown.end:block.end])
+
+    def continues(self, block: Block) -> bool:
+        """continues(N): N's first word goes on with a sentence rather than starting one.
+
+        The first word is the one at N's first non-space character, read past the
+        opening marks ``OPENING_MARKS`` (never ``[``, a footnote mark's), with a
+        trailing ``,``, ``;`` or ``:`` set aside.  It continues when it is one of
+        ``ABBREVIATIONS`` ("i.e."), or when its leading run of letters starts with
+        a lower-case letter and is two letters or more, or the word "a".  A lone
+        lower-case letter is a variable written as text (``x is…``), and a digit,
+        an upper-case letter or a formula starts a new sentence, so none of them
+        continues; nor does an item label, a run of one to four letters closed by a
+        bracket ("(ii)", "a)").  A name particle or a function name written as text
+        ("von Neumann", "ln x") reads as a continuation: a known false positive
+        (docs/proposals/statement-cut.md section 3.1).
+        """
+        layer = self.layer
+        i = block.start
+        while i < block.end and _is_white(layer[i]):
+            i += 1
+        while i < block.end and layer[i] in OPENING_MARKS and self.formula_at(i) is None:
+            i += 1
+        if i >= block.end or self.formula_at(i) is not None:
+            return False
+        j = i
+        while j < block.end and not _is_white(layer[j]) and self.formula_at(j) is None:
+            j += 1
+        word = layer[i:j]
+        if word.rstrip(",;:").lower() in ABBREVIATIONS:
+            return True
+        if _ITEM_LABEL.match(word):
+            return False
+        letters = _LETTERS.match(word).group(0)
+        return letters[:1].islower() and (len(letters) >= 2 or letters == "a")
+
+    def continuation(self, block: Block) -> Block | None:
+        """continuation(D): the paragraph that finishes D's last sentence after its
+        display, else None.
+
+        D is no list item, ends with a display (:meth:`ends_with_display`) and
+        introduces what follows (:meth:`introduces`: the display has no full
+        stop); N = next(D) is a plain paragraph (``CONTINUATION_BLOCK`` its only
+        kind: never an ``li``, a ``dd``, a theorem box or a display, and no next
+        block across a heading's text); and N continues (:meth:`continues`).
+        Then N is the continuation: "…such that [display] for all x." is one
+        sentence over three blocks.
+        """
+        if "li" in block.kinds or not self.ends_with_display(block) \
+                or not self.introduces(block):
+            return None
+        following = self.next(block)
+        if following is None or set(following.kinds) != {CONTINUATION_BLOCK}:
+            return None
+        return following if self.continues(following) else None
+
+    def chain(self, block: Block, *, continued: bool = False) -> list[Block]:
         """chain(B): B, then the display blocks its last sentence introduces.
 
         A list item (``li``) is a unit of its own, never a display a sentence
         introduces: a list of display items is one passage per item (or a
         compound statement over them, :meth:`list_run`), so the chain stops at
         one.  A ``dd`` is how an article indents a display, and joins.
+
+        With ``continued`` (the continued chain), when B is no list item: while
+        the chain's last block has a :meth:`continuation`, that paragraph and the
+        displays its own last sentence introduces join too, so a sentence that
+        goes on after its display is one sentence to its end, over as many
+        displays and continuations as it has.  Without it, the chain is the one
+        every span-end and statement-cut version so far reads.
         """
         out = [block]
-        while self.introduces(out[-1]):
-            following = self.next(out[-1])
-            if following is None or "li" in following.kinds or not self.is_display(following):
-                break
-            out.append(following)
-        return out
+        while True:
+            while self.introduces(out[-1]):
+                following = self.next(out[-1])
+                if following is None or "li" in following.kinds or not self.is_display(following):
+                    break
+                out.append(following)
+            if not continued or "li" in block.kinds:
+                return out
+            tail = self.continuation(out[-1])
+            if tail is None:
+                return out
+            out.append(tail)
 
     def list_run(self, block: Block) -> list[Block]:
         """list run(B): an ``li`` or ``dd`` and the next() blocks of its kind after it."""
@@ -704,13 +817,19 @@ class Blocks:
                 return out
             out.append(following)
 
-    def extent(self, start: int, *, compound: bool = False) -> int | None:
+    def extent(self, start: int, *, compound: bool = False,
+               continued: bool = False) -> int | None:
         """extent(s, compound): the furthest a passage that starts at ``start`` may run.
 
         None when no block holds the start; a theorem box's end when the start's
         block is one; else the end of the last block of chain(L), L the last
         item of the start's list run when ``compound`` (a compound statement
         over the items of one list), and the start's own block otherwise.
+        ``continued`` reads the continued chain (:meth:`chain`): the *continued
+        extent*, which runs on over the paragraph that finishes a sentence after
+        its display (an ``li`` L gets none; a ``dd`` run may continue).  Like
+        the extent it is an upper bound, never a unit: a continuation that goes
+        on into further sentences is included to its end.
         """
         block = self.block_at(start)
         if block is None:
@@ -718,7 +837,7 @@ class Blocks:
         if block.theorem_box:
             return block.end
         last = self.list_run(block)[-1] if compound and block.list_kind else block
-        return self.chain(last)[-1].end
+        return self.chain(last, continued=continued)[-1].end
 
     def separator_start(self, start: int, at: int) -> int:
         """Where the separator before ``at`` (the next passage's start) begins.
@@ -768,6 +887,68 @@ class Blocks:
                     continue
             return k
         return j
+
+    def cut_points(self, span: Sequence[int]) -> list[tuple[int, str]]:
+        """``[(offset, connective)]``: where a connective of ``CUT_CONNECTIVES`` stands
+        strictly inside the span ``[a, b)``, in layer order.
+
+        A ``;``; a comma followed (across whitespace) by the whole word ``and`` (the
+        connective ``, and``; a bare "and" is none); and a word connective
+        ("since", "then", …) as a whole word, case aside: whitespace or a comma
+        or semicolon before it, and whitespace or one after it.  Nothing inside a
+        formula counts, nor one at the span's start, nor one after which no word
+        of the span follows.  Each is a point :meth:`separator_start` sets aside
+        whole, so a passage that started at the word after it would end the one
+        before at or before the point.  It is an upper bound on where the cut
+        rules cut ("if … then", "so that" and a sentence that starts "Then" are
+        points too), which is how a reader is to count it (docs/proposals/
+        statement-cut.md section 3.1).
+        """
+        a, b = int(span[0]), int(span[1])
+        layer = self.layer
+        words = [c for c in CUT_CONNECTIVES if c.lstrip(",; ") and not c.startswith(",")]
+        points: list[tuple[int, str]] = []
+        i = a + 1
+        while i < b:
+            formula = self.formula_at(i)
+            if formula is not None:
+                i = max(formula[1], i + 1)
+                continue
+            ch = layer[i]
+            if ch == ";":
+                if self._word_follows(i + 1, b):
+                    points.append((i, ";"))
+            elif ch == ",":
+                m = i + 1
+                while m < b and _is_white(layer[m]) and self.formula_at(m) is None:
+                    m += 1
+                if self._whole_word(m, "and", b) and self._word_follows(m + 3, b):
+                    points.append((i, ", and"))
+            elif _is_white(layer[i - 1]) or layer[i - 1] in SEPARATOR_MARKS:
+                for word in words:
+                    if self._whole_word(i, word, b) and self._word_follows(i + len(word), b):
+                        points.append((i, word))
+                        break
+            i += 1
+        return points
+
+    def _whole_word(self, at: int, word: str, end: int) -> bool:
+        """Is ``word`` at ``at`` (case aside), outside every formula, with whitespace or a
+        comma or semicolon after it before ``end``?"""
+        after = at + len(word)
+        if after >= end or self.layer[at:after].lower() != word:
+            return False
+        if any(self.formula_at(k) is not None for k in range(at, after)):
+            return False
+        return _is_white(self.layer[after]) or self.layer[after] in SEPARATOR_MARKS
+
+    def _word_follows(self, at: int, end: int) -> bool:
+        """Does a word of ``[at, end)`` follow ``at``, across whitespace and commas or
+        semicolons?"""
+        while at < end and self.formula_at(at) is None and (
+                _is_white(self.layer[at]) or self.layer[at] in SEPARATOR_MARKS):
+            at += 1
+        return at < end
 
     # -- units (section 3.3, the receipt's counts) ---------------------------
 
@@ -834,9 +1015,10 @@ def _abbreviation(layer: str, start: int, stop: int) -> bool:
 
 
 def extent(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,
-           start: int, *, compound: bool = False) -> int | None:
+           start: int, *, compound: bool = False, continued: bool = False) -> int | None:
     """:meth:`Blocks.extent` of one source: what gate rule 10 (b) holds an end to."""
-    return Blocks.of(layer, paragraphs, formulas).extent(start, compound=compound)
+    return Blocks.of(layer, paragraphs, formulas).extent(start, compound=compound,
+                                                         continued=continued)
 
 
 def units(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,

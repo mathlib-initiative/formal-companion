@@ -362,6 +362,51 @@ nothing between them are one list run; both only widen a compound statement's bo
 stop would narrow a bound, and rule 10 (b) would then refuse a right `until`, which is why a
 formula's `!` is read as no stop.
 
+The renderer (frozen) puts the words that finish a sentence after its display in a `p` of their
+own ("…such that", a display with no full stop, "for all x."), and chain(B) stops at the display.
+The **continued** chain and extent below join that paragraph. They are defined for span-end
+rule 3 and statement-cut rule 2 (§3.2–3.3, once those exist): no gate, tool or plan reads them
+yet, so every version so far reads chain(B) and extent(s, compound) as above
+(`locate_text.Blocks`, `continued=False`, the default).
+
+- **ends_with_display(D)** — D is a display block, or D is a `p` or a `dd` (its kinds within
+  `p`, `dd`, `math`: `locate_text.CONTINUED_FROM`) and a `math` block inside it is followed by
+  only whitespace to D's end. A container — a `blockquote`, a theorem box, an `li` — that ends
+  with a display does not: it is a unit, and its sentence never runs on out of it. A footnote
+  mark after a nested display is text, so that display does not either (a known false negative).
+- **continues(N)** — N's first word, read past opening brackets and quotes `(` `"` `'` `‘` `“`
+  (never `[`, a footnote mark's) and with a trailing `,` `;` `:` set aside, goes on with a
+  sentence: it is an abbreviation of `ABBREVIATIONS` ("i.e."), or its leading run of letters
+  starts with a lower-case letter and is two letters or more, or is the word "a". So a lone
+  lower-case letter (a variable written as text), an upper-case letter, a digit and a formula
+  start a new sentence, and so does an item label — one to four letters closed by `)`, "(ii)",
+  "a)". A name particle or a function name written as text ("von Neumann", "ln x") reads as a
+  continuation; that false positive is pinned by a test and documented rather than met with a
+  stop list.
+- **continuation(D)** — when D is no `li`, ends_with_display(D) and introduces(D) hold, and
+  N = next(D) is a plain paragraph (`p` its only kind: never an `li`, a `dd`, a theorem box or a
+  display, and none across a heading's text) that continues(N): N; none otherwise.
+- **continued chain(B)** — chain(B), then, unless B is an `li`, while its last block has a
+  continuation N: N and the displays N's own last sentence introduces, and again. One sentence
+  may run over several displays and continuations.
+- **continued extent(s, compound)** — extent(s, compound) with the continued chain of L. An `li`
+  L gets no continuation (a list item is a unit); a `dd` run may continue into a `p`. A start
+  inside a continuation reads that block's own continued chain.
+- **cut points(span)** — the connectives of `CUT_CONNECTIVES` strictly inside a span, outside
+  every formula (`Blocks.cut_points`): a `;`; a comma and then, across whitespace, the whole word
+  "and" (a bare "and" is none); a word connective as a whole word, case aside, with whitespace or
+  a comma or semicolon on each side; never one at the span's start, nor one no word of the span
+  follows. A passage that started at the word after a point would end the one before it at or
+  before the point (`separator_start` sets the point aside whole; a test holds the two
+  together). It is an upper bound on where the rules cut: "if … then", "so that" and a sentence
+  that starts "Then" are points too.
+
+The continued extent is an upper bound, like the extent: a continuation that goes on into further
+sentences is included to its end, and the next passage's start or an `until` ends a passage
+inside it. What it does not see stays as the extent has it: a display the gate cannot see (a
+`texhtml` formula, a `dd` of text), a display inside a list item, and a display that ends with a
+full stop before a lower-case word, which by the sentence definition ended its sentence.
+
 ### 3.2 The end rule (`span_end_rule` 2)
 
 `locate_text.passage_end(layer, paragraphs, start, exact, until=None, *, rule=1,
