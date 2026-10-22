@@ -207,9 +207,11 @@ is enough.
   which may be its theorem box; a later restatement is `central`.
   Gate rule 10 (the proposal's §3.3; §9 below) binds only a run whose
   `gate.json` names `statement_cut_rule`, which the planner writes from the
-  flip on, and the inventory prompt describes the cut's end of end rule 2,
-  which every run planned since the flip names (a run planned before keeps the
-  prompt it rendered, version 1's paragraph). It refuses,
+  flip on, and the inventory prompt describes the cut's end of end rule 3,
+  which every run planned since the flip of inv-pilot-1's fixes names (end
+  rule 2 from the statement cut's flip until then; a run planned before keeps
+  the prompt it rendered, version 1's paragraph before the statement cut's
+  flip). It refuses,
   over the document: two passages whose spans share
   a character; a span that ends past its extent (`locate_text.extent`, with
   `compound` when the passage has `conjuncts`, so a compound statement may run
@@ -1906,7 +1908,11 @@ like a faithfulness run:
   extent without the continuation), `continuation_starts` (passages starting at
   a continuation's first word: the words after a display cut from their
   sentence), `continuations_unheld` (continuations after a block a formal
-  passage shares a character with, that no passage holds), `connective_points`,
+  passage shares a character with, that no passage holds), `loose_starts` and
+  `loose_unheld` (the same over the paragraphs only the loose bound reaches,
+  `locate_text.Blocks.loose_tails`: after a display the gate cannot see, a
+  paragraph with no full stop or a container's sentence, where the default end
+  stops before them and only an `until` keeps them), `connective_points`,
   `formal_with_connective` and `by_connective` (the connectives of
   `CUT_CONNECTIVES` inside formal passages, `locate_text.Blocks.cut_points`, an
   upper bound on the cuts there) and `connective_starts` (formal passages whose

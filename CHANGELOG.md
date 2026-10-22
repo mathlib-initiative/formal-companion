@@ -42,6 +42,34 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- Review fixes to inv-pilot-1's fixes, before any run names (3, 2). **The continued extent
+  never runs past the loose bound:** `locate_text.Blocks.ends_with_display` reads a block's
+  kinds before it reads it as a display, so a theorem box that holds only a display is a unit
+  and no continuation leaves it. Before, span-end rule 3's default end ran on out of such a box
+  while rule 10 (b)'s loose bound stopped at it, so the gate refused the end `passage_ids.py`
+  wrote. A test now holds extent ≤ continued extent ≤ loose extent at every start of every
+  test page. **A capitalised abbreviation starts a sentence:** `continues` compares the word as
+  written, so "E.g." or "Cf." after a display is no continuation. **The receipt counts the
+  loose-only tails** under statement-cut rule 2: `loose_starts` and `loose_unheld`
+  (`Blocks.loose_tails`, `harvest.gate_corpus.CUT_COUNTS_2`). These are the paragraphs only
+  the loose bound reaches (after a display the gate cannot see, say), which the default end
+  stops before, so a tail no `until` kept is no longer invisible. **The prompt:**
+  - the Context rule, in all three places and spec rule 7, counts the paragraph that finishes a
+    sentence after its displays as the sentence's own, and lets anything that comes between (not
+    only narration) leave the sentence opening nothing (reading 1);
+  - the end paragraph names running a sentence over the words that finish it as `until`'s third
+    use, and makes a list item the one place those words start a passage of their own, because
+    the loose bound never leaves one (the check says the same);
+  - the scope bullet says the subject goes on the passage that states the theorem while L2 holds
+    a curated hit, and gate rule 4's refusal adds that a lead that only describes it is
+    `expository`.
+
+  The gate's module docstring names the loose bound and (h), and `references/locate-documents.md`
+  §2 names end rule 3. New gate-level tests cover rule 10 (b)'s loose bound on a display the gate
+  cannot see and the receipt's `connective_starts`. The prompt's size test now renders host paths
+  as long as a real plan's. Placeholders had hidden about 320 bytes, so the run's `worker.md` is
+  17,252 bytes (16,933 with placeholders), about 3.0 KB (21%) over inv-pilot-1's 14,243. The
+  ceiling is 17,500.
 - The flip of inv-pilot-1's fixes (`docs/proposals/statement-cut.md` §7): `cf plan-locate` now
   writes `judgment_rules` 3, `span_end_rule` 3 and `statement_cut_rule` 2 into every gate.json it
   plans (`cflib.vocab.SPAN_END_RULE = SPAN_END_CONTINUED`, `STATEMENT_CUT_RULE =

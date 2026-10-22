@@ -719,14 +719,17 @@ class Blocks:
         block inside it with only whitespace after it to D's end.
 
         A container (a ``blockquote``, a theorem box, a list item) that ends with a
-        display does not: it is a unit, and its sentence never runs on out of it.
-        A footnote mark after a nested display makes this false too (its text is
-        not whitespace), a known false negative.
+        display does not, nor one that holds only a display: it is a unit, and its
+        sentence never runs on out of it.  So a block's kinds are read before it is
+        read as a display, and the continued extent never runs past the loose
+        bound, which stops at a theorem box (:meth:`runs_on`).  A footnote mark
+        after a nested display makes this false too (its text is not whitespace),
+        a known false negative.
         """
-        if self.is_display(block):
-            return True
         if not set(block.kinds) <= CONTINUED_FROM:
             return False
+        if self.is_display(block):
+            return True
         i = bisect_right(self._math_starts, block.end - 1) - 1
         if i < 0:
             return False
@@ -741,7 +744,8 @@ class Blocks:
         The first word is the one at N's first non-space character, read past the
         opening marks ``OPENING_MARKS`` (never ``[``, a footnote mark's), with a
         trailing ``,``, ``;`` or ``:`` set aside.  It continues when it is one of
-        ``ABBREVIATIONS`` ("i.e."), or when its leading run of letters starts with
+        ``ABBREVIATIONS`` as written, lower-case ("i.e."; "E.g." starts a new
+        sentence with its capital), or when its leading run of letters starts with
         a lower-case letter and is two letters or more, or the word "a".  A lone
         lower-case letter is a variable written as text (``x is…``), and a digit,
         an upper-case letter or a formula starts a new sentence, so none of them
@@ -762,7 +766,7 @@ class Blocks:
         while j < block.end and not _is_white(layer[j]) and self.formula_at(j) is None:
             j += 1
         word = layer[i:j]
-        if word.rstrip(",;:").lower() in ABBREVIATIONS:
+        if word.rstrip(",;:") in ABBREVIATIONS:
             return True
         if _ITEM_LABEL.match(word):
             return False
@@ -903,6 +907,25 @@ class Blocks:
             tail = self.continuation(block)
             if tail is not None:
                 out.append((block, tail))
+        return out
+
+    def loose_tails(self) -> list[tuple[list[Block], Block]]:
+        """``[(head, N)]``: every paragraph N that the loose bound alone reaches -- the
+        last block of some :meth:`runs_on`, and no :meth:`continuation` -- with the
+        blocks its sentence runs on over, from the first block no other holds whose
+        :meth:`runs_on` reaches N, in layer order (the receipt's loose counts under
+        statement-cut rule 2).  These are the tails the default end stops before:
+        after a display the gate cannot see, a paragraph with no full stop, or a
+        container's sentence."""
+        strict = {tail.span for _block, tail in self.continuations()}
+        seen: set[tuple[int, int]] = set()
+        out = []
+        for block in self.top:
+            run = self.runs_on(block)
+            if not run or run[-1].span in strict or run[-1].span in seen:
+                continue
+            seen.add(run[-1].span)
+            out.append(([block] + run[:-1], run[-1]))
         return out
 
     def mid_sentence(self, start: int) -> bool:
