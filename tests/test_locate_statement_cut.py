@@ -1262,14 +1262,25 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 
     def test_the_end_paragraph_is_the_runs_end_rule(self):
         """The prompt says where the run's own passage_ids.py ends a passage: span-end rule
-        2, which every plan made since the flip names, and what rule 10 refuses.  Version
-        1's paragraph, which a plan made before the flip rendered, went with its slot
+        3, which every plan made since the flip of inv-pilot-1's fixes names (the continued
+        extent), and what rule 10 refuses.  Version 1's paragraph, which a plan made before
+        the statement cut's flip rendered, went with its slot
         (``test_locate_judgment.TestThePromptsAreTheFlipsOnly``)."""
-        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT)
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED)
         prompt = self.prompt
         flat = self.flat
         self.assertIn("**Where a passage ends**: at the earlier of the end of its paragraph or "
                       "list item", flat)
+        self.assertIn("and with the displays its last sentence introduces and the paragraph "
+                      "that finishes that sentence after them — and the start of the next "
+                      "passage", flat)
+        self.assertIn("a remark, narration after the sentence a display interrupted)", flat)
+        # the reading K1 fallback: the gate's loose bound admits the `until` the tool's
+        # strict end leaves to the worker, so the words are never skipped (critique C6)
+        self.assertIn("The words that finish a sentence after its display are that "
+                      "sentence's: never start a passage there, and never skip them; where the "
+                      "tool's end stops before them, give `until` at the sentence's last word.",
+                      flat)
         self.assertIn("less what separates the two (the space, a connective of the cut rules "
                       "above, a comma or semicolon)", flat)
         self.assertIn("So two passages never overlap", flat)
@@ -1277,6 +1288,13 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
                       "list of its own, counts as one paragraph here", flat)
         self.assertIn("when narration you leave out follows it.\n- A single word", prompt)
         self.assertIn("The gate holds the cut's mechanical part", flat)
+        # what statement-cut rule 2 refuses and counts: (h), and the receipt's new counts
+        self.assertIn("a passage not scoped `formal_math` that is not `supporting`, two "
+                      "passages marked `subject`, and two passages with the same text are "
+                      "refused.", flat)
+        self.assertIn("the gate refuses none of them, and counts each passage's sentences, "
+                      "displays and connectives for the run's receipt.", flat)
+        self.assertNotIn("the gate only counts", flat)
         self.assertIn("The next passage's start ends each one", flat)
         for text in ("**Where a passage ends**: where its paragraph or list item ends",
                      "So give `until` to every passage that ends before its paragraph does",
@@ -1321,6 +1339,19 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
         self.assertNotIn("until", re.search(r"CUT_FIELDS = \{(.*?)\n\}", LABELER, re.S).group(1))
         self.assertIn("one quote per statement", labeler_cut_rules())
 
+    def test_the_units_rule_says_the_continuation_in_words(self):
+        """Span-end rule 3's continuation, in the shared Units rule: what it means, never
+        the gate's heuristic (a lower-case word) and never an `until`, which the labeler
+        cannot give (the critique's D7)."""
+        units = {re.match(r"- \*\*(.*?)\*\*", line).group(1): line
+                 for line in cut_rule_lines()}["Units."]
+        self.assertIn("into the displays its last sentence introduces and the paragraph that "
+                      "finishes that sentence after them, or, for a compound statement,", units)
+        for text in ("until", "lower-case", "lower case"):
+            with self.subTest(text=text):
+                self.assertNotIn(text, units)
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED)
+
     def test_what_the_prompt_kept(self):
         """The PD5 lines and the scope line other tests hold the labeler to stay."""
         for needle in ("**Only definitions, theorems, equations and declarative statements about "
@@ -1357,8 +1388,11 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
                 self.assertTrue(line == "" or line.startswith("- **"), line)
 
 
-#: the rendered inventory prompt's ceiling in bytes, so its growth is a choice
-WORKER_MD_MAX_BYTES = 16_500
+#: the rendered inventory prompt's ceiling in bytes, so its growth is a choice: 16,159
+#: bytes with the fixes for faults 2, 3 and 5, and 16,748 with span-end rule 3's words
+#: (the Units rule, the end paragraph, the check's line on the words after a display and
+#: the gate's refusals), which raised it from 16,500
+WORKER_MD_MAX_BYTES = 17_000
 
 
 class TestThePilotsPromptFixes(unittest.TestCase):
@@ -1436,10 +1470,12 @@ class TestThePilotsPromptFixes(unittest.TestCase):
                       "and the passage before it ends with `until`.", flat)
         self.assertIn("- No context sentence is a `formal_math` passage of its own, and "
                       "`prominence: subject` is on at most one passage", flat)
-        self.assertEqual(check.count("\n- "), 3)
-        # the words after a display are span-end rule 3's, which the planner does not write yet
-        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT)
-        self.assertNotIn("after a display", flat)
+        self.assertEqual(check.count("\n- "), 4)
+        # the words after a display are span-end rule 3's, which the planner writes from the
+        # flip of inv-pilot-1's fixes on
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED)
+        self.assertIn("- No passage starts inside a sentence except where you cut it: the "
+                      "words after a display or a footnote marker are their sentence's.", flat)
         # the check restates rules and adds none: the labeler does not carry it
         self.assertNotIn("check the cut", LABELER)
 

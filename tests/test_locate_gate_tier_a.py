@@ -201,7 +201,10 @@ class TestTheAstralLayer(tvl.GateTestCase):
         (source / "paragraphs.json").write_text(json.dumps(self.paragraphs), encoding="utf-8")
         self.fx.layer_sha = _sha(self.layer.encode("utf-8"))
         self.fx.gate["sources"][SID]["layer_sha256"] = self.fx.layer_sha
-        self.fx.gate["span_end_rule"] = vocab.SPAN_END_RULE
+        # the end check alone (span-end rule 2 with no rule 10, a pair the gate admits):
+        # span-end rule 3 binds only beside statement-cut rule 2 (the flip of inv-pilot-1's
+        # fixes), and this test is of the code-point end, not of the cut
+        self.fx.gate["span_end_rule"] = vocab.SPAN_END_STATEMENT_CUT
         self.fx.write_gate()
         self.fx.manifest(TASK, dict(tvl.inventory_manifest_doc(self.fx), finders=[]))
         doc = {"passages": [{"quote": {"exact": self.QUOTE, "prefix": "", "suffix": ""}}]}
@@ -319,7 +322,9 @@ class TestTheSpanEndBindsTheRunsPlannedUnderIt(tvl.GateTestCase):
         the manifest, never end-checked, so the run gates as it did.
         """
         fx = tvl.Fixture(self, "locate")
-        fx.gate["span_end_rule"] = vocab.SPAN_END_RULE
+        # the key alone, as a gate.json of span-end rule 2 names it (rule 3 binds only
+        # beside statement-cut rule 2)
+        fx.gate["span_end_rule"] = vocab.SPAN_END_STATEMENT_CUT
         fx.write_gate()
         manifest = tvl.locate_manifest_doc(fx)
         manifest["passages"][0]["span"] = [tvl.LEAD_SPAN[0],

@@ -18,11 +18,12 @@ Every invocation is rendered from the run's own host paths, and the renderer
 
 The templates describe the versions the planner writes into every gate.json
 (docs/proposals/statement-cut.md section 7): the inventory's statement cut under
-span-end rule 2 (``vocab.SPAN_END_RULE``) and judgment rules 3
-(``vocab.JUDGMENT_RULES``).  The text they rendered for a plan made before the
+span-end rule 3 and statement-cut rule 2 (``vocab.SPAN_END_RULE`` and
+``vocab.STATEMENT_CUT_RULE``, the continued cut of inv-pilot-1's fixes) and judgment
+rules 3 (``vocab.JUDGMENT_RULES``).  The text they rendered for a plan made before the
 flip (the claim lists of judgment rules 2, version 1's end paragraph) sat behind
 two slots that no plan made since could render, and was removed with them; a
-change of either constant is a change to these templates.
+change of any of these constants is a change to these templates.
 """
 from __future__ import annotations
 

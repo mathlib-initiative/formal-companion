@@ -3,9 +3,11 @@
 **Status: specification, 2026-10-21, built and flipped. Built: the shared names of §6.1
 (constants, keys, prompt slots and the tests that pin them), the four packages of §6.2 (cut,
 gate, fixes and carry), merged, the carry package's `scripts/bench/gold.py` share after the
-fixes package, and the flip (§7), but for what §9 lists as not built. From the flip the planner
-writes the new versions into every run it plans and refuses a run of the earlier flow; every run
-planned before it is gated, tallied and exported as before (§7's proof). Commands and paths
+fixes package, and the flip (§7), but for what §9 lists as not built; then inv-pilot-1's fixes
+(the continued cut: §2.2, §3.1–3.4) and their own flip (§7). From the flip the planner writes the
+new versions into every run it plans and refuses a run of the earlier flow, and from the second
+it writes span-end rule 3 and statement-cut rule 2; every run planned before either is gated,
+tallied and exported as before (§7's proof). Commands and paths
 written in *italics* are not implemented.**
 
 This document turns the maintainer's answers of 2026-10-21 on statement-level extraction into
@@ -225,16 +227,16 @@ compute it and put it on the claim as `relation`; no document writes it.
 | key | where it is written | what it binds | versions |
 |---|---|---|---|
 | `judgment_rules` | gate.json, every mode (as today) | rule 9 of locate and challenge documents; the bench holds gold to it | 1 R1–R7; 2 PD5–PD9; **3** the cut: J1–J4, the challenge rules of §1.4, A1–A3's gate rules |
-| `span_end_rule` | gate.json, every mode (as today) | rule 2's end check of an inventory passage | 1 the end of `until`, else the paragraph; **2** the end of `until`, else the earlier of the extent and the next passage's start (§3.2); 3 the same with the continued extent (§3.1–3.2) |
-| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | **1**; 2 rule 10 (b) against the loose continued bound, (h) at most one subject, the receipt's further counts (§3.3) |
+| `span_end_rule` | gate.json, every mode (as today) | rule 2's end check of an inventory passage | 1 the end of `until`, else the paragraph; 2 the end of `until`, else the earlier of the extent and the next passage's start (§3.2); **3** the same with the continued extent (§3.1–3.2) |
+| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | 1; **2** rule 10 (b) against the loose continued bound, (h) at most one subject, the receipt's further counts (§3.3) |
 | `status_rule` | a locate run's `run.yaml` (`locate.status_rule`); its record set's seal (new) | `derive_status`, the outcomes' owed hunt, the record-set format | 1 decision D1 (absent means 1); **2** the bundle's relation, the owed hunt, `cf-locate-recordset/2` |
 
-`cf plan-locate` writes all four from the flip on (`vocab.JUDGMENT_RULES` and
-`vocab.SPAN_END_RULE` are `RULES_STATEMENT_CUT` and `SPAN_END_STATEMENT_CUT`;
-`STATEMENT_CUT_RULE` and `STATUS_RULE` are written beside them), the versions in bold.
-The gate and `passage_ids.py` know `span_end_rule` 3 and `statement_cut_rule` 2, the
-continued cut of inv-pilot-1's fixes (`vocab.SPAN_END_CONTINUED`,
-`STATEMENT_CUT_CONTINUED`), before the planner writes them. Each binds a run only when its
+`cf plan-locate` writes all four from the flip on (`vocab.JUDGMENT_RULES` is
+`RULES_STATEMENT_CUT`; `SPAN_END_RULE`, `STATEMENT_CUT_RULE` and `STATUS_RULE` are written
+beside it), the versions in bold: `span_end_rule` 2 and `statement_cut_rule` 1 from the flip,
+and `span_end_rule` 3 and `statement_cut_rule` 2, the continued cut of inv-pilot-1's fixes
+(`vocab.SPAN_END_CONTINUED`, `STATEMENT_CUT_CONTINUED`), from the flip of those fixes (§7),
+which the gate and `passage_ids.py` knew a commit before. Each binds a run only when its
 own gate.json or run.yaml names it, so a re-gate, a re-tally and a re-export of a run planned
 before the flip are what they were.
 
@@ -455,7 +457,8 @@ paragraph's end over a later passage of the same paragraph.
 with the continued extent (§3.1) in place of the extent: a passage that gives no `until` runs on
 over the paragraph that finishes its sentence after its display, and the next passage's start,
 less its separator, still ends it first. `passage_ids.py` reads it from the gate.json beside it
-like rule 2; it reads only beside statement-cut rule 2 (§2.2).
+like rule 2; it reads only beside statement-cut rule 2 (§2.2), and the planner writes it from the
+flip of inv-pilot-1's fixes on (§7).
 
 ### 3.3 Gate rule 10, the statement cut (`statement_cut_rule` 1)
 
@@ -486,8 +489,8 @@ whose alttext ends with `.` or `?`, by `formula_stop`, is one too, a formula's `
 factorial, and a block that starts right after one stands in for the whitespace), displays as
 the `math` blocks inside it. It reports them.
 
-**Statement-cut rule 2** (`vocab.STATEMENT_CUT_CONTINUED`; it reads span-end rule 3, §2.2) is
-rule 1 with three changes, from inv-pilot-1's faults and the maintainer's readings of 2026-10-21:
+**Statement-cut rule 2** (`vocab.STATEMENT_CUT_CONTINUED`; it reads span-end rule 3, §2.2, and
+the planner writes it from the flip of inv-pilot-1's fixes on, §7) is rule 1 with three changes, from inv-pilot-1's faults and the maintainer's readings of 2026-10-21:
 
 - **(b)** reads the loose extent (§3.1, reading K1) in place of the extent, so an `until` that
   keeps the words finishing a sentence after its display is admitted whether or not the gate
@@ -520,7 +523,12 @@ and in the labeler's inventory mode, `workflows/locate-label.workflow.js`, in th
    lemmas. Otherwise cut it: a definition and a theorem about it; a fact and the reason the text
    gives for it; two cases in two sentences.
 2. **Units.** A passage is one or more whole units: a sentence or one of its independent
-   clauses, with the displays that sentence introduces; or a list item.
+   clauses, with the displays that sentence introduces; or a list item. It leaves its paragraph
+   only inside a theorem box, into the displays its last sentence introduces and the paragraph
+   that finishes that sentence after them (the continuation, §3.1: span-end rule 3 and
+   statement-cut rule 2, written from the flip of inv-pilot-1's fixes, §7), or over the items of
+   one list of a compound statement. The words say what the continuation means, not how the
+   gate finds it, and name no `until`, which the labeler does not give.
 3. **Displays** are never cut and belong to the sentence that introduces them. An equation chain
    (a = b = c) is one statement, its end-to-end equation, and its middle terms are steps. A
    display of several separate equations is one compound statement, shape `equations`.
@@ -578,10 +586,15 @@ and in the labeler's inventory mode, `workflows/locate-label.workflow.js`, in th
 none, so the labeler does not carry it): before the gate, the worker reads each `formal_math`
 passage again at rule 4's connectives and at each sentence after its first, at PD9's reasons
 (after a leading "Since X," that PD9 leaves out, Y starts at its own first word and the passage
-before it ends with `until`, reading 3), and for context sentences and the subject. The check's
-line on the words after a display describes span-end rule 3, so it joins the prompt at the flip
-(§7), with the Units rule's words for it. The skip paragraph says a skip never drops a statement
-no passage keeps, a proof, a derivation or a worked example.
+before it ends with `until`, reading 3), at the words after a display or a footnote marker,
+which are their sentence's and start no passage, and for context sentences and the subject.
+The line on the words after a display describes span-end rule 3, so it joined the prompt at the
+flip of inv-pilot-1's fixes (§7), with the Units rule's words for it and the end paragraph's: a
+passage runs on over the paragraph that finishes its sentence after its display, gives `until`
+where narration follows in that paragraph, and, where the tool's end stops before those words (a
+display the gate cannot see, which rule 10 (b)'s loose bound still admits, reading K1), gives
+`until` at the sentence's last word and never skips them. The skip paragraph says a skip never
+drops a statement no passage keeps, a proof, a derivation or a worked example.
 
 ### 3.5 Which rule is mechanical
 
@@ -887,6 +900,31 @@ did before the flip (`tests/_locate_fixtures.before_the_flip`), since a run plan
 new versions and refuses that flow. The locate and challenge prompts' rules-2 text and the
 inventory prompt's version-1 end paragraph, which no plan made since the flip could render, were
 removed after it with their slots (§9).
+
+**The flip of inv-pilot-1's fixes** is one commit after the three that built them (the
+continued extent as a library, §3.1; the versions the gate and `passage_ids.py` know, §2.2,
+§3.2–3.3; the prompt words for faults 2, 3 and 5, §3.4): `vocab.SPAN_END_RULE =
+SPAN_END_CONTINUED` and `vocab.STATEMENT_CUT_RULE = STATEMENT_CUT_CONTINUED`, and the gate's
+inlined copies, so the planner writes `judgment_rules` 3, `span_end_rule` 3 and
+`statement_cut_rule` 2 into every gate.json it plans, a pair the gate reads together
+(`STATEMENT_CUT_SPAN_END`). The words for span-end rule 3 join the inventory prompt with it, so
+no commit renders a prompt that asks for what its own gate refuses: the Units rule's
+continuation, in the prompt, `references/vocabulary.md` §1.11 and the labeler's inventory mode
+(§3.4 rule 2: what it means, no heuristic and no `until`); the end paragraph's (a passage runs on
+over the paragraph that finishes its sentence after its display, gives `until` where narration
+follows in that paragraph, and, where the tool's end stops before those words, gives `until` at
+the sentence's last word and never skips them, which rule 10 (b)'s loose bound admits, reading
+K1); the worker's check's line on the words after a display; and the gate's refusals, which now
+name two passages marked `subject` and say the gate counts each passage's sentences, displays
+and connectives. The labeler stays `locate-label/6` (reading 8). The e2e driver's runs name
+(3, 3, 2), its inventories are ended by rule 3, its receipt check reads statement-cut rule 2's
+counts, and its bad inventory documents include two formal subjects (rule 10 (h)); its recorded
+pages hold no continuation (reading 9), so their layers and the figures pinned on them stay. A
+test that plans as the planner did between the two flips uses
+`tests/_locate_fixtures.before_the_continuation`. A run planned before — inv-pilot-1 names
+(2, 1) — keeps the versions its gate.json names, and a locate run planned now over its inventory
+is admitted (§2.2), since locate reads only the inventory's conjuncts. Its proof is the one
+below, over the operator's workspace on the base and on the head.
 
 **What stays as it was**, and how each package proves it before it merges (and the flip once
 more):

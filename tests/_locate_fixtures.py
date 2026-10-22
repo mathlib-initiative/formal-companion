@@ -129,6 +129,26 @@ def before_the_flip():
     return mock.patch.multiple(vocab, **BEFORE_THE_FLIP)
 
 
+#: what the planner wrote from the statement cut's flip to the flip of inv-pilot-1's fixes
+#: (docs/proposals/statement-cut.md section 7): span-end rule 2 and statement-cut rule 1,
+#: the pair inv-pilot-1 names, beside judgment rules 3
+BEFORE_THE_CONTINUATION = {"SPAN_END_RULE": vocab.SPAN_END_STATEMENT_CUT,
+                           "STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_FIRST}
+
+
+def before_the_continuation():
+    """Plan as the planner did before the flip of inv-pilot-1's fixes: (2, 1), not (3, 2).
+
+    A context manager over ``cflib.vocab`` (:data:`BEFORE_THE_CONTINUATION`), for a test
+    of how a run planned under statement-cut rule 1 is gated or re-planned: its gate.json
+    names the pair a run of the statement cut's first version names.  Its prompts are the
+    continued cut's, as :func:`before_the_flip`'s are the statement cut's.
+    """
+    from unittest import mock
+
+    return mock.patch.multiple(vocab, **BEFORE_THE_CONTINUATION)
+
+
 def cf(*argv: str) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):

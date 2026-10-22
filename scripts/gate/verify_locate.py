@@ -133,9 +133,10 @@ references/locate-documents.md sections 2-4 and 9):
    and a prominence sample's conditional records are judged exactly when the
    document overturns their passage to ``subject`` or ``central``;
 10. the statement cut (docs/proposals/statement-cut.md section 3.3), only for a
-   run whose ``gate.json`` names ``statement_cut_rule`` (with span-end rule 2,
-   which ends a passage without ``until`` at the earlier of its extent and the
-   next passage's start, less the separator before it): the spans of an
+   run whose ``gate.json`` names ``statement_cut_rule`` (with the span-end rule
+   it reads, 2 or 3, which ends a passage without ``until`` at the earlier of its
+   extent, or its continued extent, and the next passage's start, less the
+   separator before it): the spans of an
    inventory are disjoint, one text one passage; a span runs from one block
    into the next only inside a theorem box, into the displays its last
    sentence introduces or over the items of one list (a compound statement),
@@ -338,8 +339,10 @@ RULES_PD5_PD9 = 2
 #: which ``cf plan-locate`` does from the proposal's flip on.  Span-end rule 3 and
 #: statement-cut rule 2 (cflib.vocab.SPAN_END_CONTINUED, STATEMENT_CUT_CONTINUED;
 #: inv-pilot-1's fixes) are the continued cut: the end and rule 10 (b) read the paragraph
-#: that finishes a sentence after its display, and rule 10 adds (h) and further counts.
-#: A statement-cut rule reads exactly one span-end rule (STATEMENT_CUT_SPAN_END)
+#: that finishes a sentence after its display, and rule 10 adds (h) and further counts;
+#: ``cf plan-locate`` writes them from the flip of those fixes on (the proposal's
+#: section 7).  A statement-cut rule reads exactly one span-end rule
+#: (STATEMENT_CUT_SPAN_END)
 RULES_STATEMENT_CUT = 3
 SPAN_END_STATEMENT_CUT = 2
 SPAN_END_CONTINUED = 3
@@ -347,14 +350,15 @@ STATEMENT_CUT_FIRST = 1
 STATEMENT_CUT_CONTINUED = 2
 STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
                           STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED}
-STATEMENT_CUT_RULE = STATEMENT_CUT_FIRST
-#: the versions the planner writes (cflib.vocab.JUDGMENT_RULES and SPAN_END_RULE, the
-#: statement cut's from its flip on): a gate.json names the version its run was planned
+STATEMENT_CUT_RULE = STATEMENT_CUT_CONTINUED
+#: the versions the planner writes (cflib.vocab.JUDGMENT_RULES, SPAN_END_RULE and
+#: STATEMENT_CUT_RULE: the statement cut's from its flip on, the continued cut's from
+#: the flip of inv-pilot-1's fixes on): a gate.json names the version its run was planned
 #: under as ``judgment_rules`` and ``span_end_rule``, and one without ``span_end_rule``
 #: (a run planned before it, whose inventories ``passage_ids.py`` wrote without
 #: ``until``) is gated without the end check
 JUDGMENT_RULES = RULES_STATEMENT_CUT
-SPAN_END_RULE = SPAN_END_STATEMENT_CUT
+SPAN_END_RULE = SPAN_END_CONTINUED
 #: the highest version of each rule this gate can hold a run to: a gate.json naming a
 #: higher one was planned by a newer planner than this gate directory (exit 3)
 KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_STATEMENT_CUT)

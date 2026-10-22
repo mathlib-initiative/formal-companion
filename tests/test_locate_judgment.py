@@ -2248,9 +2248,12 @@ class TestThePromptsAreTheFlipsOnly(unittest.TestCase):
                  "locate-reviewer-system.md.tmpl")
 
     def test_the_templates_describe_the_versions_the_planner_writes(self):
-        # a change of either constant is a change to the templates (locate.prompts)
+        # a change of any of these constants is a change to the templates (locate.prompts):
+        # the inventory prompt describes span-end rule 3 and statement-cut rule 2 from the
+        # flip of inv-pilot-1's fixes on
         self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
-        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT)
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED)
+        self.assertEqual(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_CONTINUED)
         from locate import plan as lplan
         source = Path(lplan.__file__).read_text(encoding="utf-8")
         self.assertIn('"judgment_rules": vocab.JUDGMENT_RULES,', source)
