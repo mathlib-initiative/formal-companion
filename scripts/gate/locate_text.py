@@ -26,11 +26,13 @@ file into the gate directory together with the vendored packages:
 4. **The end** of a passage: :func:`passage_end`, the rule ``passage_ids.py``
    fills a span with and gate rule 2 re-computes (references/locate-documents.md
    section 2), so the extent a reader highlights is the tool's and never a
-   hand-counted offset.  It has two versions, the ``span_end_rule`` a run's
+   hand-counted offset.  It has three versions, the ``span_end_rule`` a run's
    ``gate.json`` names: version 1 ends a passage that gives no ``until`` at the
    end of its paragraph; version 2, the statement cut's
    (docs/proposals/statement-cut.md section 3.2), at the earlier of its
-   *extent* and the next passage's start, less the separator before it.
+   *extent* and the next passage's start, less the separator before it;
+   version 3 the same with the *continued* extent, which runs on over the
+   paragraph that finishes a sentence after its display.
 5. **The blocks** the statement cut reads (the same proposal, section 3.1):
    :class:`Blocks` over ``paragraphs.json`` and ``formulas.json`` gives each
    offset its outermost block, a block the next one, and the definitions the
@@ -42,9 +44,13 @@ file into the gate directory together with the vendored packages:
    ends, gates and counts as it did.  The same section defines the *continued*
    extent -- the paragraph that finishes a sentence after its display
    (:meth:`Blocks.continuation`), which ``chain`` and ``extent`` join only
-   when asked (``continued=True``) -- and the connectives inside a span
-   (:meth:`Blocks.cut_points`); no span-end or statement-cut version reads
-   either yet, so every end and every gate verdict is the one it was.
+   when asked (``continued=True``), and the looser bound gate rule 10 (b)
+   holds an end to under statement-cut rule 2 (``loose=True``: any sentence
+   that runs on into a paragraph that continues it, the display between
+   seen or not) -- and the connectives inside a span
+   (:meth:`Blocks.cut_points`).  Only span-end rule 3 and statement-cut rule
+   2 read them, so every end and every gate verdict of an earlier version is
+   the one it was.
 
 The vendored ``formal_companion_annotations.ids`` is imported from
 ``vendor/`` of the skill checkout, or from ``vendor/`` beside this file in a
@@ -364,9 +370,13 @@ def passage_end(layer: str, paragraphs: "Sequence[dict] | Blocks", start: int, e
       ``CUT_CONNECTIVES`` and a comma or semicolon), so a statement's span,
       and with it its ``passage_key``, is the same whether the next passage
       or an ``until`` at its last word ends it.
+    * **rule 3** (``SPAN_END_CONTINUED``, the same section) is rule 2 with the
+      *continued* extent (``continued=True``): the paragraph that finishes a
+      sentence after its display (:meth:`Blocks.continuation`) is the
+      sentence's, so "…such that [display] for all x." ends after "x.".
 
-    Neither ever ends before the end of the quote.  Rule 1 reads neither
-    ``next_start`` nor ``formulas``; rule 2 needs the source's ``formulas``
+    None ever ends before the end of the quote.  Rule 1 reads neither
+    ``next_start`` nor ``formulas``; rules 2 and 3 need the source's ``formulas``
     (``formulas.json``, or ``()`` for a source that has none), and
     ``paragraphs`` may be a :class:`Blocks` built once for the source.  An empty
     or null ``until`` is none; one that is not a string, or is not on the layer
@@ -385,7 +395,7 @@ def passage_end(layer: str, paragraphs: "Sequence[dict] | Blocks", start: int, e
                                        or next_start <= start):
             raise ValueError(f"next_start {next_start!r} is not a passage start after {start}")
         blocks = Blocks.of(layer, paragraphs, formulas)
-        stop = blocks.extent(start, compound=False)
+        stop = blocks.extent(start, compound=False, continued=rule >= SPAN_END_CONTINUED)
         stop = end if stop is None else stop
         if next_start is not None and next_start < stop:
             stop = blocks.separator_start(start, next_start)
@@ -405,9 +415,11 @@ def passage_end(layer: str, paragraphs: "Sequence[dict] | Blocks", start: int, e
 #: the span-end rules this file knows (``cflib.vocab.SPAN_END_RULE``'s versions; a
 #: test pins them): 1 ends a passage at its paragraph's end, 2 -- the statement cut's,
 #: ``cflib.vocab.SPAN_END_STATEMENT_CUT`` -- at the earlier of its extent and the next
-#: passage's start
+#: passage's start, and 3 -- ``cflib.vocab.SPAN_END_CONTINUED`` -- the same with the
+#: continued extent
 SPAN_END_STATEMENT_CUT = 2
-SPAN_END_RULES = (1, SPAN_END_STATEMENT_CUT)
+SPAN_END_CONTINUED = 3
+SPAN_END_RULES = (1, SPAN_END_STATEMENT_CUT, SPAN_END_CONTINUED)
 #: ``paragraphs.json``'s ``block`` names the cut reads (references/locate-documents.md
 #: section 7: ``sources.render_html`` writes them)
 BLOCK_THEOREM_BOX = "theorem_box"
@@ -530,9 +542,10 @@ class Block:
 
 class Blocks:
     """The blocks of one source, with its layer and formulas: the definitions of
-    docs/proposals/statement-cut.md section 3.1, which the end rule (version 2)
-    and gate rule 10 read, and the continued chain and the cut points the same
-    section defines, which no version reads yet.
+    docs/proposals/statement-cut.md section 3.1, which the end rule (versions 2
+    and 3) and gate rule 10 read, with the continued chain, the loose bound and
+    the cut points the same section defines, which only span-end rule 3 and
+    statement-cut rule 2 read.
 
     ``paragraphs`` is ``paragraphs.json``: an entry without a readable non-empty
     span is passed over, as :func:`paragraph_end` passes it over.  The table is
@@ -776,7 +789,38 @@ class Blocks:
             return None
         return following if self.continues(following) else None
 
-    def chain(self, block: Block, *, continued: bool = False) -> list[Block]:
+    def runs_on(self, block: Block) -> list[Block]:
+        """The looser continuation gate rule 10 (b) reads under statement-cut rule 2
+        (docs/proposals/statement-cut.md section 3.3, the maintainer's reading K1):
+        the blocks D's last sentence runs on over to the paragraph that finishes it,
+        else ``[]``.
+
+        D is no list item and no theorem box (each a unit) and introduces what
+        follows; then any ``dd`` or display blocks, each introducing what follows
+        in turn -- a display the gate sees, or an indented line it cannot read as
+        one (a ``texhtml`` display, a ``dd`` of text) -- and then a plain paragraph
+        that :meth:`continues`.  It needs no display the gate can see, and leaves
+        a container too, so it holds every :meth:`continuation` and more: a
+        bound that only ever admits a longer ``until``.  The default end never
+        reads it.
+        """
+        out: list[Block] = []
+        last = block
+        while True:
+            if "li" in last.kinds or last.theorem_box or not self.introduces(last):
+                return []
+            following = self.next(last)
+            if following is None:
+                return []
+            if set(following.kinds) == {CONTINUATION_BLOCK}:
+                return out + [following] if self.continues(following) else []
+            if "li" in following.kinds or not set(following.kinds) <= {"dd", BLOCK_MATH}:
+                return []
+            out.append(following)
+            last = following
+
+    def chain(self, block: Block, *, continued: bool = False,
+              loose: bool = False) -> list[Block]:
         """chain(B): B, then the display blocks its last sentence introduces.
 
         A list item (``li``) is a unit of its own, never a display a sentence
@@ -788,8 +832,11 @@ class Blocks:
         the chain's last block has a :meth:`continuation`, that paragraph and the
         displays its own last sentence introduces join too, so a sentence that
         goes on after its display is one sentence to its end, over as many
-        displays and continuations as it has.  Without it, the chain is the one
-        every span-end and statement-cut version so far reads.
+        displays and continuations as it has (span-end rule 3).  Without it, the
+        chain is the one span-end rules 1 and 2 and statement-cut rule 1 read.
+        ``loose`` (gate rule 10 (b) under statement-cut rule 2) joins what
+        :meth:`runs_on` names in place of the continuation, and implies
+        ``continued``.
         """
         out = [block]
         while True:
@@ -798,8 +845,14 @@ class Blocks:
                 if following is None or "li" in following.kinds or not self.is_display(following):
                     break
                 out.append(following)
-            if not continued or "li" in block.kinds:
+            if not (continued or loose) or "li" in block.kinds:
                 return out
+            if loose:
+                tail = self.runs_on(out[-1])
+                if not tail:
+                    return out
+                out.extend(tail)
+                continue
             tail = self.continuation(out[-1])
             if tail is None:
                 return out
@@ -817,8 +870,8 @@ class Blocks:
                 return out
             out.append(following)
 
-    def extent(self, start: int, *, compound: bool = False,
-               continued: bool = False) -> int | None:
+    def extent(self, start: int, *, compound: bool = False, continued: bool = False,
+               loose: bool = False) -> int | None:
         """extent(s, compound): the furthest a passage that starts at ``start`` may run.
 
         None when no block holds the start; a theorem box's end when the start's
@@ -829,7 +882,10 @@ class Blocks:
         extent*, which runs on over the paragraph that finishes a sentence after
         its display (an ``li`` L gets none; a ``dd`` run may continue).  Like
         the extent it is an upper bound, never a unit: a continuation that goes
-        on into further sentences is included to its end.
+        on into further sentences is included to its end.  ``loose`` reads the
+        loose chain (:meth:`runs_on`), the bound gate rule 10 (b) holds an end to
+        under statement-cut rule 2; it is never shorter than the continued
+        extent.
         """
         block = self.block_at(start)
         if block is None:
@@ -837,7 +893,42 @@ class Blocks:
         if block.theorem_box:
             return block.end
         last = self.list_run(block)[-1] if compound and block.list_kind else block
-        return self.chain(last, continued=continued)[-1].end
+        return self.chain(last, continued=continued, loose=loose)[-1].end
+
+    def continuations(self) -> list[tuple[Block, Block]]:
+        """``[(D, N)]``: every block no other holds whose :meth:`continuation` is N, in
+        layer order (the receipt's counts under statement-cut rule 2)."""
+        out = []
+        for block in self.top:
+            tail = self.continuation(block)
+            if tail is not None:
+                out.append((block, tail))
+        return out
+
+    def mid_sentence(self, start: int) -> bool:
+        """Does a passage that starts at ``start`` start inside a sentence?
+
+        Not at its block's first word, and the last character before it -- read
+        back past whitespace and commas or semicolons, a trailing formula by its
+        alttext (:meth:`last_character`) -- is no full stop.  "…a gadget, since
+        gadgets…" starts "since" inside one; "…spans. Then…" starts "Then" a
+        sentence of its own.
+        """
+        block = self.block_at(start)
+        if block is None:
+            return False
+        layer = self.layer
+        first = block.start
+        while first < block.end and _is_white(layer[first]):
+            first += 1
+        if start <= first:
+            return False
+        i = start
+        while i > block.start and self.formula_at(i - 1) is None and (
+                _is_white(layer[i - 1]) or layer[i - 1] in SEPARATOR_MARKS):
+            i -= 1
+        last, stops = self._last(block.start, i)
+        return bool(last) and not stops
 
     def separator_start(self, start: int, at: int) -> int:
         """Where the separator before ``at`` (the next passage's start) begins.
@@ -1015,10 +1106,11 @@ def _abbreviation(layer: str, start: int, stop: int) -> bool:
 
 
 def extent(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,
-           start: int, *, compound: bool = False, continued: bool = False) -> int | None:
+           start: int, *, compound: bool = False, continued: bool = False,
+           loose: bool = False) -> int | None:
     """:meth:`Blocks.extent` of one source: what gate rule 10 (b) holds an end to."""
     return Blocks.of(layer, paragraphs, formulas).extent(start, compound=compound,
-                                                         continued=continued)
+                                                         continued=continued, loose=loose)
 
 
 def units(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,

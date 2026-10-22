@@ -68,6 +68,10 @@ BOX = f"{BOX_A} {BOX_B}"
 P4 = "It is unique."
 HISTORY = "History The lemma was first stated in a synthetic note about widgets."
 LAYER = "\n".join([TITLE, P1, P2, D1, P3, L1, L2, BOX, P4, HISTORY])
+#: the same layer with P3 the words that finish P2's sentence after its display (a
+#: lower-case first word of the same length, so every span and formula is the same)
+P3_WHEN = "when" + P3[len("Here"):]
+LAYER_WHEN = LAYER.replace(P3, P3_WHEN, 1)
 
 
 def at(text: str, after: int = 0) -> list[int]:
@@ -126,17 +130,18 @@ GOOD = [
 ]
 
 
-def head_ids(starts: list[int]) -> dict[int, tuple[str, int]]:
-    hm = lt.HeadMap(LAYER, FORMULAS)
+def head_ids(starts: list[int], layer: str = LAYER) -> dict[int, tuple[str, int]]:
+    hm = lt.HeadMap(layer, FORMULAS)
     return {start: (f"In-text #{h}", w) for start, (_s, h, w)
             in zip(starts, lt.assign_ids(hm.head, [hm.to_head(s) for s in starts]))}
 
 
-def passage(name: str, span, kind, prominence, scope, until, extra, ids) -> dict:
+def passage(name: str, span, kind, prominence, scope, until, extra, ids,
+            layer: str = LAYER) -> dict:
     item, words = ids[span[0]]
     row = {"item": item, "head_words": words, "span": list(span),
-           "quote": {"exact": " ".join(LAYER[span[0]:span[1]].split(" ")[:4]),
-                     "prefix": LAYER[max(0, span[0] - 12):span[0]], "suffix": ""},
+           "quote": {"exact": " ".join(layer[span[0]:span[1]].split(" ")[:4]),
+                     "prefix": layer[max(0, span[0] - 12):span[0]], "suffix": ""},
            "section": [], "fragment": None, "passage_kind": kind, "prominence": prominence,
            "scope": scope, "statement": f"a synthetic restatement of the {name.lower()} passage",
            "concept": None, "finder": "theorem_box" if name == "BOX" else "model",
@@ -146,10 +151,10 @@ def passage(name: str, span, kind, prominence, scope, until, extra, ids) -> dict
     return row
 
 
-def cut_body(rows=None) -> dict:
+def cut_body(rows=None, layer: str = LAYER) -> dict:
     rows = GOOD if rows is None else rows
-    ids = head_ids([r[1][0] for r in rows])
-    return {"passages": [passage(*r, ids) for r in rows],
+    ids = head_ids([r[1][0] for r in rows], layer)
+    return {"passages": [passage(*r, ids, layer) for r in rows],
             "skips": [{"span": SPANS["HISTORY"], "reason": "history"}], "notes": ""}
 
 
@@ -169,13 +174,13 @@ def replace(name: str, **changes) -> list:
 class CutFixture(G.Fixture):
     """test_verify_locate's gate fixture over the Widget theory layer above."""
 
-    def __init__(self, case, mode="locate-inventory", **kwargs):
+    def __init__(self, case, mode="locate-inventory", layer: str = LAYER, **kwargs):
         super().__init__(case, mode, curated=False, **kwargs)
         sdir = Path(self.gate["sourceset"]["sources_dir"]) / G.SID
-        (sdir / "layer.txt").write_text(LAYER, encoding="utf-8")
+        (sdir / "layer.txt").write_text(layer, encoding="utf-8")
         (sdir / "formulas.json").write_text(json.dumps(FORMULAS), encoding="utf-8")
         (sdir / "paragraphs.json").write_text(json.dumps(PARAGRAPHS), encoding="utf-8")
-        self.layer_sha = hashlib.sha256(LAYER.encode("utf-8")).hexdigest()
+        self.layer_sha = hashlib.sha256(layer.encode("utf-8")).hexdigest()
         self.gate["sources"][G.SID]["layer_sha256"] = self.layer_sha
         self.write_gate()
 
@@ -186,19 +191,24 @@ class CutFixture(G.Fixture):
         self.write_gate()
 
 
-#: the version keys of a run planned under the statement cut (every run planned from its
-#: flip on), and of one planned before the flip (span-end rule 1, no rule 10)
-CUT = {"span_end_rule": vocab.SPAN_END_STATEMENT_CUT,
-       "statement_cut_rule": vocab.STATEMENT_CUT_RULE}
+#: the version keys of a run planned under the statement cut's first versions (every run
+#: planned from its flip on so far: inv-pilot-1's), of one planned under the continued
+#: cut (span-end rule 3, statement-cut rule 2), and of one planned before the flip
+#: (span-end rule 1, no rule 10).  Spelled out, so a test of one version never moves
+#: with what the planner writes
+CUT_1 = {"span_end_rule": 2, "statement_cut_rule": 1}
+CUT_2 = {"span_end_rule": 3, "statement_cut_rule": 2}
 BEFORE = {"span_end_rule": 1}
 
 
 class InventoryCase(G.GateTestCase):
 
     TASK = "t-inv-0001"
+    #: the layer the case's source carries
+    LAYER = LAYER
 
     def setUp(self):
-        self.fx = CutFixture(self)
+        self.fx = CutFixture(self, layer=self.LAYER)
         self.fx.manifest(self.TASK, {
             "source_id": G.SID, "source_sha": G.HTML_SHA, "layer_sha256": self.fx.layer_sha,
             "renderer": "web-html/1",
@@ -214,7 +224,7 @@ class InventoryCase(G.GateTestCase):
 
     def assertCutOnly(self, body: dict, needle: str, rule: int = 10):
         """Refused under the statement cut, and passed as a run planned before it."""
-        self.assertRule(self.gate(body, CUT), rule, needle)
+        self.assertRule(self.gate(body, CUT_1), rule, needle)
         self.assertOk(self.gate(body, BEFORE))
 
 
@@ -270,7 +280,7 @@ class TestTheFixturesBlocks(unittest.TestCase):
 class TestTheVersionKeys(InventoryCase):
 
     def test_the_gate_knows_the_cut_and_binds_only_what_gate_json_names(self):
-        self.fx.versions(**CUT)
+        self.fx.versions(**CUT_1)
         cfg = self.fx.gate_cfg()
         self.assertEqual((cfg.span_end_rule, cfg.statement_cut_rule), (2, 1))
         self.fx.versions()
@@ -295,11 +305,40 @@ class TestTheVersionKeys(InventoryCase):
 
     def test_the_known_versions_follow_cflib(self):
         # the inlined names themselves are pinned in test_verify_locate
-        self.assertEqual(vl.KNOWN_STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_RULE)
+        self.assertEqual(vl.KNOWN_STATEMENT_CUT_RULE,
+                         max(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_CONTINUED))
         self.assertEqual(vl.KNOWN_JUDGMENT_RULES,
                          max(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT))
         self.assertEqual(vl.KNOWN_SPAN_END_RULE,
-                         max(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT))
+                         max(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED))
+        # the gate never knows a span-end rule the end it recomputes would refuse
+        self.assertEqual(vl.KNOWN_SPAN_END_RULE, max(lt.SPAN_END_RULES))
+        self.assertEqual(sorted(vl.STATEMENT_CUT_SPAN_END),
+                         list(range(1, vl.KNOWN_STATEMENT_CUT_RULE + 1)))
+
+    def test_each_statement_cut_rule_reads_one_span_end_rule(self):
+        """The pairs runs planned so far name stay admitted; every other is exit 3."""
+        for keys in ({}, {"span_end_rule": 1}, {"span_end_rule": 2}, CUT_1, CUT_2,
+                     {"judgment_rules": 3, **CUT_2}):
+            self.fx.versions(**keys)
+            with self.subTest(keys=keys):
+                cfg = self.fx.gate_cfg()
+                self.assertEqual((cfg.span_end_rule, cfg.statement_cut_rule),
+                                 (keys.get("span_end_rule", 0),
+                                  keys.get("statement_cut_rule", 0)))
+        for end, cut, needle in (
+                (3, 1, "statement-cut rule 1 reads span-end rule 2"),
+                (2, 2, "statement-cut rule 2 reads span-end rule 3"),
+                (1, 2, "statement-cut rule 2 reads span-end rule 3"),
+                (None, 2, "statement-cut rule 2 reads span-end rule 3"),
+                (3, None, "span_end_rule 3 without statement_cut_rule 2"),
+                (None, 1, "needs span-end rule 2"),
+                (2, vl.KNOWN_STATEMENT_CUT_RULE + 1, "this gate knows"),
+                (vl.KNOWN_SPAN_END_RULE + 1, 2, "this gate knows")):
+            self.fx.versions(span_end_rule=end, statement_cut_rule=cut)
+            with self.subTest(end=end, cut=cut), self.assertRaises(vl.GateBroken) as caught:
+                self.fx.gate_cfg()
+            self.assertIn(needle, str(caught.exception))
 
 
 # --------------------------------------------------------------------------- #
@@ -309,26 +348,26 @@ class TestTheVersionKeys(InventoryCase):
 class TestTheEndRule2(InventoryCase):
 
     def test_the_good_cut_passes_both_ways(self):
-        self.assertOk(self.gate(cut_body(), CUT))
+        self.assertOk(self.gate(cut_body(), CUT_1))
         self.assertOk(self.gate(cut_body(), BEFORE))
         self.assertOk(self.gate(cut_body(), {}))
 
     def test_a_passage_without_until_ends_at_the_next_ones_start(self):
         # ... less the separator before that start, which is in neither passage
         body = cut_body(replace("DEF1", span=SPANS["DEF1"], until=None))
-        self.assertOk(self.gate(body, CUT))
+        self.assertOk(self.gate(body, CUT_1))
         result = self.gate(body, BEFORE)           # rule 1 ends it at the paragraph's end
         self.assertRule(result, 2, "the end of the paragraph it starts in")
         glued = cut_body(replace("DEF1", span=[SPANS["DEF1"][0], SPANS["THM1"][0]], until=None))
-        self.assertRule(self.gate(glued, CUT), 2, "the separator before the next passage")
+        self.assertRule(self.gate(glued, CUT_1), 2, "the separator before the next passage")
 
     def test_a_passage_without_until_runs_into_the_display_it_introduces(self):
         body = cut_body(replace("P2", until=None))
-        self.assertOk(self.gate(body, CUT))
+        self.assertOk(self.gate(body, CUT_1))
         self.assertRule(self.gate(body, BEFORE), 2, "the end of the paragraph it starts in")
         short = cut_body(replace("P2", span=SPANS["P2"], until=None))
         short["skips"].append({"span": SPANS["D1"], "reason": "a display kept by no passage"})
-        self.assertRule(self.gate(short, CUT), 2, "the displays its last sentence introduces")
+        self.assertRule(self.gate(short, CUT_1), 2, "the displays its last sentence introduces")
         self.assertOk(self.gate(short, BEFORE))
 
     def test_the_paragraph_end_over_the_next_passage_is_refused_under_the_cut(self):
@@ -337,7 +376,7 @@ class TestTheEndRule2(InventoryCase):
                             if p["span"][0] != SPANS["THM1"][0]]
         self.assertOk(self.gate(body, BEFORE))
         body = cut_body(replace("DEF1", span=SPANS["P1"], until=None))
-        result = self.gate(body, CUT)
+        result = self.gate(body, CUT_1)
         self.assertRule(result, 2, "the separator before the next passage")
         self.assertRule(result, 10, "shares text with")
 
@@ -419,7 +458,7 @@ class TestRule10(InventoryCase):
         self.assertCutOnly(cut_body(rows), "the same text as")
 
     def test_the_counts_are_reported_and_refuse_nothing(self):
-        result = self.gate(cut_body(), CUT)
+        result = self.gate(cut_body(), CUT_1)
         self.assertOk(result)
         self.assertEqual(self.stats(result)["cut"], {
             "passages": 7, "formal": 5, "compound": 2, "conjuncts": 4,
@@ -428,7 +467,7 @@ class TestRule10(InventoryCase):
         self.assertNotIn("cut", self.stats(self.gate(cut_body(), BEFORE)))
 
     def test_the_receipts_cut_block(self):
-        result = self.gate(cut_body(), CUT)
+        result = self.gate(cut_body(), CUT_1)
         block = gate_corpus.cut_summary(result["stats"])
         self.assertEqual(block["formal"], 5)
         self.assertEqual(block["by_source"][G.SID]["by_shape"],
@@ -443,13 +482,196 @@ class TestRule10(InventoryCase):
     def test_the_harvest_re_gate_carries_the_block_under_the_cut_only(self):
         corpus = self.fx.root / "corpus"
         self.fx.document(self.TASK, cut_body(), directory=corpus)
-        for keys, present in ((CUT, True), (BEFORE, False)):
+        for keys, present in ((CUT_1, True), (BEFORE, False)):
             self.fx.versions(**keys)
             out = gate_corpus._gate_locate_with(vl, corpus, self.fx.root / "gate" / "gate.json",
                                                 {"from": "checkout"})
             with self.subTest(keys=keys):
                 self.assertTrue(out["ok"], out["problems"])
                 self.assertEqual("cut" in out, present)
+
+
+# --------------------------------------------------------------------------- #
+# the continued cut: span-end rule 3 and statement-cut rule 2 (inv-pilot-1's fixes)
+# --------------------------------------------------------------------------- #
+
+def without(*names: str, rows=None) -> list:
+    return [r for r in (GOOD if rows is None else rows) if r[0] not in names]
+
+
+def changed(name: str, rows=None, **changes) -> list:
+    """``rows`` (GOOD) with one passage's fields replaced, as :func:`replace` does."""
+    keys = ("name", "span", "kind", "prominence", "scope", "until", "extra")
+    out = []
+    for row in GOOD if rows is None else rows:
+        if row[0] == name:
+            values = dict(zip(keys, row))
+            values.update(changes)
+            row = tuple(values[k] for k in keys)
+        out.append(row)
+    return out
+
+
+#: P2 over its display and P3, the paragraph that (on LAYER_WHEN) finishes its sentence
+P2_ON = [SPANS["P2"][0], SPANS["P3"][1]]
+
+
+class TestTheContinuedCut(InventoryCase):
+    """On LAYER_WHEN, P3 ("when n is the order of the widget.") finishes the sentence P2
+    and its display leave open: span-end rule 3 ends P2 after it, and rule 10 (b) admits
+    it under statement-cut rule 2 only."""
+
+    LAYER = LAYER_WHEN
+
+    def body(self, rows) -> dict:
+        return cut_body(rows, layer=LAYER_WHEN)
+
+    def test_the_good_cut_passes_every_way(self):
+        for keys in (CUT_2, CUT_1, BEFORE, {}):
+            with self.subTest(keys=keys):
+                self.assertOk(self.gate(self.body(GOOD), keys))
+
+    def test_rule_10_b_admits_the_words_after_the_display_under_rule_2_only(self):
+        body = self.body(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertOk(self.gate(body, CUT_2))
+        self.assertRule(self.gate(body, CUT_1), 10, "only inside a theorem box")
+        self.assertOk(self.gate(body, BEFORE))
+
+    def test_past_the_continuation_is_refused_in_rule_2_s_words(self):
+        rows = without("P3", "LIST")
+        rows = changed("P2", rows=rows, span=[SPANS["P2"][0], SPANS["L2"][1]],
+                       until="need not exist.")
+        result = self.gate(self.body(rows), CUT_2)
+        self.assertRule(result, 10, "the displays its last sentence introduces and the "
+                                    "paragraph that finishes that sentence after them")
+        # rule 1's words are the ones they were
+        result = self.gate(self.body(rows), CUT_1)
+        self.assertRule(result, 10, "into the displays its last sentence introduces, or -- a "
+                                    "compound statement")
+
+    def test_span_end_rule_3_ends_a_passage_after_the_words(self):
+        body = self.body(changed("P2", rows=without("P3"), span=P2_ON, until=None))
+        self.assertOk(self.gate(body, CUT_2))
+        self.assertRule(self.gate(body, CUT_1), 2, "the displays its last sentence introduces")
+        short = self.body(changed("P2", until=None))
+        short["passages"] = [p for p in short["passages"]
+                             if p["span"][0] != SPANS["P3"][0]]
+        short["skips"].append({"span": SPANS["P3"], "reason": "the end of a sentence"})
+        self.assertRule(self.gate(short, CUT_2), 2, "and of the paragraph that finishes that "
+                                                    "sentence after them")
+        self.assertOk(self.gate(short, CUT_1))
+        # the next passage's start still ends it first, less the separator
+        self.assertOk(self.gate(self.body(changed("P2", until=None)), CUT_2))
+
+    def test_the_counts(self):
+        def cut(rows, skips=()):
+            body = self.body(rows)
+            body["skips"].extend({"span": list(s), "reason": "x"} for s in skips)
+            result = self.gate(body, CUT_2)
+            self.assertOk(result)
+            return self.stats(result)["cut"]
+
+        extra = ("subjects", "continued", "continuation_starts", "continuations_unheld",
+                 "connective_points", "formal_with_connective", "connective_starts")
+        got = cut(GOOD)
+        # rule 1's counts are the ones they were, and the rest follow
+        self.assertEqual({k: got[k] for k in got if k not in extra + ("by_connective",)}, {
+            "passages": 7, "formal": 5, "compound": 2, "conjuncts": 4,
+            "by_shape": {"cases": 1, "existence_uniqueness": 1},
+            "sentences": 7, "displays": 1, "multi_sentence": 1, "multi_display": 0})
+        self.assertEqual({k: got[k] for k in extra + ("by_connective",)}, {
+            "subjects": 0, "continued": 0, "continuation_starts": 1, "continuations_unheld": 0,
+            "connective_points": 1, "formal_with_connective": 1, "connective_starts": 0,
+            "by_connective": {";": 1}})
+        got = cut(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertEqual((got["continued"], got["continuation_starts"],
+                          got["continuations_unheld"]), (1, 0, 0))
+        got = cut(without("P3"), skips=[SPANS["P3"]])
+        self.assertEqual((got["continued"], got["continuation_starts"],
+                          got["continuations_unheld"]), (0, 0, 1))
+        got = cut(changed("THM1", prominence="subject"))
+        self.assertEqual(got["subjects"], 1)
+
+
+class TestTheContinuedCutOnANewSentence(InventoryCase):
+    """On LAYER, P3 ("Here n is …") starts a sentence of its own: nothing continues P2."""
+
+    def test_rule_10_b_refuses_the_run_on_under_rule_2_too(self):
+        body = cut_body(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertRule(self.gate(body, CUT_2), 10, "and the paragraph that finishes that "
+                                                    "sentence after them")
+        self.assertRule(self.gate(body, CUT_1), 10, "only inside a theorem box")
+
+    def test_the_good_cut_counts_no_continuation(self):
+        result = self.gate(cut_body(), CUT_2)
+        self.assertOk(result)
+        got = self.stats(result)["cut"]
+        self.assertEqual((got["continued"], got["continuation_starts"],
+                          got["continuations_unheld"]), (0, 0, 0))
+
+
+class TestOneSubject(InventoryCase):
+    """Rule 10 (h), statement-cut rule 2: two or more formal passages marked subject are
+    refused, all named and none chosen (the maintainer's reading K3)."""
+
+    def test_two_subjects_are_refused_under_rule_2_only(self):
+        rows = changed("BOX", rows=changed("THM1", prominence="subject"), prominence="subject")
+        body = cut_body(rows)
+        result = self.gate(body, CUT_2)
+        self.assertRule(result, 10, "2 passages carry `prominence: subject`")
+        line = next(p for p in result["problems"] if "carry `prominence" in p)
+        ids = {p["span"][0]: p["item"] for p in body["passages"]}
+        for name in ("THM1", "BOX"):
+            self.assertIn(f"{ids[SPANS[name][0]]} {SPANS[name]}", line)
+        self.assertIn("a lead that only describes it is `expository`", line)
+        self.assertNotIn("first", line)
+        self.assertOk(self.gate(body, CUT_1))
+        self.assertOk(self.gate(body, BEFORE))
+        three = cut_body(changed("DEF1", rows=rows, prominence="subject"))
+        self.assertRule(self.gate(three, CUT_2), 10, "3 passages carry `prominence: subject`")
+
+    def test_one_subject_passes(self):
+        self.assertOk(self.gate(cut_body(changed("BOX", prominence="subject")), CUT_2))
+
+    def test_a_scoped_out_subject_is_rule_f_s_alone(self):
+        body = cut_body(changed("P3", rows=changed("THM1", prominence="subject"),
+                                prominence="subject"))
+        result = self.gate(body, CUT_2)
+        self.assertRule(result, 10, "the subject marker goes")
+        self.assertFalse([p for p in result["problems"] if "carry `prominence" in p])
+
+
+class TestTheReceiptUnderRule2(InventoryCase):
+
+    def test_the_block_s_keys_follow_the_rule(self):
+        one = gate_corpus.cut_summary(self.gate(cut_body(), CUT_1)["stats"])
+        self.assertEqual(set(one), set(gate_corpus.CUT_COUNTS) | {"by_shape", "by_source"})
+        self.assertEqual(one, gate_corpus.cut_summary(self.gate(cut_body(), CUT_1)["stats"],
+                                                      rule=1))
+        stats = self.gate(cut_body(changed("BOX", prominence="subject")), CUT_2)["stats"]
+        two = gate_corpus.cut_summary(stats, rule=2)
+        self.assertEqual(set(two), set(gate_corpus.CUT_COUNTS_2)
+                         | {"by_shape", "by_connective", "by_source"})
+        self.assertEqual(set(two["by_source"][G.SID]), set(two) - {"by_source"})
+        self.assertEqual((two["subjects"], two["by_connective"]), (1, {";": 1}))
+        self.assertEqual({k: two[k] for k in one if k != "by_source"},
+                         {k: one[k] for k in one if k != "by_source"})
+        text = gate_corpus.render({"preset": "x", "sources": [], "files": 1, "ok": True,
+                                   "problems": [], "cut": two})
+        self.assertIn("cut, continued: 1 subject(s)", text)
+        self.assertNotIn("cut, continued", gate_corpus.render(
+            {"preset": "x", "sources": [], "files": 1, "ok": True, "problems": [], "cut": one}))
+
+    def test_the_harvest_re_gate_passes_the_rule(self):
+        corpus = self.fx.root / "corpus"
+        self.fx.document(self.TASK, cut_body(), directory=corpus)
+        for keys, rule in ((CUT_2, 2), (CUT_1, 1)):
+            self.fx.versions(**keys)
+            out = gate_corpus._gate_locate_with(vl, corpus, self.fx.root / "gate" / "gate.json",
+                                                {"from": "checkout"})
+            with self.subTest(keys=keys):
+                self.assertTrue(out["ok"], out["problems"])
+                self.assertEqual("subjects" in out["cut"], rule == 2)
 
 
 # --------------------------------------------------------------------------- #

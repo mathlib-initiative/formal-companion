@@ -224,13 +224,16 @@ compute it and put it on the claim as `relation`; no document writes it.
 | key | where it is written | what it binds | versions |
 |---|---|---|---|
 | `judgment_rules` | gate.json, every mode (as today) | rule 9 of locate and challenge documents; the bench holds gold to it | 1 R1–R7; 2 PD5–PD9; **3** the cut: J1–J4, the challenge rules of §1.4, A1–A3's gate rules |
-| `span_end_rule` | gate.json, every mode (as today) | rule 2's end check of an inventory passage | 1 the end of `until`, else the paragraph; **2** the end of `until`, else the earlier of the extent and the next passage's start (§3.2) |
-| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | **1** |
+| `span_end_rule` | gate.json, every mode (as today) | rule 2's end check of an inventory passage | 1 the end of `until`, else the paragraph; **2** the end of `until`, else the earlier of the extent and the next passage's start (§3.2); 3 the same with the continued extent (§3.1–3.2) |
+| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | **1**; 2 rule 10 (b) against the loose continued bound, (h) at most one subject, the receipt's further counts (§3.3) |
 | `status_rule` | a locate run's `run.yaml` (`locate.status_rule`); its record set's seal (new) | `derive_status`, the outcomes' owed hunt, the record-set format | 1 decision D1 (absent means 1); **2** the bundle's relation, the owed hunt, `cf-locate-recordset/2` |
 
 `cf plan-locate` writes all four from the flip on (`vocab.JUDGMENT_RULES` and
 `vocab.SPAN_END_RULE` are `RULES_STATEMENT_CUT` and `SPAN_END_STATEMENT_CUT`;
-`STATEMENT_CUT_RULE` and `STATUS_RULE` are written beside them). Each binds a run only when its
+`STATEMENT_CUT_RULE` and `STATUS_RULE` are written beside them), the versions in bold.
+The gate and `passage_ids.py` know `span_end_rule` 3 and `statement_cut_rule` 2, the
+continued cut of inv-pilot-1's fixes (`vocab.SPAN_END_CONTINUED`,
+`STATEMENT_CUT_CONTINUED`), before the planner writes them. Each binds a run only when its
 own gate.json or run.yaml names it, so a re-gate, a re-tally and a re-export of a run planned
 before the flip are what they were.
 
@@ -249,7 +252,12 @@ Why no other key:
 The keys depend on each other, and the planner and the gate enforce it:
 
 - A gate.json naming `statement_cut_rule` ≥ 1 with `span_end_rule` < 2 is a broken gate.json
-  (exit 3): rule 10's disjointness rests on the new end rule.
+  (exit 3): rule 10's disjointness rests on the new end rule. More exactly, each statement-cut
+  rule reads one span-end rule (`vocab.STATEMENT_CUT_SPAN_END`: statement-cut rule 1 reads
+  span-end rule 2, and 2 reads 3), and span-end rule 3 binds only beside statement-cut rule 2,
+  since its continued end and rule 10 (b)'s bound are one definition: a gate.json naming any
+  other pair is broken (exit 3). No key, span-end rule 1 or 2 alone, and (2, 1) — every pair a
+  run has named — stay admitted.
 - From the flip, `cf plan-locate --preset locate` refuses an inventory run whose gate.json names
   no `statement_cut_rule` (the hint: inventory the sources again), since judgment rules 3 reads
   the inventory's conjuncts, and `--preset locate-challenge` refuses a locate run planned under
@@ -364,10 +372,10 @@ formula's `!` is read as no stop.
 
 The renderer (frozen) puts the words that finish a sentence after its display in a `p` of their
 own ("…such that", a display with no full stop, "for all x."), and chain(B) stops at the display.
-The **continued** chain and extent below join that paragraph. They are defined for span-end
-rule 3 and statement-cut rule 2 (§3.2–3.3, once those exist): no gate, tool or plan reads them
-yet, so every version so far reads chain(B) and extent(s, compound) as above
-(`locate_text.Blocks`, `continued=False`, the default).
+The **continued** chain and extent below join that paragraph. Span-end rule 3 reads the
+continued extent and statement-cut rule 2 the loose bound (§3.2–3.3); every earlier version
+reads chain(B) and extent(s, compound) as above (`locate_text.Blocks`, `continued=False`, the
+default), so its ends and verdicts are the ones they were.
 
 - **ends_with_display(D)** — D is a display block, or D is a `p` or a `dd` (its kinds within
   `p`, `dd`, `math`: `locate_text.CONTINUED_FROM`) and a `math` block inside it is followed by
@@ -407,6 +415,18 @@ inside it. What it does not see stays as the extent has it: a display the gate c
 `texhtml` formula, a `dd` of text), a display inside a list item, and a display that ends with a
 full stop before a lower-case word, which by the sentence definition ended its sentence.
 
+- **runs on(D)** — the looser continuation rule 10 (b) reads under statement-cut rule 2 (the
+  maintainer's reading K1, 2026-10-21): when D is no `li` and no theorem box and introduces(D),
+  the blocks after it while each next() is a `dd` or a display block that introduces in turn —
+  a display the gate sees or an indented line it cannot read as one — up to a plain paragraph N
+  that continues(N), N included; none otherwise (`Blocks.runs_on`). It needs no display the gate
+  can see, and a container's sentence may run on out of it.
+- **loose extent(s, compound)** — the continued extent with runs on(D) in place of
+  continuation(D) (`Blocks.extent(…, loose=True)`). It is never shorter than the continued
+  extent, so it admits every default end; it only ever admits a longer `until`, and no end rule
+  reads it. So where the continuation cannot see a display, the words that finish its sentence
+  may still be kept by the passage that holds it, with an `until`, rather than skipped.
+
 ### 3.2 The end rule (`span_end_rule` 2)
 
 `locate_text.passage_end(layer, paragraphs, start, exact, until=None, *, rule=1,
@@ -429,6 +449,12 @@ over a list gives `until` to run past its first item.
 
 This alone ends the nesting the smoke-3 audit counted (FM9): a passage no longer runs to its
 paragraph's end over a later passage of the same paragraph.
+
+**Rule 3** (`span_end_rule` 3, `vocab.SPAN_END_CONTINUED`; inv-pilot-1's first fault) is rule 2
+with the continued extent (§3.1) in place of the extent: a passage that gives no `until` runs on
+over the paragraph that finishes its sentence after its display, and the next passage's start,
+less its separator, still ends it first. `passage_ids.py` reads it from the gate.json beside it
+like rule 2; it reads only beside statement-cut rule 2 (§2.2).
 
 ### 3.3 Gate rule 10, the statement cut (`statement_cut_rule` 1)
 
@@ -458,6 +484,29 @@ or a formula token, not after an abbreviation of `locate_records._ABBREVIATIONS`
 whose alttext ends with `.` or `?`, by `formula_stop`, is one too, a formula's `!` being a
 factorial, and a block that starts right after one stands in for the whitespace), displays as
 the `math` blocks inside it. It reports them.
+
+**Statement-cut rule 2** (`vocab.STATEMENT_CUT_CONTINUED`; it reads span-end rule 3, §2.2) is
+rule 1 with three changes, from inv-pilot-1's faults and the maintainer's readings of 2026-10-21:
+
+- **(b)** reads the loose extent (§3.1, reading K1) in place of the extent, so an `until` that
+  keeps the words finishing a sentence after its display is admitted whether or not the gate
+  sees the display; its refusal says so ("into the displays its last sentence introduces and
+  the paragraph that finishes that sentence after them"). Rule 1's words are unchanged.
+- **(h)** two or more `formal_math` passages of the source with `prominence: subject` (reading
+  K3). The refusal names every one of them, in span order, and chooses none: the marker goes on
+  the one that states the theorem or definition the article is about (the first in reading
+  order when several state it, reading K4), a lead that only describes it is `expository`, and
+  any other that states it is `central`. A subject scoped out of `formal_math` is (f)'s alone.
+  Zero is refused only where gate rule 4 refuses it, when L2 holds a curated hit.
+- **The counts** (reading 7) gain `subjects`; `continued` (formal passages that end past
+  their extent without the continuation); `continuation_starts` (passages of any scope that
+  start at a continuation's first word); `continuations_unheld` (continuations after a block a
+  formal passage shares a character with, that no passage shares one with);
+  `connective_points`, `formal_with_connective` and `by_connective` (the cut points inside
+  formal passages, §3.1, an upper bound); and `connective_starts` (formal passages whose first
+  word is a connective and that start inside a sentence — not at their block's first word, and
+  after no full stop, across whitespace and a comma or semicolon — so a sentence that starts
+  "Then" is not one). Under rule 1 the block is the one above.
 
 ### 3.4 The prompt's rules (the inventory prompt and the labeler's inventory mode)
 

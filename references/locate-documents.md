@@ -134,7 +134,12 @@ is enough.
   the next start and never inside a formula:
   `locate_text.Blocks.separator_start`), so a statement ends where an `until` at its last word
   would end it and keeps one `passage_key` whether or not its neighbour is a
-  passage; and never before the end of its quote. The extent
+  passage; under **version 3** (the continued cut's, the proposal's §3.1–§3.2)
+  the same with the **continued extent**, which also takes in the paragraph
+  that finishes a sentence after its display (a plain `p` whose first word goes
+  on with the sentence, after a block that ends with a display and no full stop:
+  `locate_text.Blocks.continuation`), so "…such that [display] for all x." ends
+  after "x."; and never before the end of its quote. The extent
   (`locate_text.Blocks.extent`, the proposal's §3.1) is the end of the outermost
   block the passage starts in when that block is a theorem box (or shares its
   span with one, as a box holding one paragraph does), and otherwise the end of
@@ -214,7 +219,14 @@ is enough.
   nothing on a passage's size: the harvest receipt counts each passage's
   sentences and displays (`locate_text.units`) and the compound statements'
   conjuncts (its `cut` block, §9). `passage_ids.py` writes
-  `conjuncts` and `shape` back as it found them.
+  `conjuncts` and `shape` back as it found them. Under `statement_cut_rule` 2
+  (§9; it reads `span_end_rule` 3) the bound of a span's end is the loose
+  continued one — a sentence that runs on may keep the paragraph that finishes
+  it, whether or not the gate sees the display between — and rule 10 also
+  refuses two or more `formal_math` passages of the source marked
+  `prominence: subject`, naming them all: the marker goes on the one that
+  states the theorem or definition, and a lead that only describes it is
+  `expository`.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
   deterministic passage of the task is dropped only with a skip whose span
@@ -1869,6 +1881,31 @@ like a faithfulness run:
   upper-case letter or a formula, not after an abbreviation), their displays
   (`math` blocks inside the span) and how many hold more than one of each — only
   for a run whose gate.json names the rule.
+
+  The gate knows the **continued cut** before the planner writes it (inv-pilot-1's
+  fixes; the proposal's §2.2): `span_end_rule` 3 ends a passage as version 2
+  does with the *continued* extent (§2), and `statement_cut_rule` 2 is rule 10
+  with (b) read against the loose continued bound (`locate_text.Blocks.runs_on`:
+  a block's last sentence with no full stop, never a list item's or a theorem
+  box's, runs on over any `dd` or display blocks that leave it open into a plain
+  paragraph that continues it; it admits only a longer `until`), its refusal
+  naming "the paragraph that finishes that sentence after them", and (h): two or
+  more `formal_math` passages of the source marked `prominence: subject`, all
+  named, none chosen. Each statement-cut rule reads exactly one span-end rule
+  (`STATEMENT_CUT_SPAN_END`: 1 reads 2, 2 reads 3), and `span_end_rule` 3 binds
+  only beside `statement_cut_rule` 2: a gate.json naming any other pair is exit
+  3, while no key, `span_end_rule` 1 or 2 alone and (2, 1) stay admitted. Under
+  statement-cut rule 2 the receipt's `cut` block also counts `subjects` (formal
+  passages marked subject), `continued` (formal passages ending past their
+  extent without the continuation), `continuation_starts` (passages starting at
+  a continuation's first word: the words after a display cut from their
+  sentence), `continuations_unheld` (continuations after a block a formal
+  passage shares a character with, that no passage holds), `connective_points`,
+  `formal_with_connective` and `by_connective` (the connectives of
+  `CUT_CONNECTIVES` inside formal passages, `locate_text.Blocks.cut_points`, an
+  upper bound on the cuts there) and `connective_starts` (formal passages whose
+  first word is a connective and that start inside a sentence: one that starts
+  "Then…" after a full stop is a correct passage and is not counted).
 
   From the flip, too, the planner copies into a locate task manifest's passage the
   frozen inventory's `statement`, and a compound statement's `conjuncts` and

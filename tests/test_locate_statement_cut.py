@@ -1,9 +1,10 @@
 """The statement cut's inventory side: the end rule, the blocks it reads, the cut rules.
 
 New code, for docs/proposals/statement-cut.md section 3 (the "cut" package of its
-section 6.2): ``locate_text.passage_end`` under ``span_end_rule`` 2 and the
-definitions of section 3.1 it rests on (``locate_text.Blocks``) -- with the
-continued extent and the cut points, which no version reads yet -- the units the
+section 6.2): ``locate_text.passage_end`` under ``span_end_rule`` 2 and 3 and the
+definitions of section 3.1 they rest on (``locate_text.Blocks``) -- with the
+continued extent span-end rule 3 reads, the loose bound gate rule 10 (b) reads under
+statement-cut rule 2, and the cut points -- the units the
 receipt counts (``locate_text.units``), ``passage_ids.py``'s two passes and the
 rule it reads from the ``gate.json`` beside it, and the cut rules the inventory
 prompt and the bench labeler's inventory mode carry word for word with
@@ -316,6 +317,8 @@ class TestTheBlocks(unittest.TestCase):
 
 #: a sentence that sets up a display and goes on after it
 LEAD = "<p>Let W be a widget such that</p>"
+#: a sentence finished after its display, then a sentence of its own in the same paragraph
+TAIL = LEAD + dd("f(x) \\le g(x)") + "<p>for every sprocket x. Then every gadget spans.</p>"
 #: every page the tests above read: what the continued chain must leave as it was
 OLD_PAGES = (CONNECTIVES, LISTS, CHAIN, PROOF, PARAGRAPHS, BOX, LEMMA_BOX, PLAIN_INTRO)
 
@@ -491,14 +494,126 @@ class TestTheContinuation(unittest.TestCase):
             for compound in (False, True):
                 self.assertEqual(b.extent(start, compound=compound),
                                  b.extent(start, compound=compound, continued=False))
-        # and every end rule ends every start as it did: none reads the continuation
-        for rule in lt.SPAN_END_RULES:
+        # and end rules 1 and 2 end every start as they did: neither reads the
+        # continuation; rule 3 runs on only from "x = y"
+        for rule in (1, 2, 3):
             for head in ("For each", "x = y{", "where S"):
                 with self.subTest(rule=rule, head=head):
                     s = page.at(head)
                     want = (max(s + 8, lt.paragraph_end(page.paragraphs, s)) if rule == 1
                             else max(s + 8, b.extent(s)))
+                    if rule == 3 and head == "x = y{":
+                        want = page.after("set of sprockets.")
                     self.assertEqual(page.end(s, rule=rule), want)
+
+
+class TestTheLooseBound(unittest.TestCase):
+    """Section 3.3: the bound gate rule 10 (b) holds an end to under statement-cut rule 2
+    (``loose=True``, the maintainer's reading K1): a sentence that runs on into the
+    paragraph that finishes it, whether or not the gate sees the display between."""
+
+    def bounds(self, *html: str, head: str = "Let W") -> tuple[Page, int, int, int]:
+        page = Page(*html)
+        start = page.at(head)
+        b = page.blocks
+        return (page, b.extent(start), b.extent(start, continued=True),
+                b.extent(start, loose=True))
+
+    def assertLooseOnly(self, *html: str, to: str, head: str = "Let W"):
+        page, plain, continued, loose = self.bounds(*html, head=head)
+        self.assertEqual(plain, continued)
+        self.assertEqual(loose, page.after(to))
+        return page
+
+    def test_what_the_gate_cannot_see(self):
+        """A display the gate cannot read as one (text in a ``dd``), a paragraph that ends
+        with no full stop and no display, and a footnote mark after a nested display: the
+        continuation is none, the loose bound runs on."""
+        self.assertLooseOnly(LEAD + "<dl><dd><i>x</i><sup>2</sup> + 1</dd></dl>"
+                             "<p>for every sprocket " + inline("x") + ".</p>",
+                             to="for every sprocket x{\\displaystyle x}.")
+        self.assertLooseOnly(LEAD + "<p>for every sprocket x.</p>", to="for every sprocket x.")
+        self.assertLooseOnly("<p>For each widget we have " + display("a = b") + "[3]</p>"
+                             "<p>where W is finite.</p>", to="where W is finite.",
+                             head="For each")
+        # and the strict continuation it holds, over several displays
+        page, plain, continued, loose = self.bounds(LEAD + dd("a = b") + "<p>where n is the "
+                                                    "order, and</p>" + dd("c = d")
+                                                    + "<p>for every k.</p>")
+        self.assertEqual((continued, loose), (page.after("for every k."),) * 2)
+        self.assertLess(plain, continued)
+
+    def test_what_it_never_joins(self):
+        """A new sentence, a list item, a heading's text, a theorem box, a sentence that
+        ended, and a start in a list item or a box."""
+        for html in (LEAD + dd("f(x)") + "<p>Then every gadget spans.</p>",
+                     LEAD + "<p>x is a widget.</p>",
+                     LEAD + dd("f(x)") + "<ul><li>for every cog.</li></ul><p>where it spans.</p>",
+                     LEAD + '<h2 id="More">More</h2><p>where it spans.</p>',
+                     LEAD + '<div class="math_theorem"><p>for every cog.</p></div>',
+                     LEAD + dd("f(x).") + "<p>for every sprocket x.</p>",
+                     "<p>Let W be a widget.</p><p>for every sprocket x.</p>"):
+            with self.subTest(html=html[:60]):
+                page, plain, continued, loose = self.bounds(html)
+                self.assertEqual(loose, plain)
+        page = Page("<ul><li>Let W be such that</li></ul><p>for every cog.</p>",
+                    '<div class="math_theorem"><p>Lemma. Each widget has the gadget</p></div>'
+                    "<p>for every cog.</p>")
+        for head in ("Let W", "Lemma."):
+            with self.subTest(head=head):
+                start = page.at(head)
+                self.assertEqual(page.blocks.extent(start, loose=True),
+                                 page.blocks.extent(start))
+
+    def test_a_quotation_may_run_on_under_the_loose_bound_only(self):
+        """Reading K1 bounds any block but a list item: a quotation whose last sentence runs
+        on admits an ``until`` into the paragraph that finishes it; the continuation, and
+        so every default end, still stops at the quotation's end."""
+        self.assertLooseOnly("<blockquote>" + LEAD + dd("a = b") + "</blockquote>"
+                             "<p>where W is finite.</p>", to="where W is finite.")
+
+    def test_it_is_never_short_of_the_continued_extent(self):
+        page = Page(*OLD_PAGES, LEAD + dd("f(x)") + "<p>for every sprocket x.</p>")
+        b = page.blocks
+        for start in range(len(page.layer)):
+            for compound in (False, True):
+                plain = b.extent(start, compound=compound)
+                if plain is None:
+                    continue
+                continued = b.extent(start, compound=compound, continued=True)
+                loose = b.extent(start, compound=compound, loose=True)
+                self.assertLessEqual(plain, continued)
+                self.assertLessEqual(continued, loose)
+
+    def test_the_module_extent_takes_it(self):
+        page = Page(LEAD + "<p>for every sprocket x.</p>")
+        self.assertEqual(lt.extent(page.layer, page.paragraphs, page.formulas, page.at("Let W"),
+                                   loose=True), page.after("sprocket x."))
+        self.assertEqual(page.blocks.runs_on(page.blocks.block_at(page.at("Let W"))),
+                         [page.blocks.block_at(page.at("for every"))])
+
+
+class TestTheReceiptsReadings(unittest.TestCase):
+    """What statement-cut rule 2's counts read: the continuations of a page and whether a
+    start is inside a sentence (the maintainer's reading 7)."""
+
+    def test_the_continuations(self):
+        page = Page(*OLD_PAGES, LEAD + dd("f(x)") + "<p>for every sprocket x.</p>")
+        b = page.blocks
+        self.assertEqual([(page.text(d.span)[:5], page.text(n.span)[:9])
+                          for d, n in b.continuations()],
+                         [("x = y", "where S i"), ("f(x){", "for every")])
+
+    def test_a_start_inside_a_sentence(self):
+        page = Page("<p>Every widget spans, since gadgets meet; so every cog turns. Then it "
+                    "spins. So it is round.</p><p>Hence every gadget spans.</p>",
+                    "<p>Every cog has " + inline("a = b.") + " Moreover it turns.</p>")
+        inside = ("since gadgets", "so every cog")
+        outside = ("Every widget", "Then it", "So it is", "Hence every", "Moreover it")
+        for head in inside + outside:
+            with self.subTest(head=head):
+                self.assertEqual(page.blocks.mid_sentence(page.at(head)), head in inside)
+        self.assertFalse(page.blocks.mid_sentence(len(page.layer) + 5))
 
 
 class TestTheCutPoints(unittest.TestCase):
@@ -739,11 +854,35 @@ class TestTheEndRule(unittest.TestCase):
         self.assertEqual(page.end(start, rule=2, starts=[page.at("every finite")], exact=quote),
                          start + len(quote))
 
+    def test_version_3_ends_a_sentence_after_its_display(self):
+        """Span-end rule 3: version 2 with the continued extent; the next passage's start,
+        less its separator, still ends a passage first."""
+        page = Page(TAIL)
+        start, display_end = page.at("Let W"), page.blocks.block_at(page.at("f(x) \\le g(x){")).end
+        self.assertEqual(page.end(start, rule=2), display_end)
+        self.assertEqual(page.end(start, rule=3), page.after("every gadget spans."))
+        self.assertEqual(page.end(start, rule=3, starts=[page.at("Then every")]),
+                         page.after("for every sprocket x."))
+        self.assertEqual(page.end(start, rule=3, starts=[page.at("for every")]), display_end)
+        self.assertEqual(page.end(start, rule=1), page.after("such that"))
+        # an `until` ends it as under every rule
+        self.assertEqual(page.end(start, rule=3, until="such that"), page.after("such that"))
+        # on every page before it, rule 3 ends every start where rule 2 does but after
+        # CHAIN's "x = y" (test_off_it_is_the_chain_and_extent_they_were)
+        old = Page(CONNECTIVES, PROOF, LISTS, PARAGRAPHS, BOX, LEMMA_BOX, PLAIN_INTRO)
+        for begin in range(len(old.layer)):
+            if old.blocks.block_at(begin) is None or old.layer[begin].isspace() \
+                    or (begin and not old.layer[begin - 1].isspace()):
+                continue
+            with self.subTest(start=begin):
+                self.assertEqual(old.end(begin, rule=3, exact=old.layer[begin]),
+                                 old.end(begin, rule=2, exact=old.layer[begin]))
+
     def test_what_version_2_refuses(self):
         page = Page(CONNECTIVES)
         start = page.at("every finite")
         with self.assertRaises(ValueError):
-            lt.passage_end(page.layer, page.paragraphs, start, "every", rule=3,
+            lt.passage_end(page.layer, page.paragraphs, start, "every", rule=4,
                            formulas=page.formulas)
         with self.assertRaises(TypeError):
             lt.passage_end(page.layer, page.paragraphs, start, "every", rule=2)
@@ -850,6 +989,18 @@ class TestPassageIds(unittest.TestCase):
         self.assertEqual(passage_ids.place(doc, page.layer, page.formulas, page.paragraphs), [])
         self.assertEqual({p["span"][1] for p in doc["passages"]}, {page.after("every sprocket.")})
 
+    def test_version_3_places_the_words_after_a_display(self):
+        page = Page(TAIL)
+        display_end = page.blocks.block_at(page.at("f(x) \\le g(x){")).end
+        heads = ("Let W", "Then every")
+        for rule, ends in ((2, [display_end, page.after("gadget spans.")]),
+                           (3, [page.after("sprocket x."), page.after("gadget spans.")])):
+            doc = self.doc(page, heads)
+            with self.subTest(rule=rule):
+                self.assertEqual(passage_ids.place(doc, page.layer, page.formulas,
+                                                   page.paragraphs, rule=rule), [])
+                self.assertEqual([p["span"][1] for p in doc["passages"]], ends)
+
     def test_problems_stay_in_document_order(self):
         page = Page(CONNECTIVES)
         doc = self.doc(page, ("A widget is finite", "not on the layer", "every finite widget"),
@@ -884,7 +1035,16 @@ class TestTheRuleBesideTheTool(unittest.TestCase):
                                                 encoding="utf-8")
         self.source = source
 
-    def run_tool(self, gate: dict | None, *flags: str, where: Path | None = None):
+    def use(self, page: Page) -> None:
+        """Render ``page`` into the source directory in place of the default one."""
+        self.page = page
+        (self.source / "layer.txt").write_text(page.layer, encoding="utf-8")
+        (self.source / "formulas.json").write_text(json.dumps(page.formulas), encoding="utf-8")
+        (self.source / "paragraphs.json").write_text(json.dumps(page.paragraphs),
+                                                     encoding="utf-8")
+
+    def run_tool(self, gate: dict | None, *flags: str, where: Path | None = None,
+                 heads=("A widget is finite", "every finite widget", "gadgets meet every")):
         if gate is not None:
             (self.gate / "gate.json").write_text(json.dumps(gate), encoding="utf-8")
         doc = {"passages": [
@@ -892,7 +1052,7 @@ class TestTheRuleBesideTheTool(unittest.TestCase):
              "quote": {"exact": head, "prefix": "", "suffix": ""}, "statement": "s",
              **({"conjuncts": [{"id": "c1", "text": "one"}, {"id": "c2", "text": "two"}],
                  "shape": "iff"} if head.startswith("every") else {})}
-            for head in ("A widget is finite", "every finite widget", "gadgets meet every")]}
+            for head in heads]}
         path = self.tmp / "doc.json"
         path.write_text(json.dumps(doc), encoding="utf-8")
         tool = (where or self.gate) / "passage_ids.py"
@@ -920,10 +1080,32 @@ class TestTheRuleBesideTheTool(unittest.TestCase):
         proc, written = self.run_tool({"span_end_rule": 2}, "--span-end-rule", "2")
         self.assertEqual((proc.returncode, self.ends(written)), (0, new))
 
+    def test_a_gate_json_naming_version_3(self):
+        """Run as the host runs it (``python3 -I``, by absolute path, from the staged gate
+        directory): version 3 runs a sentence on over the words after its display."""
+        self.use(Page(TAIL))
+        heads = ("Let W", "Then every")
+        display_end = self.page.blocks.block_at(self.page.at("f(x) \\le g(x){")).end
+        for gate, want in (({"span_end_rule": 3, "statement_cut_rule": 2},
+                            [self.page.after("sprocket x."), self.page.after("gadget spans.")]),
+                           ({"span_end_rule": 2, "statement_cut_rule": 1},
+                            [display_end, self.page.after("gadget spans.")])):
+            with self.subTest(gate=gate):
+                proc, written = self.run_tool(gate, heads=heads)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(self.ends(written), want)
+        proc, written = self.run_tool({"span_end_rule": 3}, "--span-end-rule", "2", heads=heads)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("disagrees", proc.stderr)
+        proc, written = self.run_tool(None, "--span-end-rule", "3", heads=heads,
+                                      where=SCRIPTS / "locate")
+        self.assertEqual((proc.returncode, self.ends(written)[0]),
+                         (0, self.page.after("sprocket x.")))
+
     def test_a_flag_that_disagrees_or_a_rule_it_does_not_know_is_an_input_error(self):
         for gate, flags in (({"span_end_rule": 2}, ("--span-end-rule", "1")),
                             ({}, ("--span-end-rule", "2")),
-                            ({"span_end_rule": 3}, ()), ({"span_end_rule": True}, ()),
+                            ({"span_end_rule": 4}, ()), ({"span_end_rule": True}, ()),
                             ({"span_end_rule": "2"}, ())):
             with self.subTest(gate=gate, flags=flags):
                 proc, written = self.run_tool(gate, *flags)
@@ -946,8 +1128,13 @@ class TestTheConstantsAreTheSkills(unittest.TestCase):
 
     def test_the_versions(self):
         self.assertEqual(lt.SPAN_END_STATEMENT_CUT, vocab.SPAN_END_STATEMENT_CUT)
-        self.assertEqual(lt.SPAN_END_RULES, (1, vocab.SPAN_END_STATEMENT_CUT))
+        self.assertEqual(lt.SPAN_END_CONTINUED, vocab.SPAN_END_CONTINUED)
+        self.assertEqual(lt.SPAN_END_RULES, (1, vocab.SPAN_END_STATEMENT_CUT,
+                                             vocab.SPAN_END_CONTINUED))
+        self.assertEqual(lt.SPAN_END_RULES, (1, 2, 3))
         self.assertIn(vocab.SPAN_END_RULE, lt.SPAN_END_RULES)
+        # every span-end rule a statement-cut rule reads is one the end knows
+        self.assertLessEqual(set(vocab.STATEMENT_CUT_SPAN_END.values()), set(lt.SPAN_END_RULES))
 
     def test_the_abbreviations_are_the_records(self):
         self.assertEqual(lt.ABBREVIATIONS, locate_records._ABBREVIATIONS)

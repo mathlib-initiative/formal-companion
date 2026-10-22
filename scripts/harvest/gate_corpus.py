@@ -490,16 +490,22 @@ def _gate_locate_with(vl, dest: str | Path, cfg_path: Path, gate_code: dict) -> 
         # the statement cut's counts, only for a run whose gate.json names rule 10 (and a
         # gate that knows it): a corpus of an earlier run gets the receipt it always got
         if getattr(cfg, "statement_cut_rule", 0):
-            out["cut"] = cut_summary(result.get("stats") or [])
+            out["cut"] = cut_summary(result.get("stats") or [], rule=cfg.statement_cut_rule)
     return out
 
 
 #: the counts of the receipt's ``cut`` block (docs/proposals/statement-cut.md section 3.3)
 CUT_COUNTS = ("passages", "formal", "compound", "conjuncts", "sentences", "displays",
               "multi_sentence", "multi_display")
+#: ... and under statement-cut rule 2 (the maintainer's reading 7), beside ``by_connective``
+CUT_COUNTS_2 = CUT_COUNTS + ("subjects", "continued", "continuation_starts",
+                             "continuations_unheld", "connective_points",
+                             "formal_with_connective", "connective_starts")
+#: the ``{name: n}`` maps of the block, by the rule that writes them
+_CUT_MAPS = {1: ("by_shape",), 2: ("by_shape", "by_connective")}
 
 
-def cut_summary(stats: list[dict]) -> dict:
+def cut_summary(stats: list[dict], rule: int = 1) -> dict:
     """What an inventory corpus's cut looks like, under ``statement_cut_rule`` (gate rule 10).
 
     Totals and, by source, the passages, the ``formal_math`` ones, the compound
@@ -509,26 +515,35 @@ def cut_summary(stats: list[dict]) -> dict:
     are its conjuncts, or one for a simple statement, so the clauses of the cut
     are ``conjuncts + formal - compound``.  Reported, never a refusal: rule 10
     refuses nothing on a passage's size, and these are what the inventory pilot
-    measures.
+    measures.  Under ``rule`` 2 (``statement_cut_rule`` 2) the block also counts
+    ``CUT_COUNTS_2``'s further keys -- the subjects, the passages the continued
+    bound let run on, the continuations cut from their sentence or held by no
+    passage, and the connectives inside formal passages -- and ``by_connective``
+    (``verify_locate._continued_counts``); under 1 it is the block it always was.
     """
-    total: dict = {k: 0 for k in CUT_COUNTS}
-    total["by_shape"] = {}
+    names = CUT_COUNTS_2 if rule >= 2 else CUT_COUNTS
+    maps = _CUT_MAPS[2 if rule >= 2 else 1]
+    total: dict = {k: 0 for k in names}
+    for m in maps:
+        total[m] = {}
     by_source: dict[str, dict] = {}
     for row in stats:
         got = row.get("cut") if isinstance(row, dict) else None
         if not isinstance(got, dict):
             continue
         mine = by_source.setdefault(str(row.get("source_id") or ""),
-                                    {**{k: 0 for k in CUT_COUNTS}, "by_shape": {}})
-        for k in CUT_COUNTS:
+                                    {**{k: 0 for k in names}, **{m: {} for m in maps}})
+        for k in names:
             value = int(got.get(k) or 0)
             mine[k] += value
             total[k] += value
-        for shape, n in sorted((got.get("by_shape") or {}).items()):
-            for into in (mine, total):
-                into["by_shape"][shape] = into["by_shape"].get(shape, 0) + int(n or 0)
+        for m in maps:
+            for key, n in sorted((got.get(m) or {}).items()):
+                for into in (mine, total):
+                    into[m][key] = into[m].get(key, 0) + int(n or 0)
     for into in (total, *by_source.values()):
-        into["by_shape"] = dict(sorted(into["by_shape"].items()))
+        for m in maps:
+            into[m] = dict(sorted(into[m].items()))
     return {**total, "by_source": dict(sorted(by_source.items()))}
 
 
@@ -582,6 +597,15 @@ def render(result: dict, max_named: int = 12) -> str:
                      f"{cut['sentences']} sentence(s) and "
                      f"{cut['displays']} display(s), {cut['multi_sentence']} passage(s) of "
                      f"several sentences and {cut['multi_display']} of several displays")
+        if "subjects" in cut:
+            lines.append(f"  cut, continued: {cut['subjects']} subject(s); "
+                         f"{cut['continued']} passage(s) run on past a display, "
+                         f"{cut['continuation_starts']} passage(s) start at the words that "
+                         f"finish a sentence after its display, "
+                         f"{cut['continuations_unheld']} such paragraph(s) no passage holds; "
+                         f"{cut['connective_points']} connective(s) inside "
+                         f"{cut['formal_with_connective']} formal passage(s), "
+                         f"{cut['connective_starts']} passage(s) starting at one")
     for problem in result["problems"][:max_named]:
         lines.append("  - " + problem)
     if len(result["problems"]) > max_named:

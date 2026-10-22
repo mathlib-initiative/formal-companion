@@ -586,6 +586,12 @@ JUDGMENT_RULES = RULES_STATEMENT_CUT
 #: extent (its block, and the displays its last sentence introduces) and the next
 #: passage's start.  ``SPAN_END_RULE`` is this from the proposal's flip on.
 SPAN_END_STATEMENT_CUT = 2
+#: The continued span-end rule (the proposal's sections 3.1 and 3.2; inv-pilot-1's first
+#: fault): version 2 with the *continued* extent, which takes in the paragraph that
+#: finishes a sentence after its display ("...such that [display] for all x.").  It reads
+#: only with ``STATEMENT_CUT_CONTINUED`` (``STATEMENT_CUT_SPAN_END``).  The gate and
+#: ``passage_ids.py`` know it; the planner does not write it yet.
+SPAN_END_CONTINUED = 3
 #: The span-end rule (gate rule 2's end check; references/locate-documents.md
 #: sections 2 and 9): the version a run's ``gate.json`` names as
 #: ``span_end_rule``.  Under it an inventory passage ends where ``passage_ids.py``
@@ -731,11 +737,23 @@ CANDIDATE_PART_PHRASES = ("only part", "part of the passage", "one clause",
 # its versions into every run it plans; each rule binds only a run whose gate.json or
 # run.yaml names its version, so every run planned before the flip is gated, tallied
 # and exported as it was before them.
+#: The statement-cut rule's versions (gate rule 10; the proposal's section 3.3):
+#: version 1 (``STATEMENT_CUT_FIRST``) is (a)-(g) with rule 10 (b) holding an end to the
+#: extent; version 2 (``STATEMENT_CUT_CONTINUED``, inv-pilot-1's fixes) holds it to the
+#: loose continued bound (``locate_text.Blocks.runs_on``, the maintainer's reading K1),
+#: adds (h) -- at most one ``formal_math`` passage of a source is ``prominence: subject``
+#: (reading K3) -- and the receipt's further counts (reading 7).  Each reads one span-end
+#: rule, ``STATEMENT_CUT_SPAN_END``: a gate.json naming another pair, or span-end rule 3
+#: without statement-cut rule 2, is broken (exit 3).
+STATEMENT_CUT_FIRST = 1
+STATEMENT_CUT_CONTINUED = 2
+STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
+                          STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED}
 #: The statement-cut rule (gate rule 10, the inventory's cut checks; the proposal's
 #: section 3): the version a gate.json names as ``statement_cut_rule``.  ``cf
 #: plan-locate`` writes it into every gate.json from the flip on; a gate.json without
 #: the key is gated without rule 10, as every run planned before it is.
-STATEMENT_CUT_RULE = 1
+STATEMENT_CUT_RULE = STATEMENT_CUT_FIRST
 #: The status rule (the proposal's section 2): the version of the derivation a locate
 #: run's outcomes are derived under, recorded in its ``run.yaml`` (``locate.status_rule``)
 #: and in the seal of its record set.  Version 1 (``STATUS_RULE_D1``) is decision D1 as
