@@ -16,8 +16,9 @@ the shipped producer, not a fixture of the next stage's format:
     L2         cf locate candidates with a synthetic 1000.yaml-shaped list
 
     Every run is planned under the statement cut (docs/proposals/statement-cut.md,
-    from its flip on: judgment rules 3, span-end rule 2, statement-cut rule 1, and a
-    locate run's status rule 2), and its documents take its shapes:
+    from its flip on, and the continued cut of inv-pilot-1's fixes from theirs:
+    judgment rules 3, span-end rule 3, statement-cut rule 2, and a locate run's status
+    rule 2), and its documents take its shapes:
 
     L3a        cf plan-locate --preset locate-inventory; a worker's documents cut
                one passage per statement (a compound statement's conjuncts and
@@ -31,7 +32,7 @@ the shipped producer, not a fixture of the next stage's format:
     L5         cf plan-locate --preset locate-challenge; verdicts (the bundle's
                part relations, a strong verdict's tests); gate; harvest
     cut        the statement cut's rules over those runs' documents: bad ones refused
-               under rule 10, rule 2's end rule 2 and rule 9's rules 3, by the run's
+               under rule 10, rule 2's end rule 3 and rule 9's rules 3, by the run's
                own staged gate or a copy of it where a case needs another version,
                database or record
     L6         cf tally --locate (status rule 2: the bundle's weakest part's
@@ -519,6 +520,16 @@ class Pipeline:
             check(code == 0, f"the staged gate refused the good inventory of {sid}:\n{text}")
         self._inventory_refusals(paths)
         self.harvest("inv-1", out)
+        # the receipt's cut block is statement-cut rule 2's: the subject, continuation and
+        # connective counts beside the first version's, one subject on every page
+        from harvest import gate_corpus
+
+        cut = self.read_json(paths.receipt_json("inv-1"))["gate"]["cut"]
+        check(set(gate_corpus.CUT_COUNTS_2) <= set(cut) and "by_connective" in cut,
+              f"inv-1's receipt does not count statement-cut rule 2's measures: {sorted(cut)}")
+        check({sid: row.get("subjects") for sid, row in cut["by_source"].items()}
+              == {sid: 1 for sid in self.inventory_docs},
+              f"inv-1's receipt does not count one subject per page: {cut['by_source']}")
 
     def _inventory_documents(self, run_id: str, out: Path, *,
                              more_starts: dict[str, list[tuple[int, str]]] | None = None,
@@ -529,14 +540,16 @@ class Pipeline:
         The finders' passages, then one "model" passage per math paragraph the finders
         left uncovered (the coverage floor, gate rule 8), and a re-cut's ``more_starts``
         (``{source: [(start, scope)]}``) and ``untils`` (``{source: {start: until}}``).
-        Each quote stops before the passage's end, since under the span-end rule 2 a
-        passage ends at the next passage's start, or its ``until``, and never before its
-        quote's end; the widget theorem box is a compound statement (its conjuncts, shape
+        Each quote stops before the passage's end, since under the span-end rule 3 (as
+        under 2) a passage ends at the next passage's start, or its ``until``, and never
+        before its quote's end (the recorded pages hold no sentence that continues after
+        its display, so rule 3's ends are rule 2's here); the widget theorem box is a compound statement (its conjuncts, shape
         ``conclusions``), and a sentence that only sets up its objects ("Let ...") states
         nothing and is scoped ``expository``, as the cut rules say
         (docs/proposals/statement-cut.md section 3.4).  ``passage_ids.py`` places and
         ends every passage, by the end rule of the gate.json beside it.
         """
+        from cflib import vocab
         from gate import locate_text as lt
 
         paths = cf_main_paths(self.ws)
@@ -573,7 +586,8 @@ class Pipeline:
                         prominence = "supporting"
                     start = f["start"]
                     until = until_at.get(start)
-                    end = lt.passage_end(layer, paragraphs, start, "", until, rule=2,
+                    end = lt.passage_end(layer, paragraphs, start, "", until,
+                                         rule=vocab.SPAN_END_RULE,
                                          next_start=starts[n + 1] if n + 1 < len(starts)
                                          else None, formulas=formulas)
                     exact = self._layer_words(layer, start)
@@ -652,9 +666,10 @@ class Pipeline:
               f"the moved end was refused, but not by the span-end rule:\n{text}")
 
     # ------------------------------------------------------------------ L3b
-    #: the version keys of a run planned after the statement cut's flip
-    #: (docs/proposals/statement-cut.md section 7), which every run here is
-    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 2, "statement_cut_rule": 1}
+    #: the version keys of a run planned after the flip of inv-pilot-1's fixes
+    #: (docs/proposals/statement-cut.md section 7), which every run here is: the
+    #: statement cut's judgment rules and the continued cut's end and rule 10
+    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 3, "statement_cut_rule": 2}
     #: the widget theorem's conjuncts, as the cut's inventory writes them (synthetic)
     BOX_CONJUNCTS = [{"id": "c1", "text": "each finite widget has a spanning gadget"},
                      {"id": "c2", "text": "that gadget's size divides the order"}]
@@ -1063,7 +1078,7 @@ class Pipeline:
         self._cut_challenge()
 
     def _cut_inventory(self) -> None:
-        """inv-1's cut of the widget lemma, held by rule 10 and the end rule 2: its bad twins."""
+        """inv-1's cut of the widget lemma, held by rule 10 and the end rule 3: its bad twins."""
         from gate import locate_text as lt
 
         paths = cf_main_paths(self.ws)
@@ -1127,6 +1142,9 @@ class Pipeline:
         def scoped_out_central(ps):
             ps[context]["prominence"] = "central"
 
+        def two_subjects(ps):                # the theorem box marked subject beside the lead
+            ps[box]["prominence"] = "subject"
+
         def end_moved(ps):
             ps[lead]["span"][1] -= 1
 
@@ -1154,8 +1172,10 @@ class Pipeline:
                  "rule 10 shape": (shapeless, "the closed list"),
                  "rule 10 scope": (scoped_out_conjuncts, "belong to a formal_math passage"),
                  "rule 10 prominence": (scoped_out_central, "the subject marker goes"),
+                 "rule 10 two subjects": (two_subjects, "2 passages carry `prominence: "
+                                                        "subject`"),
                  "rule 10 same text": (same_text, "two passages with one span text"),
-                 "rule 2 end rule 2": (end_moved, "passage_ids.py ends it")}
+                 "rule 2 end rule 3": (end_moved, "passage_ids.py ends it")}
         for name, (fn, needle) in cases.items():
             path = self.write_json(self.made / "inv-cut" / name.replace(" ", "-") / task_id
                                    / f"{WIDGET}.json", mutate(fn))
@@ -1778,7 +1798,7 @@ class Pipeline:
               f"the carry-over map is no cf-locate-carry/1 map of every page: {report}")
         check((report["old"]["span_end_rule"], report["old"]["statement_cut_rule"],
                report["new"]["span_end_rule"], report["new"]["statement_cut_rule"])
-              == (2, 1, 2, 1), f"the map does not name the two cuts' rules: {report['old']}, "
+              == (3, 2, 3, 2), f"the map does not name the two cuts' rules: {report['old']}, "
                                f"{report['new']}")
         page = next(pg for pg in report["pages"] if pg["new"]["source_id"] == WIDGET)
         check(page["same_layer"] is True, "the re-cut of one revision is on another layer")

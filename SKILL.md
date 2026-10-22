@@ -196,8 +196,9 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
    versions its `gate.json` names. A run planned with this code names the
    statement cut's (`docs/proposals/statement-cut.md`): its inventory is cut one
    passage per statement, with its `statement`, `conjuncts` and `shape`, and
-   held to gate rule 10 and span-end rule 2; its locate and challenge documents
-   to judgment rules 3 (gate rule 9, `references/locate-documents.md` §3 and
+   held to gate rule 10 (statement-cut rule 2) and span-end rule 3, which run
+   a sentence on over the paragraph that finishes it after its display; its
+   locate and challenge documents to judgment rules 3 (gate rule 9, `references/locate-documents.md` §3 and
    §4): no claim list (one is refused) — the clause ids are the frozen
    inventory's conjunct ids, `c1` for a simple statement —, the clauses every
    record states, an absence's query of its own per clause, both instantiation

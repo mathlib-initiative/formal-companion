@@ -584,20 +584,22 @@ JUDGMENT_RULES = RULES_STATEMENT_CUT
 #: The first span-end rule version of the statement cut (gate rule 2's end check; the
 #: proposal's section 3): a passage that gives no ``until`` ends at the earlier of its
 #: extent (its block, and the displays its last sentence introduces) and the next
-#: passage's start.  ``SPAN_END_RULE`` is this from the proposal's flip on.
+#: passage's start.  ``SPAN_END_RULE`` was this from the proposal's flip to the flip of
+#: inv-pilot-1's fixes.
 SPAN_END_STATEMENT_CUT = 2
 #: The continued span-end rule (the proposal's sections 3.1 and 3.2; inv-pilot-1's first
 #: fault): version 2 with the *continued* extent, which takes in the paragraph that
 #: finishes a sentence after its display ("...such that [display] for all x.").  It reads
-#: only with ``STATEMENT_CUT_CONTINUED`` (``STATEMENT_CUT_SPAN_END``).  The gate and
-#: ``passage_ids.py`` know it; the planner does not write it yet.
+#: only with ``STATEMENT_CUT_CONTINUED`` (``STATEMENT_CUT_SPAN_END``).  ``SPAN_END_RULE``
+#: is this from the flip of inv-pilot-1's fixes on (the proposal's section 7).
 SPAN_END_CONTINUED = 3
 #: The span-end rule (gate rule 2's end check; references/locate-documents.md
 #: sections 2 and 9): the version a run's ``gate.json`` names as
 #: ``span_end_rule``.  Under it an inventory passage ends where ``passage_ids.py``
 #: ends it (``locate_text.passage_end``: its ``until``, else -- version 1 -- its
 #: paragraph, or -- version 2 -- the earlier of its extent and the next passage's
-#: start, else its quote), and the gate refuses any other end.  ``cf plan-locate``
+#: start, or -- version 3 -- the same with the continued extent, else its quote), and
+#: the gate refuses any other end.  ``cf plan-locate``
 #: writes it into every gate.json it plans, as it does ``JUDGMENT_RULES``, so the
 #: check binds the inventory documents of a run planned with this code; a
 #: ``gate.json`` without the key -- a run planned before it, whose
@@ -606,7 +608,7 @@ SPAN_END_CONTINUED = 3
 #: as it always was, and one naming version 1 by version 1.  A locate or challenge
 #: document carries no span of its own (the gate takes each passage's span from the
 #: task manifest), so in those modes the key binds nothing.
-SPAN_END_RULE = SPAN_END_STATEMENT_CUT
+SPAN_END_RULE = SPAN_END_CONTINUED
 #: A passage's claim list (rule R4; the smoke-2 audit's FM1): before it judges any
 #: declaration, the worker writes the passage's formal clauses as short
 #: paraphrases, each with an id ``c1``, ``c2``, ... (``CLAIM_ID``), at most
@@ -751,9 +753,12 @@ STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
                           STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED}
 #: The statement-cut rule (gate rule 10, the inventory's cut checks; the proposal's
 #: section 3): the version a gate.json names as ``statement_cut_rule``.  ``cf
-#: plan-locate`` writes it into every gate.json from the flip on; a gate.json without
-#: the key is gated without rule 10, as every run planned before it is.
-STATEMENT_CUT_RULE = STATEMENT_CUT_FIRST
+#: plan-locate`` writes it into every gate.json from the flip on (version 1 until the
+#: flip of inv-pilot-1's fixes, version 2 from it, beside span-end rule 3:
+#: ``STATEMENT_CUT_SPAN_END[STATEMENT_CUT_RULE] == SPAN_END_RULE``); a gate.json without
+#: the key is gated without rule 10, as every run planned before it is, and one naming
+#: version 1 by version 1.
+STATEMENT_CUT_RULE = STATEMENT_CUT_CONTINUED
 #: The status rule (the proposal's section 2): the version of the derivation a locate
 #: run's outcomes are derived under, recorded in its ``run.yaml`` (``locate.status_rule``)
 #: and in the seal of its record set.  Version 1 (``STATUS_RULE_D1``) is decision D1 as

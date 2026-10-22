@@ -42,6 +42,28 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The flip of inv-pilot-1's fixes (`docs/proposals/statement-cut.md` §7): `cf plan-locate` now
+  writes `judgment_rules` 3, `span_end_rule` 3 and `statement_cut_rule` 2 into every gate.json it
+  plans (`cflib.vocab.SPAN_END_RULE = SPAN_END_CONTINUED`, `STATEMENT_CUT_RULE =
+  STATEMENT_CUT_CONTINUED`, and the gate's inlined copies), so a newly planned inventory ends a
+  passage that gives no `until` at its continued extent, which runs on over the paragraph that
+  finishes a sentence after its display, and rule 10 holds it to the loose bound, refuses two
+  `formal_math` subjects (h) and counts the continuations, subjects and connectives in the
+  receipt. The words for span-end rule 3 join the inventory prompt with it. The Units rule, in
+  the prompt, `references/vocabulary.md` §1.11 and the labeler's inventory mode, lets a passage
+  run into the paragraph that finishes its sentence after its displays (its meaning only: no
+  heuristic and no `until`). The end paragraph says the same, gives `until` where narration
+  follows in that paragraph, and, where the tool's end stops before the words that finish such a
+  sentence (a display the gate cannot see), gives `until` at the sentence's last word and never
+  a skip (reading K1). The check before the gate says the words after a display or a footnote
+  marker are their sentence's, and the gate's refusals name two passages marked `subject` and
+  say what the gate counts. The rendered inventory `worker.md` is now 16,748 bytes, and its
+  test ceiling rises from 16,500 to 17,000. The labeler stays `locate-label/6` (reading 8). The
+  e2e driver's runs name (3, 3, 2), its ends are rule 3's, it checks the receipt's rule-2
+  counts and refuses a document with two formal subjects; its recorded pages hold no
+  continuation, so their figures stay (reading 9). A run planned before keeps the versions its
+  gate.json names and re-gates, re-tallies and re-exports as it did; inv-pilot-1's (2, 1)
+  inventory still admits a locate plan over it.
 - The inventory prompt's fixes for inv-pilot-1's faults 2, 3 and 5, in words only
   (`docs/proposals/statement-cut.md` §3.4 rules 6, 7 and 9; the maintainer's readings of
   2026-10-21). The shared cut rules change in `references/vocabulary.md` §1.11, the template and
@@ -1265,7 +1287,7 @@ release has something to say.
   one span-end rule (`STATEMENT_CUT_SPAN_END`: 1 reads 2, 2 reads 3), and span-end rule 3 binds
   only beside statement-cut rule 2, so any other pair in a gate.json is exit 3. The gate's
   refusal for statement-cut rule 1 with a span-end rule below 2 no longer says "or later". The
-  planner still writes `(3, 2, 1)`. Every pair a run has named (no key, 1, 2, and (2, 1)) is
+  planner wrote `(3, 2, 1)` until the flip of these fixes (Changed, above). Every pair a run has named (no key, 1, 2, and (2, 1)) is
   gated, ended and counted byte for byte as before: rule 1's checks, messages and receipt block
   are unchanged.
 - `cf plan-locate --agent-timeout <duration>`: a plan sets the agent timeout for its run. tend

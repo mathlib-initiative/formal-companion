@@ -180,7 +180,8 @@ is enough.
   quote, as it was when it ran. A run planned before the statement cut's flip
   names version 1 or no version, so a re-gate recomputes its ends by version 1,
   or holds them only to the layer and the quote, exactly as before.
-- **The statement cut** (`statement_cut_rule` 1 in `gate.json`; the
+- **The statement cut** (`statement_cut_rule` 1 in `gate.json`, and 2, the
+  continued cut, from the flip of inv-pilot-1's fixes on; the
   proposal's §1.1 and §3; every run planned from the proposal's flip on names
   it, and one whose `gate.json` names no `statement_cut_rule` — every run
   planned before the flip — is gated as before). A passage is one statement, cut by the rules of
@@ -1851,7 +1852,8 @@ like a faithfulness run:
   so every run planned before it is re-gated, tallied and exported as it was. The
   gate knew them before the planner wrote them: `judgment_rules` 3 (§3 and §4,
   "Under judgment rules 3"), `span_end_rule` 2 and `statement_cut_rule` 1, its own
-  key, written in every mode. `span_end_rule` 2 ends an inventory passage that
+  key, written in every mode until the flip of inv-pilot-1's fixes, which moved
+  the last two to 3 and 2 (below). `span_end_rule` 2 ends an inventory passage that
   gives no `until` at the earlier of its **extent** — its block, the whole of a
   theorem box, and the displays its last sentence introduces
   (`locate_text.extent`, the proposal's §3.1) — and the start of the document's
@@ -1885,8 +1887,9 @@ like a faithfulness run:
   (`math` blocks inside the span) and how many hold more than one of each — only
   for a run whose gate.json names the rule.
 
-  The gate knows the **continued cut** before the planner writes it (inv-pilot-1's
-  fixes; the proposal's §2.2): `span_end_rule` 3 ends a passage as version 2
+  The **continued cut** (inv-pilot-1's fixes; the proposal's §2.2) is what the
+  planner writes from the flip of those fixes on (the proposal's §7), in every
+  mode, and what the gate knew before it did: `span_end_rule` 3 ends a passage as version 2
   does with the *continued* extent (§2), and `statement_cut_rule` 2 is rule 10
   with (b) read against the loose continued bound (`locate_text.Blocks.runs_on`:
   a block's last sentence with no full stop, never a list item's or a theorem
@@ -1908,7 +1911,10 @@ like a faithfulness run:
   `CUT_CONNECTIVES` inside formal passages, `locate_text.Blocks.cut_points`, an
   upper bound on the cuts there) and `connective_starts` (formal passages whose
   first word is a connective and that start inside a sentence: one that starts
-  "Then…" after a full stop is a correct passage and is not counted).
+  "Then…" after a full stop is a correct passage and is not counted). A locate
+  run planned now over an inventory of (2, 1) — inv-pilot-1's, say — is
+  admitted, since it reads only the inventory's conjuncts, and names (3, 2)
+  itself, which binds nothing in a locate document.
 
   From the flip, too, the planner copies into a locate task manifest's passage the
   frozen inventory's `statement`, and a compound statement's `conjuncts` and
