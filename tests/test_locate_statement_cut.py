@@ -1274,7 +1274,7 @@ def realistic_host() -> tuple[str, dict]:
     every name synthetic: what a run's ``worker.md`` weighs."""
     from locate import plan as lplan
 
-    root, run_id = "/home/runner/widget-run", "inv-run-002"
+    root, run_id = "/home/tester/widget-run", "inv-run-002"
     gate = f"{root}/{run_id}-gate"
     return run_id, {"gate_dir": gate, "tools_corpus_db": f"{root}/corpora/u1/tools.sqlite",
                     "gate_command": (f"python3 {gate}/{lplan.GATE_SCRIPT} "
