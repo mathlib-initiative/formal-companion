@@ -202,7 +202,8 @@ is enough.
   no passage otherwise; no field links it to the statement it supports. A lead
   that describes the subject rather than states it is `expository`, and
   `prominence: subject` — with it the article's QID on the passage's records —
-  goes on the passage that states the theorem, which may be its theorem box.
+  goes on at most one passage, the first that states the theorem or definition,
+  which may be its theorem box; a later restatement is `central`.
   Gate rule 10 (the proposal's §3.3; §9 below) binds only a run whose
   `gate.json` names `statement_cut_rule`, which the planner writes from the
   flip on, and the inventory prompt describes the cut's end of end rule 2,
@@ -1009,8 +1010,10 @@ What every record carries beyond §2.7's example:
   overturn to `subject` adds it and one away removes it (the maintainer's
   decision B5, proposal §2.2; `records.article_qid`). The challenge plan
   refutes every `subject` prominence by default (§9), so under a plan written
-  since that rule each QID rests on a label a challenger judged; an article may
-  have several subject passages, each judged on its own. A record whose
+  since that rule each QID rests on a label a challenger judged. An inventory
+  marks at most one subject passage (the prompt's subject rule; gate rule 10
+  (h) under `statement_cut_rule` 2), but an older run or a prominence overturn
+  to `subject` may give an article several, each judged on its own. A record whose
   `challenge` is `challenge_pending` carries none: an overturn to `subject`
   reopened it and no challenger judged it under that rule (§10), while the
   passage's judged records carry the QID. The QID

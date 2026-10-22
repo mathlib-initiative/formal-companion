@@ -283,7 +283,10 @@ def article_qid(source: Mapping[str, Any], passage: Mapping[str, Any], *,
     challenger judged under that prominence's rule, so the QID would rest on a
     location (or an absence) nobody checked (the B5 review's F1); the
     passage's other records carry it, so the rule is per record, never per
-    passage.  An article may have several subject passages.  The skill does
+    passage.  An article may have several subject passages: an inventory marks
+    at most one (docs/proposals/statement-cut.md section 3.4 rule 9, and gate
+    rule 10 (h) under statement-cut rule 2), but an older run or a prominence
+    overturn to ``subject`` can give it more.  The skill does
     not check that the QID's enwiki sitelink is this article (no network in
     library code): its consumer does, before any concept-level edge.  A source
     with no QID gives None; one whose ``wikidata`` is no QID is refused, never
