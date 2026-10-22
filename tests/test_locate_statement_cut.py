@@ -2,7 +2,8 @@
 
 New code, for docs/proposals/statement-cut.md section 3 (the "cut" package of its
 section 6.2): ``locate_text.passage_end`` under ``span_end_rule`` 2 and the
-definitions of section 3.1 it rests on (``locate_text.Blocks``), the units the
+definitions of section 3.1 it rests on (``locate_text.Blocks``) -- with the
+continued extent and the cut points, which no version reads yet -- the units the
 receipt counts (``locate_text.units``), ``passage_ids.py``'s two passes and the
 rule it reads from the ``gate.json`` beside it, and the cut rules the inventory
 prompt and the bench labeler's inventory mode carry word for word with
@@ -311,6 +312,263 @@ class TestTheBlocks(unittest.TestCase):
         self.assertEqual(lt.extent(page.layer, page.paragraphs, page.formulas,
                                    page.at("Each sprocket")),
                          b.extent(page.at("Each sprocket")))
+
+
+#: a sentence that sets up a display and goes on after it
+LEAD = "<p>Let W be a widget such that</p>"
+#: every page the tests above read: what the continued chain must leave as it was
+OLD_PAGES = (CONNECTIVES, LISTS, CHAIN, PROOF, PARAGRAPHS, BOX, LEMMA_BOX, PLAIN_INTRO)
+
+
+def old_chain(blocks, block):
+    """chain(B) as every span-end and statement-cut version so far reads it, verbatim."""
+    out = [block]
+    while blocks.introduces(out[-1]):
+        following = blocks.next(out[-1])
+        if following is None or "li" in following.kinds or not blocks.is_display(following):
+            break
+        out.append(following)
+    return out
+
+
+class TestTheContinuation(unittest.TestCase):
+    """Section 3.1: the paragraph that finishes a sentence after its display, and the
+    continued chain and extent that read it (``continued=True``); off by default."""
+
+    def tail(self, *html: str, head: str = "Let W") -> tuple[Page, int, int]:
+        """The page, and the extent from ``head`` without and with the continuation."""
+        page = Page(*html)
+        start = page.at(head)
+        return (page, page.blocks.extent(start),
+                page.blocks.extent(start, continued=True))
+
+    def assertContinues(self, *html: str, to: str, head: str = "Let W"):
+        page, plain, continued = self.tail(*html, head=head)
+        self.assertEqual(continued, page.after(to))
+        self.assertLess(plain, continued)
+        return page
+
+    def assertStops(self, *html: str, head: str = "Let W"):
+        page, plain, continued = self.tail(*html, head=head)
+        self.assertEqual(continued, plain)
+        return page
+
+    def test_the_words_after_a_display_are_its_sentences(self):
+        page = self.assertContinues(LEAD + dd("f(x) \\le g(x)") + "<p>for every sprocket x.</p>",
+                                    to="for every sprocket x.")
+        b = page.blocks
+        shown = b.block_at(page.at("f(x) \\le g(x){"))
+        self.assertTrue(b.ends_with_display(shown))
+        self.assertIs(b.continuation(shown), b.block_at(page.at("for every")))
+        # without it the extent is the display's end, as it was
+        self.assertEqual(b.extent(page.at("Let W")), shown.end)
+        self.assertEqual(lt.extent(page.layer, page.paragraphs, page.formulas, page.at("Let W"),
+                                   continued=True), page.after("for every sprocket x."))
+        # the chain names the three blocks; a start in the continuation has its own chain
+        self.assertEqual([page.text(x.span)[:8] for x in b.chain(b.block_at(page.at("Let W")),
+                                                                  continued=True)],
+                         ["Let W be", "f(x) \\le", "for ever"])
+        self.assertEqual(b.extent(page.at("for every"), continued=True),
+                         page.after("sprocket x."))
+
+    def test_a_display_that_ends_its_sentence_has_no_continuation(self):
+        self.assertStops(LEAD + dd("f(x) \\le g(x).") + "<p>for every sprocket x.</p>")
+
+    def test_the_first_word_decides(self):
+        """A lower-case word of two letters or more, the word "a", or an abbreviation goes
+        on with the sentence; a capital, a lone letter (a variable written as text), a
+        formula, a digit, a footnote's bracket or an item label starts a new one."""
+        for first in ("a widget then spans.", "i.e., it spans.", "e.g. every cog.",
+                      "(that is, the widget) spans.", "“which” spans.",
+                      "which is finite.", "where it spans."):
+            with self.subTest(first=first):
+                self.assertContinues(LEAD + dd("f(x)") + f"<p>{first}</p>", to=first)
+        for first in ("Then every gadget spans.", "x is a widget.", "μ is a measure.",
+                      inline("x") + " is finite.", "3 widgets span.", "[1] where it spans.",
+                      "(ii) every widget spans.", "(a) every widget spans.",
+                      "a) every widget spans.", "iv) every cog turns."):
+            with self.subTest(first=first):
+                self.assertStops(LEAD + dd("f(x)") + f"<p>{first}</p>")
+
+    def test_name_particles_read_as_a_continuation(self):
+        """A known false positive, pinned as documented (the maintainer's reading 5): a
+        name particle or a function name written as text is a lower-case word."""
+        for first in ("von Neumann showed it.", "de Rham proved it.", "ln x is finite."):
+            with self.subTest(first=first):
+                self.assertContinues(LEAD + dd("f(x)") + f"<p>{first}</p>", to=first)
+
+    def test_only_a_plain_paragraph_continues(self):
+        """No continuation across a heading's text, into a list item, a theorem box or a
+        ``dd`` holding text (a documented false negative)."""
+        self.assertStops(LEAD + dd("f(x)"), '<h2 id="More">More</h2>', "<p>where it spans.</p>")
+        self.assertStops(LEAD + dd("f(x)") + "<ul><li>for every cog.</li></ul>")
+        self.assertStops(LEAD + dd("f(x)"), '<div class="math_theorem"><p>for every cog.</p></div>')
+        self.assertStops(LEAD + dd("f(x)") + "<dl><dd>where x is a cog.</dd></dl>")
+
+    def test_the_display_forms(self):
+        """A display nested at a paragraph's end continues, and so does a ``dd`` display
+        followed by footnote digits (no letter); a footnote mark after a nested display is
+        text, a known false negative."""
+        self.assertContinues("<p>For each widget we have " + display("a = b") + "</p>"
+                             "<p>where W is finite.</p>", to="where W is finite.",
+                             head="For each")
+        page = self.assertContinues(LEAD + "<dl><dd>" + display("a = b") + "[3]</dd></dl>"
+                                    "<p>where W is finite.</p>", to="where W is finite.")
+        self.assertTrue(page.blocks.is_display(page.blocks.block_at(page.at("a = b{"))))
+        self.assertStops("<p>For each widget we have " + display("a = b") + "[3]</p>"
+                         "<p>where W is finite.</p>", head="For each")
+
+    def test_a_container_is_a_unit(self):
+        """A quotation or a list item that ends with a display leaves no sentence to
+        continue (the extent of a container is the container's end), simple or compound."""
+        page = self.assertStops("<blockquote>" + LEAD + dd("a = b") + "</blockquote>"
+                                "<p>where W is finite.</p>")
+        quote = page.blocks.block_at(page.at("Let W"))
+        self.assertEqual(quote.kinds, ["blockquote"])
+        self.assertTrue(page.blocks.introduces(quote))
+        self.assertFalse(page.blocks.ends_with_display(quote))
+        html = ("<ul><li>Each widget has " + display("a = b") + "</li><li>each gadget has "
+                + display("c = d") + "</li></ul><p>where W is finite.</p>")
+        page = Page(html)
+        b = page.blocks
+        for head in ("Each widget", "each gadget"):
+            for compound in (False, True):
+                with self.subTest(head=head, compound=compound):
+                    start = page.at(head)
+                    self.assertEqual(b.extent(start, compound=compound, continued=True),
+                                     b.extent(start, compound=compound))
+        self.assertIsNone(b.continuation(b.block_at(page.at("each gadget"))))
+
+    def test_a_dd_run_may_continue(self):
+        page = Page(LEAD + "<dl><dd>" + inline("a = b,") + "</dd><dd>" + inline("c = d")
+                    + "</dd></dl><p>where W is finite.</p>")
+        start = page.at("a = b,{")
+        self.assertEqual(page.blocks.extent(start, compound=True, continued=True),
+                         page.after("where W is finite."))
+        self.assertEqual(page.blocks.extent(start, compound=True),
+                         page.blocks.block_at(page.at("c = d{")).end)
+
+    def test_a_continuation_may_introduce_more(self):
+        page = self.assertContinues(LEAD + dd("a = b") + "<p>where n is the order, and</p>"
+                                    + dd("c = d") + "<p>for every k.</p>", to="for every k.")
+        chain = page.blocks.chain(page.blocks.block_at(page.at("Let W")), continued=True)
+        self.assertEqual(len(chain), 5)
+
+    def test_the_chain_page(self):
+        """On CHAIN the sentence from "For each" ends at its stop, so nothing continues it;
+        the one that "x = y" introduces runs on over "where S …"."""
+        page = Page(CHAIN)
+        b = page.blocks
+        start = page.at("For each")
+        self.assertEqual(b.extent(start, continued=True), b.block_at(page.at("k = |S|.{")).end)
+        shown = page.at("x = y{")
+        self.assertEqual(b.extent(shown), b.block_at(shown).end)
+        self.assertEqual(b.extent(shown, continued=True), page.after("set of sprockets."))
+
+    def test_a_continuation_of_two_sentences_is_an_upper_bound(self):
+        """The continued extent runs to the continuation's end; the next passage's start,
+        less its separator, is what ends the first passage there."""
+        page = Page(LEAD + dd("f(x)") + "<p>for every sprocket x. Then every gadget spans.</p>")
+        start, second = page.at("Let W"), page.at("Then every")
+        b = page.blocks
+        self.assertEqual(b.extent(start, continued=True), page.after("every gadget spans."))
+        self.assertEqual(b.separator_start(start, second), page.after("for every sprocket x."))
+
+    def test_off_it_is_the_chain_and_extent_they_were(self):
+        """``continued=False`` and the default are the old chain, on every page above and
+        every start; on them the continued chain differs only after CHAIN's "x = y"."""
+        page = Page(*OLD_PAGES)
+        b = page.blocks
+        differs = []
+        for block in b.blocks:
+            with self.subTest(block=block):
+                self.assertEqual(b.chain(block), old_chain(b, block))
+                self.assertEqual(b.chain(block, continued=False), old_chain(b, block))
+                if b.chain(block, continued=True) != old_chain(b, block):
+                    differs.append(page.text(block.span))
+        self.assertEqual(differs, [page.text(b.block_at(page.at("x = y{")).span)])
+        for start in range(len(page.layer)):
+            for compound in (False, True):
+                self.assertEqual(b.extent(start, compound=compound),
+                                 b.extent(start, compound=compound, continued=False))
+        # and every end rule ends every start as it did: none reads the continuation
+        for rule in lt.SPAN_END_RULES:
+            for head in ("For each", "x = y{", "where S"):
+                with self.subTest(rule=rule, head=head):
+                    s = page.at(head)
+                    want = (max(s + 8, lt.paragraph_end(page.paragraphs, s)) if rule == 1
+                            else max(s + 8, b.extent(s)))
+                    self.assertEqual(page.end(s, rule=rule), want)
+
+
+class TestTheCutPoints(unittest.TestCase):
+    """Section 3.1: the connectives strictly inside a span (``Blocks.cut_points``), an upper
+    bound the receipt is to count, and where the separator before each next word begins."""
+
+    def points(self, html: str) -> tuple[Page, list[tuple[str, str]]]:
+        page = Page(html)
+        span = (0, len(page.layer))
+        return page, [(c, page.layer[k:k + 12]) for k, c in page.blocks.cut_points(span)]
+
+    def test_each_connective(self):
+        page, got = self.points(CONNECTIVES)
+        self.assertEqual(got, [(";", "; every fini"), ("since", "since gadget")])
+        _page, got = self.points("<p>Every widget is finite, and every gadget is round; "
+                                 "hence every cog turns, because cogs spin, so moreover then "
+                                 "Moreover, sprockets spin.</p>")
+        self.assertEqual([c for c, _t in got],
+                         [", and", ";", "hence", "because", "so", "moreover", "then", "moreover"])
+        self.assertEqual({c for c, _t in got} | {"since"}, set(lt.CUT_CONNECTIVES))
+
+    def test_what_is_no_point(self):
+        """A bare "and", a connective inside a word or a formula, one at the span's start
+        and one after which nothing of the span follows."""
+        for html in ("<p>Every widget is finite and every gadget is round.</p>",
+                     "<p>Every widget is sincere, also thence mosaic.</p>",
+                     "<p>Every widget has " + inline("a ; b, and c") + " cogs.</p>",
+                     "<p>Since every widget is finite it spans.</p>",
+                     "<p>Every widget spans;</p>",
+                     "<p>Every widget spans, and</p>",
+                     "<p>Every widget spans so.</p>"):
+            with self.subTest(html=html[:40]):
+                self.assertEqual(self.points(html)[1], [])
+
+    def test_strictly_inside_the_span(self):
+        page = Page(CONNECTIVES)
+        b = page.blocks
+        start, since = page.at("every finite"), page.at("since gadgets")
+        self.assertEqual(b.cut_points((start, page.after("every sprocket."))), [(since, "since")])
+        self.assertEqual(b.cut_points((since, page.after("every sprocket."))), [])
+        # a connective the span ends with has no word of the span after it
+        self.assertEqual(b.cut_points((start, since + len("since "))), [])
+
+    def test_the_separator_sets_each_point_aside(self):
+        """For each point, a passage that started at the next word would end the one
+        before at or before the point: the two restatements of CUT_CONNECTIVES agree."""
+        html = ("<p>Every widget is finite; moreover, every gadget is round, and every cog "
+                "turns since cogs spin, so every sprocket spins because it is round; hence "
+                "every widget spans, then every gadget meets; then it spins. Then it is "
+                "finite,and it is round ;so it spins.</p>")
+        page = Page(html)
+        b = page.blocks
+        span = (0, len(page.layer))
+        points = b.cut_points(span)
+        self.assertGreaterEqual(len(points), 10)
+        for k, connective in points:
+            with self.subTest(at=k, connective=connective):
+                after = k + (1 if connective == ";" else 0)
+                if connective == ", and":
+                    after = page.layer.index("and", k) + 3
+                elif connective != ";":
+                    after = k + len(connective)
+                word = after
+                while _gap(page.layer[word]):
+                    word += 1
+                self.assertLessEqual(b.separator_start(span[0], word), k)
+
+
+def _gap(ch: str) -> bool:
+    return ch.isspace() or ch in lt.SEPARATOR_MARKS
 
 
 class TestTheEndRule(unittest.TestCase):

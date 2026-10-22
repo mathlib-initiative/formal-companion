@@ -1213,6 +1213,21 @@ release has something to say.
   zero-cost baseline is no longer a pass.
 
 ### Added
+- The statement cut's *continued* extent, as a library only (`docs/proposals/statement-cut.md`
+  §3.1; inv-pilot-1's first fault). The renderer puts the words that finish a sentence after its
+  display in a paragraph of their own, and `Blocks.chain` stopped at the display, so the end rule
+  and gate rule 10 (b) cut "…such that [display] for all x." after the display.
+  `scripts/gate/locate_text.py` now defines `Blocks.ends_with_display`, `Blocks.continues` (the
+  first word goes on with the sentence: lower case and two letters or more, "a", or an
+  abbreviation; never a lone letter, an item label such as "(ii)", a capital, a digit, a footnote
+  bracket or a formula), `Blocks.continuation` (a plain `p` after a `p`, `dd` or display that
+  ends with a display and no full stop; never out of a quotation, a theorem box or a list item),
+  and a `continued` flag on `Blocks.chain`, `Blocks.extent` and `extent` that joins it, with the
+  displays it introduces in turn. `Blocks.cut_points` lists the connectives of `CUT_CONNECTIVES`
+  strictly inside a span, an upper bound on where the rules cut, and each is one
+  `separator_start` sets aside. Nothing reads any of it: `continued` defaults to off,
+  `SPAN_END_RULES` is still `(1, 2)`, and every end, gate verdict and receipt is the one it was.
+  Span-end rule 3 and statement-cut rule 2 will read them.
 - `cf plan-locate --agent-timeout <duration>`: a plan sets the agent timeout for its run. tend
   runs in the environment of the session that launches it, so the plan stages
   `export CF_AGENT_TIMEOUT=<duration>` into the run's two wrappers (`bin/worker-agent.sh`,
