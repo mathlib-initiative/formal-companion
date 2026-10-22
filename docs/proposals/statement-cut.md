@@ -432,6 +432,55 @@ full stop before a lower-case word, which by the sentence definition ended its s
   reads it. So where the continuation cannot see a display, the words that finish its sentence
   may still be kept by the passage that holds it, with an `until`, rather than skipped.
 
+The loose bound still stops at three shapes inv-pilot-2's repairs met: a footnote mark between
+a sentence and the display or paragraph that goes on with it (the renderer drops a
+`sup.reference` from every block span, so its `[1]` lies between two blocks and next() finds
+none); a `dd` that holds text with its display and finishes the sentence itself; and a paragraph
+that opens with a formula and goes on with the sentence ("…for an n by n matrix", then
+"A requires…"). The **wide** bound below reads across all three. It is defined here as a library
+(`locate_text`, `wide=True`); no gate version reads it yet, and `continues`, `introduces`,
+`continuation`, `loose_tails`, every default end and `passage_ids.py` are untouched by it.
+
+- **footnote mark** — `[N]` (one to four digits), `[a]` (one lower-case letter), `[nb N]` and
+  `[note N]` (`locate_text.FOOTNOTE_MARK`). `[0, 1]`, `[edit]` and a heading's text ("History[1]")
+  are none.
+- **next across marks(B)** — next(B), where the text between the two blocks may also hold
+  footnote marks: with every mark removed only whitespace is left, and no formula has a character
+  between them (`Blocks.next(…, marks=True)`).
+- **opens_with_formula(N, before)** — N is no display block; its first non-space character is
+  inside a formula; the first word after its leading formulas (whitespace and `,` `;` `:` set
+  aside) is no item label, and its leading run of letters starts lower-case and is two letters
+  or more, or is "a"; and `before` ends with a word, its last non-space character outside every
+  formula. There is no abbreviation clause.
+- **finishes(N, before)** — continues(N), or opens_with_formula(N, before) when `before`'s kinds
+  are within `p`, `dd`, `math` (`CONTINUED_FROM`). The kinds guard keeps a `dt` term and a
+  quotation out.
+- **wide runs on(D)** — runs on(D), with three differences: it reads next across marks; a plain
+  paragraph ends the run when it finishes(N, last), not only when it continues; and a `dd` that
+  is no display block also ends it, included, when `last`'s kinds are within `CONTINUED_FROM`
+  and finishes(dd, last). Any other `dd` or display block is passed over while it introduces, as
+  in runs on(D) (`Blocks.runs_on(…, wide=True)`).
+- **wide chain(B)** and **wide extent(s, compound)** — the loose chain and extent with next across
+  marks in the display join and wide runs on(D) in place of runs on(D)
+  (`Blocks.chain(…, wide=True)`, `Blocks.extent(…, wide=True)`; `wide` implies `loose`). By
+  construction, and by a test at every start of every test page, extent ≤ continued extent ≤
+  loose extent ≤ wide extent; no end rule reads it.
+- **wide tails** — every block N that the wide chain of an earlier block no other holds reaches
+  and the loose chain of none reaches, with the blocks of the first such chain before it
+  (`Blocks.wide_tails`). None is a continuation or a loose tail.
+
+What it leaves refused, by design: a text-only `dd` with a capital after a sentence that runs on
+(admitting the first `dd` that closes the sentence with its full stop, whatever its first word,
+would also take in the first item of a list after a colon and the last of a comma-separated
+list); a capitalised "Then" line
+between two displays, which is reached from the "Then" line and not from the sentence before;
+a new sentence after a display ("They are…"); a `dt` term's `dd`; a list after a colon whose items
+start with a label or a capital; and a paragraph that opens with a formula after a block ending
+with a formula, after a full stop, or with a capital word after its formula. One false positive
+is pinned by a test and documented rather than met: a missing full stop before a sentence that
+opens with a formula ("…see the integers", then "Z is a principal ideal domain.") reads as one
+sentence, as "von Neumann" reads as a continuation.
+
 ### 3.2 The end rule (`span_end_rule` 2)
 
 `locate_text.passage_end(layer, paragraphs, start, exact, until=None, *, rule=1,

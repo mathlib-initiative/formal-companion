@@ -50,7 +50,12 @@ file into the gate directory together with the vendored packages:
    seen or not) -- and the connectives inside a span
    (:meth:`Blocks.cut_points`).  Only span-end rule 3 and statement-cut rule
    2 read them, so every end and every gate verdict of an earlier version is
-   the one it was.
+   the one it was.  The same section defines the *wide* bound beside them
+   (``wide=True``: the loose bound read across footnote marks, ``FOOTNOTE_MARK``,
+   and into a ``dd`` or a paragraph that finishes the sentence,
+   :meth:`Blocks.finishes`, :meth:`Blocks.opens_with_formula`) and the tails only
+   it reaches (:meth:`Blocks.wide_tails`); no gate version reads it yet, and
+   ``continues``, ``continuation`` and every default end are untouched by it.
 
 The vendored ``formal_companion_annotations.ids`` is imported from
 ``vendor/`` of the skill checkout, or from ``vendor/`` beside this file in a
@@ -468,6 +473,12 @@ _LETTERS = re.compile(r"[^\W\d_]*")
 #: the words a full stop does not end a sentence after (``locate_records.
 #: _ABBREVIATIONS``, restated: that module imports this one; a test pins the two)
 ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
+#: what a ``sup.reference`` leaves in the layer between two blocks (the renderer drops it
+#: from every block span): ``[12]``, ``[a]``, ``[nb 3]``, ``[note 3]``.  Only the wide
+#: bound reads it (:meth:`Blocks.next` with ``marks=True``), so ``[0, 1]``, ``[edit]`` and
+#: a heading's text are no mark and still end a run (docs/proposals/statement-cut.md
+#: section 3.1)
+FOOTNOTE_MARK = re.compile(r"\[(?:[0-9]{1,4}|[a-z]|(?:nb|note) [0-9]{1,4})\]")
 
 
 def formula_stop(alttext: str) -> str:
@@ -545,7 +556,7 @@ class Blocks:
     docs/proposals/statement-cut.md section 3.1, which the end rule (versions 2
     and 3) and gate rule 10 read, with the continued chain, the loose bound and
     the cut points the same section defines, which only span-end rule 3 and
-    statement-cut rule 2 read.
+    statement-cut rule 2 read, and the wide bound, which nothing reads yet.
 
     ``paragraphs`` is ``paragraphs.json``: an entry without a readable non-empty
     span is passed over, as :func:`paragraph_end` passes it over.  The table is
@@ -646,16 +657,37 @@ class Blocks:
                 return block
         return None
 
-    def next(self, block: Block) -> Block | None:
+    def next(self, block: Block, *, marks: bool = False) -> Block | None:
         """next(B): the first block no other holds that starts at or after B's end
-        with only whitespace between, else None."""
+        with only whitespace between, else None.
+
+        With ``marks`` (the wide bound's next across marks, docs/proposals/
+        statement-cut.md section 3.1), the text between may also hold footnote
+        marks: with every ``FOOTNOTE_MARK`` removed only whitespace is left, and no
+        formula has a character between the two blocks.  ``[0, 1]``, ``[edit]`` and
+        a heading's text are no mark, so no next block is found across them.
+        """
         i = bisect_right(self._top_starts, block.end - 1)
         if i >= len(self.top):
             return None
         following = self.top[i]
-        if not all(_is_white(ch) for ch in self.layer[block.end:following.start]):
-            return None
+        gap = self.layer[block.end:following.start]
+        if not all(_is_white(ch) for ch in gap):
+            if not marks or not all(_is_white(ch) for ch in FOOTNOTE_MARK.sub("", gap)) \
+                    or self._formula_between(block.end, following.start):
+                return None
         return following
+
+    def _formula_between(self, start: int, end: int) -> bool:
+        """Does a formula have a character in ``[start, end)``?"""
+        i = bisect_right(self._formula_starts, start) - 1
+        if i < 0:
+            i = 0
+        while i < len(self.formulas) and self.formulas[i][0] < end:
+            if self.formulas[i][1] > start:
+                return True
+            i += 1
+        return False
 
     def is_display(self, block: Block) -> bool:
         """A display block: it holds a formula, and its text outside its formulas
@@ -793,7 +825,68 @@ class Blocks:
             return None
         return following if self.continues(following) else None
 
-    def runs_on(self, block: Block) -> list[Block]:
+    def opens_with_formula(self, block: Block, before: Block) -> bool:
+        """opens_with_formula(N, before): N goes on with the sentence ``before`` left
+        open, with a formula as its first word (docs/proposals/statement-cut.md
+        section 3.1; only the wide bound reads it).
+
+        N is no display block; its first non-space character is inside a formula;
+        the first word after its leading formulas, whitespace and ``,`` ``;`` ``:``
+        set aside, is no item label, and its leading run of letters starts with a
+        lower-case letter and is two letters or more, or is the word "a"; and
+        ``before`` ends with a word: its last non-space character lies outside
+        every formula.  So "…for an n by n matrix" and then "A requires…" is one
+        sentence, while a paragraph that opens "x etc. are…" after one that ends
+        with a formula, or "A Then…" with a capital after its formula, is not.
+        There is no abbreviation clause.  Nothing here reads a full stop: the run
+        that asks (:meth:`runs_on`) reaches N only from a sentence that
+        :meth:`introduces` it.  A missing full stop before a sentence that opens
+        with a formula ("…see the integers" and then "Z is a domain.") reads as one
+        sentence: a known false positive, pinned by a test.
+        """
+        if self.is_display(block):
+            return False
+        layer = self.layer
+        i = block.start
+        while i < block.end and _is_white(layer[i]):
+            i += 1
+        if i >= block.end or self.formula_at(i) is None:
+            return False
+        while i < block.end:
+            formula = self.formula_at(i)
+            if formula is not None:
+                i = formula[1]
+            elif _is_white(layer[i]) or layer[i] in ",;:":
+                i += 1
+            else:
+                break
+        if i >= block.end:
+            return False
+        j = i
+        while j < block.end and not _is_white(layer[j]) and self.formula_at(j) is None:
+            j += 1
+        word = layer[i:j]
+        if _ITEM_LABEL.match(word):
+            return False
+        letters = _LETTERS.match(word).group(0)
+        if not (letters[:1].islower() and (len(letters) >= 2 or letters == "a")):
+            return False
+        k = before.end - 1
+        while k >= before.start and _is_white(layer[k]):
+            k -= 1
+        return k >= before.start and self.formula_at(k) is None
+
+    def finishes(self, block: Block, before: Block) -> bool:
+        """finishes(N, before): N's first word goes on with ``before``'s open sentence --
+        it :meth:`continues`, or ``before`` is a paragraph, a ``dd`` or a display
+        (``CONTINUED_FROM``) and N :meth:`opens_with_formula` after it.  The kinds
+        guard keeps a ``dt`` term and a quotation from running on into a ``dd`` or a
+        paragraph that opens with a formula."""
+        if self.continues(block):
+            return True
+        return set(before.kinds) <= CONTINUED_FROM and self.opens_with_formula(block, before)
+
+    def runs_on(self, block: Block, *, wide: bool = False) -> list[Block]:
         """The looser continuation gate rule 10 (b) reads under statement-cut rule 2
         (docs/proposals/statement-cut.md section 3.3, the maintainer's reading K1):
         the blocks D's last sentence runs on over to the paragraph that finishes it,
@@ -807,24 +900,37 @@ class Blocks:
         a container too, so it holds every :meth:`continuation` and more: a
         bound that only ever admits a longer ``until``.  The default end never
         reads it.
+
+        With ``wide`` (the wide runs on, docs/proposals/statement-cut.md section
+        3.1), the walk is the same with three differences: it reads :meth:`next`
+        across footnote marks (``marks=True``); a plain paragraph ends the run when
+        it :meth:`finishes` the sentence, not only when it continues it; and a
+        ``dd`` that is no display block also ends it, included, when the block
+        before is a paragraph, a ``dd`` or a display (``CONTINUED_FROM``) and the
+        ``dd`` finishes it.  Any other ``dd`` or display block is passed over while
+        it introduces, as without.  No end rule reads it.
         """
         out: list[Block] = []
         last = block
         while True:
             if "li" in last.kinds or last.theorem_box or not self.introduces(last):
                 return []
-            following = self.next(last)
+            following = self.next(last, marks=wide)
             if following is None:
                 return []
             if set(following.kinds) == {CONTINUATION_BLOCK}:
-                return out + [following] if self.continues(following) else []
+                done = self.finishes(following, last) if wide else self.continues(following)
+                return out + [following] if done else []
             if "li" in following.kinds or not set(following.kinds) <= {"dd", BLOCK_MATH}:
                 return []
+            if wide and "dd" in following.kinds and not self.is_display(following) \
+                    and set(last.kinds) <= CONTINUED_FROM and self.finishes(following, last):
+                return out + [following]
             out.append(following)
             last = following
 
     def chain(self, block: Block, *, continued: bool = False,
-              loose: bool = False) -> list[Block]:
+              loose: bool = False, wide: bool = False) -> list[Block]:
         """chain(B): B, then the display blocks its last sentence introduces.
 
         A list item (``li``) is a unit of its own, never a display a sentence
@@ -840,19 +946,22 @@ class Blocks:
         chain is the one span-end rules 1 and 2 and statement-cut rule 1 read.
         ``loose`` (gate rule 10 (b) under statement-cut rule 2) joins what
         :meth:`runs_on` names in place of the continuation, and implies
-        ``continued``.
+        ``continued``.  ``wide`` (the wide chain, which no gate version reads yet)
+        implies ``loose``, and both the display join and :meth:`runs_on` read across
+        footnote marks and with ``wide=True``.
         """
+        loose = loose or wide
         out = [block]
         while True:
             while self.introduces(out[-1]):
-                following = self.next(out[-1])
+                following = self.next(out[-1], marks=wide)
                 if following is None or "li" in following.kinds or not self.is_display(following):
                     break
                 out.append(following)
             if not (continued or loose) or "li" in block.kinds:
                 return out
             if loose:
-                tail = self.runs_on(out[-1])
+                tail = self.runs_on(out[-1], wide=wide)
                 if not tail:
                     return out
                 out.extend(tail)
@@ -875,7 +984,7 @@ class Blocks:
             out.append(following)
 
     def extent(self, start: int, *, compound: bool = False, continued: bool = False,
-               loose: bool = False) -> int | None:
+               loose: bool = False, wide: bool = False) -> int | None:
         """extent(s, compound): the furthest a passage that starts at ``start`` may run.
 
         None when no block holds the start; a theorem box's end when the start's
@@ -889,7 +998,8 @@ class Blocks:
         on into further sentences is included to its end.  ``loose`` reads the
         loose chain (:meth:`runs_on`), the bound gate rule 10 (b) holds an end to
         under statement-cut rule 2; it is never shorter than the continued
-        extent.
+        extent.  ``wide`` reads the wide chain: the *wide extent*, never shorter
+        than the loose one, which no end rule reads.
         """
         block = self.block_at(start)
         if block is None:
@@ -897,7 +1007,7 @@ class Blocks:
         if block.theorem_box:
             return block.end
         last = self.list_run(block)[-1] if compound and block.list_kind else block
-        return self.chain(last, continued=continued, loose=loose)[-1].end
+        return self.chain(last, continued=continued, loose=loose, wide=wide)[-1].end
 
     def continuations(self) -> list[tuple[Block, Block]]:
         """``[(D, N)]``: every block no other holds whose :meth:`continuation` is N, in
@@ -926,6 +1036,27 @@ class Blocks:
                 continue
             seen.add(run[-1].span)
             out.append(([block] + run[:-1], run[-1]))
+        return out
+
+    def wide_tails(self) -> list[tuple[list[Block], Block]]:
+        """``[(head, N)]``: every block N that the wide chain (:meth:`chain` with
+        ``wide=True``) of an earlier block no other holds reaches and the loose chain
+        of none reaches, in layer order, with ``head`` the blocks of the first such
+        wide chain before N (docs/proposals/statement-cut.md section 3.1).  These are
+        what the wide bound alone admits an ``until`` into: across a footnote mark,
+        into a ``dd`` that finishes a sentence, into a paragraph that opens with a
+        formula.  No tail is a :meth:`continuation` or one of :meth:`loose_tails`."""
+        reached = {b.span for block in self.top for b in self.chain(block, loose=True)[1:]}
+        seen: set[tuple[int, int]] = set()
+        out = []
+        for block in self.top:
+            run = self.chain(block, wide=True)
+            for k in range(1, len(run)):
+                tail = run[k]
+                if tail.span in reached or tail.span in seen:
+                    continue
+                seen.add(tail.span)
+                out.append((run[:k], tail))
         return out
 
     def mid_sentence(self, start: int) -> bool:
@@ -1130,10 +1261,11 @@ def _abbreviation(layer: str, start: int, stop: int) -> bool:
 
 def extent(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,
            start: int, *, compound: bool = False, continued: bool = False,
-           loose: bool = False) -> int | None:
+           loose: bool = False, wide: bool = False) -> int | None:
     """:meth:`Blocks.extent` of one source: what gate rule 10 (b) holds an end to."""
     return Blocks.of(layer, paragraphs, formulas).extent(start, compound=compound,
-                                                         continued=continued, loose=loose)
+                                                         continued=continued, loose=loose,
+                                                         wide=wide)
 
 
 def units(layer: str, paragraphs: "Sequence[dict] | Blocks", formulas: Sequence[dict] | None,

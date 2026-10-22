@@ -42,6 +42,19 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- **The wide bound, as a library** (docs/proposals/statement-cut.md §3.1). inv-pilot-2's
+  repair prototype made 16 merges that rule 10 (b)'s loose bound refuses, 12 of them at three
+  shapes it stops at: a footnote mark between a sentence and what goes on with it, a `dd` of text that
+  finishes the sentence, and a paragraph that opens with a formula and continues it.
+  `locate_text` gains `FOOTNOTE_MARK`, `Blocks.next(…, marks=True)`, `opens_with_formula`,
+  `finishes`, `runs_on`/`chain`/`extent` with `wide=True` (and the module `extent`), and
+  `wide_tails`. Nothing reads it yet: the gate learns it as statement-cut rule 3 in a later
+  commit. Every default (`wide=False`, `marks=False`) is the code it was, so no end, verdict,
+  receipt or export of any run moves; tests pin next() and runs on(D) verbatim, hold extent ≤
+  continued ≤ loose ≤ wide at every start of every test page, and pin each mark shape, each
+  guard, the shapes left refused (a text-only `dd` with a capital, a "Then" line between two
+  displays, "They" after a display, a `dt`'s `dd`, a list after a colon) and the one known false
+  positive (a missing full stop before a sentence that opens with a formula).
 - Review fixes to inv-pilot-1's fixes, before any run names (3, 2). **The continued extent
   never runs past the loose bound:** `locate_text.Blocks.ends_with_display` reads a block's
   kinds before it reads it as a display, so a theorem box that holds only a display is a unit
