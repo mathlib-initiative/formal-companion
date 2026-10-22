@@ -380,14 +380,16 @@ continued extent and statement-cut rule 2 the loose bound (§3.2–3.3); every e
 reads chain(B) and extent(s, compound) as above (`locate_text.Blocks`, `continued=False`, the
 default), so its ends and verdicts are the ones they were.
 
-- **ends_with_display(D)** — D is a display block, or D is a `p` or a `dd` (its kinds within
-  `p`, `dd`, `math`: `locate_text.CONTINUED_FROM`) and a `math` block inside it is followed by
-  only whitespace to D's end. A container — a `blockquote`, a theorem box, an `li` — that ends
-  with a display does not: it is a unit, and its sentence never runs on out of it. A footnote
+- **ends_with_display(D)** — D's kinds are within `p`, `dd`, `math`
+  (`locate_text.CONTINUED_FROM`), and D is a display block or a `math` block inside it is
+  followed by only whitespace to D's end. A container — a `blockquote`, a theorem box, an
+  `li` — that ends with a display, or holds only one, does not: it is a unit, and its sentence
+  never runs on out of it. A footnote
   mark after a nested display is text, so that display does not either (a known false negative).
 - **continues(N)** — N's first word, read past opening brackets and quotes `(` `"` `'` `‘` `“`
   (never `[`, a footnote mark's) and with a trailing `,` `;` `:` set aside, goes on with a
-  sentence: it is an abbreviation of `ABBREVIATIONS` ("i.e."), or its leading run of letters
+  sentence: it is an abbreviation of `ABBREVIATIONS` as written, lower-case ("i.e."; a capital
+  "E.g." or "Cf." starts a new sentence), or its leading run of letters
   starts with a lower-case letter and is two letters or more, or is the word "a". So a lone
   lower-case letter (a variable written as text), an upper-case letter, a digit and a formula
   start a new sentence, and so does an item label — one to four letters closed by `)`, "(ii)",
@@ -505,7 +507,11 @@ the planner writes it from the flip of inv-pilot-1's fixes on, §7) is rule 1 wi
 - **The counts** (reading 7) gain `subjects`; `continued` (formal passages that end past
   their extent without the continuation); `continuation_starts` (passages of any scope that
   start at a continuation's first word); `continuations_unheld` (continuations after a block a
-  formal passage shares a character with, that no passage shares one with);
+  formal passage shares a character with, that no passage shares one with); `loose_starts`
+  and `loose_unheld` (the same two over the paragraphs only the loose bound reaches,
+  `Blocks.loose_tails`: the last block of a runs on(D) that is no continuation, its head the
+  blocks from the first D that reaches it; the default end stops before them, so only an
+  `until` keeps them with their sentence);
   `connective_points`, `formal_with_connective` and `by_connective` (the cut points inside
   formal passages, §3.1, an upper bound); and `connective_starts` (formal passages whose first
   word is a connective and that start inside a sentence — not at their block's first word, and
@@ -552,9 +558,10 @@ and in the labeler's inventory mode, `workflows/locate-label.workflow.js`, in th
    record's §2: context sentences "open the first statement that uses them"), and a statement
    is never cut from its hypothesis, so such a sentence is no `formal_math` passage of its own
    and opens that statement. When that statement lies beyond the sentence's extent (another block
-   outside a theorem box and the displays the sentence introduces: rule 10 (b)), or narration
-   comes between, it opens nothing, and it is `expository` where the coverage floor needs its
-   paragraph (reading 1). A sentence that defines a symbol for later use ("let σ(W) denote …")
+   outside a theorem box, the displays the sentence introduces and the paragraph that finishes
+   that sentence after them: rule 10 (b)), or anything comes between (reading 1: "when nothing
+   comes between them within its extent"), it opens nothing, and it is `expository` where the
+   coverage floor needs its paragraph (reading 1). A sentence that defines a symbol for later use ("let σ(W) denote …")
    is a `notation` passage; one that fixes an example's objects is context (reading 2).
    `statement` carries the hypotheses and objects, so it reads on its own and the span stays
    tight.
@@ -587,14 +594,22 @@ none, so the labeler does not carry it): before the gate, the worker reads each 
 passage again at rule 4's connectives and at each sentence after its first, at PD9's reasons
 (after a leading "Since X," that PD9 leaves out, Y starts at its own first word and the passage
 before it ends with `until`, reading 3), at the words after a display or a footnote marker,
-which are their sentence's and start no passage, and for context sentences and the subject.
+which are their sentence's and start no passage (but after a list item, below), and for
+context sentences and the subject.
 The line on the words after a display describes span-end rule 3, so it joined the prompt at the
 flip of inv-pilot-1's fixes (§7), with the Units rule's words for it and the end paragraph's: a
 passage runs on over the paragraph that finishes its sentence after its display, gives `until`
 where narration follows in that paragraph, and, where the tool's end stops before those words (a
 display the gate cannot see, which rule 10 (b)'s loose bound still admits, reading K1), gives
-`until` at the sentence's last word and never skips them. The skip paragraph says a skip never
-drops a statement no passage keeps, a proof, a derivation or a worked example.
+`until` at the sentence's last word and never skips them. That is the third use of `until` the
+end paragraph names, beside ending a passage sooner and running a compound statement over its
+list. A list item is a unit, which the loose bound never leaves, so after a display inside one
+the words that finish its sentence start a passage of their own; there the prompt says so, and
+rule 10 (b)'s refusal ("cut the rest into passages of their own") agrees with it. The skip
+paragraph says a skip never drops a statement no passage keeps, a proof, a derivation or a
+worked example. While L2 holds a curated hit, the scope bullet says the subject goes on the
+passage that states the theorem (gate rule 4 refuses an inventory with none, and its refusal
+says a lead that only describes it is `expository`).
 
 ### 3.5 Which rule is mechanical
 

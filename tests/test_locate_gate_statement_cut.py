@@ -130,8 +130,9 @@ GOOD = [
 ]
 
 
-def head_ids(starts: list[int], layer: str = LAYER) -> dict[int, tuple[str, int]]:
-    hm = lt.HeadMap(layer, FORMULAS)
+def head_ids(starts: list[int], layer: str = LAYER,
+             formulas: list | None = None) -> dict[int, tuple[str, int]]:
+    hm = lt.HeadMap(layer, FORMULAS if formulas is None else formulas)
     return {start: (f"In-text #{h}", w) for start, (_s, h, w)
             in zip(starts, lt.assign_ids(hm.head, [hm.to_head(s) for s in starts]))}
 
@@ -151,9 +152,9 @@ def passage(name: str, span, kind, prominence, scope, until, extra, ids,
     return row
 
 
-def cut_body(rows=None, layer: str = LAYER) -> dict:
+def cut_body(rows=None, layer: str = LAYER, formulas: list | None = None) -> dict:
     rows = GOOD if rows is None else rows
-    ids = head_ids([r[1][0] for r in rows], layer)
+    ids = head_ids([r[1][0] for r in rows], layer, formulas)
     return {"passages": [passage(*r, ids, layer) for r in rows],
             "skips": [{"span": SPANS["HISTORY"], "reason": "history"}], "notes": ""}
 
@@ -174,12 +175,15 @@ def replace(name: str, **changes) -> list:
 class CutFixture(G.Fixture):
     """test_verify_locate's gate fixture over the Widget theory layer above."""
 
-    def __init__(self, case, mode="locate-inventory", layer: str = LAYER, **kwargs):
+    def __init__(self, case, mode="locate-inventory", layer: str = LAYER,
+                 formulas: list | None = None, paragraphs: list | None = None, **kwargs):
         super().__init__(case, mode, curated=False, **kwargs)
         sdir = Path(self.gate["sourceset"]["sources_dir"]) / G.SID
         (sdir / "layer.txt").write_text(layer, encoding="utf-8")
-        (sdir / "formulas.json").write_text(json.dumps(FORMULAS), encoding="utf-8")
-        (sdir / "paragraphs.json").write_text(json.dumps(PARAGRAPHS), encoding="utf-8")
+        (sdir / "formulas.json").write_text(
+            json.dumps(FORMULAS if formulas is None else formulas), encoding="utf-8")
+        (sdir / "paragraphs.json").write_text(
+            json.dumps(PARAGRAPHS if paragraphs is None else paragraphs), encoding="utf-8")
         self.layer_sha = hashlib.sha256(layer.encode("utf-8")).hexdigest()
         self.gate["sources"][G.SID]["layer_sha256"] = self.layer_sha
         self.write_gate()
@@ -204,11 +208,15 @@ BEFORE = {"span_end_rule": 1}
 class InventoryCase(G.GateTestCase):
 
     TASK = "t-inv-0001"
-    #: the layer the case's source carries
+    #: the layer the case's source carries, and its formulas and blocks (None: the
+    #: module's)
     LAYER = LAYER
+    FORMULAS = None
+    PARAGRAPHS = None
 
     def setUp(self):
-        self.fx = CutFixture(self, layer=self.LAYER)
+        self.fx = CutFixture(self, layer=self.LAYER, formulas=self.FORMULAS,
+                             paragraphs=self.PARAGRAPHS)
         self.fx.manifest(self.TASK, {
             "source_id": G.SID, "source_sha": G.HTML_SHA, "layer_sha256": self.fx.layer_sha,
             "renderer": "web-html/1",
@@ -572,7 +580,8 @@ class TestTheContinuedCut(InventoryCase):
             return self.stats(result)["cut"]
 
         extra = ("subjects", "continued", "continuation_starts", "continuations_unheld",
-                 "connective_points", "formal_with_connective", "connective_starts")
+                 "loose_starts", "loose_unheld", "connective_points", "formal_with_connective",
+                 "connective_starts")
         got = cut(GOOD)
         # rule 1's counts are the ones they were, and the rest follow
         self.assertEqual({k: got[k] for k in got if k not in extra + ("by_connective",)}, {
@@ -581,8 +590,8 @@ class TestTheContinuedCut(InventoryCase):
             "sentences": 7, "displays": 1, "multi_sentence": 1, "multi_display": 0})
         self.assertEqual({k: got[k] for k in extra + ("by_connective",)}, {
             "subjects": 0, "continued": 0, "continuation_starts": 1, "continuations_unheld": 0,
-            "connective_points": 1, "formal_with_connective": 1, "connective_starts": 0,
-            "by_connective": {";": 1}})
+            "loose_starts": 0, "loose_unheld": 0, "connective_points": 1,
+            "formal_with_connective": 1, "connective_starts": 0, "by_connective": {";": 1}})
         got = cut(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
         self.assertEqual((got["continued"], got["continuation_starts"],
                           got["continuations_unheld"]), (1, 0, 0))
@@ -591,6 +600,100 @@ class TestTheContinuedCut(InventoryCase):
                           got["continuations_unheld"]), (0, 0, 1))
         got = cut(changed("THM1", prominence="subject"))
         self.assertEqual(got["subjects"], 1)
+
+
+#: LAYER_WHEN with D1 a ``dd`` of text: a display the gate cannot see (a ``texhtml``
+#: formula, say), so the continuation is none and only the loose bound reaches P3_WHEN
+FORMULAS_UNSEEN = [f for f in FORMULAS if f["span"] != SPANS["D1"]]
+PARAGRAPHS_UNSEEN = [dict(p, block="dd", math=False) if p["span"] == SPANS["D1"] else p
+                     for p in PARAGRAPHS]
+
+
+class TestTheLooseCutOnADisplayTheGateCannotSee(InventoryCase):
+    """Reading K1 through the gate: on LAYER_WHEN with D1 no display the gate can see, rule
+    10 (b) under statement-cut rule 2 still admits the `until` that keeps P3_WHEN with its
+    sentence, while span-end rule 3's default end stops at P2 (the strict rule)."""
+
+    LAYER = LAYER_WHEN
+    FORMULAS = FORMULAS_UNSEEN
+    PARAGRAPHS = PARAGRAPHS_UNSEEN
+
+    def body(self, rows) -> dict:
+        return cut_body(rows, layer=LAYER_WHEN, formulas=FORMULAS_UNSEEN)
+
+    def test_the_blocks(self):
+        blocks = lt.Blocks(LAYER_WHEN, PARAGRAPHS_UNSEEN, FORMULAS_UNSEEN)
+        start = SPANS["P2"][0]
+        self.assertEqual(blocks.extent(start), SPANS["P2"][1])
+        self.assertEqual(blocks.extent(start, continued=True), SPANS["P2"][1])
+        self.assertEqual(blocks.extent(start, loose=True), SPANS["P3"][1])
+
+    def test_rule_10_b_admits_the_until_under_rule_2_only(self):
+        body = self.body(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertOk(self.gate(body, CUT_2))
+        self.assertRule(self.gate(body, CUT_1), 10, "only inside a theorem box")
+        self.assertOk(self.gate(body, BEFORE))
+
+    def test_the_default_end_still_stops_at_its_paragraph(self):
+        body = self.body(changed("P2", rows=without("P3"), span=P2_ON, until=None))
+        self.assertRule(self.gate(body, CUT_2), 2, f"and passage_ids.py ends it at "
+                                                   f"{SPANS['P2'][1]}")
+        # the tool's own end passes, and leaves the words to an `until`
+        short = self.body(changed("P2", span=SPANS["P2"], until=None))
+        self.assertOk(self.gate(short, CUT_2))
+
+    def test_the_loose_counts(self):
+        def cut(rows, skips=()):
+            body = self.body(rows)
+            body["skips"].extend({"span": list(s), "reason": "x"} for s in skips)
+            result = self.gate(body, CUT_2)
+            self.assertOk(result)
+            return self.stats(result)["cut"]
+
+        keys = ("continuation_starts", "continuations_unheld", "loose_starts", "loose_unheld")
+        # held by P2's `until`: nothing cut and nothing unheld
+        got = cut(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertEqual(tuple(got[k] for k in keys), (0, 0, 0, 0))
+        # started as a passage of its own
+        got = cut(changed("P2", span=SPANS["P2"], until=None))
+        self.assertEqual(tuple(got[k] for k in keys), (0, 0, 1, 0))
+        # held by no passage (a skip is no passage)
+        got = cut(changed("P2", rows=without("P3"), span=SPANS["P2"], until=None),
+                  skips=[SPANS["P3"]])
+        self.assertEqual(tuple(got[k] for k in keys), (0, 0, 0, 1))
+
+
+#: P1 with a reason cut out of its first sentence at "since" and a second sentence that
+#: starts "Then" (the same length, so every span and formula stays where it is)
+P1_SINCE = "A widget spans, since it has finitely many wheels. Then every finite widget has a " \
+           "spanning gadget."
+LAYER_SINCE = LAYER.replace(P1, P1_SINCE, 1)
+
+
+class TestTheConnectiveStarts(InventoryCase):
+    """The receipt's ``connective_starts`` counts a formal passage that starts at a
+    connective inside a sentence ("since …"), never one that starts a sentence ("Then …"),
+    the maintainer's reading 7."""
+
+    LAYER = LAYER_SINCE
+
+    def test_one_start_inside_a_sentence(self):
+        self.assertEqual(len(P1_SINCE), len(P1))
+        a = LAYER_SINCE.index(P1_SINCE)
+        since, then = LAYER_SINCE.index("since", a), LAYER_SINCE.index("Then", a)
+        rows = [r for r in GOOD if r[0] not in ("DEF1", "THM1")]
+        rows[:0] = [("HEAD", [a, a + len("A widget spans")], "theorem", "supporting",
+                     "formal_math", "widget spans", {}),
+                    ("SINCE", [since, LAYER_SINCE.index("wheels.", a) + len("wheels.")],
+                     "theorem", "supporting", "formal_math", None, {}),
+                    ("THEN", [then, a + len(P1_SINCE)], "theorem", "central", "formal_math",
+                     None, {})]
+        result = self.gate(cut_body(rows, layer=LAYER_SINCE), CUT_2)
+        self.assertOk(result)
+        got = self.stats(result)["cut"]
+        self.assertEqual(got["connective_starts"], 1)
+        # one cut point is inside no formal passage: the "since" each passage starts or ends at
+        self.assertEqual(got["by_connective"], {";": 1})
 
 
 class TestTheContinuedCutOnANewSentence(InventoryCase):

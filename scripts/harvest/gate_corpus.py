@@ -499,8 +499,9 @@ CUT_COUNTS = ("passages", "formal", "compound", "conjuncts", "sentences", "displ
               "multi_sentence", "multi_display")
 #: ... and under statement-cut rule 2 (the maintainer's reading 7), beside ``by_connective``
 CUT_COUNTS_2 = CUT_COUNTS + ("subjects", "continued", "continuation_starts",
-                             "continuations_unheld", "connective_points",
-                             "formal_with_connective", "connective_starts")
+                             "continuations_unheld", "loose_starts", "loose_unheld",
+                             "connective_points", "formal_with_connective",
+                             "connective_starts")
 #: the ``{name: n}`` maps of the block, by the rule that writes them
 _CUT_MAPS = {1: ("by_shape",), 2: ("by_shape", "by_connective")}
 
@@ -518,7 +519,8 @@ def cut_summary(stats: list[dict], rule: int = 1) -> dict:
     measures.  Under ``rule`` 2 (``statement_cut_rule`` 2) the block also counts
     ``CUT_COUNTS_2``'s further keys -- the subjects, the passages the continued
     bound let run on, the continuations cut from their sentence or held by no
-    passage, and the connectives inside formal passages -- and ``by_connective``
+    passage (and apart, the paragraphs only the loose bound reaches), and the
+    connectives inside formal passages -- and ``by_connective``
     (``verify_locate._continued_counts``); under 1 it is the block it always was.
     """
     names = CUT_COUNTS_2 if rule >= 2 else CUT_COUNTS
@@ -602,7 +604,9 @@ def render(result: dict, max_named: int = 12) -> str:
                          f"{cut['continued']} passage(s) run on past a display, "
                          f"{cut['continuation_starts']} passage(s) start at the words that "
                          f"finish a sentence after its display, "
-                         f"{cut['continuations_unheld']} such paragraph(s) no passage holds; "
+                         f"{cut['continuations_unheld']} such paragraph(s) no passage holds, "
+                         f"and {cut['loose_starts']} and {cut['loose_unheld']} of those only "
+                         f"the loose bound reaches; "
                          f"{cut['connective_points']} connective(s) inside "
                          f"{cut['formal_with_connective']} formal passage(s), "
                          f"{cut['connective_starts']} passage(s) starting at one")

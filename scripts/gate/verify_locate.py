@@ -140,11 +140,16 @@ references/locate-documents.md sections 2-4 and 9):
    inventory are disjoint, one text one passage; a span runs from one block
    into the next only inside a theorem box, into the displays its last
    sentence introduces or over the items of one list (a compound statement),
-   and never ends inside a formula; ``conjuncts`` are
+   and under statement-cut rule 2 into the paragraph that finishes its
+   sentence after them (the loose bound, ``locate_text.Blocks.runs_on``), and
+   never ends inside a formula; ``conjuncts`` are
    none or 2-5 with a ``shape`` of the closed list, on a ``formal_math`` passage;
-   and a passage scoped out is ``supporting``.  Rule 10 refuses nothing on a
-   passage's size: its counts of compound statements and their conjuncts,
-   sentences and displays are the harvest receipt's ``cut`` block.
+   a passage scoped out is ``supporting``; and, under statement-cut rule 2, at
+   most one ``formal_math`` passage of a source is marked ``prominence:
+   subject`` (h).  Rule 10 refuses nothing on a passage's size: its counts of
+   compound statements and their conjuncts, sentences and displays (and under
+   statement-cut rule 2 the subjects, continuations and connectives) are the
+   harvest receipt's ``cut`` block.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -2987,7 +2992,9 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                    and _one_of(p.get("scope"), LOCATED_SCOPES) for p in passages):
             problems.add(4, name, f"L2 holds {len(curated)} curated hit(s) for this article "
                                   f"({_hits(curated)}), so a passage of prominence subject is "
-                                  f"kept, scoped formal_math")
+                                  f"kept, scoped formal_math: the passage that states the "
+                                  f"theorem or definition; a lead that only describes it is "
+                                  f"`expository`")
     return stats
 
 
@@ -3215,7 +3222,13 @@ def _continued_counts(blocks: Any, rows: list[tuple[int, dict, tuple[int, int]]]
     first word (:meth:`~locate_text.Blocks.continuations`): the words after a
     display cut from their sentence.  ``continuations_unheld``: continuations
     after a block a formal passage shares a character with, that no passage
-    shares one with.  ``connective_points`` and ``by_connective``: the cut points
+    shares one with.  ``loose_starts`` and ``loose_unheld``: the same two counts
+    over the paragraphs only the loose bound reaches
+    (:meth:`~locate_text.Blocks.loose_tails`: after a display the gate cannot see,
+    a paragraph with no full stop or a container's sentence), whose default end
+    stops before them, the run-on head in place of the display -- so a tail that
+    no ``until`` kept and no passage holds, or that starts a passage of its own,
+    is counted too.  ``connective_points`` and ``by_connective``: the cut points
     (:meth:`~locate_text.Blocks.cut_points`) inside formal passages, an upper bound
     on the cuts the rules make there, and ``formal_with_connective`` the formal
     passages holding one.  ``connective_starts``: formal passages whose first word
@@ -3224,8 +3237,8 @@ def _continued_counts(blocks: Any, rows: list[tuple[int, dict, tuple[int, int]]]
     a correct passage, and is not counted.
     """
     out = {"subjects": 0, "continued": 0, "continuation_starts": 0, "continuations_unheld": 0,
-           "connective_points": 0, "formal_with_connective": 0, "connective_starts": 0,
-           "by_connective": {}}
+           "loose_starts": 0, "loose_unheld": 0, "connective_points": 0,
+           "formal_with_connective": 0, "connective_starts": 0, "by_connective": {}}
     spans = [span for _i, _p, span in rows]
     formal = [(p, span) for _i, p, span in rows if _one_of(p.get("scope"), LOCATED_SCOPES)]
     starts = {span[0] for span in spans}
@@ -3247,13 +3260,20 @@ def _continued_counts(blocks: Any, rows: list[tuple[int, dict, tuple[int, int]]]
     def shares(block, among) -> bool:
         return any(a < block.end and block.start < b for a, b in among)
 
-    formal_spans = [span for _p, span in formal]
-    for display, tail in blocks.continuations():
+    def first_word(tail) -> int:
         first = tail.start
         while first < tail.end and lt._is_white(blocks.layer[first]):
             first += 1
-        out["continuation_starts"] += first in starts
+        return first
+
+    formal_spans = [span for _p, span in formal]
+    for display, tail in blocks.continuations():
+        out["continuation_starts"] += first_word(tail) in starts
         out["continuations_unheld"] += shares(display, formal_spans) and not shares(tail, spans)
+    for head, tail in blocks.loose_tails():
+        out["loose_starts"] += first_word(tail) in starts
+        out["loose_unheld"] += any(shares(b, formal_spans) for b in head) \
+            and not shares(tail, spans)
     out["by_connective"] = dict(sorted(out["by_connective"].items()))
     return out
 

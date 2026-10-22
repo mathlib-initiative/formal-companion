@@ -379,8 +379,9 @@ class TestTheContinuation(unittest.TestCase):
 
     def test_the_first_word_decides(self):
         """A lower-case word of two letters or more, the word "a", or an abbreviation goes
-        on with the sentence; a capital, a lone letter (a variable written as text), a
-        formula, a digit, a footnote's bracket or an item label starts a new one."""
+        on with the sentence; a capital (a capitalised abbreviation too: "E.g." starts a
+        sentence), a lone letter (a variable written as text), a formula, a digit, a
+        footnote's bracket or an item label starts a new one."""
         for first in ("a widget then spans.", "i.e., it spans.", "e.g. every cog.",
                       "(that is, the widget) spans.", "“which” spans.",
                       "which is finite.", "where it spans."):
@@ -389,7 +390,8 @@ class TestTheContinuation(unittest.TestCase):
         for first in ("Then every gadget spans.", "x is a widget.", "μ is a measure.",
                       inline("x") + " is finite.", "3 widgets span.", "[1] where it spans.",
                       "(ii) every widget spans.", "(a) every widget spans.",
-                      "a) every widget spans.", "iv) every cog turns."):
+                      "a) every widget spans.", "iv) every cog turns.",
+                      "E.g. the gadget spans.", "Cf. the gadget lemma.", "I.e. it spans."):
             with self.subTest(first=first):
                 self.assertStops(LEAD + dd("f(x)") + f"<p>{first}</p>")
 
@@ -430,6 +432,16 @@ class TestTheContinuation(unittest.TestCase):
         self.assertEqual(quote.kinds, ["blockquote"])
         self.assertTrue(page.blocks.introduces(quote))
         self.assertFalse(page.blocks.ends_with_display(quote))
+        # a theorem box that holds only a display is a unit too, as a display or a dd
+        for shown in (display("a = b"), dd("a = b")):
+            with self.subTest(box=shown[:12]):
+                page = self.assertStops(LEAD + '<div class="math_theorem">' + shown + "</div>"
+                                        "<p>where W is finite.</p>")
+                box = page.blocks.block_at(page.at("a = b{"))
+                self.assertTrue(box.theorem_box)
+                self.assertTrue(page.blocks.is_display(box))
+                self.assertFalse(page.blocks.ends_with_display(box))
+                self.assertIsNone(page.blocks.continuation(box))
         html = ("<ul><li>Each widget has " + display("a = b") + "</li><li>each gadget has "
                 + display("c = d") + "</li></ul><p>where W is finite.</p>")
         page = Page(html)
@@ -507,6 +519,30 @@ class TestTheContinuation(unittest.TestCase):
                     self.assertEqual(page.end(s, rule=rule), want)
 
 
+#: the pages the continuation and the loose bound are read on below, each a page of its own
+RUN_ON_PAGES = (
+    TAIL,
+    LEAD + dd("f(x) \\le g(x)") + "<p>for every sprocket x.</p>",
+    LEAD + dd("f(x) \\le g(x).") + "<p>for every sprocket x.</p>",
+    "<p>For each widget we have " + display("a = b") + "</p><p>where W is finite.</p>",
+    "<p>For each widget we have " + display("a = b") + "[3]</p><p>where W is finite.</p>",
+    LEAD + "<dl><dd>" + display("a = b") + "[3]</dd></dl><p>where W is finite.</p>",
+    "<blockquote>" + LEAD + dd("a = b") + "</blockquote><p>where W is finite.</p>",
+    LEAD + '<div class="math_theorem">' + display("a = b") + "</div><p>where W is finite.</p>",
+    LEAD + '<div class="math_theorem">' + dd("a = b") + "</div><p>where W is finite.</p>",
+    "<ul><li>Each widget has " + display("a = b") + "</li><li>each gadget has "
+    + display("c = d") + "</li></ul><p>where W is finite.</p>",
+    "<ul><li>Let W be such that " + display("x^2 + 1") + "</li></ul><p>where x is a sprocket.</p>",
+    LEAD + "<dl><dd>" + inline("a = b,") + "</dd><dd>" + inline("c = d")
+    + "</dd></dl><p>where W is finite.</p>",
+    LEAD + dd("a = b") + "<p>where n is the order, and</p>" + dd("c = d") + "<p>for every k.</p>",
+    LEAD + "<dl><dd><i>x</i><sup>2</sup> + 1</dd></dl><p>for every sprocket " + inline("x")
+    + ".</p>",
+    LEAD + "<p>for every sprocket x.</p>",
+    LEAD + dd("f(x)") + "<ul><li>for every cog.</li></ul><p>where it spans.</p>",
+)
+
+
 class TestTheLooseBound(unittest.TestCase):
     """Section 3.3: the bound gate rule 10 (b) holds an end to under statement-cut rule 2
     (``loose=True``, the maintainer's reading K1): a sentence that runs on into the
@@ -556,6 +592,14 @@ class TestTheLooseBound(unittest.TestCase):
             with self.subTest(html=html[:60]):
                 page, plain, continued, loose = self.bounds(html)
                 self.assertEqual(loose, plain)
+        # a display inside a list item: the item is a unit, so the words after it start a
+        # passage of their own (the prompt's end paragraph says so)
+        page = Page("<ul><li>Let W be such that " + display("x^2 + 1") + "</li></ul>"
+                    "<p>where x is a sprocket.</p>")
+        start = page.at("Let W")
+        self.assertEqual(page.blocks.extent(start, loose=True), page.blocks.extent(start))
+        self.assertEqual(page.blocks.extent(start, continued=True), page.blocks.extent(start))
+        self.assertEqual(page.blocks.loose_tails(), [])
         page = Page("<ul><li>Let W be such that</li></ul><p>for every cog.</p>",
                     '<div class="math_theorem"><p>Lemma. Each widget has the gadget</p></div>'
                     "<p>for every cog.</p>")
@@ -573,17 +617,34 @@ class TestTheLooseBound(unittest.TestCase):
                              "<p>where W is finite.</p>", to="where W is finite.")
 
     def test_it_is_never_short_of_the_continued_extent(self):
-        page = Page(*OLD_PAGES, LEAD + dd("f(x)") + "<p>for every sprocket x.</p>")
-        b = page.blocks
-        for start in range(len(page.layer)):
-            for compound in (False, True):
-                plain = b.extent(start, compound=compound)
-                if plain is None:
-                    continue
-                continued = b.extent(start, compound=compound, continued=True)
-                loose = b.extent(start, compound=compound, loose=True)
-                self.assertLessEqual(plain, continued)
-                self.assertLessEqual(continued, loose)
+        """extent <= continued extent <= loose extent, at every start of every page these
+        tests read, so the loose bound admits every default end span-end rule 3 writes; a
+        theorem box that holds only a display once broke it (the box joined the continued
+        chain and stopped the loose one)."""
+        pages = [OLD_PAGES, *((html,) for html in OLD_PAGES + RUN_ON_PAGES)]
+        for first in ("which is finite.", "E.g. the gadget spans.", "(ii) every widget spans.",
+                      "von Neumann showed it.", "Then every gadget spans."):
+            pages.append((LEAD + dd("f(x)") + f"<p>{first}</p>",))
+        for html in pages:
+            page = Page(*html)
+            b = page.blocks
+            with self.subTest(page=page.layer[:40]):
+                for start in range(len(page.layer)):
+                    for compound in (False, True):
+                        plain = b.extent(start, compound=compound)
+                        if plain is None:
+                            continue
+                        continued = b.extent(start, compound=compound, continued=True)
+                        loose = b.extent(start, compound=compound, loose=True)
+                        self.assertLessEqual(plain, continued, start)
+                        self.assertLessEqual(continued, loose, start)
+                        # and the default end of span-end rule 3 is one the loose bound admits
+                        if not compound:
+                            self.assertLessEqual(page.end(start, rule=3), max(loose, start + 8))
+                strict = {tail.span for _d, tail in b.continuations()}
+                for head, tail in b.loose_tails():
+                    self.assertNotIn(tail.span, strict)
+                    self.assertEqual(b.runs_on(head[0])[-1].span, tail.span)
 
     def test_the_module_extent_takes_it(self):
         page = Page(LEAD + "<p>for every sprocket x.</p>")
@@ -603,6 +664,23 @@ class TestTheReceiptsReadings(unittest.TestCase):
         self.assertEqual([(page.text(d.span)[:5], page.text(n.span)[:9])
                           for d, n in b.continuations()],
                          [("x = y", "where S i"), ("f(x){", "for every")])
+        # none of them is a tail only the loose bound reaches
+        self.assertEqual(b.loose_tails(), [])
+
+    def test_the_tails_only_the_loose_bound_reaches(self):
+        """A display the gate cannot see, a paragraph with no full stop, and a quotation's
+        sentence: each tail once, with the blocks its sentence runs on over from the first."""
+        page = Page(LEAD + "<dl><dd><i>x</i><sup>2</sup> + 1</dd></dl><p>for every sprocket "
+                    "s.</p>", "<p>Each cog has the gadget</p><p>for every widget.</p>",
+                    "<blockquote><p>Each gadget is such that</p>" + dd("a = b")
+                    + "</blockquote><p>where W is finite.</p>",
+                    LEAD + dd("f(x)") + "<p>for every sprocket x.</p>")
+        b = page.blocks
+        self.assertEqual([([page.text(x.span)[:7] for x in head], page.text(tail.span)[:9])
+                          for head, tail in b.loose_tails()],
+                         [(["Let W b", "x2 + 1"], "for every"), (["Each co"], "for every"),
+                          (["Each ga"], "where W i")])
+        self.assertEqual(len(b.continuations()), 1)
 
     def test_a_start_inside_a_sentence(self):
         page = Page("<p>Every widget spans, since gadgets meet; so every cog turns. Then it "
@@ -1184,18 +1262,39 @@ def pd9_line() -> str:
     return "- **PD9** — " + " ".join(match.group(1).replace("\n> ", " ").split())
 
 
-def rendered_inventory() -> str:
-    """The inventory worker prompt as the planner renders it."""
+#: placeholder host paths, which the needles below read
+PLACEHOLDER_HOST = {"gate_dir": "<gate>", "tools_corpus_db": "<db>",
+                    "gate_command": "<gate cmd>", "sources_dir": "<sources>",
+                    "candidates_dir": "<candidates>", "tasks_dir": "<tasks>"}
+
+
+def realistic_host() -> tuple[str, dict]:
+    """A run id and host paths as long as a real remote plan's (``locate.plan``'s layout
+    under a 23-character root, an 11-character run id and a 4-character sourceset),
+    every name synthetic: what a run's ``worker.md`` weighs."""
+    from locate import plan as lplan
+
+    root, run_id = "/home/runner/widget-run", "inv-run-002"
+    gate = f"{root}/{run_id}-gate"
+    return run_id, {"gate_dir": gate, "tools_corpus_db": f"{root}/corpora/u1/tools.sqlite",
+                    "gate_command": (f"python3 {gate}/{lplan.GATE_SCRIPT} "
+                                     f"--gate-config {gate}/gate.json"),
+                    "sources_dir": f"{root}/sourcesets/wset/sources",
+                    "candidates_dir": f"{root}/sourcesets/wset/candidates/u1",
+                    "tasks_dir": f"{gate}/tasks"}
+
+
+def rendered_inventory(host: dict | None = None, run_id: str = "r1") -> str:
+    """The inventory worker prompt as the planner renders it (placeholder host paths
+    unless ``host`` is given)."""
     from locate import presets as lpresets, prompts as lprompts
 
     class _Universe:
         id, sha256, libraries = "u1", "0" * 64, {}
 
-    host = {"gate_dir": "<gate>", "tools_corpus_db": "<db>", "gate_command": "<gate cmd>",
-            "sources_dir": "<sources>", "candidates_dir": "<candidates>", "tasks_dir": "<tasks>"}
     preset = lpresets.get(vocab.LOCATE_INVENTORY)
-    ctx = lprompts.build_context(preset, run_id="r1", host=host, universe=_Universe(),
-                                 per_task=8)
+    ctx = lprompts.build_context(preset, run_id=run_id, host=host or PLACEHOLDER_HOST,
+                                 universe=_Universe(), per_task=8)
     return lprompts.render_prompts(preset, ctx)["worker.md"]
 
 
@@ -1276,11 +1375,18 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
                       "passage", flat)
         self.assertIn("a remark, narration after the sentence a display interrupted)", flat)
         # the reading K1 fallback: the gate's loose bound admits the `until` the tool's
-        # strict end leaves to the worker, so the words are never skipped (critique C6)
-        self.assertIn("The words that finish a sentence after its display are that "
-                      "sentence's: never start a passage there, and never skip them; where the "
-                      "tool's end stops before them, give `until` at the sentence's last word.",
-                      flat)
+        # strict end leaves to the worker, so the words are never skipped (critique C6); it
+        # is the third use of `until` the "only" names, and a list item, which the loose
+        # bound never leaves, is the one place the words start a passage of their own
+        self.assertIn("you give `until` only to end a passage sooner (", flat)
+        self.assertIn("narration after the sentence a display interrupted), to run a compound "
+                      "statement over the items of its list, or to run a sentence to its last "
+                      "word over the words that finish it after its display, where the tool's "
+                      "end stops before them.", flat)
+        self.assertIn("Those words are that sentence's: never start a passage there, and never "
+                      "skip them, except after a list item, which is a unit: there they start a "
+                      "passage of their own.", flat)
+        self.assertNotIn("give `until` at the sentence's last word", flat)
         self.assertIn("less what separates the two (the space, a connective of the cut rules "
                       "above, a comma or semicolon)", flat)
         self.assertIn("So two passages never overlap", flat)
@@ -1388,11 +1494,15 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
                 self.assertTrue(line == "" or line.startswith("- **"), line)
 
 
-#: the rendered inventory prompt's ceiling in bytes, so its growth is a choice: 16,159
-#: bytes with the fixes for faults 2, 3 and 5, and 16,748 with span-end rule 3's words
-#: (the Units rule, the end paragraph, the check's line on the words after a display and
-#: the gate's refusals), which raised it from 16,500
-WORKER_MD_MAX_BYTES = 17_000
+#: the rendered inventory prompt's ceiling in bytes, so its growth is a choice, rendered
+#: with host paths as long as a real plan's (:func:`realistic_host`): placeholder paths
+#: hide about 320 bytes.  inv-pilot-1's worker.md was 14,243 bytes.  With placeholders
+#: the prompt was 16,159 bytes with the fixes for faults 2, 3 and 5, 16,748 with span-end
+#: rule 3's words, and is 16,933 with the review's fixes (the Context rule's continuation,
+#: the third use of `until`, the list-item exception and the curated subject); with real
+#: paths it is 17,252, about 3.0 KB (21%, some 750 tokens) over the pilot's, not the
+#: 1.9 KB first estimated.  The ceiling was 17,000 over placeholder paths
+WORKER_MD_MAX_BYTES = 17_500
 
 
 class TestThePilotsPromptFixes(unittest.TestCase):
@@ -1428,10 +1538,17 @@ class TestThePilotsPromptFixes(unittest.TestCase):
         context = self.lines["Context."]
         self.assertIn("is no statement and no `formal_math` passage of its own", context)
         self.assertNotIn("no passage of its own", context)
-        self.assertIn("When that statement is in another paragraph (outside a theorem box and "
-                      "the displays the sentence introduces), or narration comes between, the "
-                      "sentence opens nothing: it is `expository` where its paragraph must be "
-                      "covered, and otherwise in no passage.", context)
+        # the paragraph that finishes the sentence after its displays is the sentence's own
+        # (the Units rule), and a statement between that does not use the sentence leaves it
+        # opening nothing as narration does (reading 1: "nothing comes between")
+        self.assertIn("When that statement is in another paragraph (outside a theorem box, the "
+                      "displays the sentence introduces and the paragraph that finishes that "
+                      "sentence after them), or anything comes between, the sentence opens "
+                      "nothing: it is `expository` where its paragraph must be covered, and "
+                      "otherwise in no passage.", context)
+        self.assertNotIn("narration comes between", context)
+        self.assertIn("the paragraph that finishes that sentence after them",
+                      self.lines["Units."])
         self.assertIn("A sentence that defines a symbol for later use is a `notation` passage, "
                       "not context", context)
 
@@ -1445,6 +1562,10 @@ class TestThePilotsPromptFixes(unittest.TestCase):
                       "`central`.", subject)
         self.assertIn("`subject` — at most one passage, the one that states what the article "
                       "is about (the subject rule above)", self.flat)
+        # while L2 holds a curated hit gate rule 4 wants a subject: the prompt says it goes on
+        # the passage that states the theorem, never on a lead that only describes it
+        self.assertIn("holds a `curated` hit, keep at least one `formal_math` passage, the "
+                      "subject on the one that states it, and never scope it out;", self.flat)
         for text in ("goes on one passage only", "the one `subject` passage", "usually one"):
             with self.subTest(text=text):
                 self.assertNotIn(text, self.flat)
@@ -1474,8 +1595,9 @@ class TestThePilotsPromptFixes(unittest.TestCase):
         # the words after a display are span-end rule 3's, which the planner writes from the
         # flip of inv-pilot-1's fixes on
         self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED)
-        self.assertIn("- No passage starts inside a sentence except where you cut it: the "
-                      "words after a display or a footnote marker are their sentence's.", flat)
+        self.assertIn("- No passage starts inside a sentence except where you cut it or after "
+                      "a list item: the words after a display or a footnote marker are their "
+                      "sentence's.", flat)
         # the check restates rules and adds none: the labeler does not carry it
         self.assertNotIn("check the cut", LABELER)
 
@@ -1486,7 +1608,12 @@ class TestThePilotsPromptFixes(unittest.TestCase):
         self.assertNotIn("never a proof left out whole", LABELER)
 
     def test_the_prompts_size(self):
-        self.assertLessEqual(len(self.prompt.encode("utf-8")), WORKER_MD_MAX_BYTES)
+        run_id, host = realistic_host()
+        real = rendered_inventory(host, run_id=run_id)
+        self.assertNotIn("<gate", real)
+        self.assertLessEqual(len(real.encode("utf-8")), WORKER_MD_MAX_BYTES)
+        # the placeholder render, which every other test reads, is the lighter one
+        self.assertLess(len(self.prompt.encode("utf-8")), len(real.encode("utf-8")))
 
 
 if __name__ == "__main__":

@@ -1251,6 +1251,18 @@ class TestTheInventoryKeepsItsSubject(GateTestCase):
         self.assertRule(fx.run(fx.document(TASK, body)), 4, "prominence subject is kept")
         self.assertOk(fx.run(fx.document(TASK, inventory_body())))
 
+    def test_the_refusal_says_which_passage_is_the_subject(self):
+        """The refusal steers to the passage that states the theorem, never to marking a
+        descriptive lead (inv-pilot-1's fault 5)."""
+        fx = Fixture(self, "locate-inventory")
+        fx.manifest(TASK, inventory_manifest_doc(fx))
+        body = inventory_body()
+        body["passages"][0].update(prominence="central")
+        self.assertRule(fx.run(fx.document(TASK, body)), 4,
+                        "so a passage of prominence subject is kept, scoped formal_math: the "
+                        "passage that states the theorem or definition; a lead that only "
+                        "describes it is `expository`")
+
 
 class TestEveryDocumentOfTheTask(GateTestCase):
     """Review #53: a task that writes documents writes one per source its manifest names."""
