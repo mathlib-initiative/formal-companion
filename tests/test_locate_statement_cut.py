@@ -4,7 +4,8 @@ New code, for docs/proposals/statement-cut.md section 3 (the "cut" package of it
 section 6.2): ``locate_text.passage_end`` under ``span_end_rule`` 2 and 3 and the
 definitions of section 3.1 they rest on (``locate_text.Blocks``) -- with the
 continued extent span-end rule 3 reads, the loose bound gate rule 10 (b) reads under
-statement-cut rule 2, and the cut points -- the units the
+statement-cut rule 2, the wide bound beside it that no gate version reads yet, and the
+cut points -- the units the
 receipt counts (``locate_text.units``), ``passage_ids.py``'s two passes and the
 rule it reads from the ``gate.json`` beside it, and the cut rules the inventory
 prompt and the bench labeler's inventory mode carry word for word with
@@ -617,11 +618,13 @@ class TestTheLooseBound(unittest.TestCase):
                              "<p>where W is finite.</p>", to="where W is finite.")
 
     def test_it_is_never_short_of_the_continued_extent(self):
-        """extent <= continued extent <= loose extent, at every start of every page these
-        tests read, so the loose bound admits every default end span-end rule 3 writes; a
-        theorem box that holds only a display once broke it (the box joined the continued
-        chain and stopped the loose one)."""
-        pages = [OLD_PAGES, *((html,) for html in OLD_PAGES + RUN_ON_PAGES)]
+        """extent <= continued extent <= loose extent <= wide extent, at every start of
+        every page these tests read, so the loose bound admits every default end span-end
+        rule 3 writes and the wide bound every one the loose admits; a theorem box that
+        holds only a display once broke it (the box joined the continued chain and stopped
+        the loose one)."""
+        pages = [OLD_PAGES, WIDE_PAGES,
+                 *((html,) for html in OLD_PAGES + RUN_ON_PAGES + WIDE_PAGES)]
         for first in ("which is finite.", "E.g. the gadget spans.", "(ii) every widget spans.",
                       "von Neumann showed it.", "Then every gadget spans."):
             pages.append((LEAD + dd("f(x)") + f"<p>{first}</p>",))
@@ -636,15 +639,23 @@ class TestTheLooseBound(unittest.TestCase):
                             continue
                         continued = b.extent(start, compound=compound, continued=True)
                         loose = b.extent(start, compound=compound, loose=True)
+                        wide = b.extent(start, compound=compound, wide=True)
                         self.assertLessEqual(plain, continued, start)
                         self.assertLessEqual(continued, loose, start)
-                        # and the default end of span-end rule 3 is one the loose bound admits
+                        self.assertLessEqual(loose, wide, start)
+                        # and the default end of span-end rule 3 is one both bounds admit
                         if not compound:
-                            self.assertLessEqual(page.end(start, rule=3), max(loose, start + 8))
+                            end = page.end(start, rule=3)
+                            self.assertLessEqual(end, max(loose, start + 8))
+                            self.assertLessEqual(end, max(wide, start + 8))
                 strict = {tail.span for _d, tail in b.continuations()}
                 for head, tail in b.loose_tails():
                     self.assertNotIn(tail.span, strict)
                     self.assertEqual(b.runs_on(head[0])[-1].span, tail.span)
+                loose_tails = {tail.span for _h, tail in b.loose_tails()}
+                for head, tail in b.wide_tails():
+                    self.assertNotIn(tail.span, strict | loose_tails)
+                    self.assertEqual(b.chain(head[0], wide=True)[len(head)].span, tail.span)
 
     def test_the_module_extent_takes_it(self):
         page = Page(LEAD + "<p>for every sprocket x.</p>")
@@ -692,6 +703,277 @@ class TestTheReceiptsReadings(unittest.TestCase):
             with self.subTest(head=head):
                 self.assertEqual(page.blocks.mid_sentence(page.at(head)), head in inside)
         self.assertFalse(page.blocks.mid_sentence(len(page.layer) + 5))
+
+
+def mark(label: str) -> str:
+    """A footnote mark as MediaWiki sets one: a ``sup.reference``, which the renderer
+    drops from every block span, so at a paragraph's end it stands between two blocks."""
+    return f'<sup class="reference"><a href="#cite_note-{label}">[{label}]</a></sup>'
+
+
+#: "Let W be a widget such that", then a footnote mark: the sentence runs on past it
+MARKED = "<p>Let W be a widget such that{}</p>"
+#: a lead that ends with a word, then a paragraph that opens with a formula and goes on
+#: with its sentence over a display to the paragraph that finishes it
+OPENS = ("<p>For an n by n matrix</p><p>" + inline("A") + " satisfies</p>" + dd("A^2 = 1")
+         + "<p>for every widget.</p>")
+#: the pages the wide bound is read on below, each a page of its own
+WIDE_PAGES = (
+    MARKED.format(mark("1")) + dd("f(x) \\le g(x)") + "<p>for every sprocket x.</p>",
+    MARKED.format(mark("a")) + dd("f(x) \\le g(x).") + "<p>Then every gadget spans.</p>",
+    MARKED.format(mark("1") + " " + mark("2")) + "<dl><dd>for every sprocket x.</dd></dl>",
+    "<p>Let W be a widget.</p>" + mark("1") + dd("f(x)") + "<p>for every sprocket x.</p>",
+    LEAD + "[0, 1]" + dd("f(x)") + "<p>for every sprocket x.</p>",
+    LEAD + '<h2 id="H">History' + mark("1") + '<span class="mw-editsection">[edit]</span>'
+    "</h2>" + dd("f(x)") + "<p>for every sprocket x.</p>",
+    LEAD + "<dl><dd>" + inline("x") + " is a sprocket.</dd></dl>",
+    "<p>In other words,</p><dl><dd>Index(D) = dim Ker(D).</dd></dl>",
+    "<dl><dt>Widget</dt><dd>a set with two sprockets.</dd></dl>",
+    "<p>The axioms are:</p><dl><dd>A1. Every widget spans;</dd>"
+    "<dd>A2. Every gadget is finite.</dd></dl>",
+    OPENS,
+    "<p>Each widget has the gadget " + inline("g") + "</p><p>" + inline("x")
+    + " etc. are sprockets.</p>",
+    "<p>See the integers</p><p>" + inline("\\mathbb{Z}") + " is a principal ideal domain.</p>",
+    MARKED.format(mark("1")) + dd("a = b") + "<p>Then for every gadget</p>" + dd("c = d")
+    + "<p>holds for every sprocket.</p>",
+    LEAD + dd("a = b") + "<p>They are coprime.</p>",
+    "<blockquote><p>Each gadget is such that" + mark("note 3") + "</p></blockquote>"
+    "<p>for every widget.</p>",
+    "<blockquote><p>Each gadget is such that" + mark("note 3") + "</p></blockquote>"
+    "<dl><dd>for every widget.</dd></dl>",
+)
+
+
+def old_next(blocks, block):
+    """next(B) as every version before the wide bound reads it, verbatim."""
+    i = lt.bisect_right(blocks._top_starts, block.end - 1)
+    if i >= len(blocks.top):
+        return None
+    following = blocks.top[i]
+    if not all(lt._is_white(ch) for ch in blocks.layer[block.end:following.start]):
+        return None
+    return following
+
+
+def old_runs_on(blocks, block):
+    """runs on(D) as statement-cut rule 2 reads it, verbatim."""
+    out = []
+    last = block
+    while True:
+        if "li" in last.kinds or last.theorem_box or not blocks.introduces(last):
+            return []
+        following = old_next(blocks, last)
+        if following is None:
+            return []
+        if set(following.kinds) == {lt.CONTINUATION_BLOCK}:
+            return out + [following] if blocks.continues(following) else []
+        if "li" in following.kinds or not set(following.kinds) <= {"dd", lt.BLOCK_MATH}:
+            return []
+        out.append(following)
+        last = following
+
+
+class TestTheWideBound(unittest.TestCase):
+    """Section 3.1: the wide bound (``wide=True``) -- the loose bound read across footnote
+    marks, into a ``dd`` that finishes a sentence and into a paragraph that opens with a
+    formula -- and the tails only it reaches.  No gate version reads it yet."""
+
+    def bounds(self, *html: str, head: str = "Let W") -> tuple[Page, int, int, int, int]:
+        page = Page(*html)
+        start = page.at(head)
+        b = page.blocks
+        return (page, b.extent(start), b.extent(start, continued=True),
+                b.extent(start, loose=True), b.extent(start, wide=True))
+
+    def end_of(self, page: Page, text: str) -> int:
+        return page.blocks.block_at(page.at(text)).end
+
+    def assertWideOnly(self, *html: str, to: str, head: str = "Let W") -> Page:
+        """Every earlier bound stops at the start's own block's chain, as it did; the
+        wide one runs on to the end of the block holding ``to``."""
+        page, plain, continued, loose, wide = self.bounds(*html, head=head)
+        self.assertEqual((continued, loose), (plain, plain))
+        self.assertEqual(wide, self.end_of(page, to))
+        self.assertLess(loose, wide)
+        return page
+
+    def assertNotWidened(self, *html: str, head: str = "Let W") -> Page:
+        page, plain, continued, loose, wide = self.bounds(*html, head=head)
+        self.assertEqual(wide, loose)
+        return page
+
+    def test_each_mark_shape_is_crossed(self):
+        for label in ("1", "12", "a", "nb 3", "note 3"):
+            with self.subTest(mark=label):
+                page = self.assertWideOnly(MARKED.format(mark(label)) + dd("f(x) \\le g(x)")
+                                           + "<p>for every sprocket x.</p>", to="for every")
+                self.assertIn(f"[{label}]", page.layer)
+        self.assertWideOnly(MARKED.format(mark("1") + " " + mark("2"))
+                            + dd("f(x) \\le g(x)") + "<p>for every sprocket x.</p>",
+                            to="for every")
+        # the display join reads across a mark too: a display with its full stop
+        page = self.assertWideOnly(WIDE_PAGES[1], to="\\le g(x).}")
+        self.assertNotIn("Then", page.text((0, page.blocks.extent(0, wide=True))))
+
+    def test_next_across_marks_only_when_asked(self):
+        page = Page(WIDE_PAGES[0])
+        b = page.blocks
+        lead = b.block_at(page.at("Let W"))
+        self.assertIsNone(b.next(lead))
+        self.assertEqual(b.next(lead, marks=True), b.block_at(page.at("\\le g(x)}")))
+        for label in ("12345", "ab", "A", "nb", "note 3a", "0, 1", "edit", "Nb 3"):
+            with self.subTest(gap=label):
+                self.assertFalse(lt.FOOTNOTE_MARK.fullmatch(f"[{label}]"))
+        for label in ("1", "1234", "z", "nb 1", "note 12"):
+            with self.subTest(mark=label):
+                self.assertTrue(lt.FOOTNOTE_MARK.fullmatch(f"[{label}]"))
+
+    def test_what_is_no_mark(self):
+        """A full stop before the mark, ``[0, 1]`` between the blocks, and a heading's text
+        with its own mark and ``[edit]``: no next block, so nothing is widened."""
+        for html in WIDE_PAGES[3:6]:
+            with self.subTest(html=html[:50]):
+                page, plain, continued, loose, wide = self.bounds(html)
+                self.assertEqual((loose, wide), (plain, plain))
+
+    def test_a_formula_between_the_blocks_is_no_mark(self):
+        """Marks and whitespace only: a formula in the gap ends the run, whatever its text."""
+        layer = "Let W be such that[1] y=z"
+        paragraphs = [{"block": "p", "span": [0, 18]}, {"block": "math", "span": [22, 25]}]
+        for formulas, joined in (([{"span": [22, 25], "alttext": "y=z"}], True),
+                                 ([{"span": [21, 22], "alttext": "\\,"},
+                                   {"span": [22, 25], "alttext": "y=z"}], False)):
+            with self.subTest(joined=joined):
+                b = lt.Blocks(layer, paragraphs, formulas)
+                self.assertEqual(b.next(b.block_at(0), marks=True) is not None, joined)
+                self.assertEqual(b.extent(0, wide=True), 25 if joined else 18)
+                self.assertEqual(b.extent(0, loose=True), 18)
+
+    def test_a_dd_that_finishes_the_sentence(self):
+        """A lower-case ``dd`` and a ``dd`` that opens with a formula end the run, the
+        ``dd`` included; the loose bound passes a ``dd`` over and needs a paragraph."""
+        self.assertWideOnly(LEAD + "<dl><dd>for every sprocket x.</dd></dl>", to="for every")
+        self.assertWideOnly(WIDE_PAGES[6], to=" is a sprocket.")
+        # across a mark too
+        self.assertWideOnly(WIDE_PAGES[2], to="for every")
+        # a dd that finishes a dd: the first opens with a formula after the lead
+        self.assertWideOnly(LEAD + "<dl><dd>" + inline("u^2 = a") + " holds</dd>"
+                            "<dd>for every sprocket x.</dd></dl>", to="for every")
+
+    def test_what_a_dd_does_not_finish(self):
+        """A text-only ``dd`` with a capital, a ``dt`` term's ``dd``, and the items of a list
+        after a colon, and a quotation's ``dd``: refused, as the loose bound refuses them
+        (a quotation's sentence may still run on across a mark into a paragraph that
+        continues it, as the loose bound lets it without the mark)."""
+        self.assertWideOnly(WIDE_PAGES[15], to="for every widget.", head="Each gadget")
+        for html, head in ((WIDE_PAGES[16], "Each gadget"),
+                           (WIDE_PAGES[7], "In other"),
+                           (WIDE_PAGES[8], "Widget"),
+                           ("<dl><dt>Widget</dt><dd>" + inline("W") + " is a set.</dd></dl>",
+                            "Widget"),
+                           (WIDE_PAGES[9], "The axioms")):
+            with self.subTest(html=html[:50]):
+                page, plain, continued, loose, wide = self.bounds(html, head=head)
+                self.assertEqual((loose, wide), (plain, plain))
+
+    def test_a_paragraph_that_opens_with_a_formula(self):
+        """The paragraph is the sentence's when the block before ends with a word and the
+        word after its formula goes on with it; then its own display and continuation
+        join too."""
+        page = self.assertWideOnly(OPENS, to="for every widget.", head="For an")
+        b = page.blocks
+        lead, opening = b.block_at(page.at("For an")), b.block_at(page.at(" satisfies"))
+        self.assertTrue(b.opens_with_formula(opening, lead))
+        self.assertTrue(b.finishes(opening, lead))
+        self.assertFalse(b.continues(opening))
+        self.assertIsNone(b.continuation(lead))
+        self.assertEqual(b.runs_on(lead), [])
+        self.assertEqual(b.runs_on(lead, wide=True), [opening])
+
+    def test_the_guards(self):
+        """After a block that ends with a formula, after a full stop, with a capital or an
+        item label after the formula, a display paragraph, and after a ``dt``: refused."""
+        lead = "<p>For an n by n matrix</p>"
+        for html in (WIDE_PAGES[11].replace("Each widget", "For an"),
+                     "<p>For an n by n matrix.</p><p>" + inline("A") + " is invertible.</p>",
+                     lead + "<p>" + inline("A") + " Then it spans.</p>",
+                     lead + "<p>" + inline("A") + " a) spans.</p>",
+                     lead + "<p>" + inline("A = B") + "</p>",
+                     lead + "<p>" + inline("A") + "</p>",
+                     "<dl><dt>For an n by n matrix</dt></dl><p>" + inline("A") + " spans.</p>"):
+            with self.subTest(html=html[:70]):
+                page, plain, continued, loose, wide = self.bounds(html, head="For an")
+                self.assertEqual((loose, wide), (plain, plain))
+        # the guard is the block before's, not the words: the same paragraph after a word
+        self.assertWideOnly(lead + "<p>" + inline("A") + ", a sprocket, spans.</p>",
+                            to=", a sprocket", head="For an")
+
+    def test_the_missing_full_stop_is_a_known_false_positive(self):
+        """"…see the integers" and then a sentence that opens with a formula reads as one
+        sentence (docs/proposals/statement-cut.md section 3.1): pinned, not met."""
+        self.assertWideOnly(WIDE_PAGES[12], to=" is a principal", head="See the")
+
+    def test_a_new_sentence_between_two_displays(self):
+        """A capitalised "Then" line between two displays is not reached from the first
+        sentence; from the "Then" line the loose bound already reaches its finish."""
+        page = self.assertWideOnly(WIDE_PAGES[13], to="{\\displaystyle a = b}")
+        start = page.at("Then for")
+        b = page.blocks
+        self.assertEqual(b.extent(start, wide=True), b.extent(start, loose=True))
+        self.assertEqual(b.extent(start, wide=True), self.end_of(page, "holds for every"))
+
+    def test_a_new_sentence_after_a_display(self):
+        page = self.assertNotWidened(WIDE_PAGES[14])
+        self.assertEqual(page.blocks.extent(page.at("Let W"), wide=True),
+                         self.end_of(page, "{\\displaystyle a = b}"))
+
+    def test_what_it_leaves_as_it_was(self):
+        """On every page, new and old, next(), the chain and runs on(D) without ``wide``
+        are the ones every earlier version reads, verbatim, and the loose chain and
+        extent are the ones ``wide=False`` gives."""
+        for html in OLD_PAGES + RUN_ON_PAGES + WIDE_PAGES:
+            page = Page(html)
+            b = page.blocks
+            with self.subTest(page=page.layer[:40]):
+                for block in b.top:
+                    self.assertEqual(b.chain(block), old_chain(b, block))
+                    self.assertEqual(b.next(block), old_next(b, block))
+                    self.assertEqual(b.runs_on(block), old_runs_on(b, block))
+                    self.assertEqual(b.runs_on(block), b.runs_on(block, wide=False))
+                    self.assertEqual(b.chain(block, loose=True),
+                                     b.chain(block, loose=True, wide=False))
+                for start in range(len(page.layer)):
+                    self.assertEqual(b.extent(start, loose=True),
+                                     b.extent(start, loose=True, wide=False))
+
+    def test_the_tails_only_the_wide_bound_reaches(self):
+        """Each tail once, with the blocks before it from the first wide chain that reaches
+        it; none is a continuation or a loose tail."""
+        page = Page(WIDE_PAGES[0], OPENS, WIDE_PAGES[12],
+                    LEAD + dd("f(x)") + "<p>for every sprocket x.</p>",
+                    "<p>Each cog has the gadget</p><p>for every widget.</p>")
+        b = page.blocks
+        self.assertEqual([([page.text(x.span)[:7] for x in head], page.text(tail.span)[:9])
+                          for head, tail in b.wide_tails()],
+                         [(["Let W b"], "f(x) \\le "), (["For an "], "A{\\displa"),
+                          (["See the"], "\\mathbb{Z")])
+        strict = {n.span for _d, n in b.continuations()}
+        loose = {n.span for _h, n in b.loose_tails()}
+        self.assertEqual(len(strict), 3)
+        self.assertEqual(len(loose), 1)
+        self.assertFalse({n.span for _h, n in b.wide_tails()} & (strict | loose))
+        # a page with nothing only the wide bound reaches has none
+        self.assertEqual(Page(*OLD_PAGES, *RUN_ON_PAGES).blocks.wide_tails(), [])
+
+    def test_the_module_extent_takes_it(self):
+        page = Page(OPENS)
+        self.assertEqual(lt.extent(page.layer, page.paragraphs, page.formulas,
+                                   page.at("For an"), wide=True),
+                         self.end_of(page, "for every widget."))
+        self.assertEqual(lt.extent(page.layer, page.paragraphs, page.formulas,
+                                   page.at("For an"), loose=True),
+                         self.end_of(page, "For an"))
 
 
 class TestTheCutPoints(unittest.TestCase):
