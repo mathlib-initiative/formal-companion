@@ -386,6 +386,11 @@ class TestTheInlinedVocabularyIsCflibs(unittest.TestCase):
             "RULES_STATEMENT_CUT": vocab.RULES_STATEMENT_CUT,
             "SPAN_END_STATEMENT_CUT": vocab.SPAN_END_STATEMENT_CUT,
             "STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_RULE,
+            # the continued cut's, which the gate knows before the planner writes them
+            "SPAN_END_CONTINUED": vocab.SPAN_END_CONTINUED,
+            "STATEMENT_CUT_FIRST": vocab.STATEMENT_CUT_FIRST,
+            "STATEMENT_CUT_CONTINUED": vocab.STATEMENT_CUT_CONTINUED,
+            "STATEMENT_CUT_SPAN_END": vocab.STATEMENT_CUT_SPAN_END,
             "COMPOUND_SHAPES": vocab.COMPOUND_SHAPES, "MIN_CONJUNCTS": vocab.MIN_CONJUNCTS,
             "MAX_CONJUNCTS": vocab.MAX_CONJUNCTS,
             "SHAPE_CONJUNCT_COUNTS": vocab.SHAPE_CONJUNCT_COUNTS,

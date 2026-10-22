@@ -1228,6 +1228,26 @@ release has something to say.
   `separator_start` sets aside. Nothing reads any of it: `continued` defaults to off,
   `SPAN_END_RULES` is still `(1, 2)`, and every end, gate verdict and receipt is the one it was.
   Span-end rule 3 and statement-cut rule 2 will read them.
+- The continued cut's versions, known to the host before the planner writes them (inv-pilot-1's
+  fixes; `docs/proposals/statement-cut.md` §2.2, §3.1–§3.3). **Span-end rule 3**
+  (`cflib.vocab.SPAN_END_CONTINUED`) is rule 2 with the continued extent: a passage with no
+  `until` runs on over the paragraph that finishes its sentence after its display.
+  `locate_text.SPAN_END_RULES` is `(1, 2, 3)`, and `passage_ids.py` ends a passage by it when the
+  gate.json beside it names 3. **Statement-cut rule 2** (`STATEMENT_CUT_CONTINUED`) holds rule 10
+  (b) to a loose continued bound (`Blocks.runs_on`, the maintainer's reading K1): a sentence may
+  run on into the paragraph that finishes it whether or not the gate sees the display between,
+  which admits only a longer `until`. It adds (h), which refuses two or more `formal_math`
+  passages of a source marked `prominence: subject` and names them all without choosing one
+  (reading K3). The receipt's `cut` block gains `subjects`, `continued`, `continuation_starts`,
+  `continuations_unheld`, `connective_points`, `formal_with_connective`, `connective_starts`
+  (mid-sentence starts only, reading 7) and `by_connective`
+  (`harvest.gate_corpus.CUT_COUNTS_2`, `cut_summary(…, rule=2)`). Each statement-cut rule reads
+  one span-end rule (`STATEMENT_CUT_SPAN_END`: 1 reads 2, 2 reads 3), and span-end rule 3 binds
+  only beside statement-cut rule 2, so any other pair in a gate.json is exit 3. The gate's
+  refusal for statement-cut rule 1 with a span-end rule below 2 no longer says "or later". The
+  planner still writes `(3, 2, 1)`. Every pair a run has named (no key, 1, 2, and (2, 1)) is
+  gated, ended and counted byte for byte as before: rule 1's checks, messages and receipt block
+  are unchanged.
 - `cf plan-locate --agent-timeout <duration>`: a plan sets the agent timeout for its run. tend
   runs in the environment of the session that launches it, so the plan stages
   `export CF_AGENT_TIMEOUT=<duration>` into the run's two wrappers (`bin/worker-agent.sh`,

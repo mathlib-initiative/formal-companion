@@ -22,7 +22,9 @@ re-computes): under version 1 at the end of the paragraph of
 2, the statement cut's (docs/proposals/statement-cut.md section 3.2), at the
 earlier of its extent -- its block, and the displays its last sentence
 introduces -- and the next passage's start, so the tool places every passage
-first and ends each in a second pass.  ``until`` stays in the document, so the
+first and ends each in a second pass; under version 3 the same with the
+continued extent, which takes in the paragraph that finishes a sentence after
+its display.  ``until`` stays in the document, so the
 gate can re-compute the end from it and refuse any other: an offset edited by
 hand, or counted in UTF-16 units.  Everything else a passage carries -- its
 ``conjuncts`` and ``shape`` among them -- is written back as it was.
@@ -65,8 +67,8 @@ def place(doc: dict, layer: str, formulas: list, paragraphs: list, *,
     """Fill the document's passages in place; return the problems, one per passage.
 
     Two passes: every quote is placed first, then each passage is ended by
-    span-end rule ``rule`` -- version 2 reads the next passage's start, so it
-    needs them all.  A passage that cannot be placed names its problem in
+    span-end rule ``rule`` -- versions 2 and 3 read the next passage's start, so
+    they need them all.  A passage that cannot be placed names its problem in
     document order, as it always did.
     """
     problems: dict[int, str] = {}
@@ -89,7 +91,7 @@ def place(doc: dict, layer: str, formulas: list, paragraphs: list, *,
             problems[index] = f"{where}: {exc}"
             continue
         found.append((index, passage, start, head_start, exact))
-    table = lt.Blocks(layer, paragraphs, formulas) if rule == lt.SPAN_END_STATEMENT_CUT \
+    table = lt.Blocks(layer, paragraphs, formulas) if rule >= lt.SPAN_END_STATEMENT_CUT \
         else paragraphs
     starts = sorted({start for _i, _p, start, _h, _e in found})
     placed: list[tuple[dict, int]] = []
