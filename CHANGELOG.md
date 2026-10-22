@@ -42,6 +42,26 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The inventory prompt's fixes for inv-pilot-1's faults 2, 3 and 5, in words only
+  (`docs/proposals/statement-cut.md` §3.4 rules 6, 7 and 9; the maintainer's readings of
+  2026-10-21). The shared cut rules change in `references/vocabulary.md` §1.11, the template and
+  the labeler's `CUT_RULES` together, one physical line each, and a test now refuses a wrapped
+  one. **Proofs:** a proof or derivation is judged a sentence at a time and is never kept,
+  skipped or scoped `expository` whole for being a proof; a worked example's sentence that
+  asserts its own equation is a passage, never a conjunct of the example (K2). **Context:** a
+  set-up sentence is no `formal_math` passage of its own. When the statement that uses it lies
+  in another paragraph, or narration comes between, it opens nothing and is `expository` where
+  the coverage floor needs it. A symbol defined for later use is a `notation`. **The subject:**
+  a sentence describes when it would stay true whatever the result concluded, and the marker
+  goes on at most one passage, the first in reading order that states the theorem or
+  definition (K4). The template alone gains a skip sentence (a skip never drops a statement no
+  passage keeps, a proof, a derivation or a worked example) and a check before the gate
+  (connectives, PD9's reasons with the `until` a leading "Since …," needs, context and the
+  subject). The PD5 bullet no longer says "or a span around it". The labeler's enumerators
+  also say a statement inside a proof is never left out as narration. The labeler stays
+  `locate-label/6` (`scripts/bench/gold.py` says why). The words for span-end rule 3 wait for
+  the flip. A plan made now renders the new words, and the template and labeler shas move. A
+  run planned before keeps the prompts it rendered, and no re-gate, tally or export reads them.
 - The locate prompts keep no pre-flip text (reading F4's consequence, `docs/proposals/
   statement-cut.md` §9). The rules-2 branches of the locate, challenge and worker-system
   templates (`{{#unless judgment_rules_statement_cut}}`) and the inventory prompt's version-1 end

@@ -82,8 +82,9 @@ row changes, and there is **no new scope and no new passage kind**:
   passages' `statement`, and nothing downstream reads it.
 - **A descriptive subject lead** (question 6) is cut like any other text: what describes rather
   than states is `expository`, and the subject marker — `prominence: subject`, and with it the
-  article's QID on the passage's records (`locate.records.article_qid`, unchanged) — goes on the
-  passage that states the theorem, which may be the theorem box. Rule 10 (§3.3) refuses
+  article's QID on the passage's records (`locate.records.article_qid`, unchanged) — goes on at
+  most one passage, the first that states the theorem, which may be the theorem box (§3.4 rule
+  9). Rule 10 (§3.3) refuses
   `subject` on a passage not scoped `formal_math`, and holds every passage not scoped
   `formal_math` to `prominence: supporting`, the one value nothing reads there.
 
@@ -533,19 +534,54 @@ and in the labeler's inventory mode, `workflows/locate-label.workflow.js`, in th
    (`cases`, `iff`). Its lead-in sentence is expository, unless it states a reason no neighbour
    states, which is a statement of its own; a display inside a list item belongs to that item,
    never to the lead-in sentence (the chain stops at a list item, §3.1).
-6. **Proofs** (PD5, unchanged): narration is expository; each statement inside is its own
-   passage.
-7. **Context.** `statement` carries the hypotheses and objects, so it reads on its own and the
-   span stays tight.
+6. **Proofs** (PD5, unchanged): narration is expository, judged a sentence at a time; each
+   statement inside is its own passage, and no proof or derivation is kept, skipped or scoped
+   `expository` whole for being a proof. The steps of a worked example are judged the same way
+   (the design record's "a sequence of steps"; the maintainer's reading K2, 2026-10-21): a sentence that asserts its own
+   equation is a passage, never a conjunct of the example, and a skip never covers a worked
+   example.
+7. **Context.** A sentence that only sets up objects or hypotheses is not a statement (the design
+   record's §2: context sentences "open the first statement that uses them"), and a statement
+   is never cut from its hypothesis, so such a sentence is no `formal_math` passage of its own
+   and opens that statement. When that statement lies beyond the sentence's extent (another block
+   outside a theorem box and the displays the sentence introduces: rule 10 (b)), or narration
+   comes between, it opens nothing, and it is `expository` where the coverage floor needs its
+   paragraph (reading 1). A sentence that defines a symbol for later use ("let σ(W) denote …")
+   is a `notation` passage; one that fixes an example's objects is context (reading 2).
+   `statement` carries the hypotheses and objects, so it reads on its own and the span stays
+   tight.
 8. **Conjuncts.** Write the conjuncts of a compound statement, 2 to 5, with one of the five
    shapes; a simple statement has none. Anything else holding two results is two statements.
-9. **The subject.** A lead that describes rather than states is expository; the subject marker
-   goes on the passage that states the theorem.
+9. **The subject.** A lead that describes rather than states is expository: it would stay true
+   whatever the result concluded, so negating the conclusion leaves a description true and makes
+   a statement false. The subject marker goes on at most one passage, the first in reading order
+   that states the theorem or definition (reading K4; a theorem stated only in parts takes the
+   passage that states its first part), and on none when no passage states it; a later
+   restatement is `central`. Gate rule 10 (h) refuses a second under statement-cut rule 2 (§3.3).
+
+   | sentence | reading |
+   |---|---|
+   | "The gadget theorem links the sprockets of a widget to its gadgets." | describes |
+   | "The gadget theorem is a basic result about finite widgets." | describes |
+   | "It gives a criterion for a widget to be spanned." | describes: the criterion is never given |
+   | "Roughly, spanning and sprocketing undo each other." | describes: a hedged gloss, which no declaration states whole |
+   | "The gadget theorem says that every finite widget has a spanning gadget." | states |
+   | "A widget is spanned if and only if each of its sprockets is." | states |
+   | "A gadget of W is a subset of W closed under the sprocket map." | states: it defines |
 10. **PD9**, in the words all five rule files carry from the flip on (§6.2):
 
 > **PD9** — a stated reason ("it holds because X") is a passage of its own only when X is a
 > declarative mathematical statement that no neighbouring passage already states; otherwise X is
 > no passage and no clause.
+
+*The worker's check* (the inventory prompt only; it restates rules 4, 7, 9 and PD9 and adds
+none, so the labeler does not carry it): before the gate, the worker reads each `formal_math`
+passage again at rule 4's connectives and at each sentence after its first, at PD9's reasons
+(after a leading "Since X," that PD9 leaves out, Y starts at its own first word and the passage
+before it ends with `until`, reading 3), and for context sentences and the subject. The check's
+line on the words after a display describes span-end rule 3, so it joins the prompt at the flip
+(§7), with the Units rule's words for it. The skip paragraph says a skip never drops a statement
+no passage keeps, a proof, a derivation or a worked example.
 
 ### 3.5 Which rule is mechanical
 
@@ -555,9 +591,9 @@ and in the labeler's inventory mode, `workflows/locate-label.workflow.js`, in th
 | no run into another block (theorem box, introduced displays and a compound list excepted) | rule 10 (b) | units, displays |
 | a display is never cut | rule 2 (start), rule 10 (c) (end) | displays |
 | conjunct count and shape | rule 10 (d), (e) | conjuncts, the closed list |
-| the subject on the stating passage | rule 10 (f) | the subject |
+| the subject on the stating passage, at most one per source | rule 10 (f); (h) under statement-cut rule 2 | the subject, the worker's check |
 | one key per passage | rule 10 (g) | — |
-| what one statement is; where a sentence is cut; lists; chains; proofs; context; PD9 | — (counted in the receipt only) | 1–10 above |
+| what one statement is; where a sentence is cut; lists; chains; proofs; context; PD9 | — (counted in the receipt only) | 1–10 above, and the worker's check |
 
 ## 4. Keys and the carry-over map
 

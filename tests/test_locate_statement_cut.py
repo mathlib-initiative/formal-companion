@@ -1345,6 +1345,113 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
         self.assertIn('("Let W be a finite widget.")', lines["Context."])
         self.assertIn('("for a finite widget W, …")', lines["Context."])
 
+    def test_each_rule_is_one_line(self):
+        """``cut_rule_lines`` reads physical lines, so a rule wrapped over two would be
+        checked only up to its first line break: after the header paragraph, every line up to
+        PD9 is a rule or blank."""
+        start = VOCABULARY_MD.index("**How the inventory cuts**")
+        block = VOCABULARY_MD[start:VOCABULARY_MD.index("A stated reason is cut by PD9", start)]
+        rules = block.split("\n\n", 1)[1]
+        for line in rules.splitlines():
+            with self.subTest(line=line[:30]):
+                self.assertTrue(line == "" or line.startswith("- **"), line)
+
+
+#: the rendered inventory prompt's ceiling in bytes, so its growth is a choice
+WORKER_MD_MAX_BYTES = 16_500
+
+
+class TestThePilotsPromptFixes(unittest.TestCase):
+    """inv-pilot-1's faults 2, 3 and 5 (docs/proposals/statement-cut.md section 3.4 rules
+    6, 7 and 9, and the worker's check): prompt words only, with the corrections that keep
+    each new sentence from contradicting another rule."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prompt = rendered_inventory()
+        cls.flat = " ".join(cls.prompt.split())
+        cls.lines = {re.match(r"- \*\*(.*?)\*\*", line).group(1): line
+                     for line in cut_rule_lines()}
+
+    def test_proofs_are_judged_a_sentence_at_a_time(self):
+        proofs = self.lines["Proofs."]
+        self.assertIn("a proof or a derivation is judged a sentence at a time, never kept, "
+                      "skipped or scoped `expository` whole for being a proof", proofs)
+        # a proof that is narration as a whole is still PD5's to scope or leave out
+        self.assertNotIn("cut a sentence at a time", proofs)
+        self.assertNotIn("narration as a whole", self.flat)
+        self.assertIn("It is judged a sentence at a time (Proofs, below), so a statement "
+                      "inside a proof is never narration. Never make a narration sentence, or "
+                      "a span that holds one, a `formal_math` passage", self.flat)
+        self.assertNotIn("or a span around it", self.flat)
+
+    def test_a_worked_examples_steps(self):
+        self.assertIn("The steps of a worked example are judged the same way: a sentence that "
+                      "asserts its own equation is a passage of its own, never a conjunct of "
+                      "the example.", self.lines["Proofs."])
+
+    def test_a_context_sentence_is_no_formal_passage_of_its_own(self):
+        context = self.lines["Context."]
+        self.assertIn("is no statement and no `formal_math` passage of its own", context)
+        self.assertNotIn("no passage of its own", context)
+        self.assertIn("When that statement is in another paragraph (outside a theorem box and "
+                      "the displays the sentence introduces), or narration comes between, the "
+                      "sentence opens nothing: it is `expository` where its paragraph must be "
+                      "covered, and otherwise in no passage.", context)
+        self.assertIn("A sentence that defines a symbol for later use is a `notation` passage, "
+                      "not context", context)
+
+    def test_at_most_one_subject(self):
+        subject = self.lines["The subject."]
+        self.assertIn("a sentence describes when it would stay true whatever the result "
+                      "concluded", subject)
+        self.assertIn("goes on at most one passage, the first in reading order that states the "
+                      "theorem or definition", subject)
+        self.assertIn("and on none when no passage states it; a later restatement is "
+                      "`central`.", subject)
+        self.assertIn("`subject` — at most one passage, the one that states what the article "
+                      "is about (the subject rule above)", self.flat)
+        for text in ("goes on one passage only", "the one `subject` passage", "usually one"):
+            with self.subTest(text=text):
+                self.assertNotIn(text, self.flat)
+
+    def test_what_a_skip_never_drops(self):
+        self.assertIn("A skip drops text no passage keeps (an infobox, navigation, references), "
+                      "never a statement no passage keeps, a proof, a derivation or a worked "
+                      "example: one that holds the whole span of a passage you keep is refused, "
+                      "while a skip inside a kept passage is how you drop a finder nested in it",
+                      self.flat)
+
+    def test_the_check_comes_before_the_gate(self):
+        heading = "## Before you commit, check the cut, then run the gate\n"
+        self.assertIn(heading, self.prompt)
+        self.assertNotIn("## Before you commit, run the gate", self.prompt)
+        check = self.prompt[self.prompt.index(heading):self.prompt.index("```bash\n<gate cmd>")]
+        flat = " ".join(check.split())
+        self.assertIn("Read each `formal_math` passage again and fix what breaks a cut rule:",
+                      flat)
+        self.assertIn("- At each connective of the cut rules, and at each sentence after a "
+                      "passage's first, cut when both sides assert a fact.", flat)
+        self.assertIn('after a leading "Since …," the statement starts at its own first word, '
+                      "and the passage before it ends with `until`.", flat)
+        self.assertIn("- No context sentence is a `formal_math` passage of its own, and "
+                      "`prominence: subject` is on at most one passage", flat)
+        self.assertEqual(check.count("\n- "), 3)
+        # the words after a display are span-end rule 3's, which the planner does not write yet
+        self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_STATEMENT_CUT)
+        self.assertNotIn("after a display", flat)
+        # the check restates rules and adds none: the labeler does not carry it
+        self.assertNotIn("check the cut", LABELER)
+
+    def test_the_labelers_enumerators(self):
+        inventory = LABELER[LABELER.index("async function inventory"):]
+        self.assertIn("never one formal_math passage for the whole proof, and never a statement "
+                      "inside a proof left out as narration.", inventory)
+        self.assertNotIn("never a proof left out whole", LABELER)
+
+    def test_the_prompts_size(self):
+        self.assertLessEqual(len(self.prompt.encode("utf-8")), WORKER_MD_MAX_BYTES)
+
 
 if __name__ == "__main__":
     unittest.main()
