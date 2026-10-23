@@ -1922,6 +1922,26 @@ like a faithfulness run:
   admitted, since it reads only the inventory's conjuncts, and names (3, 2)
   itself, which binds nothing in a locate document.
 
+  The **wide cut** (`statement_cut_rule` 3, `STATEMENT_CUT_WIDE`; inv-pilot-2's
+  repairs, the proposal's §3.3) is what the gate knows and the planner does not
+  write yet. It reads `span_end_rule` 3, as rule 2 does, so no default end, span or
+  `passage_key` moves: it is rule 10 with (b) read against the **wide** bound
+  (`locate_text.Blocks.runs_on(…, wide=True)`: the loose bound read across a
+  footnote mark between two blocks, `[12]`, `[a]`, `[nb 3]` or `[note 3]`, which the
+  renderer leaves outside every block span, and ended by a `dd` or a paragraph
+  that finishes the sentence, by its first word or by a formula that opens it
+  after a block ending with a word), its refusal naming "the paragraph or
+  indented line that finishes that sentence after them (a footnote mark between
+  them, or a formula opening that paragraph, does not end it)". Rule 1's and rule
+  2's words are unchanged. Under it the receipt's `cut` block also counts
+  `widened` (formal passages ending past their loose extent: the merges only the
+  wide bound admits, each for a reader to judge), `wide_starts` and `wide_unheld`
+  (the same as `loose_starts` and `loose_unheld` over the tails only the wide
+  bound reaches, `locate_text.Blocks.wide_tails`; `wide_starts` is an upper bound,
+  since a tail can be a correct start of its own), on a receipt line of their
+  own. The text-only `dd` with a capital and a capitalised "Then" line between two
+  displays stay refused, by design.
+
   From the flip, too, the planner copies into a locate task manifest's passage the
   frozen inventory's `statement`, and a compound statement's `conjuncts` and
   `shape`; into a challenge task's record the same three and `conditional`

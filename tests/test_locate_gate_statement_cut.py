@@ -202,6 +202,9 @@ class CutFixture(G.Fixture):
 #: with what the planner writes
 CUT_1 = {"span_end_rule": 2, "statement_cut_rule": 1}
 CUT_2 = {"span_end_rule": 3, "statement_cut_rule": 2}
+#: ... and of one planned under the wide cut (statement-cut rule 3, which reads span-end
+#: rule 3 as rule 2 does), which the gate knows before the planner writes it
+CUT_3 = {"span_end_rule": 3, "statement_cut_rule": 3}
 BEFORE = {"span_end_rule": 1}
 
 
@@ -314,7 +317,7 @@ class TestTheVersionKeys(InventoryCase):
     def test_the_known_versions_follow_cflib(self):
         # the inlined names themselves are pinned in test_verify_locate
         self.assertEqual(vl.KNOWN_STATEMENT_CUT_RULE,
-                         max(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_CONTINUED))
+                         max(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_WIDE))
         self.assertEqual(vl.KNOWN_JUDGMENT_RULES,
                          max(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT))
         self.assertEqual(vl.KNOWN_SPAN_END_RULE,
@@ -325,9 +328,10 @@ class TestTheVersionKeys(InventoryCase):
                          list(range(1, vl.KNOWN_STATEMENT_CUT_RULE + 1)))
 
     def test_each_statement_cut_rule_reads_one_span_end_rule(self):
-        """The pairs runs planned so far name stay admitted; every other is exit 3."""
+        """The pairs runs planned so far name stay admitted, and the wide cut's (3, 3) is;
+        every other is exit 3, with the messages they had."""
         for keys in ({}, {"span_end_rule": 1}, {"span_end_rule": 2}, CUT_1, CUT_2,
-                     {"judgment_rules": 3, **CUT_2}):
+                     {"judgment_rules": 3, **CUT_2}, CUT_3, {"judgment_rules": 3, **CUT_3}):
             self.fx.versions(**keys)
             with self.subTest(keys=keys):
                 cfg = self.fx.gate_cfg()
@@ -339,7 +343,11 @@ class TestTheVersionKeys(InventoryCase):
                 (2, 2, "statement-cut rule 2 reads span-end rule 3"),
                 (1, 2, "statement-cut rule 2 reads span-end rule 3"),
                 (None, 2, "statement-cut rule 2 reads span-end rule 3"),
-                (3, None, "span_end_rule 3 without statement_cut_rule 2"),
+                (3, None, "span_end_rule 3 without statement_cut_rule 2: span-end rule 3 "
+                          "is the continued cut's end, and binds only with its rule 10"),
+                (2, 3, "statement-cut rule 3 reads span-end rule 3, and no other"),
+                (1, 3, "statement-cut rule 3 reads span-end rule 3"),
+                (None, 3, "statement-cut rule 3 reads span-end rule 3"),
                 (None, 1, "needs span-end rule 2"),
                 (2, vl.KNOWN_STATEMENT_CUT_RULE + 1, "this gate knows"),
                 (vl.KNOWN_SPAN_END_RULE + 1, 2, "this gate knows")):
@@ -775,6 +783,223 @@ class TestTheReceiptUnderRule2(InventoryCase):
             with self.subTest(keys=keys):
                 self.assertTrue(out["ok"], out["problems"])
                 self.assertEqual("subjects" in out["cut"], rule == 2)
+
+
+# --------------------------------------------------------------------------- #
+# the wide cut: statement-cut rule 3 (inv-pilot-2's repairs), the wide bound
+# --------------------------------------------------------------------------- #
+
+#: (i) a footnote mark between P2 and its display: P2 ends "obeys:" and its "[1] " lies
+#: between the two blocks, as a ``sup.reference`` the renderer drops from every block
+#: span does (the same length, so every other span and formula stays where it is)
+P2_MARK = P2[:-len("satisfies:")] + "obeys:[1] "
+LAYER_MARK = LAYER.replace(P2, P2_MARK, 1)
+PARAGRAPHS_MARK = [dict(p, span=[p["span"][0], p["span"][1] - len("[1] ")])
+                   if p["span"] == SPANS["P2"] else p for p in PARAGRAPHS]
+#: (ii) LAYER_WHEN with P3_WHEN an indented line (a ``dd`` of text) that finishes P2's
+#: sentence after its display
+PARAGRAPHS_DD = [dict(p, block="dd") if p["span"] == SPANS["P3"] else p for p in PARAGRAPHS]
+#: (iii) LAYER_WHEN with D1 and P3_WHEN one paragraph that opens with the formula and goes
+#: on "when n is ...": P2's sentence runs on into it
+PARAGRAPHS_OPENS = sorted(
+    [p for p in PARAGRAPHS if p["span"] not in (SPANS["D1"], SPANS["P3"])]
+    + [{"span": [SPANS["D1"][0], SPANS["P3"][1]], "section": [], "block": "p", "formulas": 0,
+        "math": True}],
+    key=lambda p: (p["span"][0], -p["span"][1], p["block"]))
+#: rule 10 (b)'s refusal under statement-cut rule 2, byte for byte
+RULE_2_PAST = ("block ends: a passage runs from one block into the next only inside a "
+               "theorem box, into the displays its last sentence introduces and the paragraph "
+               "that finishes that sentence after them, or -- a compound statement -- over the "
+               "items of one list; cut the rest into passages of their own")
+#: ... and under statement-cut rule 3
+RULE_3_PAST = ("block ends: a passage runs from one block into the next only inside a "
+               "theorem box, into the displays its last sentence introduces and the paragraph "
+               "or indented line that finishes that sentence after them (a footnote mark "
+               "between them, or a formula opening that paragraph, does not end it), or -- a "
+               "compound statement -- over the items of one list; cut the rest into passages "
+               "of their own")
+WIDE_KEYS = ("widened", "wide_starts", "wide_unheld")
+
+
+class WideCase(InventoryCase):
+
+    def body(self, rows) -> dict:
+        return cut_body(rows, layer=self.LAYER)
+
+    def cut(self, rows, keys=CUT_3, skips=()) -> dict:
+        body = self.body(rows)
+        body["skips"].extend({"span": list(s), "reason": "x"} for s in skips)
+        result = self.gate(body, keys)
+        self.assertOk(result)
+        return self.stats(result)["cut"]
+
+    def past(self, result, rule: int) -> str:
+        """The one rule 10 (b) refusal of ``result``, its words after "past N, where its"."""
+        self.assertEqual(result["exit"], vl.EXIT_REJECTED, result)
+        lines = [p for p in result["problems"] if p.startswith("[rule 10]") and "past" in p]
+        self.assertEqual(len(lines), 1, result["problems"])
+        return lines[0].split(", where its ", 1)[1]
+
+
+class TestTheWideCutAcrossAFootnoteMark(WideCase):
+    """(i): on LAYER_MARK, P2's display lies past a "[1]": the loose bound stops at P2, the
+    wide bound reads across the mark."""
+
+    LAYER = LAYER_MARK
+    PARAGRAPHS = PARAGRAPHS_MARK
+
+    def test_the_blocks(self):
+        blocks = lt.Blocks(LAYER_MARK, PARAGRAPHS_MARK, FORMULAS)
+        start = SPANS["P2"][0]
+        self.assertEqual(LAYER_MARK[blocks.block_at(start).end:SPANS["D1"][0]], "[1] \n")
+        self.assertEqual(blocks.extent(start, loose=True), SPANS["P2"][1] - len("[1] "))
+        self.assertEqual(blocks.extent(start, wide=True), SPANS["D1"][1])
+
+    def test_rule_3_admits_the_until_across_the_mark_and_rule_2_refuses_it(self):
+        self.assertOk(self.gate(self.body(GOOD), CUT_3))
+        self.assertEqual(self.past(self.gate(self.body(GOOD), CUT_2), 10), RULE_2_PAST)
+        self.assertOk(self.gate(self.body(GOOD), BEFORE))
+        got = self.cut(GOOD)
+        self.assertEqual(tuple(got[k] for k in WIDE_KEYS), (1, 0, 0))
+
+
+class TestTheWideCutIntoAnIndentedLine(WideCase):
+    """(ii): on LAYER_WHEN with P3_WHEN a ``dd``, the indented line finishes P2's sentence
+    after its display; the loose bound passes a ``dd`` over and stops, the wide bound ends
+    the run with it."""
+
+    LAYER = LAYER_WHEN
+    PARAGRAPHS = PARAGRAPHS_DD
+
+    def test_the_blocks(self):
+        blocks = lt.Blocks(LAYER_WHEN, PARAGRAPHS_DD, FORMULAS)
+        start = SPANS["P2"][0]
+        self.assertEqual(blocks.extent(start, loose=True), SPANS["D1"][1])
+        self.assertEqual(blocks.extent(start, wide=True), SPANS["P3"][1])
+        self.assertEqual([tail.span for _head, tail in blocks.wide_tails()],
+                         [tuple(SPANS["P3"])])
+
+    def test_rule_3_admits_the_until_into_the_line_and_rule_2_refuses_it(self):
+        body = self.body(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertOk(self.gate(body, CUT_3))
+        self.assertEqual(self.past(self.gate(body, CUT_2), 10), RULE_2_PAST)
+        self.assertRule(self.gate(body, CUT_1), 10, "only inside a theorem box")
+        self.assertOk(self.gate(body, BEFORE))
+
+    def test_past_the_wide_bound_is_refused_in_rule_3_s_words(self):
+        rows = changed("P2", rows=without("P3", "LIST"), span=[SPANS["P2"][0], SPANS["L2"][1]],
+                       until="need not exist.")
+        self.assertEqual(self.past(self.gate(self.body(rows), CUT_3), 10), RULE_3_PAST)
+        # rule 2's and rule 1's words are the ones they were
+        self.assertEqual(self.past(self.gate(self.body(rows), CUT_2), 10), RULE_2_PAST)
+        self.assertRule(self.gate(self.body(rows), CUT_1), 10,
+                        "into the displays its last sentence introduces, or -- a compound "
+                        "statement")
+
+    def test_the_default_end_does_not_move(self):
+        """No end rule reads the wide bound: span-end rule 3 still ends P2 at its display."""
+        body = self.body(changed("P2", rows=without("P3"), span=P2_ON, until=None))
+        self.assertRule(self.gate(body, CUT_3), 2, f"and passage_ids.py ends it at "
+                                                   f"{SPANS['D1'][1]}")
+        self.assertOk(self.gate(self.body(GOOD), CUT_3))
+
+    def test_the_wide_counts(self):
+        # held by P2's `until`: one passage the wide bound let run on
+        got = self.cut(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertEqual(tuple(got[k] for k in WIDE_KEYS), (1, 0, 0))
+        # started as a passage of its own
+        got = self.cut(GOOD)
+        self.assertEqual(tuple(got[k] for k in WIDE_KEYS), (0, 1, 0))
+        # held by no passage (a skip is no passage)
+        got = self.cut(without("P3"), skips=[SPANS["P3"]])
+        self.assertEqual(tuple(got[k] for k in WIDE_KEYS), (0, 0, 1))
+        # rule 2's counts beside them are rule 2's own
+        two = self.cut(GOOD, keys=CUT_2)
+        self.assertEqual({k: v for k, v in self.cut(GOOD).items() if k not in WIDE_KEYS}, two)
+        self.assertFalse(set(WIDE_KEYS) & set(two))
+
+
+class TestTheWideCutIntoAParagraphOpeningWithAFormula(WideCase):
+    """(iii): on LAYER_WHEN with D1 and P3_WHEN one paragraph "c(W)=2n when n is ...", the
+    paragraph opens with a formula and goes on with P2's sentence."""
+
+    LAYER = LAYER_WHEN
+    PARAGRAPHS = PARAGRAPHS_OPENS
+
+    def test_the_blocks(self):
+        blocks = lt.Blocks(LAYER_WHEN, PARAGRAPHS_OPENS, FORMULAS)
+        start = SPANS["P2"][0]
+        self.assertEqual(blocks.extent(start, loose=True), SPANS["P2"][1])
+        self.assertEqual(blocks.extent(start, wide=True), SPANS["P3"][1])
+
+    def test_rule_3_admits_the_until_into_the_paragraph_and_rule_2_refuses_it(self):
+        body = self.body(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertOk(self.gate(body, CUT_3))
+        self.assertEqual(self.past(self.gate(body, CUT_2), 10), RULE_2_PAST)
+        self.assertOk(self.gate(body, BEFORE))
+        got = self.cut(changed("P2", rows=without("P3"), span=P2_ON, until="of the widget."))
+        self.assertEqual(tuple(got[k] for k in WIDE_KEYS), (1, 0, 0))
+
+
+class TestTheWideCutOnTheWidgetLayer(InventoryCase):
+    """On LAYER no shape of the wide bound occurs: statement-cut rule 3 gates the good cut
+    as rule 2 does, and counts nothing wide."""
+
+    def test_the_good_cut_and_its_counts(self):
+        three = self.stats(self.gate(cut_body(), CUT_3))["cut"]
+        two = self.stats(self.gate(cut_body(), CUT_2))["cut"]
+        self.assertEqual(three, {**two, "widened": 0, "wide_starts": 0, "wide_unheld": 0})
+
+    def test_two_subjects_are_refused_under_rule_3_too(self):
+        rows = changed("BOX", rows=changed("THM1", prominence="subject"), prominence="subject")
+        self.assertRule(self.gate(cut_body(rows), CUT_3), 10,
+                        "2 passages carry `prominence: subject`")
+
+
+class TestTheReceiptUnderRule3(InventoryCase):
+
+    def test_the_block_s_keys_follow_the_rule(self):
+        self.assertEqual(gate_corpus.CUT_COUNTS_3,
+                         gate_corpus.CUT_COUNTS_2 + ("widened", "wide_starts", "wide_unheld"))
+        stats = self.gate(cut_body(), CUT_3)["stats"]
+        three = gate_corpus.cut_summary(stats, rule=3)
+        self.assertEqual(set(three), set(gate_corpus.CUT_COUNTS_3)
+                         | {"by_shape", "by_connective", "by_source"})
+        self.assertEqual(set(three["by_source"][G.SID]), set(three) - {"by_source"})
+        two = gate_corpus.cut_summary(self.gate(cut_body(), CUT_2)["stats"], rule=2)
+        self.assertEqual(set(two), set(gate_corpus.CUT_COUNTS_2)
+                         | {"by_shape", "by_connective", "by_source"})
+        self.assertEqual({k: three[k] for k in two if k != "by_source"},
+                         {k: two[k] for k in two if k != "by_source"})
+        # a rule-2 corpus read with rule 3's names would be no receipt it ever had: the rule
+        # picks the names, and rule 2's are the ones they were
+        self.assertEqual(two, gate_corpus.cut_summary(self.gate(cut_body(), CUT_2)["stats"],
+                                                      rule=2))
+
+    def test_the_receipt_line(self):
+        def render(cut):
+            return gate_corpus.render({"preset": "x", "sources": [], "files": 1, "ok": True,
+                                       "problems": [], "cut": cut})
+
+        three = gate_corpus.cut_summary(self.gate(cut_body(), CUT_3)["stats"], rule=3)
+        two = gate_corpus.cut_summary(self.gate(cut_body(), CUT_2)["stats"], rule=2)
+        self.assertIn("  cut, wide: 0 passage(s) run on past the loose bound, 0 passage(s) "
+                      "start at a tail only the wide bound reaches", render(three))
+        self.assertNotIn("cut, wide", render(two))
+        self.assertEqual(render(two), "\n".join(line for line in render(three).split("\n")
+                                                 if not line.startswith("  cut, wide")))
+
+    def test_the_harvest_re_gate_passes_the_rule(self):
+        corpus = self.fx.root / "corpus"
+        self.fx.document(self.TASK, cut_body(), directory=corpus)
+        for keys, rule in ((CUT_3, 3), (CUT_2, 2), (CUT_1, 1)):
+            self.fx.versions(**keys)
+            out = gate_corpus._gate_locate_with(vl, corpus, self.fx.root / "gate" / "gate.json",
+                                                {"from": "checkout"})
+            with self.subTest(keys=keys):
+                self.assertTrue(out["ok"], out["problems"])
+                self.assertEqual("widened" in out["cut"], rule == 3)
+                self.assertEqual("subjects" in out["cut"], rule >= 2)
 
 
 # --------------------------------------------------------------------------- #
@@ -1544,6 +1769,17 @@ class TestThePlanner(unittest.TestCase):
         self.assertEqual(code, 0, out + err)
         gate = read_json(self.paths.gate_json("loc-3"))
         self.assertEqual((gate["span_end_rule"], gate["statement_cut_rule"]), (3, 2))
+
+    def test_an_inventory_planned_before_the_wide_flip_is_gated_by_rule_2(self):
+        """An inventory planned under ``F.before_the_wide`` names (3, 3, 2), as inv-pilot-2
+        does; this gate, which knows statement-cut rule 3, holds it to rule 2."""
+        with F.before_the_wide():
+            code, out, err = self.plan("--preset", "locate-inventory", "--run-id", "inv-4")
+        self.assertEqual(code, 0, out + err)
+        gate = read_json(self.paths.gate_json("inv-4"))
+        self.assertEqual((gate["judgment_rules"], gate["span_end_rule"],
+                          gate["statement_cut_rule"]), (3, 3, 2))
+        self.assertLess(gate["statement_cut_rule"], vl.KNOWN_STATEMENT_CUT_RULE)
 
     def test_the_challenge_manifest_carries_the_records_cut_fields_after_the_flip(self):
         from locate import plan as lplan

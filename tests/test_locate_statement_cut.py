@@ -4,7 +4,7 @@ New code, for docs/proposals/statement-cut.md section 3 (the "cut" package of it
 section 6.2): ``locate_text.passage_end`` under ``span_end_rule`` 2 and 3 and the
 definitions of section 3.1 they rest on (``locate_text.Blocks``) -- with the
 continued extent span-end rule 3 reads, the loose bound gate rule 10 (b) reads under
-statement-cut rule 2, the wide bound beside it that no gate version reads yet, and the
+statement-cut rule 2, the wide bound it reads under statement-cut rule 3, and the
 cut points -- the units the
 receipt counts (``locate_text.units``), ``passage_ids.py``'s two passes and the
 rule it reads from the ``gate.json`` beside it, and the cut rules the inventory

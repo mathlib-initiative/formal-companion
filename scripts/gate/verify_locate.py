@@ -141,15 +141,18 @@ references/locate-documents.md sections 2-4 and 9):
    into the next only inside a theorem box, into the displays its last
    sentence introduces or over the items of one list (a compound statement),
    and under statement-cut rule 2 into the paragraph that finishes its
-   sentence after them (the loose bound, ``locate_text.Blocks.runs_on``), and
-   never ends inside a formula; ``conjuncts`` are
+   sentence after them (the loose bound, ``locate_text.Blocks.runs_on``), under
+   statement-cut rule 3 also across a footnote mark and into a ``dd`` or a
+   paragraph opening with a formula that finishes it (the wide bound,
+   ``runs_on(..., wide=True)``), and never ends inside a formula; ``conjuncts`` are
    none or 2-5 with a ``shape`` of the closed list, on a ``formal_math`` passage;
-   a passage scoped out is ``supporting``; and, under statement-cut rule 2, at
-   most one ``formal_math`` passage of a source is marked ``prominence:
+   a passage scoped out is ``supporting``; and, under statement-cut rule 2 or 3,
+   at most one ``formal_math`` passage of a source is marked ``prominence:
    subject`` (h).  Rule 10 refuses nothing on a passage's size: its counts of
    compound statements and their conjuncts, sentences and displays (and under
-   statement-cut rule 2 the subjects, continuations and connectives) are the
-   harvest receipt's ``cut`` block.
+   statement-cut rule 2 the subjects, continuations and connectives, and under 3
+   the passages the wide bound let run on and its tails) are the harvest
+   receipt's ``cut`` block.
 
 One JSON line per call is appended to ``gate.json``'s ``log_dir`` when that is
 writable (the watchdog and the bench read it); a log that cannot be written
@@ -346,15 +349,21 @@ RULES_PD5_PD9 = 2
 #: inv-pilot-1's fixes) are the continued cut: the end and rule 10 (b) read the paragraph
 #: that finishes a sentence after its display, and rule 10 adds (h) and further counts;
 #: ``cf plan-locate`` writes them from the flip of those fixes on (the proposal's
-#: section 7).  A statement-cut rule reads exactly one span-end rule
-#: (STATEMENT_CUT_SPAN_END)
+#: section 7).  Statement-cut rule 3 (cflib.vocab.STATEMENT_CUT_WIDE; inv-pilot-2's
+#: repairs) is rule 2 with (b) read against the wide bound (``locate_text.Blocks.runs_on``
+#: with ``wide=True``: across footnote marks, and into a ``dd`` or a paragraph that
+#: finishes the sentence) and three more counts; it reads span-end rule 3 too, and the
+#: gate knows it before the planner writes it.  A statement-cut rule reads exactly one
+#: span-end rule (STATEMENT_CUT_SPAN_END)
 RULES_STATEMENT_CUT = 3
 SPAN_END_STATEMENT_CUT = 2
 SPAN_END_CONTINUED = 3
 STATEMENT_CUT_FIRST = 1
 STATEMENT_CUT_CONTINUED = 2
+STATEMENT_CUT_WIDE = 3
 STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
-                          STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED}
+                          STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED,
+                          STATEMENT_CUT_WIDE: SPAN_END_CONTINUED}
 STATEMENT_CUT_RULE = STATEMENT_CUT_CONTINUED
 #: the versions the planner writes (cflib.vocab.JUDGMENT_RULES, SPAN_END_RULE and
 #: STATEMENT_CUT_RULE: the statement cut's from its flip on, the continued cut's from
@@ -368,7 +377,7 @@ SPAN_END_RULE = SPAN_END_CONTINUED
 #: higher one was planned by a newer planner than this gate directory (exit 3)
 KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_STATEMENT_CUT)
 KNOWN_SPAN_END_RULE = max(SPAN_END_RULE, SPAN_END_CONTINUED)
-KNOWN_STATEMENT_CUT_RULE = max(STATEMENT_CUT_RULE, STATEMENT_CUT_CONTINUED)
+KNOWN_STATEMENT_CUT_RULE = max(STATEMENT_CUT_RULE, STATEMENT_CUT_WIDE)
 #: a compound statement's conjuncts (cflib.vocab's statement-cut block, inlined)
 COMPOUND_SHAPES = frozenset({"existence_uniqueness", "iff", "cases", "conclusions",
                              "equations"})
@@ -719,9 +728,11 @@ class GateConfig:
 
     def _check_the_pair(self) -> None:
         """A statement-cut rule reads exactly one span-end rule, and span-end rule 3 only
-        with statement-cut rule 2 (docs/proposals/statement-cut.md section 2.2): any
+        with statement-cut rule 2 or 3 (docs/proposals/statement-cut.md section 2.2): any
         other pair is a broken gate.json (exit 3).  No key, span-end rule 1 or 2 alone,
-        and (2, 1) are what runs planned so far name, and stay admitted."""
+        (2, 1) and (3, 2) are what runs planned so far name, and stay admitted, and (3, 3)
+        is statement-cut rule 3's.  The message for span-end rule 3 with no statement-cut
+        rule, which only a broken gate.json prints, is the one it was."""
         cut, end = self.statement_cut_rule, self.span_end_rule
         if cut:
             if cut == STATEMENT_CUT_FIRST and end < SPAN_END_STATEMENT_CUT:
@@ -3101,11 +3112,21 @@ def check_statement_cut(problems: Problems, name: str, passages: list,
     subject`` (reading K3), naming them all and choosing none; and the counts
     gain :func:`_continued_counts`'s.  Rule 1's checks, messages and counts are
     the ones they were.
+
+    Under ``statement_cut_rule`` 3 (``STATEMENT_CUT_WIDE``, inv-pilot-2's repairs),
+    (b) reads the wide bound (``locate_text.Blocks.extent(..., wide=True)``: the
+    loose bound read across footnote marks, and into a ``dd`` or a paragraph that
+    finishes the sentence, by its first word or by a formula opening it), never
+    shorter than the loose one, so an ``until`` across a ``[1]`` or into such a
+    paragraph is admitted; its refusal says so.  Everything else is rule 2's, and
+    the counts gain :func:`_wide_counts`'s.  Rule 1's and rule 2's checks, messages
+    and counts are the ones they were.
     """
     layer = source.layer
     blocks = source.blocks()
     top_starts = [blk.start for blk in blocks.top]
     continued = rule >= STATEMENT_CUT_CONTINUED
+    wide = rule >= STATEMENT_CUT_WIDE
     counts = {"passages": len(passages), "formal": 0, "compound": 0, "conjuncts": 0,
               "by_shape": {}, "sentences": 0, "displays": 0, "multi_sentence": 0,
               "multi_display": 0}
@@ -3173,11 +3194,21 @@ def check_statement_cut(problems: Problems, name: str, passages: list,
     for i, p, span in rows:
         where = f"{name}: passages[{i}]"
         compound = isinstance(p.get("conjuncts"), list) and bool(p.get("conjuncts"))
-        bound = blocks.extent(span[0], compound=compound, loose=continued)
+        bound = blocks.extent(span[0], compound=compound, loose=continued, wide=wide)
         if bound is None:
             later = bisect.bisect_right(top_starts, span[0])
             bound = top_starts[later] if later < len(top_starts) else len(layer)
-        if span[1] > bound and continued:
+        if span[1] > bound and wide:
+            problems.add(10, where, f"the passage ends at {span[1]}, past {bound}, where its "
+                                    f"block ends: a passage runs from one block into the next "
+                                    f"only inside a theorem box, into the displays its last "
+                                    f"sentence introduces and the paragraph or indented line "
+                                    f"that finishes that sentence after them (a footnote mark "
+                                    f"between them, or a formula opening that paragraph, does "
+                                    f"not end it), or -- a compound statement -- over the "
+                                    f"items of one list; cut the rest into passages of their "
+                                    f"own")
+        elif span[1] > bound and continued:
             problems.add(10, where, f"the passage ends at {span[1]}, past {bound}, where its "
                                     f"block ends: a passage runs from one block into the next "
                                     f"only inside a theorem box, into the displays its last "
@@ -3207,6 +3238,8 @@ def check_statement_cut(problems: Problems, name: str, passages: list,
     counts["by_shape"] = dict(sorted(counts["by_shape"].items()))
     if continued:
         counts.update(_continued_counts(blocks, rows))
+    if wide:
+        counts.update(_wide_counts(blocks, rows))
     return counts
 
 
@@ -3276,6 +3309,46 @@ def _continued_counts(blocks: Any, rows: list[tuple[int, dict, tuple[int, int]]]
             and not shares(tail, spans)
     out["by_connective"] = dict(sorted(out["by_connective"].items()))
     return out
+
+
+def _wide_counts(blocks: Any, rows: list[tuple[int, dict, tuple[int, int]]]) -> dict:
+    """The counts statement-cut rule 3 adds to the receipt's ``cut`` block, beside rule
+    2's (docs/proposals/statement-cut.md section 3.3).  Reported, never a refusal.
+
+    ``widened``: the formal passages that end past their loose extent
+    (``loose=True``), so only the wide bound let them run on -- each such ``until``
+    is a merge the wide bound alone admits, for a reader to judge.
+    ``wide_starts`` and ``wide_unheld``: ``loose_starts`` and ``loose_unheld``
+    over the blocks only the wide bound reaches
+    (:meth:`~locate_text.Blocks.wide_tails`: across a footnote mark, a ``dd`` or a
+    paragraph that finishes the sentence), whose default end stops before them --
+    a passage of any scope that starts at such a tail's first word, and a tail
+    after a head a formal passage shares a character with that no passage holds.
+    ``wide_starts`` is an upper bound on the cuts the wide bound would undo: a
+    tail can be a correct start of its own.
+    """
+    out = {"widened": 0, "wide_starts": 0, "wide_unheld": 0}
+    spans = [span for _i, _p, span in rows]
+    formal = [(p, span) for _i, p, span in rows if _one_of(p.get("scope"), LOCATED_SCOPES)]
+    starts = {span[0] for span in spans}
+    for p, span in formal:
+        compound = isinstance(p.get("conjuncts"), list) and bool(p.get("conjuncts"))
+        loose = blocks.extent(span[0], compound=compound, loose=True)
+        out["widened"] += loose is not None and span[1] > loose
+    formal_spans = [span for _p, span in formal]
+    for head, tail in blocks.wide_tails():
+        first = tail.start
+        while first < tail.end and lt._is_white(blocks.layer[first]):
+            first += 1
+        out["wide_starts"] += first in starts
+        out["wide_unheld"] += any(_shares(b, formal_spans) for b in head) \
+            and not _shares(tail, spans)
+    return out
+
+
+def _shares(block: Any, among: list) -> bool:
+    """Does ``block`` share a character with one of the spans ``among``?"""
+    return any(a < block.end and block.start < b for a, b in among)
 
 
 def _connective_words() -> frozenset[str]:
