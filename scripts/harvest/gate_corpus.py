@@ -502,8 +502,14 @@ CUT_COUNTS_2 = CUT_COUNTS + ("subjects", "continued", "continuation_starts",
                              "continuations_unheld", "loose_starts", "loose_unheld",
                              "connective_points", "formal_with_connective",
                              "connective_starts")
+#: ... and under statement-cut rule 3 (the wide bound), beside rule 2's: the formal
+#: passages that run on past the loose bound, and the tails only the wide bound reaches
+CUT_COUNTS_3 = CUT_COUNTS_2 + ("widened", "wide_starts", "wide_unheld")
 #: the ``{name: n}`` maps of the block, by the rule that writes them
 _CUT_MAPS = {1: ("by_shape",), 2: ("by_shape", "by_connective")}
+_CUT_MAPS[3] = _CUT_MAPS[2]
+#: the counts of the block, by the rule that writes them
+_CUT_NAMES = {1: CUT_COUNTS, 2: CUT_COUNTS_2, 3: CUT_COUNTS_3}
 
 
 def cut_summary(stats: list[dict], rule: int = 1) -> dict:
@@ -521,10 +527,15 @@ def cut_summary(stats: list[dict], rule: int = 1) -> dict:
     bound let run on, the continuations cut from their sentence or held by no
     passage (and apart, the paragraphs only the loose bound reaches), and the
     connectives inside formal passages -- and ``by_connective``
-    (``verify_locate._continued_counts``); under 1 it is the block it always was.
+    (``verify_locate._continued_counts``); under 3 also ``CUT_COUNTS_3``'s -- the
+    formal passages the wide bound let run on past the loose one (``widened``), and
+    the tails only the wide bound reaches that start a passage or that no passage
+    holds (``verify_locate._wide_counts``); under 1 and 2 it is the block it always
+    was.
     """
-    names = CUT_COUNTS_2 if rule >= 2 else CUT_COUNTS
-    maps = _CUT_MAPS[2 if rule >= 2 else 1]
+    known = max(1, min(int(rule), max(_CUT_NAMES)))
+    names = _CUT_NAMES[known]
+    maps = _CUT_MAPS[known]
     total: dict = {k: 0 for k in names}
     for m in maps:
         total[m] = {}
@@ -610,6 +621,12 @@ def render(result: dict, max_named: int = 12) -> str:
                          f"{cut['connective_points']} connective(s) inside "
                          f"{cut['formal_with_connective']} formal passage(s), "
                          f"{cut['connective_starts']} passage(s) starting at one")
+        if "widened" in cut:
+            lines.append(f"  cut, wide: {cut['widened']} passage(s) run on past the loose "
+                         f"bound, {cut['wide_starts']} passage(s) start at a tail only the "
+                         f"wide bound reaches (a footnote mark, a dd or a paragraph that "
+                         f"finishes a sentence), {cut['wide_unheld']} such tail(s) no "
+                         f"passage holds")
     for problem in result["problems"][:max_named]:
         lines.append("  - " + problem)
     if len(result["problems"]) > max_named:

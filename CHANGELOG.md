@@ -42,6 +42,23 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- **The gate and the receipt know statement-cut rule 3** (docs/proposals/statement-cut.md
+  §2.2 and §3.3). The planner still writes (3, 3, 2), so nothing a run planned now is held to
+  changes. `cflib.vocab.STATEMENT_CUT_WIDE` is 3 and `STATEMENT_CUT_SPAN_END` is
+  `{1: 2, 2: 3, 3: 3}`, with the gate's inlined copies and `KNOWN_STATEMENT_CUT_RULE` 3. Rule 3
+  reads span-end rule 3, as rule 2 does, so no default end, `passage_key` or carry moves, and
+  `passage_ids.py` is unchanged. It is rule 2 with rule 10 (b) held to the wide extent
+  (`locate_text.Blocks.extent(…, wide=True)`), so an `until` across a footnote mark, into a
+  `dd` that finishes the sentence or into a paragraph that opens with a formula is admitted.
+  Its refusal has words of its own. Rule 1's and rule 2's checks, messages and counts are the
+  ones they were, and so is the refusal of span-end rule 3 without a statement-cut rule, which
+  only a broken gate.json prints. The pair (3, 3) is admitted, (3, 1) and (3, 2) are exit 3.
+  Under rule 3 the receipt's `cut` block adds `widened` (formal passages past their loose
+  extent: the merges only the wide bound admits), `wide_starts` and `wide_unheld` (over
+  `Blocks.wide_tails`), in `harvest.gate_corpus.CUT_COUNTS_3`, with a `cut, wide:` receipt
+  line of its own. Tests cover each of the three shapes admitted under rule 3 and refused in
+  rule 2's exact words, a refusal past the wide bound in rule 3's, the unmoved default end, the
+  counts and the pairs. `tests/_locate_fixtures.before_the_wide` pins a (3, 3, 2) plan.
 - **The wide bound, as a library** (docs/proposals/statement-cut.md §3.1). inv-pilot-2's
   repair prototype made 16 merges that rule 10 (b)'s loose bound refuses, 12 of them at three
   shapes it stops at: a footnote mark between a sentence and what goes on with it, a `dd` of text that

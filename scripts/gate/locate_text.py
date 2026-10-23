@@ -54,8 +54,9 @@ file into the gate directory together with the vendored packages:
    (``wide=True``: the loose bound read across footnote marks, ``FOOTNOTE_MARK``,
    and into a ``dd`` or a paragraph that finishes the sentence,
    :meth:`Blocks.finishes`, :meth:`Blocks.opens_with_formula`) and the tails only
-   it reaches (:meth:`Blocks.wide_tails`); no gate version reads it yet, and
-   ``continues``, ``continuation`` and every default end are untouched by it.
+   it reaches (:meth:`Blocks.wide_tails`); only statement-cut rule 3 reads it
+   (gate rule 10 (b)), and ``continues``, ``continuation`` and every default end
+   are untouched by it.
 
 The vendored ``formal_companion_annotations.ids`` is imported from
 ``vendor/`` of the skill checkout, or from ``vendor/`` beside this file in a
@@ -556,7 +557,8 @@ class Blocks:
     docs/proposals/statement-cut.md section 3.1, which the end rule (versions 2
     and 3) and gate rule 10 read, with the continued chain, the loose bound and
     the cut points the same section defines, which only span-end rule 3 and
-    statement-cut rule 2 read, and the wide bound, which nothing reads yet.
+    statement-cut rule 2 read, and the wide bound, which only statement-cut rule 3
+    reads.
 
     ``paragraphs`` is ``paragraphs.json``: an entry without a readable non-empty
     span is passed over, as :func:`paragraph_end` passes it over.  The table is
@@ -946,9 +948,9 @@ class Blocks:
         chain is the one span-end rules 1 and 2 and statement-cut rule 1 read.
         ``loose`` (gate rule 10 (b) under statement-cut rule 2) joins what
         :meth:`runs_on` names in place of the continuation, and implies
-        ``continued``.  ``wide`` (the wide chain, which no gate version reads yet)
-        implies ``loose``, and both the display join and :meth:`runs_on` read across
-        footnote marks and with ``wide=True``.
+        ``continued``.  ``wide`` (the wide chain, gate rule 10 (b) under
+        statement-cut rule 3) implies ``loose``, and both the display join and
+        :meth:`runs_on` read across footnote marks and with ``wide=True``.
         """
         loose = loose or wide
         out = [block]

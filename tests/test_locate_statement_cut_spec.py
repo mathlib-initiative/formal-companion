@@ -49,7 +49,10 @@ class TestTheVersions(unittest.TestCase):
         self.assertEqual(vocab.STATEMENT_CUT_FIRST, 1)
         # the continued cut of inv-pilot-1's fixes, written from their flip on
         self.assertEqual((vocab.SPAN_END_CONTINUED, vocab.STATEMENT_CUT_CONTINUED), (3, 2))
-        self.assertEqual(vocab.STATEMENT_CUT_SPAN_END, {1: 2, 2: 3})
+        # the wide cut of inv-pilot-2's repairs, which the gate knows before the planner
+        # writes it: it reads span-end rule 3 too, since no end rule reads the wide bound
+        self.assertEqual(vocab.STATEMENT_CUT_WIDE, 3)
+        self.assertEqual(vocab.STATEMENT_CUT_SPAN_END, {1: 2, 2: 3, 3: 3})
         self.assertEqual(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_CONTINUED)
         self.assertEqual(vocab.STATEMENT_CUT_RULE, 2)
         self.assertEqual((vocab.STATUS_RULE_D1, vocab.STATUS_RULE_BUNDLE), (1, 2))

@@ -228,7 +228,7 @@ compute it and put it on the claim as `relation`; no document writes it.
 |---|---|---|---|
 | `judgment_rules` | gate.json, every mode (as today) | rule 9 of locate and challenge documents; the bench holds gold to it | 1 R1–R7; 2 PD5–PD9; **3** the cut: J1–J4, the challenge rules of §1.4, A1–A3's gate rules |
 | `span_end_rule` | gate.json, every mode (as today) | rule 2's end check of an inventory passage | 1 the end of `until`, else the paragraph; 2 the end of `until`, else the earlier of the extent and the next passage's start (§3.2); **3** the same with the continued extent (§3.1–3.2) |
-| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | 1; **2** rule 10 (b) against the loose continued bound, (h) at most one subject, the receipt's further counts (§3.3) |
+| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | 1; **2** rule 10 (b) against the loose continued bound, (h) at most one subject, the receipt's further counts (§3.3); 3 rule 10 (b) against the wide bound, and three more counts (§3.3) |
 | `status_rule` | a locate run's `run.yaml` (`locate.status_rule`); its record set's seal (new) | `derive_status`, the outcomes' owed hunt, the record-set format | 1 decision D1 (absent means 1); **2** the bundle's relation, the owed hunt, `cf-locate-recordset/2` |
 
 `cf plan-locate` writes all four from the flip on (`vocab.JUDGMENT_RULES` is
@@ -236,7 +236,9 @@ compute it and put it on the claim as `relation`; no document writes it.
 beside it), the versions in bold: `span_end_rule` 2 and `statement_cut_rule` 1 from the flip,
 and `span_end_rule` 3 and `statement_cut_rule` 2, the continued cut of inv-pilot-1's fixes
 (`vocab.SPAN_END_CONTINUED`, `STATEMENT_CUT_CONTINUED`), from the flip of those fixes (§7),
-which the gate and `passage_ids.py` knew a commit before. Each binds a run only when its
+which the gate and `passage_ids.py` knew a commit before. `statement_cut_rule` 3
+(`vocab.STATEMENT_CUT_WIDE`, the wide bound of inv-pilot-2's repairs) the gate knows, and the
+planner does not write yet. Each binds a run only when its
 own gate.json or run.yaml names it, so a re-gate, a re-tally and a re-export of a run planned
 before the flip are what they were.
 
@@ -257,10 +259,13 @@ The keys depend on each other, and the planner and the gate enforce it:
 - A gate.json naming `statement_cut_rule` ≥ 1 with `span_end_rule` < 2 is a broken gate.json
   (exit 3): rule 10's disjointness rests on the new end rule. More exactly, each statement-cut
   rule reads one span-end rule (`vocab.STATEMENT_CUT_SPAN_END`: statement-cut rule 1 reads
-  span-end rule 2, and 2 reads 3), and span-end rule 3 binds only beside statement-cut rule 2,
-  since its continued end and rule 10 (b)'s bound are one definition: a gate.json naming any
-  other pair is broken (exit 3). No key, span-end rule 1 or 2 alone, and (2, 1) — every pair a
-  run has named — stay admitted.
+  span-end rule 2, and 2 and 3 read 3, since no end rule reads the wide bound), and span-end
+  rule 3 binds only beside statement-cut rule 2 or 3, since its continued end and rule 10 (b)'s
+  bound are one definition: a gate.json naming any other pair is broken (exit 3). No key,
+  span-end rule 1 or 2 alone, (2, 1) and (3, 2) — every pair a run has named — stay admitted,
+  and so does (3, 3). The refusal of span-end rule 3 with no statement-cut rule still names
+  statement-cut rule 2 alone: only a broken gate.json prints it, and its words are the ones
+  they were.
 - From the flip, `cf plan-locate --preset locate` refuses an inventory run whose gate.json names
   no `statement_cut_rule` (the hint: inventory the sources again), since judgment rules 3 reads
   the inventory's conjuncts, and `--preset locate-challenge` refuses a locate run planned under
@@ -438,8 +443,9 @@ a sentence and the display or paragraph that goes on with it (the renderer drops
 none); a `dd` that holds text with its display and finishes the sentence itself; and a paragraph
 that opens with a formula and goes on with the sentence ("…for an n by n matrix", then
 "A requires…"). The **wide** bound below reads across all three. It is defined here as a library
-(`locate_text`, `wide=True`); no gate version reads it yet, and `continues`, `introduces`,
-`continuation`, `loose_tails`, every default end and `passage_ids.py` are untouched by it.
+(`locate_text`, `wide=True`); only gate rule 10 (b) under statement-cut rule 3 reads it (§3.3),
+and `continues`, `introduces`, `continuation`, `loose_tails`, every default end and
+`passage_ids.py` are untouched by it.
 
 - **footnote mark** — `[N]` (one to four digits), `[a]` (one lower-case letter), `[nb N]` and
   `[note N]` (`locate_text.FOOTNOTE_MARK`). `[0, 1]`, `[edit]` and a heading's text ("History[1]")
@@ -566,6 +572,25 @@ the planner writes it from the flip of inv-pilot-1's fixes on, §7) is rule 1 wi
   word is a connective and that start inside a sentence — not at their block's first word, and
   after no full stop, across whitespace and a comma or semicolon — so a sentence that starts
   "Then" is not one). Under rule 1 the block is the one above.
+
+**Statement-cut rule 3** (`vocab.STATEMENT_CUT_WIDE`; inv-pilot-2's repairs, whose 16 refused
+merges sat at shapes the loose bound stops at) is rule 2 with two changes. It reads span-end
+rule 3, as rule 2 does (§2.2): no default end moves, so `passage_ids.py`, every `passage_key`
+and the carry are what they are under rule 2. The gate knows it before the planner writes it.
+
+- **(b)** reads the wide extent (§3.1) in place of the loose one, so an `until` that keeps a
+  sentence's words across a footnote mark, into an indented line (`dd`) that finishes it, or
+  into a paragraph that opens with a formula and goes on with it, is admitted. Its refusal
+  says so ("into the displays its last sentence introduces and the paragraph or indented line
+  that finishes that sentence after them (a footnote mark between them, or a formula opening
+  that paragraph, does not end it)"). Rule 1's and rule 2's words are unchanged.
+- **The counts** gain three: `widened` (formal passages that end past their loose extent, so
+  only the wide bound let them run on: each is a merge the wide bound alone admits, for a reader
+  to judge, since the bound's one known false positive and its debatable runs are among them);
+  and `wide_starts` and `wide_unheld` (`loose_starts` and `loose_unheld` over the wide tails,
+  `Blocks.wide_tails`). `wide_starts` is an upper bound: a tail can be a correct start of its
+  own. The receipt's `cut` block carries them only under rule 3
+  (`harvest.gate_corpus.CUT_COUNTS_3`), with a line of its own.
 
 ### 3.4 The prompt's rules (the inventory prompt and the labeler's inventory mode)
 
