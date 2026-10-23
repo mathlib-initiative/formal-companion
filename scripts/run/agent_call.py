@@ -6,7 +6,7 @@ session cap; cost and spend) for the bridges in this directory, which call it
 instead of running the agent CLI themselves:
 
     agent_call.py --role worker --raw RAW --err ERR [--usage-dir DIR] [--task-id ID] \\
-        -- agentbox host claude --profile P -- -p ... --output-format json
+        [--step STEP] -- agentbox host claude --profile P -- -p ... --output-format json
 
 * **The session cap.**  The account allows 16 concurrent agent sessions per
   Unix user, across every root, and the 17th gets HTTP 409s.  Before the call
@@ -30,7 +30,11 @@ instead of running the agent CLI themselves:
   its usage and ``total_cost_usd`` -- is copied to
   ``<usage-dir>/<task-id>.<role>.<UTC stamp>.<pid>.json`` (``.out`` when it is
   not a JSON object), outside the worktree, where the spend watchdog and the cost
-  cross-check read it.  The bridges used to delete it.
+  cross-check read it.  The bridges used to delete it.  An audited run's turn
+  machine (``audit_turn.py``, references/locate-documents.md section 13.9) names
+  each call's step (``--step``, one of :data:`AUDIT_STEPS`), and its envelope is
+  then ``<task-id>.<role>.<step>.<UTC stamp>.<pid>.json``; without ``--step`` the
+  name, and the record below, are what they always were.
 * **A call that left no envelope still leaves a record.**  A timeout, a
   signal, an empty stdout or one that is not a JSON object writes, under the
   same name with ``.json``, a synthetic envelope saying what is known
@@ -71,6 +75,9 @@ POLL_SECONDS = 5.0
 KILL_GRACE = 30.0
 #: what a caller's stop arrives as; each is forwarded to the agent's group
 FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+#: COPIED from ``cflib.vocab.AUDIT_STEPS`` (no cflib on the host): the ``--step`` values;
+#: tests/test_audit_turn.py pins the copy
+AUDIT_STEPS = ("audit", "skeptic", "check", "revision")
 _CONFLICT = re.compile(r"(?:\b(?:HTTP|status|API Error|error)\W{0,4}409\b|\b409\W{0,3}"
                        r"(?:conflict|too many))", re.I)
 
@@ -143,13 +150,14 @@ def is_envelope(raw: bytes) -> bool:
 
 
 def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str,
-                  suffix: str | None = None) -> Path | None:
+                  suffix: str | None = None, step: str | None = None) -> Path | None:
     """Copy the envelope outside the worktree; a failure to keep it never fails the call.
 
     ``.json`` only for a JSON object (:func:`is_envelope`); anything else -- prose,
     or JSON that is no object, such as an array -- is kept as ``.out``, so the
     record :func:`call_record` writes under the same name with ``.json`` in the
-    same second never replaces the raw output it is about.
+    same second never replaces the raw output it is about.  ``step`` (an audited
+    call's) goes into the name after the role.
     """
     if usage_dir is None:
         return None
@@ -159,7 +167,8 @@ def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str
     safe_task = re.sub(r"[^A-Za-z0-9._-]", "_", task_id or "no-task")[:120]
     try:
         usage_dir.mkdir(parents=True, exist_ok=True)
-        path = usage_dir / f"{safe_task}.{role}.{stamp}.{os.getpid()}.{suffix}"
+        named = f"{role}.{step}" if step else role
+        path = usage_dir / f"{safe_task}.{named}.{stamp}.{os.getpid()}.{suffix}"
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_bytes(raw)
         os.replace(tmp, path)
@@ -169,22 +178,27 @@ def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str
 
 
 def call_record(*, outcome: str, role: str, task_id: str, slot: int, seconds: float,
-                timeout: float, code: int | None, signum: int = 0, stdout_bytes: int = 0) -> dict:
+                timeout: float, code: int | None, signum: int = 0, stdout_bytes: int = 0,
+                step: str | None = None) -> dict:
     """The synthetic envelope of a call that left none: what is known, the cost unknown.
 
     Shaped like the agent CLI's own result envelope (``type``, ``subtype``,
     ``is_error``, ``total_cost_usd``, ``duration_ms``) so every reader of
     ``usage/`` reads it, with ``total_cost_usd: null`` -- never a guessed 0 --
-    and the call's facts under ``cf_agent_call``.
+    and the call's facts under ``cf_agent_call`` (with ``step`` only for a call that
+    named one).
     """
-    return {"type": "result", "subtype": f"error_{outcome}", "is_error": True,
-            "total_cost_usd": None, "duration_ms": int(round(seconds * 1000)),
-            "usage": None, "session_id": None,
-            "cf_agent_call": {"outcome": outcome, "role": role, "task_id": task_id or None,
-                              "slot": slot, "elapsed_s": round(seconds, 1),
-                              "timeout_s": round(timeout, 1), "exit": code,
-                              "signal": signum or None, "stdout_bytes": stdout_bytes,
-                              "cost": "unknown"}}
+    record = {"type": "result", "subtype": f"error_{outcome}", "is_error": True,
+              "total_cost_usd": None, "duration_ms": int(round(seconds * 1000)),
+              "usage": None, "session_id": None,
+              "cf_agent_call": {"outcome": outcome, "role": role, "task_id": task_id or None,
+                                "slot": slot, "elapsed_s": round(seconds, 1),
+                                "timeout_s": round(timeout, 1), "exit": code,
+                                "signal": signum or None, "stdout_bytes": stdout_bytes,
+                                "cost": "unknown"}}
+    if step:
+        record["cf_agent_call"]["step"] = step
+    return record
 
 
 class _Signalled(Exception):
@@ -231,7 +245,7 @@ def _forward_signals(proc: subprocess.Popen) -> dict:
 
 def run(argv: list[str], *, role: str, raw_path: Path, err_path: Path | None,
         usage_dir: Path | None, task_id: str, slots: int, timeout: float,
-        poll: float = POLL_SECONDS) -> int:
+        poll: float = POLL_SECONDS, step: str | None = None) -> int:
     def log(line: str) -> None:
         print(line, file=sys.stderr)
         if err_path is not None:
@@ -290,7 +304,7 @@ def run(argv: list[str], *, role: str, raw_path: Path, err_path: Path | None,
             pass
     raw = raw_path.read_bytes() if raw_path.exists() else b""
     seconds = time.time() - started
-    kept = keep_envelope(usage_dir, raw, task_id=task_id, role=role) if raw else None
+    kept = keep_envelope(usage_dir, raw, task_id=task_id, role=role, step=step) if raw else None
     if not is_envelope(raw):
         outcome = ("signal" if signalled else "timeout" if code is None
                    else "empty" if not raw.strip() else "not_json")
@@ -298,9 +312,9 @@ def run(argv: list[str], *, role: str, raw_path: Path, err_path: Path | None,
                              seconds=seconds, timeout=timeout,
                              code=(128 + signalled if signalled else
                                    EXIT_TIMEOUT if code is None else int(code)),
-                             signum=signalled, stdout_bytes=len(raw))
+                             signum=signalled, stdout_bytes=len(raw), step=step)
         noted = keep_envelope(usage_dir, (json.dumps(record, sort_keys=True) + "\n").encode(),
-                              task_id=task_id, role=role, suffix="json")
+                              task_id=task_id, role=role, suffix="json", step=step)
         kept = noted or kept
     where = f" (kept at {kept})" if kept else ""
     if signalled:
@@ -339,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--err", default=None, help="append the agent's stderr here")
     ap.add_argument("--usage-dir", default=None, help="keep a copy of the envelope here")
     ap.add_argument("--task-id", default=os.environ.get("TEND_TASK_ID", ""))
+    ap.add_argument("--step", default=None, choices=AUDIT_STEPS,
+                    help="an audited run's step, named in the envelope's file name")
     args = ap.parse_args(argv[:split])
     command = argv[split + 1:]
     if not command:
@@ -356,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     return run(command, role=args.role, raw_path=Path(args.raw),
                err_path=Path(args.err) if args.err else None,
                usage_dir=Path(args.usage_dir) if args.usage_dir else None,
-               task_id=args.task_id, slots=slots, timeout=timeout, poll=poll)
+               task_id=args.task_id, slots=slots, timeout=timeout, poll=poll, step=args.step)
 
 
 if __name__ == "__main__":

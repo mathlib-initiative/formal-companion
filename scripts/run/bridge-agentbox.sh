@@ -51,6 +51,8 @@
 #                          locate run's nested layout is findings/$TEND_TASK_ID/*.json)
 #   CF_EXTRA_TOOLS         allowlist entries appended for the WORKER only (a locate run's
 #                          two host tools, Bash(python3 <gate>/corpus_search.py:*), ...)
+#   CF_AUDIT_RULE, CF_AUDIT_ROUNDS  an audited inventory run's decision rule and review
+#                          rounds: set, every turn is bin/audit_turn.py's (below)
 #   CF_SLOT_DIR, CF_SLOTS  the per-user session-slot directory and its size (default
 #                          ~/.cache/cf-agent-slots, 15): agent_call.py takes a slot with
 #                          flock before the agent call and WAITS for one (the account
@@ -203,6 +205,21 @@ if [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
     echo "bridge-agentbox: the attempt cap could not end task $TEND_TASK_ID (exit $CAPRC)" >&2
     exit 1
   fi
+fi
+
+# THE AUDITED INVENTORY (references/locate-documents.md section 13.9). A run planned
+# with an audit exports CF_AUDIT_RULE in both wrappers, and every turn of its tasks is
+# then audit_turn.py's: the worker's first call, its gate re-runs and its revisions,
+# the mechanical revert and reset; the reviewer's precheck, its chunked audit, check
+# and skeptic calls, and the merge that decides. It takes this bridge's allowlist,
+# profile, host and bypass, calls agent_call.py as below, and prints the contract.
+# Without CF_AUDIT_RULE nothing here changes.
+if [ -n "${CF_AUDIT_RULE:-}" ]; then
+  [ -r "$BINDIR/audit_turn.py" ] || {
+    echo "bridge-agentbox: CF_AUDIT_RULE=$CF_AUDIT_RULE but $BINDIR/audit_turn.py is missing" >&2
+    exit 78; }
+  exec python3 -I "$BINDIR/audit_turn.py" "$ROLE" --root "$ROOT" --prompts "$PROMPTS" \
+    --host "$HOST" --profile "$PROFILE" --bypass "$BYPASS" --tools "$TOOLS" --err "$ERR"
 fi
 
 RESULT="$PWD/.tend/agent_result.json"

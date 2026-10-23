@@ -27,7 +27,9 @@ bridge reads:
   observable-state fallback.
 
 ``bin/`` carries the bridge with every helper (``plan.make_tend_root.
-BIN_HELPERS``) and, for a locate run, ``watchdog.py``.  The gate directory,
+BIN_HELPERS``) and, for a locate run, ``watchdog.py`` and ``audit_turn.py`` (the
+turn machine an audited run's bridge hands its turns to; an unaudited run's
+bridge never calls it).  The gate directory,
 outside every worktree, then gets what the locate gate and the worker's tools
 read (``GATE_FILES``, each one required): the gate itself and the findings gate
 it imports (``verify_findings.py``, whose hardened change-set reader it uses),

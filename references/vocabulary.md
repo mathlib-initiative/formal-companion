@@ -1042,6 +1042,18 @@ more than there are), the word caps `AUDIT_REASON_WORDS` (30), `AUDIT_ACTION_WOR
 (`and` · `so` · `hence` · `thus` · `therefore` · `then` · `but`, the rendering's
 `connective-start` hint).
 
+**The turn machine's values** (`references/locate-documents.md` §13.9, the turns an audited
+run's bridge hands to `scripts/run/audit_turn.py`, which copies them; `agent_call.py` and
+`watchdog.py` copy `AUDIT_STEPS`; a test pins every copy): `AUDIT_TURN_SCHEMA`
+(`cf-audit-turn/1`, the `schema` of `<tend-root>/audit/<task-id>/state.json`), `AUDIT_STEPS`
+(`audit` · `skeptic` · `check` · `revision`: `agent_call.py --step`, which an audited call's
+envelope names after its role), `AUDIT_OUTPUT_RETRIES` (1: the re-calls of a step whose output
+stays invalid before the round is `audit_failed`), `AUDIT_GATE_RESETS` (3: the refused revisions
+of a round before the bridge resets the worktree to the round's reviewed commit),
+`AUDIT_DISCUSSION_TAIL` (6,000: the bytes of `.tend/discussion.md` a revision prompt carries,
+the bridge's own tail) and `AUDIT_REVERT_ATTEMPTS` (3: the revert requests whose restore the
+reviewer may find unmatched before the turn stops).
+
 **The benchmark's values** (the proposal's §8 and §9):
 
 | enum | values |

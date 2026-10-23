@@ -34,11 +34,17 @@ What it reads, all of it outside every worktree:
 * **merged tasks** -- the task directories under ``findings/`` on the
   entrypoint's merge target (``git ls-tree``, with the boundary pinned).
 
+An envelope is named ``<task-id>.<role>.<UTC stamp>.<pid>.json``, or, for an
+audited run's call, ``<task-id>.<role>.<step>.<UTC stamp>.<pid>.json``
+(``agent_call.py --step``; references/locate-documents.md section 13.9);
+:func:`envelope_name` reads both, and every one counts towards the spend.
+
 Every record carries ``spend_usd`` (the priced floor plus the estimate, what
 the rules judge), ``spend_floor_usd``, ``unpriced_calls``, ``unpriced_seconds``,
 ``estimated_unpriced_usd`` (null when there was nothing to estimate with),
 ``estimate_usd_per_second``, ``gate_calls`` and ``gate_failed`` (the validation
-calls the rate is over) and ``pre_merge_calls`` and ``pre_merge_failed``.
+calls the rate is over) and ``pre_merge_calls`` and ``pre_merge_failed``; a root
+with any stepped envelope also gets ``spend_by_step``.
 
 Model-free and standard library only: it decides from numbers, runs on the
 host where cflib is not installed, and its one action is ``tend-control
@@ -95,12 +101,39 @@ MIN_GATE_CALLS = 20
 POLL = 2.0
 #: seconds --stop-others gives a watchdog to leave on SIGTERM before SIGKILL
 STOP_GRACE = 10.0
+#: COPIED from ``cflib.vocab.AUDIT_STEPS`` (no cflib on the host): the step an audited
+#: call's envelope names; tests/test_audit_turn.py pins the copy
+AUDIT_STEPS = ("audit", "skeptic", "check", "revision")
+ROLES = ("worker", "reviewer")
+_ENVELOPE = re.compile(r"(?P<head>.+)\.(?P<stamp>\d{8}T\d{6}Z)\.(?P<pid>\d+)\.(?:json|out)\Z")
 
 
 def _number(value) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     return None
+
+
+def envelope_name(name: str) -> dict | None:
+    """``{task_id, role, step, stamp, pid}`` of a kept envelope's file name, or None.
+
+    Both forms: ``<task>.<role>.<stamp>.<pid>.json`` (``step`` None) and an audited
+    call's ``<task>.<role>.<step>.<stamp>.<pid>.json``.  The task id may itself hold
+    dots, so the name is read from its right end.
+    """
+    match = _ENVELOPE.match(name)
+    if not match:
+        return None
+    head = match.group("head")
+    step = None
+    task, _, last = head.rpartition(".")
+    if last in AUDIT_STEPS:
+        step = last
+        task, _, last = task.rpartition(".")
+    if last not in ROLES or not task:
+        return None
+    return {"task_id": task, "role": last, "step": step, "stamp": match.group("stamp"),
+            "pid": int(match.group("pid"))}
 
 
 def ledger(usage_dir: Path, *, fallback_usd_per_hour: float | None = None) -> dict:
@@ -116,13 +149,17 @@ def ledger(usage_dir: Path, *, fallback_usd_per_hour: float | None = None) -> di
     None when neither exists.  ``usd_per_hour`` is that rate an hour, taken
     from the unrounded rate: ``usd_per_second`` is rounded to 9 places, an
     error an hour multiplies by 3600, and ``cf campaign plan`` records a
-    pilot's $20 an hour from this key as 20.0.
+    pilot's $20 an hour from this key as 20.0.  When any envelope's name carries an
+    audited call's step (:func:`envelope_name`), ``by_step`` is ``{step: {envelopes,
+    dollars}}`` over the stepped envelopes (the priced floor of each); a root with
+    none gets no such key.
     """
     out = {"dollars": 0.0, "envelopes": 0, "unpriced_calls": 0, "unpriced_seconds": 0.0,
            "usd_per_second": None, "usd_per_hour": None, "estimated_unpriced_usd": 0.0}
     if not usage_dir.is_dir():
         return out
     rate = None
+    by_step: dict[str, dict] = {}
     for path in sorted(usage_dir.rglob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -133,6 +170,11 @@ def ledger(usage_dir: Path, *, fallback_usd_per_hour: float | None = None) -> di
         out["envelopes"] += 1
         cost = _number(data.get("total_cost_usd"))
         millis = _number(data.get("duration_ms"))
+        named = envelope_name(path.name)
+        if named and named["step"]:
+            row = by_step.setdefault(named["step"], {"envelopes": 0, "dollars": 0.0})
+            row["envelopes"] += 1
+            row["dollars"] += cost if cost is not None and cost > 0 else 0.0
         if cost is not None:
             if cost > 0:
                 out["dollars"] += cost
@@ -156,6 +198,10 @@ def ledger(usage_dir: Path, *, fallback_usd_per_hour: float | None = None) -> di
                                          if rate is not None else None)
     out["dollars"] = round(out["dollars"], 6)
     out["unpriced_seconds"] = round(out["unpriced_seconds"], 1)
+    if by_step:
+        out["by_step"] = {step: {"envelopes": row["envelopes"],
+                                 "dollars": round(row["dollars"], 6)}
+                          for step, row in sorted(by_step.items())}
     return out
 
 
@@ -378,6 +424,8 @@ def check(args) -> dict:
               "pre_merge_calls": gate["pre_merge_calls"],
               "pre_merge_failed": gate["pre_merge_failed"], "merged_tasks": merged,
               "reasons": reasons, "drained": bool(previous.get("drained")), "action": None}
+    if "by_step" in spent:
+        record["spend_by_step"] = spent["by_step"]
     if reasons and not record["drained"]:
         # tend's prefix is shell (the host's tend_cmd exports PATH and cd's), so a
         # prefixed drain runs through bash -c; a bare one is an argv
