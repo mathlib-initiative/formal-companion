@@ -49,6 +49,13 @@ the shipped producer, not a fixture of the next stage's format:
     carry      inv-2, a re-cut of the same revisions; cf locate carry from inv-1's
                cut to it (a split, an end moved, the rest unchanged; --rows carried
                by their passages' fates) and cf bench carry over the frozen gold
+    audit      inv-aud, an audited inventory (cf plan-locate --audit-rounds 2): every
+               turn through the planned wrappers, bridge-agentbox.sh and the turn
+               machine, the agents a fake agentbox; round 1 rejects the widget page,
+               the fake worker applies the verdict's operation with the staged edit
+               tool, round 2 checks it and approves; the tend root's audit/ and usage/
+               landed as a remote harvest fetches them, cf harvest's receipt carries
+               the audit block (references/locate-documents.md section 13.10)
 
 Nothing touches the network or a model.  Every check reads an artifact, never
 a log line.  Run it on its own with ``python3 tests/e2e/locate_synthetic/driver.py
@@ -1850,13 +1857,264 @@ class Pipeline:
               "cf bench carry edited a label file")
 
 
+    # ------------------------------------------------------------------ audit
+    #: the audited run's flagged page and the repaired statement its worker writes
+    AUDIT_RUN = "inv-aud"
+    AUDIT_REPAIRED = "synthetic restatement naming every hypothesis"
+
+    def audit(self) -> None:
+        """An audited inventory run, every turn as tend would make it, then its harvest.
+
+        ``cf plan-locate --audit-rounds 2`` plans inv-aud; each task's committed cut sits
+        in a git worktree of its own, and each turn runs the planned wrapper
+        (``tend-root/bin/<role>-agent.sh``: ``CF_AUDIT_RULE`` makes the bridge hand it to
+        ``bin/audit_turn.py``, which calls ``agent_call.py --step``) with a fake
+        ``agentbox`` first on PATH (:data:`FAKE_AGENTBOX`).  The widget page's auditor
+        flags its first formal passage, the skeptic upholds it with evidence from the
+        layer, and the merge rejects; the worker's revision applies the verdict as one
+        ``set`` operation through the staged ``inventory_edit.py``, ``passage_ids.py``
+        and the gate, and commits; round 2's checker finds it applied and, the final
+        round, the merge approves.  The other pages are clean in round 1.  The tend
+        root's ``audit/`` and ``usage/`` are landed under ``runs/<run>/host/`` as the
+        remote harvest's fetch lands them (``*.json`` only), and ``cf harvest`` writes
+        the receipt's ``audit`` block (references/locate-documents.md section 13.10).
+        """
+        run_id = self.AUDIT_RUN
+        self.cf("plan-locate", "--preset", "locate-inventory", "--sourceset", SS,
+                "--universe", U, "--run-id", run_id, "--max-cost", "50",
+                "--audit-rounds", "2")
+        paths = cf_main_paths(self.ws)
+        root = paths.tend_root(run_id)
+        for role in ("worker", "reviewer"):
+            wrapper = (root / "bin" / f"{role}-agent.sh").read_text(encoding="utf-8")
+            check('export CF_AUDIT_RULE="1"' in wrapper and 'export CF_AUDIT_ROUNDS="2"'
+                  in wrapper, f"the planned {role} wrapper does not turn the audit on")
+        drafts = self._inventory_documents(run_id, self.made / run_id / "drafts")
+        fakebin = self._fake_agentbox()
+        findings = self.made / run_id / "findings"
+        for task_id, manifest in self._manifests(run_id).items():
+            sid = manifest["documents"][0]["source_id"]
+            wt = self._task_worktree(run_id, task_id, sid, drafts[sid])
+            flagged = sid == WIDGET
+            env = {"PATH": f"{fakebin}{os.pathsep}/usr/bin{os.pathsep}/bin",
+                   "HOME": str(self.made / "home"), "TEND_TASK_ID": task_id,
+                   "TEND_WORKTREE_PATH": str(wt), "TEND_WORKTREE_ID": f"wt-{task_id}",
+                   "CF_AGENTBOX_PROFILE": "e2e", "CF_SLOT_DIR": str(self.made / "slots"),
+                   "FAKE_FLAG": "1" if flagged else "", "FAKE_REPAIRED": self.AUDIT_REPAIRED,
+                   "FAKE_SOURCES": str(paths.sourceset_source_dir(SS, sid).parent),
+                   **GIT_ENV}
+            first = self._turn(root, wt, "reviewer", env)
+            if flagged:
+                check(first.get("verdict") == "request_changes"
+                      and "r1.verdicts.json" in str(first.get("feedback_text")),
+                      f"round 1 did not reject the flagged page with its verdicts: {first}")
+                worked = self._turn(root, wt, "worker", env)
+                check(worked.get("status") in ("completed", "needs_review"),
+                      f"the revision did not finish: {worked}")
+                second = self._turn(root, wt, "reviewer", env)
+                check(second.get("verdict") == "approve",
+                      f"round 2 did not approve the repaired page: {second}")
+            else:
+                check(first.get("verdict") == "approve",
+                      f"round 1 did not approve the clean page {sid}: {first}")
+            doc = wt / "findings" / task_id / f"{sid}.json"
+            (findings / task_id).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(doc, findings / task_id / doc.name)
+        widget = next(findings.glob(f"*/{WIDGET}.json"))
+        check(self.AUDIT_REPAIRED in widget.read_text(encoding="utf-8"),
+              "the merged widget page does not carry the repaired statement")
+        code, text = self.gate(run_id, widget)
+        check(code == 0, f"the staged gate refused the repaired page:\n{text}")
+        host = paths.run_host_dir(run_id)
+        self._land(root / "audit", host / "audit")
+        self._land(root / "usage", host / "envelopes")
+        receipt = self.harvest(run_id, findings)
+        block = receipt.get("audit") or {}
+        per = block.get("per_source") or {}
+        check(block.get("rule") == 1 and block.get("review_rounds") == 2
+              and block.get("source") == "kept", f"the receipt's audit block is {block}")
+        check(block.get("outcomes", {}).get("approved") == 3 and block.get("audited") == 3
+              and not block.get("stale") and not block.get("unaudited"),
+              f"not every page is the bytes its audit approved: {block.get('outcomes')}")
+        rounds = block.get("rounds") or {}
+        check(rounds.get("1", {}).get("decisions") == {"approve": 2, "request_changes": 1,
+                                                       "revert": 0}
+              and rounds.get("2", {}).get("decisions") == {"approve": 1, "request_changes": 0,
+                                                           "revert": 0}
+              and rounds["2"]["counts"].get("status_applied") == 1,
+              f"the rounds are not round 1's rejection and round 2's approval: {rounds}")
+        check(per.get(WIDGET, {}).get("actionable_by_round") == [1, 0]
+              and per[WIDGET].get("reviewed_round") == 2
+              and block.get("residual", {}).get("actionable") == 0,
+              f"the widget page's verdicts were not applied: {per.get(WIDGET)}")
+        check(block.get("turns", {}).get("rejections") == 1,
+              f"the turn machine recorded {block.get('turns')} rejections, not one")
+        cost = block.get("cost_usd") or {}
+        check(all(cost.get(step, 0) > 0 for step in ("audit", "skeptic", "check",
+                                                     "worker_revision"))
+              and cost.get("worker_initial") == 0,
+              f"the cost by step does not price the audit's calls: {cost}")
+        check("audit" not in self.read_json(paths.receipt_json("inv-1")),
+              "an unaudited run's receipt carries an audit block")
+
+    def _fake_agentbox(self) -> Path:
+        """``fakebin/`` with :data:`FAKE_AGENTBOX` as ``agentbox`` and this interpreter as
+        ``python3`` (the bridge and the turn machine run ``python3``; the system's may be
+        older than the 3.11 the skill needs)."""
+        fakebin = self.made / "fakebin"
+        if not fakebin.is_dir():
+            fakebin.mkdir(parents=True)
+            (fakebin / "agentbox").write_text(FAKE_AGENTBOX, encoding="utf-8")
+            (fakebin / "agentbox").chmod(0o755)
+            (fakebin / "python3").symlink_to(sys.executable)
+        return fakebin
+
+    def _task_worktree(self, run_id: str, task_id: str, sid: str, draft: Path) -> Path:
+        """A task's worktree as tend leaves it for review: ``main``, then the task's branch
+        with the worker's committed document; ``.tend/`` excluded as in a tend worktree."""
+        wt = self.made / run_id / "worktrees" / task_id
+        wt.mkdir(parents=True)
+        self.git(wt, "init", "-q", "-b", "main")
+        (wt / ".git" / "info" / "exclude").write_text(".tend/\n", encoding="utf-8")
+        self.git(wt, "commit", "-q", "--allow-empty", "-m", "base")
+        self.git(wt, "checkout", "-q", "-b", task_id)
+        doc = wt / "findings" / task_id / f"{sid}.json"
+        doc.parent.mkdir(parents=True)
+        shutil.copy2(draft, doc)
+        self.git(wt, "add", "--", "findings")
+        self.git(wt, "commit", "-q", "-m", f"inventory of {sid}")
+        return wt
+
+    def _turn(self, root: Path, wt: Path, role: str, env: dict) -> dict:
+        """One tend turn: the planned wrapper, in the worktree; its stdout is the contract."""
+        proc = subprocess.run(["bash", str(root / "bin" / f"{role}-agent.sh")],
+                              capture_output=True, text=True, cwd=str(wt), env=env,
+                              timeout=600)
+        check(proc.returncode == 0 and len(proc.stdout.strip().splitlines()) == 1,
+              f"the {role} turn exited {proc.returncode}:\n{proc.stdout}\n{proc.stderr}")
+        return json.loads(proc.stdout)
+
+    @staticmethod
+    def _land(remote: Path, local: Path) -> None:
+        """What the harvest's fetch of a host directory lands: its ``*.json``, in place."""
+        if local.exists():
+            shutil.rmtree(local)
+        for path in sorted(remote.rglob("*.json")):
+            target = local / path.relative_to(remote)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+
+
+#: the audited run's agents (synthetic): an executable that answers each call
+#: ``audit_turn.py`` makes through ``agent_call.py`` from what the call's prompt names.  The
+#: auditor flags the first formal passage of the page when FAKE_FLAG is set; the skeptic
+#: upholds every flag with the first words of its span as evidence; the checker finds every
+#: verdict applied and no collateral harmful; the worker's revision writes one ``set``
+#: operation per verdict, runs the edit tool, the id tool and the gate the prompt names,
+#: reports each verdict applied and commits the document.  It prints a priced envelope.
+FAKE_AGENTBOX = r"""#!/usr/bin/env python3
+import json, os, re, shlex, subprocess, sys
+argv = sys.argv[1:]
+prompt = argv[argv.index("-p") + 1] if "-p" in argv else ""
+A = os.path.join(".tend", "audit")
+task = os.environ["TEND_TASK_ID"]
+(doc_rel,) = [os.path.join("findings", task, n) for n in os.listdir(os.path.join("findings", task))]
+sid = os.path.basename(doc_rel)[:-5]
+
+def load(name):
+    with open(os.path.join(A, name), encoding="utf-8") as fh:
+        return json.load(fh)
+
+def dump(path, data):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+
+def head(kind, k):
+    return {"schema": "cf-inventory-audit/1", "kind": kind, "round": k, "source_id": sid}
+
+def evidence(item):
+    with open(doc_rel, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    with open(os.path.join(os.environ["FAKE_SOURCES"], sid, "layer.txt"), encoding="utf-8") as fh:
+        layer = fh.read()
+    (p,) = [p for p in doc["passages"] if p["item"] == item]
+    return " ".join(layer[p["span"][0]:p["span"][1]].split()[:4])
+
+call = re.search(r"## This call: the (audit|check|skeptic) of round (\d+), part (\d+) of", prompt)
+if call:
+    step, k, part = call.group(1), int(call.group(2)), int(call.group(3))
+    out = re.search(r"Write exactly one file: (\S+?)\.\n", prompt + "\n").group(1)
+    formal = load("r%d.render.json" % k)["parts"][part - 1]["formal"]
+    if step == "audit":
+        rows = [{"item": item, "origin": "lead", "verdict": "clean", "rule": 0,
+                 "merge_with": "", "reason": "", "action": ""} for item in formal]
+        if os.environ.get("FAKE_FLAG") and part == 1 and rows:
+            rows[0].update(verdict="statement_misstates", rule=8,
+                           reason="the statement drops a hypothesis the passage states",
+                           action="set the statement to name every hypothesis")
+        data = dict(head("audit", 1), passages=rows, expository_flags=[],
+                    per_spec_formal_estimate=len(rows), patterns=[], subject_check="one subject")
+    elif step == "skeptic":
+        flags = load("r%d.flags.part%d.json" % (k, part))
+        flagged = {f["item"] for f in flags["flags"]}
+        data = dict(head("skeptic", k),
+                    verdicts=[{"flag_id": f["flag_id"], "upheld": True, "verdict": f["verdict"],
+                               "rule": f["rule"], "evidence": evidence(f["item"]),
+                               "reason": "the rule as written says so"} for f in flags["flags"]],
+                    missed=[], disputes=[{"verdict_id": d["verdict_id"], "worker_right": False,
+                                          "reason": "the rule as written"}
+                                         for d in flags["disputes"]],
+                    examined=[x for x in formal if x not in flagged],
+                    per_spec_formal_estimate=len(formal), summary="part %d judged" % part)
+    else:
+        expect = load("r%d.check.part%d.expect.json" % (k, part))
+        data = dict(head("check", k),
+                    checked=[{"verdict_id": x, "status": "applied", "reason": "applied as asked"}
+                             for x in expect if "-v" in x],
+                    collateral=[{"id": x, "harmful": False, "reason": "harmless"}
+                                for x in expect if "-x" in x], new=[], regressions=[])
+    dump(out, data)
+elif "## This session: the revision of round" in prompt:
+    k = int(re.search(r"the revision of round (\d+)", prompt).group(1))
+    line = next(ln for ln in prompt.splitlines() if ln.startswith("- The verdicts:"))
+    ids = re.findall(r"r[0-9]+-v[0-9]{3,}", line.split(";", 1)[1])
+    verdicts = [v for v in load("r%d.verdicts.json" % k)["verdicts"] if v["id"] in ids]
+    ops_path, repair_path = (os.path.join(A, "r%d.%s.json" % (k, n)) for n in ("ops", "repair"))
+    ops = load("r%d.ops.json" % k) if os.path.isfile(ops_path) else dict(head("ops", k), ops=[])
+    repair = (load("r%d.repair.json" % k) if os.path.isfile(repair_path)
+              else dict(head("repair", k), entries=[]))
+    for v in verdicts:
+        ops["ops"].append({"op": "set", "item": v["item"], "verdict": v["id"],
+                           "fields": {"statement": os.environ["FAKE_REPAIRED"]}})
+        repair["entries"].append({"verdict_id": v["id"], "status": "applied", "why": ""})
+    dump(ops_path, ops)
+    dump(repair_path, repair)
+    for tool in ("inventory_edit.py --document", "passage_ids.py --source-dir",
+                 "verify_locate.py --gate-config"):
+        (command,) = [ln for ln in prompt.splitlines()
+                      if ln.startswith("python3 ") and tool in ln and "<" not in ln]
+        subprocess.run(shlex.split(command), check=True, stdout=sys.stderr)
+    subprocess.run(["git", "add", "--", doc_rel], check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "audit revision %d" % k], check=True)
+    dump(os.path.join(".tend", "agent_result.json"),
+         {"status": "completed", "summary": "applied %d verdict(s)" % len(verdicts)})
+print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "done",
+                  "total_cost_usd": 0.5, "duration_ms": 1000,
+                  "modelUsage": {"claude-opus-5": {"inputTokens": 10, "outputTokens": 20,
+                                                   "cacheCreationInputTokens": 0,
+                                                   "cacheReadInputTokens": 30,
+                                                   "costUSD": 0.5}}}))
+"""
+
+
 def cf_main_paths(ws: Path):
     from cflib.paths import WorkspacePaths
     return WorkspacePaths(Path(ws))
 
 
 STAGES = ("workspace", "universe", "sourceset", "candidates", "inventory", "locate",
-          "challenge", "statement_cut", "export", "bench", "aa", "aa_refusal", "carry")
+          "challenge", "statement_cut", "export", "bench", "aa", "aa_refusal", "carry",
+          "audit")
 
 
 def run(root: Path, stages=STAGES) -> Pipeline:

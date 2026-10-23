@@ -294,7 +294,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
                   source_manifest: dict[str, str] | None = None,
                   run_yaml: str | None = None, allow_edition_mismatch: bool = False,
                   gate: dict | None = None, cost: dict | None = None,
-                  host_artifacts: dict | None = None) -> dict:
+                  host_artifacts: dict | None = None, audit: dict | None = None) -> dict:
     """Reconcile the destination against the expected set.
 
     ``expected`` is the REMOTE listing, never a number someone remembered.
@@ -318,6 +318,9 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     run's gate log, usage export and canary scan); an EXPECTED one that did
     not arrive (the gate log) makes the receipt incomplete and is named in
     ``host_artifacts_missing``, the others never affect ``complete``.
+    ``audit`` is an audited inventory run's block (``harvest.audit_summary.
+    summarise``, references/locate-documents.md section 13.10), recorded as given
+    and only when given; it never affects ``complete``.
     """
     actual_paths = iter_finding_files(dest)
     actual = sorted(finding_name(p, dest) for p in actual_paths)
@@ -376,6 +379,8 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     if host_artifacts is not None:
         receipt["host_artifacts"] = host_artifacts
         receipt["host_artifacts_missing"] = artifacts_missing
+    if audit is not None:
+        receipt["audit"] = audit
     if previous:
         receipt["previous"] = {
             "harvested_at": previous.get("harvested_at"),
@@ -506,6 +511,10 @@ def describe(receipt: dict) -> str:
         from harvest import host_artifacts as host_mod
 
         lines.extend(host_mod.describe(receipt["host_artifacts"]))
+    if isinstance(receipt.get("audit"), dict):
+        from harvest import audit_summary
+
+        lines.extend(audit_summary.describe(receipt["audit"]))
     prev = receipt.get("previous")
     if prev:
         lines.append(f"  previous harvest: {prev.get('actual')} files at {prev.get('harvested_at')}"
@@ -523,12 +532,14 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
             run_yaml_src: Path | None = None, verify_sha: bool = False,
             execute: bool = True, allow_edition_mismatch: bool = False,
             gate_runner=None, cost: dict | None = None,
-            host_artifacts: dict | None = None) -> dict:
+            host_artifacts: dict | None = None, audit_runner=None) -> dict:
     """Transfer, reconcile and write RECEIPT.json. Returns the receipt.
 
     ``execute=False`` only makes sense for a remote source: it prints the
     commands and returns a receipt marked ``planned``.  ``cost`` is the priced
     block of the run's transcripts, recorded on the receipt as given.
+    ``audit_runner``, an audited run's, is called on the landed corpus like
+    ``gate_runner`` and its block recorded as the receipt's ``audit``.
     """
     dest = Path(dest)
     if source["kind"] == "remote" and not execute:
@@ -547,11 +558,12 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
         run_yaml_name = "run.yaml"
 
     gate = gate_runner(dest) if gate_runner else None
+    audit = audit_runner(dest) if audit_runner else None
     receipt = build_receipt(run_id=run_id, source=source, expected=expected, dest=dest,
                             sources=sources, previous=previous, source_manifest=shas,
                             run_yaml=run_yaml_name,
                             allow_edition_mismatch=allow_edition_mismatch, gate=gate,
-                            cost=cost, host_artifacts=host_artifacts)
+                            cost=cost, host_artifacts=host_artifacts, audit=audit)
     write_json(dest / RECEIPT_NAME, receipt, indent=1, sort_keys=True)
     return receipt
 
