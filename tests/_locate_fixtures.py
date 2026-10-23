@@ -149,19 +149,21 @@ def before_the_continuation():
     return mock.patch.multiple(vocab, **BEFORE_THE_CONTINUATION)
 
 
-#: what the planner writes before the flip of the wide bound (docs/proposals/statement-cut.md
-#: sections 3.3 and 7): statement-cut rule 2 beside span-end rule 3, the pair inv-pilot-2
-#: names, under the gate that knows statement-cut rule 3 too
+#: what the planner wrote from the flip of inv-pilot-1's fixes to the flip of the wide bound
+#: (docs/proposals/statement-cut.md sections 3.3 and 7): statement-cut rule 2 beside
+#: span-end rule 3, the pair inv-pilot-2 names, under the gate that knows statement-cut
+#: rule 3 too
 BEFORE_THE_WIDE = {"STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_CONTINUED}
 
 
 def before_the_wide():
-    """Plan as the planner does before the flip of the wide bound: (3, 3, 2), not (3, 3, 3).
+    """Plan as the planner did before the flip of the wide bound: (3, 3, 2), not (3, 3, 3).
 
     A context manager over ``cflib.vocab`` (:data:`BEFORE_THE_WIDE`), for a test of how a
-    run planned under statement-cut rule 2 is gated or re-planned once the planner writes
-    3.  Until that flip it is what the planner writes anyway, so a test under it pins
-    today's plans and keeps pinning them after the flip.
+    run planned under statement-cut rule 2 is gated or re-planned now that the planner
+    writes 3.  Its prompts are the ones such a plan rendered: the worker's are the same
+    under either rule, and an audited plan's rule card reads the patched rule
+    (``locate.prompts.gate_bound``).
     """
     from unittest import mock
 

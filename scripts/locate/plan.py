@@ -374,9 +374,11 @@ def rule_versions() -> dict[str, int]:
     statement cut's, which rule 10's disjointness rests on: a gate.json naming
     the cut with an earlier end rule is one the gate refuses to run.  From the
     flip of inv-pilot-1's fixes (docs/proposals/statement-cut.md section 7) they
-    are judgment rules 3, span-end rule 3 and statement-cut rule 2, the pair the
-    gate reads together (``vocab.STATEMENT_CUT_SPAN_END``); a run planned before
-    keeps the (2, 1) of its gate.json.
+    were judgment rules 3, span-end rule 3 and statement-cut rule 2, and from the
+    flip of the wide bound they are judgment rules 3, span-end rule 3 and
+    statement-cut rule 3, the pair the gate reads together
+    (``vocab.STATEMENT_CUT_SPAN_END``); a run planned before keeps the (2, 1) or
+    (3, 2) of its gate.json.
     """
     versions = {"judgment_rules": vocab.JUDGMENT_RULES, "span_end_rule": vocab.SPAN_END_RULE}
     if vocab.SPAN_END_RULE >= vocab.SPAN_END_STATEMENT_CUT:
@@ -750,7 +752,8 @@ def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict
         # reuses an older inventory plans and gates as before, whatever its ends are.
         # Rule 10 (statement_cut_rule) binds from the statement cut's flip on, and no run
         # planned before it; from the flip of inv-pilot-1's fixes the pair is span-end
-        # rule 3 with statement-cut rule 2 (rule_versions)
+        # rule 3 with statement-cut rule 2, and from the flip of the wide bound span-end
+        # rule 3 with statement-cut rule 3 (rule_versions)
         **rule_versions(),
         "vendor": vendor_shas(),
     }

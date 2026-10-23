@@ -458,11 +458,13 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     directory is byte for byte the same -- the rendered prompts, the wrappers,
     ``config.yaml``, the task files and manifests, both gate.json files -- but the
     files staged from a source this branch changed, ``audit_turn.py``, which
-    every locate root's ``bin/`` stages since the turn machine, and the worker
+    every locate root's ``bin/`` stages since the turn machine, the worker
     prompt, which is the base commit's with the kind sentence
-    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and nothing else;
-    ``run.yaml`` differs only in its skill commit, those files' pins and the worker
-    prompt's two shas.
+    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and nothing else,
+    and the three gate.json files, which name statement-cut rule 3 where the base
+    commit's named 2 (the flip of the wide bound, docs/proposals/statement-cut.md
+    section 7) and nothing else; ``run.yaml`` differs only in its skill commit, those
+    files' pins and the worker prompt's two shas.
     """
 
     def setUp(self):
@@ -522,7 +524,19 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                 self.assertEqual(now[name], then[name].replace(
                     kinds, kinds + b" " + TS.KIND_SENTENCE.encode("utf-8")))
         self.assertEqual(sorted(set(differ) & set(worker)), sorted(worker))
-        differ = [k for k in differ if k not in worker]
+        # the gate.json files name statement-cut rule 3 for 2, and only that
+        gates = ("gate.json", "gate.local.json", "tend-root/gate/gate.json")
+        rule = b'"statement_cut_rule": '
+        for name in gates:
+            with self.subTest(gate=name):
+                was = rule + str(vocab.STATEMENT_CUT_CONTINUED).encode()
+                self.assertEqual(then[name].count(was), 1)
+                self.assertEqual(now[name], then[name].replace(
+                    was, rule + str(vocab.STATEMENT_CUT_WIDE).encode()))
+                self.assertEqual(json.loads(now[name])["statement_cut_rule"],
+                                 vocab.STATEMENT_CUT_RULE)
+        self.assertEqual(sorted(set(differ) & set(gates)), sorted(gates))
+        differ = [k for k in differ if k not in worker + gates]
         self.assertLessEqual(set(differ), allowed)
         self.assertNotIn("tend-root/bin/audit_turn.py", then)
         # the branch's gate and bridge changes are seen, and nothing of the audit's gate
@@ -532,7 +546,7 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         self.assertFalse([n for n in now if "inventory_" in n])
         # what a run is launched with and told is untouched
         for name in sorted(then):
-            if name in worker:
+            if name in worker + gates:
                 continue
             if name.startswith(("prompts/", "tend-root/prompts/", "tasks/")) or name in (
                     "gate.json", "gate.local.json", "tend-root/config.yaml",
@@ -546,7 +560,7 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         moved = {f"tend-root/{k}" for k in now_yaml["locate"]["gate_files"]
                  if then_yaml["locate"]["gate_files"].get(k)
                  != now_yaml["locate"]["gate_files"][k]}
-        self.assertEqual(moved, set(differ))
+        self.assertEqual(moved, set(differ) | {"tend-root/gate/gate.json"})
         # the worker prompt's shas: the rendered prompt's and its template's
         self.assertEqual(now_yaml["prompts"].pop("worker.md"),
                          hashlib.sha256(now["prompts/worker.md"]).hexdigest())

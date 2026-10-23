@@ -203,7 +203,7 @@ class CutFixture(G.Fixture):
 CUT_1 = {"span_end_rule": 2, "statement_cut_rule": 1}
 CUT_2 = {"span_end_rule": 3, "statement_cut_rule": 2}
 #: ... and of one planned under the wide cut (statement-cut rule 3, which reads span-end
-#: rule 3 as rule 2 does), which the gate knows before the planner writes it
+#: rule 3 as rule 2 does), which the planner writes from the flip of the wide bound on
 CUT_3 = {"span_end_rule": 3, "statement_cut_rule": 3}
 BEFORE = {"span_end_rule": 1}
 
@@ -1703,7 +1703,7 @@ class TestThePlanner(unittest.TestCase):
     def test_the_flip_writes_the_keys_and_refuses_the_old_flow(self):
         self.assertEqual((vocab.JUDGMENT_RULES, vocab.SPAN_END_RULE, vocab.STATEMENT_CUT_RULE),
                          (vocab.RULES_STATEMENT_CUT, vocab.SPAN_END_CONTINUED,
-                          vocab.STATEMENT_CUT_CONTINUED))
+                          vocab.STATEMENT_CUT_WIDE))
         code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-1",
                                    "--run-id", "loc-9")
         self.assertNotEqual(code, 0)
@@ -1713,9 +1713,9 @@ class TestThePlanner(unittest.TestCase):
         self.assertEqual(code, 0, out + err)
         gate = read_json(self.paths.gate_json("inv-2"))
         self.assertEqual((gate["judgment_rules"], gate["span_end_rule"],
-                          gate["statement_cut_rule"]), (3, 3, 2))
+                          gate["statement_cut_rule"]), (3, 3, 3))
         self.assertEqual(read_json(self.paths.run_dir("inv-2") / "gate.local.json")
-                         ["statement_cut_rule"], vocab.STATEMENT_CUT_CONTINUED)
+                         ["statement_cut_rule"], vocab.STATEMENT_CUT_WIDE)
         docs = F.inventory_documents(self.paths, "inv-2")
         doc = docs[f"inv-{F.W1}/{F.W1}.json"]
         theorem = doc["passages"][1]
@@ -1755,8 +1755,8 @@ class TestThePlanner(unittest.TestCase):
     def test_a_locate_plan_over_an_inventory_of_statement_cut_rule_1(self):
         """An inventory planned before the flip of inv-pilot-1's fixes names (2, 1), as
         inv-pilot-1 does; a locate run planned now over it is admitted (it reads the
-        inventory's conjuncts, which rule 1 cut too) and names the continued cut's
-        versions, which bind nothing in a locate document."""
+        inventory's conjuncts, which rule 1 cut too) and names the versions the planner
+        writes now, the wide cut's, which bind nothing in a locate document."""
         with F.before_the_continuation():
             code, out, err = self.plan("--preset", "locate-inventory", "--run-id", "inv-3")
         self.assertEqual(code, 0, out + err)
@@ -1768,11 +1768,13 @@ class TestThePlanner(unittest.TestCase):
                                    "--run-id", "loc-3")
         self.assertEqual(code, 0, out + err)
         gate = read_json(self.paths.gate_json("loc-3"))
-        self.assertEqual((gate["span_end_rule"], gate["statement_cut_rule"]), (3, 2))
+        self.assertEqual((gate["span_end_rule"], gate["statement_cut_rule"]), (3, 3))
 
     def test_an_inventory_planned_before_the_wide_flip_is_gated_by_rule_2(self):
         """An inventory planned under ``F.before_the_wide`` names (3, 3, 2), as inv-pilot-2
-        does; this gate, which knows statement-cut rule 3, holds it to rule 2."""
+        does; this gate, which knows statement-cut rule 3, holds it to rule 2, and a
+        locate run planned now over it is admitted (it reads the inventory's conjuncts,
+        which rule 2 cut as rule 3 does) and names (3, 3)."""
         with F.before_the_wide():
             code, out, err = self.plan("--preset", "locate-inventory", "--run-id", "inv-4")
         self.assertEqual(code, 0, out + err)
@@ -1780,6 +1782,14 @@ class TestThePlanner(unittest.TestCase):
         self.assertEqual((gate["judgment_rules"], gate["span_end_rule"],
                           gate["statement_cut_rule"]), (3, 3, 2))
         self.assertLess(gate["statement_cut_rule"], vl.KNOWN_STATEMENT_CUT_RULE)
+        self.assertEqual(vl.GateConfig.load(self.paths.gate_json("inv-4")).statement_cut_rule,
+                         vocab.STATEMENT_CUT_CONTINUED)
+        F.write_harvest(self.paths, "inv-4", F.inventory_documents(self.paths, "inv-4"))
+        code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-4",
+                                   "--run-id", "loc-4")
+        self.assertEqual(code, 0, out + err)
+        gate = read_json(self.paths.gate_json("loc-4"))
+        self.assertEqual((gate["span_end_rule"], gate["statement_cut_rule"]), (3, 3))
 
     def test_the_challenge_manifest_carries_the_records_cut_fields_after_the_flip(self):
         from locate import plan as lplan

@@ -391,7 +391,7 @@ class TestTheInlinedVocabularyIsCflibs(unittest.TestCase):
             "STATEMENT_CUT_FIRST": vocab.STATEMENT_CUT_FIRST,
             "STATEMENT_CUT_CONTINUED": vocab.STATEMENT_CUT_CONTINUED,
             "STATEMENT_CUT_SPAN_END": vocab.STATEMENT_CUT_SPAN_END,
-            # the wide cut's, which the gate knows before the planner writes it
+            # the wide cut's, which the planner writes from the flip of the wide bound on
             "STATEMENT_CUT_WIDE": vocab.STATEMENT_CUT_WIDE,
             "COMPOUND_SHAPES": vocab.COMPOUND_SHAPES, "MIN_CONJUNCTS": vocab.MIN_CONJUNCTS,
             "MAX_CONJUNCTS": vocab.MAX_CONJUNCTS,

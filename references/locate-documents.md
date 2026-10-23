@@ -208,7 +208,8 @@ is enough.
   which may be its theorem box; a later restatement is `central`.
   Gate rule 10 (the proposal's §3.3; §9 below) binds only a run whose
   `gate.json` names `statement_cut_rule`, which the planner writes from the
-  flip on, and the inventory prompt describes the cut's end of end rule 3,
+  flip on (version 3, the wide bound, from the flip of the wide bound), and
+  the inventory prompt describes the cut's end of end rule 3,
   which every run planned since the flip of inv-pilot-1's fixes names (end
   rule 2 from the statement cut's flip until then; a run planned before keeps
   the prompt it rendered, version 1's paragraph before the statement cut's
@@ -231,7 +232,10 @@ is enough.
   refuses two or more `formal_math` passages of the source marked
   `prominence: subject`, naming them all: the marker goes on the one that
   states the theorem or definition, and a lead that only describes it is
-  `expository`.
+  `expository`. Under `statement_cut_rule` 3 (§9; it reads `span_end_rule` 3
+  too) the bound is the wide one — the loose bound read across a footnote mark,
+  and into an indented line or a paragraph that opens with a formula when it
+  finishes the sentence — and the rest is rule 2's.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
   deterministic passage of the task is dropped only with a skip whose span
@@ -1016,7 +1020,7 @@ What every record carries beyond §2.7's example:
   refutes every `subject` prominence by default (§9), so under a plan written
   since that rule each QID rests on a label a challenger judged. An inventory
   marks at most one subject passage (the prompt's subject rule; gate rule 10
-  (h) under `statement_cut_rule` 2), but an older run or a prominence overturn
+  (h) under `statement_cut_rule` 2 or 3), but an older run or a prominence overturn
   to `subject` may give an article several, each judged on its own. A record whose
   `challenge` is `challenge_pending` carries none: an overturn to `subject`
   reopened it and no challenger judged it under that rule (§10), while the
@@ -1891,8 +1895,8 @@ like a faithfulness run:
   for a run whose gate.json names the rule.
 
   The **continued cut** (inv-pilot-1's fixes; the proposal's §2.2) is what the
-  planner writes from the flip of those fixes on (the proposal's §7), in every
-  mode, and what the gate knew before it did: `span_end_rule` 3 ends a passage as version 2
+  planner wrote from the flip of those fixes to the flip of the wide bound (the
+  proposal's §7), in every mode, and what the gate knew before it did: `span_end_rule` 3 ends a passage as version 2
   does with the *continued* extent (§2), and `statement_cut_rule` 2 is rule 10
   with (b) read against the loose continued bound (`locate_text.Blocks.runs_on`:
   a block's last sentence with no full stop, never a list item's or a theorem
@@ -1920,13 +1924,16 @@ like a faithfulness run:
   first word is a connective and that start inside a sentence: one that starts
   "Then…" after a full stop is a correct passage and is not counted). A locate
   run planned now over an inventory of (2, 1) — inv-pilot-1's, say — is
-  admitted, since it reads only the inventory's conjuncts, and names (3, 2)
-  itself, which binds nothing in a locate document.
+  admitted, since it reads only the inventory's conjuncts, and names the pair
+  the planner writes now itself, which binds nothing in a locate document.
 
   The **wide cut** (`statement_cut_rule` 3, `STATEMENT_CUT_WIDE`; inv-pilot-2's
-  repairs, the proposal's §3.3) is what the gate knows and the planner does not
-  write yet. It reads `span_end_rule` 3, as rule 2 does, so no default end, span or
-  `passage_key` moves: it is rule 10 with (b) read against the **wide** bound
+  repairs, the proposal's §3.3) is what the planner writes from the flip of the
+  wide bound on (the proposal's §7), in every mode, beside `span_end_rule` 3, and
+  what the gate knew before it did; a locate run planned now over an inventory of
+  (3, 2) — inv-pilot-2's, say — is admitted, as one over (2, 1) is. It reads
+  `span_end_rule` 3, as rule 2 does, so no default end, span or `passage_key`
+  moves: it is rule 10 with (b) read against the **wide** bound
   (`locate_text.Blocks.runs_on(…, wide=True)`: the loose bound read across a
   footnote mark between two blocks, `[12]`, `[a]`, `[nb 3]` or `[note 3]`, which the
   renderer leaves outside every block span, and ended by a `dd` or a paragraph
