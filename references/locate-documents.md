@@ -3041,8 +3041,8 @@ again after a gate refusal; without `--write` it is a dry run. The operations ar
 `scope`, `passage_kind`, `prominence`, `statement`, `shape`, `conjuncts`, `until`, `concept`,
 `quote` and `quote_end`:
 
-- `merge {keep, drop, fields?}`: `drop` (an item or a list) joins `keep`, which starts at the
-  earlier start (with that passage's quote and finder), ends where the one ending later ended
+- `merge {keep, drop, fields?}`: `drop` (an item or a list, never `keep` and no item twice)
+  joins `keep`, which starts at the earlier start (with that passage's quote and finder), ends where the one ending later ended
   (its `until`, or none), and keeps its other fields, then `fields`;
 - `split {item, at, new, earlier?}`: a new passage starts at the quote `at` inside `item`, ends
   where `item` ended, and takes `new` (`statement`, `passage_kind`, `scope` and `prominence`
@@ -3054,6 +3054,10 @@ again after a gate refusal; without `--write` it is a dry run. The operations ar
 - `add {after, quote, fields}`: a passage from text no passage holds, after `after` (null: first);
 - `drop {item}`.
 
+A `revert` verdict (rule 0, origin `collateral`) names an entry of `r<k>.collateral.json`, which
+the revision stages beside the verdicts: its operations put the entry's `before` back (a `set` of
+the changed fields, an `add` of a lost passage, a `drop` of an added one, a `set` of `until` for
+a moved one), each citing the verdict.
 A passage an operation scopes out of `formal_math` becomes `supporting` and loses `shape` and
 `conjuncts` unless the operation says otherwise. The tool computes no offsets: `passage_ids.py
 --write` places and re-keys the passages afterwards, and the gate judges the result.
@@ -3096,7 +3100,7 @@ writes and its `inventory_audit.py validate` line.
 `{round, rounds: {<k>: {document_sha256, head, worktree_id, steps, raw, decision, actionable,
 harm, audit_failed, revert_to}}, revision, pending, approved, best: {round, sha256, snapshot},
 last, rejections, counts: {reviewer_tampered, gate_resets, audit_failed, precheck_refused,
-reverts, retries, unaudited, repair_invalid}, events}`. The round files of §13's table are
+reverts, retries, unaudited, repair_invalid, no_progress}, events}`. The round files of §13's table are
 beside it in `<source-id>/`, with `raw/` (each call's envelope) and `discarded/` (a round's files
 whose document changed under it). The worktree's `.tend/audit/` is their mirror: before every
 call it is cleared and holds exactly what that call may read, and the call's output is copied
@@ -3109,6 +3113,10 @@ back after, so a wiped `.tend/` loses nothing; a `.tend` that is a symlink is re
    approved before, or a rejection recorded for this very document, is answered again as it was.
 2. The precheck, the gate's `--findings` check: exit 1 is a `request_changes` the bridge writes
    and does not record, and the round does not move; any other failure is infrastructure (75).
+   A document whose sha256 is the one round k − 1 reviewed and rejected (a gate-loop reset, or a
+   revision that changed nothing) is approved mechanically, with no agent call and counted
+   (`no_progress`): there is nothing to check, and the last round's ops file is never re-applied
+   to it as collateral.
 3. The snapshot `r<k>.document.json`. An `unresolved` document, or one with no passage, is
    approved unaudited (counted).
 4. The rendering in parts (`inventory_render.py --out-dir .tend/audit --label r<k>`, from round 2
@@ -3129,7 +3137,8 @@ back after, so a wiped `.tend/` loses nothing; a `.tend` that is a symlink is re
 
 An agent step whose output is missing or invalid is called again `AUDIT_OUTPUT_RETRIES` time, with
 the validator's lines and its last output staged; still invalid, or files the strip or the merge
-refuse, and the round is `merge --audit-failed`: approve, counted. A step that validated for the
+refuse, or a rendering or collateral that exits other than 0 or 3 (a failure on its input, which
+a retry would only repeat), and the round is `merge --audit-failed`: approve, counted. A step that validated for the
 round's document is not called again: a call that fails as infrastructure exits 124, 75, 64 or
 128 + N, tend retries the turn, and only what is left is paid for. Around every reviewer call the
 tamper guard compares HEAD, the tracked changes and the untracked files outside `.tend/`; a
@@ -3149,12 +3158,13 @@ with no step; a re-run with a discussion adds `## THIS IS A RE-RUN — the valid
 your last commit` and the last `AUDIT_DISCUSSION_TAIL` bytes of `.tend/discussion.md` (never "a
 reviewer rejected", since no reviewer did). A revision runs sessions of at most
 `AUDIT_REPAIR_VERDICTS_PER_SESSION` verdicts, each a fresh `revision` call of `worker.md`,
-`worker-revision.md` and its block (its verdict ids; `r<k>.verdicts.json`, `r<k>.document.json`
-and the ops and repair files so far staged), the worker's `r<k>.ops.json` and `r<k>.repair.json`
+`worker-revision.md` and its block (its verdict ids; `r<k>.verdicts.json`, `r<k>.document.json`,
+`r<k>.collateral.json` from round 2, and the ops and repair files so far staged), the worker's `r<k>.ops.json` and `r<k>.repair.json`
 copied back after each; an interrupted revision resumes at its next session. A committed revision
 that comes back without a review was refused by tend's pre-review gate or by the precheck: it is
 re-run on the gate's words, and at the `AUDIT_GATE_RESETS`th refusal the worktree is reset to
-round k's reviewed commit with no agent call, so the next review finds no progress.
+round k's reviewed commit with no agent call, so the next review finds no progress and
+approves.
 
 **The cap.** In an audited run `attempt_cap.py` never writes UNRESOLVED when the state names a
 best snapshot: the worker side writes its bytes (checked against `best.sha256`), puts every other

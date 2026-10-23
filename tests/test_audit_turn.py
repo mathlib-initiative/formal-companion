@@ -657,6 +657,7 @@ class TestTheRevision(TurnCase):
         self.assertEqual(labels.count("r1.revision.s1"), 1)
 
     def test_a_wiped_tend_directory_loses_nothing(self):
+        self.agents.edit = self.restate(0, "a repaired statement")
         self.turn("worker")
         shutil.rmtree(self.wt / ".tend")
         self.runner.calls.clear()
@@ -686,10 +687,72 @@ class TestTheRevision(TurnCase):
         self.assertEqual(git(self.wt, "rev-parse", "HEAD"), reviewed)
         self.assertIn("reset", out["summary"])
         self.assertEqual(self.state()["counts"]["gate_resets"], 1)
-        # the next review finds no progress; on its final round it approves
+        # the next review finds no progress and approves it mechanically: no check is
+        # paid for, and the reset's stale ops file is never re-applied as collateral
+        self.runner.calls.clear()
         code, out = self.turn("reviewer")
         self.assertEqual(code, 0, self.last_err)
         self.assertEqual(out["verdict"], "approve")
+        self.assertIn("no progress since round 1", out["notes"])
+        self.assertEqual(self.runner.calls, [])
+        self.assertFalse((attempt_cap.audit_task_dir(self.root, TASK) / SID
+                          / "r2.collateral.json").exists())
+        self.assertEqual(self.state()["counts"]["no_progress"], 1)
+        self.assertEqual(self.rejections(), 1)
+
+    def test_a_revision_that_changed_nothing_is_no_progress(self):
+        """A stale ops file beside an unchanged document is not judged: the reviewer
+        approves round 1's bytes with no agent call."""
+        self.turn("worker")
+        ops = attempt_cap.audit_task_dir(self.root, TASK) / SID / "r1.ops.json"
+        items = self.items()
+        ops.write_text(json.dumps({**self.agents.head("ops", 1), "ops": [
+            {"op": "merge", "keep": items[0], "drop": items[1],
+             "verdict": self.auth("r1.verdicts.json")["verdicts"][0]["id"]}]}))
+        self.runner.calls.clear()
+        code, out = self.turn("reviewer")
+        self.assertEqual(code, 0, self.last_err)
+        self.assertEqual(out["verdict"], "approve")
+        self.assertEqual(self.runner.calls, [])
+        state = self.state()
+        self.assertEqual(state["approved"], {"round": 1, "sha256": state["rounds"]["1"]
+                                             ["document_sha256"],
+                                             "why": "no progress since round 1"})
+        self.assertIsNone(state["revision"])
+        # asked again, it answers as it did
+        code, again = self.turn("reviewer")
+        self.assertEqual(again["verdict"], "approve")
+        self.assertEqual(self.state()["counts"]["no_progress"], 1)
+
+    def failing_tool(self, script: str, word: str | None):
+        """Round 2's reviewer turn with ``script`` (its ``word`` subcommand) exiting 1 as a
+        traceback does."""
+        self.agents.edit = self.restate(0, "a repair")
+        self.turn("worker")
+        real = self.runner.tool
+
+        def tool(turn, name, args):
+            if name == script and (word is None or word in args):
+                return 1, "", "Traceback: ValueError: list.remove(x): x not in list"
+            return real(turn, name, args)
+        with mock.patch.object(self.runner, "tool", tool):
+            return self.turn("reviewer")
+
+    def assertAuditFailed(self, code: int, out: dict | None) -> None:
+        """A host tool that fails on its input ends the round as audit_failed (approve,
+        counted), so a deterministic failure cannot rerun the reviewer turn on exit 1
+        for ever."""
+        self.assertEqual(code, 0, self.last_err)
+        self.assertEqual(out["verdict"], "approve")
+        state = self.state()
+        self.assertIn("failed (exit 1)", state["approved"]["why"])
+        self.assertEqual(state["counts"]["audit_failed"], 1)
+
+    def test_a_collateral_that_fails_is_audit_failed_not_a_loop(self):
+        self.assertAuditFailed(*self.failing_tool("inventory_audit.py", "collateral"))
+
+    def test_a_rendering_that_fails_is_audit_failed_not_a_loop(self):
+        self.assertAuditFailed(*self.failing_tool("inventory_render.py", None))
 
 
 class TestTheFirstWorkerTurn(TurnCase):
@@ -777,6 +840,30 @@ class TestRevertToTheBest(TurnCase):
             self.assertEqual(self.runner.calls, [])
             self.assertEqual(self.rejections(), 2)
 
+    def test_a_middle_rounds_revert_verdict_reaches_the_revision_with_its_collateral(self):
+        with mock.patch.object(ia, "AUDIT_THRESHOLD_MIN", 1):
+            self.flag_all()
+            self.turn("reviewer")                          # R1: 5 actionable
+            self.agents.edit = self.restate(0, "the first repair, by hand")
+            self.turn("worker")
+            ids1 = [v["id"] for v in self.auth("r1.verdicts.json")["verdicts"]]
+            self.agents.statuses = {ids1[0]: "applied", ids1[1]: "applied"}
+            self.agents.harmful = True
+            code, out = self.turn("reviewer")              # R2: progress, and harm
+            self.assertEqual(out["verdict"], "request_changes", self.last_err)
+        reverts = [v for v in self.auth("r2.verdicts.json")["verdicts"]
+                   if v["verdict"] == ia.VERDICT_REVERT]
+        self.assertTrue(reverts)
+        self.assertTrue(all(v["rule"] == 0 and v["origin"] == "collateral" for v in reverts))
+        self.agents.edit = None
+        self.runner.calls.clear()
+        code, _out = self.turn("worker")
+        self.assertEqual(code, 0, self.last_err)
+        (call, seen), = self.runner.calls
+        self.assertIn("r2.collateral.json", seen)
+        self.assertIn("The collateral a `revert` verdict names: .tend/audit/r2.collateral.json",
+                      call.prompt)
+
     def test_a_restore_the_reviewer_does_not_find_is_asked_for_again(self):
         with mock.patch.object(ia, "AUDIT_THRESHOLD_MIN", 1):
             self.flag_all()
@@ -790,6 +877,16 @@ class TestRevertToTheBest(TurnCase):
         code, out = self.turn("reviewer")
         self.assertEqual(out["verdict"], "request_changes")
         self.assertEqual(self.state()["pending"]["attempts"], 1)
+        self.assertEqual(self.rejections(), 1)
+        for n in range(2, at.REVERT_ATTEMPTS + 1):
+            code, out = self.turn("reviewer")
+            self.assertEqual((code, out["verdict"]), (0, "request_changes"))
+            self.assertEqual(self.state()["pending"]["attempts"], n)
+        # past the limit the turn stops, exit 1, never a verdict
+        code, out = self.turn("reviewer")
+        self.assertEqual(code, at.EXIT_FAILED)
+        self.assertIsNone(out)
+        self.assertIn("was not restored after", self.last_err)
         self.assertEqual(self.rejections(), 1)
 
 
@@ -848,6 +945,91 @@ class TestTheAuditedCap(TurnCase):
 
 
 # --------------------------------------------------------------------------- #
+# what the turn refuses before it runs (references/locate-documents.md section 13.9)
+# --------------------------------------------------------------------------- #
+
+class TestTheConfigurationIsRefused(TurnCase):
+    """Each configuration the turn refuses, one value changed at a time: exit 78 with the
+    problem named, 66 for a missing prompt, and no agent call."""
+
+    def refused(self, *extra: str, code: int = at.EXIT_CONFIG, role: str = "reviewer") -> str:
+        out, err = io.StringIO(), io.StringIO()
+        argv = [role, "--root", str(self.root), "--prompts", str(self.prompts), "--profile",
+                "examplebox", "--tools", "Read,Glob", *extra]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            got = at.main(argv, runner=self.runner, env=self.env, worktree=self.wt)
+        self.assertEqual(got, code, err.getvalue())
+        self.assertEqual(out.getvalue(), "", "a refusal prints no contract")
+        self.assertEqual(self.runner.calls, [])
+        return err.getvalue()
+
+    def test_another_host(self):
+        self.assertIn("calls claude, not 'codex'", self.refused("--host", "codex"))
+
+    def test_an_unknown_rule(self):
+        for rule in ("2", "", "audit/1"):
+            with self.subTest(rule=rule):
+                self.env["CF_AUDIT_RULE"] = rule
+                self.assertIn("is not a rule this bridge knows", self.refused())
+
+    def test_review_rounds_outside_the_two(self):
+        for rounds in ("1", "4", "", "three"):
+            with self.subTest(rounds=rounds):
+                self.env["CF_AUDIT_ROUNDS"] = rounds
+                self.assertIn(f"CF_AUDIT_ROUNDS={rounds!r} is not one of", self.refused())
+
+    def test_a_gate_command_that_is_not_the_locate_gate_with_its_config(self):
+        gate = f"python3 {self.gate_dir}"
+        for cmd in (f"{gate}/verify_findings.py --gate-config {self.gate_dir}/gate.json",
+                    f"{gate}/verify_locate.py",
+                    f"{gate}/verify_locate.py {self.gate_dir}/gate.json",
+                    f"{gate}/verify_locate.py --gate-config", ""):
+            with self.subTest(cmd=cmd):
+                self.env["CF_GATE_CMD"] = cmd
+                self.assertIn("is not the locate gate with its --gate-config", self.refused())
+
+    def test_a_gate_directory_missing_a_host_tool(self):
+        for script in ("inventory_audit.py", "inventory_render.py", "inventory_edit.py"):
+            with self.subTest(script=script):
+                kept = self.gate_dir / (script + ".kept")
+                os.replace(self.gate_dir / script, kept)
+                try:
+                    self.assertIn(f"holds no {script}", self.refused())
+                finally:
+                    os.replace(kept, self.gate_dir / script)
+
+    def test_a_task_of_more_than_one_document(self):
+        manifests = Path(tempfile.mkdtemp(prefix="cf-manifests-"))
+        self.addCleanup(shutil.rmtree, manifests, ignore_errors=True)
+        manifest = json.loads((Path(self.env["CF_TASK_MANIFESTS"]) / f"{TASK}.json")
+                              .read_text())
+        self.env["CF_TASK_MANIFESTS"] = str(manifests)
+        for documents in (manifest["documents"] * 2, []):
+            with self.subTest(documents=len(documents)):
+                (manifests / f"{TASK}.json").write_text(json.dumps(
+                    {**manifest, "documents": documents}))
+                self.assertIn(f"holds one document; task {TASK}'s manifest names "
+                              f"{len(documents)}", self.refused())
+
+    def test_a_missing_prompt(self):
+        (self.prompts / "reviewer-skeptic.md").unlink()
+        self.assertIn("missing prompt", self.refused(code=at.EXIT_NO_PROMPT))
+        # the worker's three are its own: it still runs without the reviewer's
+        self.assertEqual(self.turn("worker")[0], 0, self.last_err)
+
+    def test_a_tend_directory_that_is_a_symlink(self):
+        elsewhere = Path(tempfile.mkdtemp(prefix="cf-elsewhere-"))
+        self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
+        (self.wt / ".tend").symlink_to(elsewhere, target_is_directory=True)
+        code, out = self.turn("reviewer")
+        self.assertEqual(code, at.EXIT_FAILED)
+        self.assertIsNone(out)
+        self.assertIn("is a symlink; nothing is staged through it", self.last_err)
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(list(elsewhere.iterdir()), [])
+
+
+# --------------------------------------------------------------------------- #
 # the property: every path ends, within the bound, never UNRESOLVED
 # --------------------------------------------------------------------------- #
 
@@ -855,7 +1037,9 @@ class TestEveryPathEnds(TurnCase):
     """Random sequences of outcomes -- rejections, infrastructure failures (124, 75, a
     409's 75), gate refusals, invalid audits -- through a simulated tend loop."""
 
-    SEEDS = 24
+    #: 40 seeds take every path below; at 24 none rejected twice once an unchanged
+    #: document stopped paying for a check (the fake worker that edits does it by hand)
+    SEEDS = 40
     MAX_TURNS = 150
 
     def simulate(self, seed: int) -> dict:
@@ -935,7 +1119,7 @@ class TestEveryPathEnds(TurnCase):
 
     def test_random_sequences(self):
         seen = {"two_rejections": 0, "reverts": 0, "gate_resets": 0, "audit_failed": 0,
-                "retries": 0, "infra": 0}
+                "retries": 0, "infra": 0, "no_progress": 0}
         for seed in range(self.SEEDS):
             with self.subTest(seed=seed):
                 if seed:
@@ -943,7 +1127,7 @@ class TestEveryPathEnds(TurnCase):
                 got = self.simulate(seed)
                 counts = self.state()["counts"]
                 seen["two_rejections"] += self.rejections() == 2
-                for key in ("reverts", "gate_resets", "audit_failed", "retries"):
+                for key in ("reverts", "gate_resets", "audit_failed", "retries", "no_progress"):
                     seen[key] += counts[key]
                 seen["infra"] += sum(1 for _who, what in got["outcomes"] if what in (124, 75))
                 self.assertTrue(got["done"], got)

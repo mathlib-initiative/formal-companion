@@ -592,6 +592,9 @@ class TestEachOperation(unittest.TestCase):
              "a new passage needs 'passage_kind'"),
             ({"op": "merge", "keep": self.item("P4"), "drop": self.item("P4"),
               "verdict": "r1-v001"}, "keeps and drops the same passage"),
+            ({"op": "merge", "keep": self.item("P3"), "drop": [self.item("P4"),
+                                                              self.item("P4")],
+              "verdict": "r1-v001"}, "drops the same passage twice"),
             ({"op": "drop", "verdict": "r1-v001"}, "drop needs 'item'"),
             ({"op": "rewrite", "verdict": "r1-v001"}, "not one of merge"),
         ]
@@ -1186,6 +1189,25 @@ class TestCollateral(HostCase):
         out = ia.collateral(2, before, self.doc(), ops, {"verdicts": [{"id": "r1-v001"}]})
         self.assertEqual([(e["change"], e["was"]) for e in out["collateral"]],
                          [("moved", item_of(before, "DEF1"))])
+
+    def test_a_merge_that_drops_one_passage_twice_is_refused_not_a_crash(self):
+        """The validator refuses the repeated item, so the edit tool and ``collateral``
+        report it (``ops_refused``) where ``list.remove`` once raised."""
+        before = self.snapshot()
+        b = item_of(before, "P4")
+        op = {"op": "merge", "keep": item_of(before, "P3"), "drop": [b, b],
+              "verdict": "r1-v001"}
+        self.assertTrue(any("drops the same passage twice" in p
+                            for p in ia.op_problems(op, "ops[0]")))
+        self.assertTrue(ia.validate_ops(ops_doc([op]), before))
+        _out, _log, problems = ie.apply(before, [op])
+        self.assertTrue(problems)
+        out = ia.collateral(2, before, before, ops_doc([op]), {"verdicts": [{"id": "r1-v001"}]})
+        self.assertEqual([e["change"] for e in out["collateral"]], ["ops_refused"])
+        # the edit's own guard holds even past a validator that let it through
+        with mock.patch.object(ia, "op_problems", return_value=[]):
+            _out, _log, problems = ie.apply(before, [op])
+        self.assertEqual(problems, ["ops[0]: merge names one passage twice"])
 
     def test_operations_the_tool_refuses_make_every_change_a_hand_edit(self):
         before = self.snapshot()

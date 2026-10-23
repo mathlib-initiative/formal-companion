@@ -369,6 +369,40 @@ class TestThePrompts(Audited):
         self.assertIn(", ".join(f'"{c}"' for c in vocab.CUT_CONNECTIVES), system)
         self.assertIn(vocab.AUDIT_VERDICTS[0], system)
 
+    #: each rule's clauses a verdict can turn on, as section 3.4 says them: the card line
+    #: carries every one
+    KEY_CLAUSES = {
+        1: ("one Lean declaration could state it whole", "even when a library states it in two"),
+        2: ("only inside a theorem box", "the paragraph that finishes that sentence after them",
+            "over the items of one list of a compound statement"),
+        3: ("its end-to-end equation", "shape `equations`"),
+        4: ("between a hypothesis and its conclusion", "inside an iff",
+            "between conjuncts about one subject"),
+        5: ("one passage per item", "a display inside a list item belongs to that item"),
+        6: ("judged a sentence at a time", "never a conjunct of the example"),
+        7: ("no `formal_math` passage of its own", "is a `notation` passage",
+            "`statement` carries the hypotheses and objects", "so it reads on its own"),
+        8: ("Anything else", "is two statements"),
+        9: ("would stay true whatever the result concluded", "at most one passage",
+            "a theorem stated only in parts takes the passage that states its first part",
+            "a later restatement is `central`"),
+        10: ("no neighbouring passage already states", "no passage and no clause"),
+    }
+
+    def test_each_card_rule_keeps_the_clauses_a_verdict_turns_on(self):
+        system = self.prompts()["reviewer-system.md"]
+        section = " ".join(section_34().split())
+        cards = dict(re.findall(r"(?m)^- \*\*C(\d+) [^*]+?\*\* (.*)$", system))
+        for n, clauses in self.KEY_CLAUSES.items():
+            card = cards[str(n)]
+            for clause in clauses:
+                with self.subTest(rule=n, clause=clause):
+                    self.assertIn(clause.lower(), card.lower())
+                    self.assertIn(clause.lower(), section.lower())
+        # the verdict that rests on rule 7's last sentence names it
+        self.assertRegex(self.prompts()["reviewer.md"],
+                         r"`statement_misstates` when [^;]*read on its own \(C7\)")
+
     def test_what_the_gate_allows_is_the_plans_statement_cut_rule(self):
         system = self.prompts()["reviewer-system.md"]
         rule = lplan.rule_versions()["statement_cut_rule"]
@@ -377,10 +411,16 @@ class TestThePrompts(Audited):
         gate = json.loads((self.gate_dir() / "gate.json").read_text())
         self.assertEqual(gate["statement_cut_rule"], rule)
         wide = lprompts.gate_bound(vocab.STATEMENT_CUT_WIDE)
-        for words in ("footnote mark", "`dd` that holds text", "opens with a formula",
-                      "text-only `dd`", '"Then"'):
+        for words in ("footnote mark between the blocks", "`dd` or paragraph whose first word",
+                      "a formula followed by a lower-case word",
+                      "text-only `dd` that starts with a capital", '"Then"',
+                      "never from a `dt` term or a quotation"):
             self.assertIn(words, wide)
             self.assertNotIn(words, lprompts.gate_bound(vocab.STATEMENT_CUT_CONTINUED))
+        # the card names no refusal the gate does not make: the wide bound admits a
+        # text-only `dd` with a lower-case first word, so the card qualifies its refusal
+        self.assertNotRegex(wide, r"text-only `dd`(,| stays| stay)")
+        self.assertNotIn("before its display", wide)
         with self.assertRaises(ValueError):
             lprompts.gate_bound(vocab.STATEMENT_CUT_FIRST)
 
@@ -414,6 +454,19 @@ class TestThePrompts(Audited):
                      "reviewer-skeptic.md"):
             self.assertNotIn('"verdict": "approve"', prompts[name])
         self.assertIn("Do not write `.tend/agent_result.json`", prompts["reviewer-system.md"])
+
+    def test_the_revision_says_how_a_revert_verdict_is_applied(self):
+        """A middle round can send the merge's ``revert`` verdicts (rule 0, origin
+        ``collateral``) to the worker: the revision names them and the collateral file the
+        turn stages beside the verdicts."""
+        revision = self.prompts()["worker-revision.md"]
+        self.assertIn(f"A `{vocab.AUDIT_VERDICT_REVERT}` verdict** (rule 0, origin `collateral`)",
+                      revision)
+        self.assertIn(".tend/audit/r$CF_AUDIT_ROUND.collateral.json", revision)
+        for change in ("hand_edit", "moved"):
+            self.assertIn(f"`{change}`", revision)
+        for op in ("set", "add", "drop"):
+            self.assertIn(f"`{op}`", revision.split("verdict** (rule 0")[1].split("\n")[0])
 
     def test_every_shape_the_prompts_show_is_one_the_schema_takes(self):
         prompts = self.prompts()

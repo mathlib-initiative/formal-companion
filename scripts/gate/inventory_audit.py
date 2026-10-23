@@ -688,9 +688,12 @@ def op_problems(op: Any, where: str, *, verdict_ids: set[str] | None = None) -> 
         if key in op:
             new = (key == "new") or (name == "add" and key == "fields")
             problems.extend(field_problems(op[key], f"{where}.{key}", new=new))
-    if name == "merge" and op.get("keep") in (op.get("drop") if isinstance(op.get("drop"), list)
-                                              else [op.get("drop")]):
-        problems.append(f"{where}: merge keeps and drops the same passage")
+    if name == "merge":
+        drops = op.get("drop") if isinstance(op.get("drop"), list) else [op.get("drop")]
+        if op.get("keep") in drops:
+            problems.append(f"{where}: merge keeps and drops the same passage")
+        if any(d in drops[:i] for i, d in enumerate(drops)):
+            problems.append(f"{where}: merge drops the same passage twice")
     return problems
 
 

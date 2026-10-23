@@ -742,6 +742,12 @@ WIDE_PAGES = (
     "<p>for every widget.</p>",
     "<blockquote><p>Each gadget is such that" + mark("note 3") + "</p></blockquote>"
     "<dl><dd>for every widget.</dd></dl>",
+    # a `dt` term or a quotation never runs on, however many `dd` blocks come between
+    "<dl><dt>Widget</dt><dd>a set with two sprockets</dd><dd>an operation on them.</dd></dl>",
+    "<blockquote><p>Each gadget is such that" + mark("note 3") + "</p></blockquote>"
+    "<dl><dd>for every widget</dd><dd>and every sprocket.</dd></dl>",
+    "<dl><dt>For an n by n matrix</dt><dd>a set with two sprockets</dd></dl><p>"
+    + inline("A") + " spans.</p>",
 )
 
 
@@ -872,10 +878,35 @@ class TestTheWideBound(unittest.TestCase):
                            (WIDE_PAGES[8], "Widget"),
                            ("<dl><dt>Widget</dt><dd>" + inline("W") + " is a set.</dd></dl>",
                             "Widget"),
-                           (WIDE_PAGES[9], "The axioms")):
+                           (WIDE_PAGES[9], "The axioms"),
+                           (WIDE_PAGES[17], "Widget"),
+                           (WIDE_PAGES[18], "Each gadget"),
+                           (WIDE_PAGES[19], "For an")):
             with self.subTest(html=html[:50]):
                 page, plain, continued, loose, wide = self.bounds(html, head=head)
                 self.assertEqual((loose, wide), (plain, plain))
+
+    def test_the_kinds_guard_reads_the_head(self):
+        """The guard is the run's head's as well as the block before's: a ``dt`` term or a
+        quotation does not run on into a second ``dd`` or a paragraph that opens with a
+        formula once an introducing ``dd`` sits between (docs/proposals/statement-cut.md
+        section 3.1), while the same ``dd`` blocks after a paragraph do."""
+        for html, head in ((WIDE_PAGES[17], "Widget"), (WIDE_PAGES[18], "Each gadget"),
+                           (WIDE_PAGES[19], "For an")):
+            with self.subTest(head=head):
+                page = Page(html)
+                b = page.blocks
+                self.assertEqual(b.runs_on(b.block_at(page.at(head)), wide=True), [])
+        self.assertWideOnly("<p>Each widget is a set with two sprockets</p>"
+                            "<dl><dd>a set with two sprockets</dd>"
+                            "<dd>an operation on them.</dd></dl>",
+                            to="an operation", head="Each widget")
+        self.assertWideOnly("<p>Each gadget is such that" + mark("note 3") + "</p>"
+                            "<dl><dd>for every widget</dd><dd>and every sprocket.</dd></dl>",
+                            to="and every", head="Each gadget")
+        self.assertWideOnly("<p>For an n by n matrix</p><dl><dd>a set with two sprockets</dd>"
+                            "</dl><p>" + inline("A") + " spans.</p>", to=" spans.",
+                            head="For an")
 
     def test_a_paragraph_that_opens_with_a_formula(self):
         """The paragraph is the sentence's when the block before ends with a word and the

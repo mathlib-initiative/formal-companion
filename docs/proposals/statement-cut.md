@@ -467,7 +467,9 @@ and `continues`, `introduces`, `continuation`, `loose_tails`, every default end 
   paragraph ends the run when it finishes(N, last), not only when it continues; and a `dd` that
   is no display block also ends it, included, when `last`'s kinds are within `CONTINUED_FROM`
   and finishes(dd, last). Any other `dd` or display block is passed over while it introduces, as
-  in runs on(D) (`Blocks.runs_on(…, wide=True)`).
+  in runs on(D) (`Blocks.runs_on(…, wide=True)`). The kinds guard reads D too: when D's kinds are
+  not within `CONTINUED_FROM` (a `dt` term, a quotation), no `dd` ends the run and a plain
+  paragraph ends it only when it continues(N), however many `dd` blocks come between.
 - **wide chain(B)** and **wide extent(s, compound)** — the loose chain and extent with next across
   marks in the display join and wide runs on(D) in place of runs on(D)
   (`Blocks.chain(…, wide=True)`, `Blocks.extent(…, wide=True)`; `wide` implies `loose`). By

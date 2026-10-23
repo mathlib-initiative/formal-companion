@@ -21,6 +21,8 @@ Your document `$CF_AUDIT_DOCUMENT` is committed and passed the gate. Round $CF_A
    - `drop {item}`.
 
    A passage you scope out of `formal_math` becomes `supporting` and loses `shape` and `conjuncts`. A quote follows the document's rule: verbatim from the layer, starting at a word.
+
+   **A `revert` verdict** (rule 0, origin `collateral`) undoes a change no operation of the last revision produced, which the check judged harmful. Its `action` names the entry (`revert collateral r$CF_AUDIT_ROUND-x001 (…)`) in `.tend/audit/r$CF_AUDIT_ROUND.collateral.json`, whose `before` is the passage as it was and `after` the passage as it is. Put `before` back with operations that cite the `revert` verdict: a `hand_edit` with both is a `set` on `after`'s item of its `fields`, to their `before` values; one with only `before` (a passage lost) is an `add` with `before`'s quote and fields; one with only `after` (a passage added) is a `drop` of `after`'s item; a `moved` passage is a `set` on `after`'s item of the `until` (its last words) that ends it where `before`'s span ended.
 2. **Apply, re-key, gate.** Run the edit, the id tool and the gate's check:
 
 ```bash
