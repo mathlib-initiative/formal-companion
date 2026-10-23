@@ -9,8 +9,9 @@ machine appends is admitted, nothing wider), the seven prompts the turn machine
 reads with no unfilled slot of the plan's or the turn's, the rule card's C1 to C10
 against docs/proposals/statement-cut.md section 3.4, every JSON shape the prompts
 show against the schema ``inventory_audit.py`` holds the files to, and an unaudited
-plan equal to the base commit's (99fbad4) apart from its commit and the staged files
-whose source changed since.  Every page, library and document is made up.
+plan equal to the base commit's (99fbad4) apart from its commit, the staged files
+whose source changed since and the inventory prompt's kind sentence.  Every page,
+library and document is made up.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
 import dataclasses
+import hashlib
 import io
 import json
 import re
@@ -46,6 +48,7 @@ from cflib import hashing, vocab  # noqa: E402
 from cflib.yamlio import read_yaml  # noqa: E402
 from locate import plan as lplan, presets as lp, prompts as lprompts  # noqa: E402
 from locate import tend_root as ltr  # noqa: E402
+import test_locate_statement_cut as TS  # noqa: E402
 from test_locate_planner import Campaign, scratch, ws  # noqa: E402
 
 at = TA.at
@@ -454,9 +457,12 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     and then re-made by this checkout's, as the same run.  Every file of the run
     directory is byte for byte the same -- the rendered prompts, the wrappers,
     ``config.yaml``, the task files and manifests, both gate.json files -- but the
-    files staged from a source this branch changed, and ``audit_turn.py``, which
-    every locate root's ``bin/`` stages since the turn machine; ``run.yaml`` differs
-    only in its skill commit and those files' pins.
+    files staged from a source this branch changed, ``audit_turn.py``, which
+    every locate root's ``bin/`` stages since the turn machine, and the worker
+    prompt, which is the base commit's with the kind sentence
+    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and nothing else;
+    ``run.yaml`` differs only in its skill commit, those files' pins and the worker
+    prompt's two shas.
     """
 
     def setUp(self):
@@ -507,6 +513,16 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         allowed = {f"tend-root/{staged}" for staged, rel in sources.items()
                    if rel in self.changed}
         self.assertIn("tend-root/bin/audit_turn.py", allowed)
+        # the worker prompt gains the kind sentence after the kinds, and only that
+        kinds = b"(`passage_kind`; `other` when it states something that is none of these)."
+        worker = ("prompts/worker.md", "tend-root/prompts/worker.md")
+        for name in worker:
+            with self.subTest(prompt=name):
+                self.assertEqual(then[name].count(kinds), 1)
+                self.assertEqual(now[name], then[name].replace(
+                    kinds, kinds + b" " + TS.KIND_SENTENCE.encode("utf-8")))
+        self.assertEqual(sorted(set(differ) & set(worker)), sorted(worker))
+        differ = [k for k in differ if k not in worker]
         self.assertLessEqual(set(differ), allowed)
         self.assertNotIn("tend-root/bin/audit_turn.py", then)
         # the branch's gate and bridge changes are seen, and nothing of the audit's gate
@@ -516,6 +532,8 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         self.assertFalse([n for n in now if "inventory_" in n])
         # what a run is launched with and told is untouched
         for name in sorted(then):
+            if name in worker:
+                continue
             if name.startswith(("prompts/", "tend-root/prompts/", "tasks/")) or name in (
                     "gate.json", "gate.local.json", "tend-root/config.yaml",
                     "tend-root/bin/worker-agent.sh", "tend-root/bin/reviewer-agent.sh",
@@ -529,6 +547,14 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                  if then_yaml["locate"]["gate_files"].get(k)
                  != now_yaml["locate"]["gate_files"][k]}
         self.assertEqual(moved, set(differ))
+        # the worker prompt's shas: the rendered prompt's and its template's
+        self.assertEqual(now_yaml["prompts"].pop("worker.md"),
+                         hashlib.sha256(now["prompts/worker.md"]).hexdigest())
+        then_yaml["prompts"].pop("worker.md")
+        template = "locate-inventory.md.tmpl"
+        self.assertEqual(now_yaml["locate"]["config_shas"]["prompts"].pop(template),
+                         hashing.sha256_file(SKILL / "templates" / "prompts" / template))
+        then_yaml["locate"]["config_shas"]["prompts"].pop(template)
         for block in (then_yaml["locate"], now_yaml["locate"]):
             block.pop("gate_files")
             block["config_shas"].pop("gate_files")

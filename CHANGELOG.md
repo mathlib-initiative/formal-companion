@@ -106,6 +106,15 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **The inventory prompt says the kind rule in one sentence** (`templates/prompts/locate-inventory.md.tmpl`,
+  "What a passage is"): a step of a proof, a derivation or a worked example that asserts a fact
+  or an equation is kind `theorem`, never `other`. It is the rule the audit's merge applies
+  mechanically to a formal `other` passage in a proof or example section
+  (`references/locate-documents.md` §13.7), told to the worker where it picks a kind, audited or
+  not. Every inventory planned from now on renders a `worker.md` with that sentence and a new
+  template sha; nothing else in a plan moves. It is not a cut rule: `references/vocabulary.md`
+  §1.11 and the bench labeler are unchanged. The rendered prompt is 17,373 bytes with a real
+  plan's paths, under the 17,500 ceiling.
 - **The gate and the receipt know statement-cut rule 3** (docs/proposals/statement-cut.md
   §2.2 and §3.3). The planner still writes (3, 3, 2), so nothing a run planned now is held to
   changes. `cflib.vocab.STATEMENT_CUT_WIDE` is 3 and `STATEMENT_CUT_SPAN_END` is

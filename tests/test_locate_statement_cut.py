@@ -1783,8 +1783,20 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 #: rule 3's words, and is 16,933 with the review's fixes (the Context rule's continuation,
 #: the third use of `until`, the list-item exception and the curated subject); with real
 #: paths it is 17,252, about 3.0 KB (21%, some 750 tokens) over the pilot's, not the
-#: 1.9 KB first estimated.  The ceiling was 17,000 over placeholder paths
+#: 1.9 KB first estimated.  The ceiling was 17,000 over placeholder paths.  The kind
+#: sentence (:data:`KIND_SENTENCE`, the inventory audit's kind rule of
+#: references/locate-documents.md section 13.7 said to the worker) adds 121 bytes: 17,054
+#: with placeholders, 17,373 with real paths, under the same ceiling
 WORKER_MD_MAX_BYTES = 17_500
+
+#: the inventory prompt's one kind sentence, in "What a passage is" after the kinds: the
+#: kind rule the audit's merge applies mechanically to a formal ``other`` passage in a
+#: proof or example section (references/locate-documents.md section 13.7) and its rule
+#: card states under C6, said where the worker chooses a kind.  It is the prompt's own,
+#: not a cut rule: references/vocabulary.md section 1.11 and the bench labeler, which cut
+#: by the shared words, do not carry it
+KIND_SENTENCE = ("A step of a proof, a derivation or a worked example that asserts a fact or "
+                 "an equation is kind `theorem`, never `other`.")
 
 
 class TestThePilotsPromptFixes(unittest.TestCase):
@@ -1888,6 +1900,25 @@ class TestThePilotsPromptFixes(unittest.TestCase):
         self.assertIn("never one formal_math passage for the whole proof, and never a statement "
                       "inside a proof left out as narration.", inventory)
         self.assertNotIn("never a proof left out whole", LABELER)
+
+    def test_the_kind_sentence(self):
+        """One sentence after the kinds, said once: the shared cut rules and the labeler do
+        not carry it, and the audit's rule card says the same rule."""
+        section = self.prompt[self.prompt.index("## What a passage is\n"):
+                              self.prompt.index("## How to cut")]
+        self.assertEqual(section.count(KIND_SENTENCE), 1)
+        self.assertEqual(self.prompt.count(KIND_SENTENCE), 1)
+        self.assertIn("(`passage_kind`; `other` when it states something that is none of "
+                      "these). " + KIND_SENTENCE + " One passage per statement:", section)
+        for text, name in ((" ".join(cut_rule_lines()), "vocabulary"),
+                           (labeler_cut_rules(), "labeler"), (LABELER, "labeler file")):
+            with self.subTest(text=name):
+                self.assertNotIn("never `other`", text)
+                self.assertNotIn("is kind `theorem`", text)
+        card = (SKILL / "templates" / "prompts" /
+                "locate-inventory-audit-system.md.tmpl").read_text(encoding="utf-8")
+        self.assertIn("step that asserts a fact or an equation is kind `theorem`", card)
+        self.assertIn("that asserts a fact or an equation is kind `theorem`", KIND_SENTENCE)
 
     def test_the_prompts_size(self):
         run_id, host = realistic_host()
