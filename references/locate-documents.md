@@ -13,7 +13,7 @@ planner side (`scripts/locate/`: §5's candidates, §6's sealed set, §9's run,
 4 challenge document · 5 candidates file · 6 sealed record set · 7 sourcesets and
 rendered web sources · 8 universes, library indexes and `corpus.sqlite` · 9 a
 locate run on disk · 10 harvested rows and passage outcomes · 11 campaigns · 12 carry-over
-maps · 13 inventory audit records
+maps · 13 inventory audit records (13.9 the turn machine)
 
 Every example is synthetic: a made-up article ("Widget lemma", page id 1001,
 revision 2002), made-up libraries `alpha` and `beta`, made-up declarations.
@@ -2201,8 +2201,11 @@ non-JSON stdout — leaves a record of its own under that name, `{type: result,
 subtype: error_<outcome>, is_error: true, total_cost_usd: null, duration_ms,
 cf_agent_call: {outcome, role, task_id, slot, elapsed_s, timeout_s, exit,
 signal, stdout_bytes, cost: unknown}}`, and prose stdout is kept beside it as
-`.out`), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
-the count of genuine reviewer rejections), `gate-log/gate.jsonl` (one JSON line
+`.out`; an audited run's call names its step after the role,
+`<task-id>.<role>.<step>.<UTC stamp>.<pid>.json`, and its record carries `step`, §13.9),
+`attempts/<task-id>.json` (`{task_id, rejections, history}`:
+the count of genuine reviewer rejections), `audit/<task-id>/` (an audited run only: the turn
+machine's `state.json` and the round files, §13.9), `gate-log/gate.jsonl` (one JSON line
 per gate call: `at`, `run_id`, `mode`, `task_id`, `task_id_from` (`--task-id`,
 `$TEND_TASK_ID`, `orchestrator.sqlite…`, or null with no id), `caller` (which call
 it was: `validation` for `--changed-files`, tend's validation command; `pre_merge` for
@@ -2837,10 +2840,13 @@ working directory. Round `k`'s files are `r<k>.<name>.json` (and `.md`):
 | `r<k>.document.json` | the bridge | the snapshot round `k` reviewed |
 | `r1.audit.json` (or `r1.audit.part<i>.json`) | the auditor | `audit` |
 | `r<k>.audit.json` (or parts), `k` ≥ 2 | the checker | `check` |
+| `r<k>.check.part<i>.expect.json`, `k` ≥ 2 | the bridge | a check part's verdict and collateral ids |
 | `r<k>.collateral.json`, `k` ≥ 2 | `inventory_audit.py collateral` | `collateral` |
 | `r<k>.flags.json` | `inventory_audit.py strip` | `flags` |
-| `r<k>.skeptic.json` | the skeptic | `skeptic` |
+| `r<k>.flags.part<i>.json` | the bridge | `flags`: the part's flags and disputes |
+| `r<k>.skeptic.json` (from `r<k>.skeptic.part<i>.json`) | the skeptic (the bridge combines the parts) | `skeptic` |
 | `r<k>.verdicts.json` | `inventory_audit.py merge` | `verdicts` |
+| `r<k>.result.json` | the bridge | the contract the round's decision printed |
 | `r<k>.ops.json`, `r<k>.repair.json` | the worker | `ops`, `repair` |
 
 **Common rules.** Every file is a JSON object with `schema` (`cf-inventory-audit/1`), `kind`,
@@ -2918,7 +2924,11 @@ An upheld flag names a defect (never `clean`) and its rule, and may correct the 
 (whitespace and the rendering's `⏎` folded): an upheld flag without it counts as refuted.
 `examined` names the formal passages no flag names that the skeptic judged; in round 1 it holds
 at least `min(clean, max(AUDIT_SKEPTIC_FLOOR, ⌈AUDIT_SKEPTIC_SHARE · clean⌉))` of them (10, or a
-tenth), and `missed` holds what it found wrong among any passages, each with its evidence.
+tenth), and `missed` holds what it found wrong among any passages, each with its evidence. A
+part file (`validate --kind skeptic --flags r<k>.flags.part<i>.json --render-index r<k>.render.json
+--part <i>`) judges its part's flags and disputes, and its hunt is over its part's unflagged
+formal passages, the floor theirs: the floor is superadditive, so parts that each meet theirs,
+combined, meet the document's.
 
 ### 13.5 The checker's file (`kind: check`, round 2 on)
 
@@ -2929,7 +2939,8 @@ of the last round's verdicts file is checked exactly once, with a status: `appli
 gate refusal the gate's bound really makes), `gate_refused_doubtful` or `disputed` (left to the
 skeptic). Every collateral entry is judged harmful or not; `new` holds defects of changed passages
 and their neighbours only, and `regressions` verdicts of an earlier round that the latest change
-undid. A part file judges the verdicts it names; the parts together judge every one once.
+undid. A part file judges the verdict ids and the collateral ids (`r<k>-x<nnn>`) its `--expect`
+list names, each exactly once; the parts together judge every one once.
 
 ### 13.6 The collateral file (`kind: collateral`)
 
@@ -3018,3 +3029,94 @@ round asked for: `applied`, `not_applied`, `gate_refused` (with the gate's refus
 verbatim, as `gate_line`) or `disputed` (the spec as written does not support the verdict; `why`
 says so). `inventory_audit.py validate --kind audit|skeptic|check|repair|ops` holds one file to
 this section and is the call an agent makes before it finishes.
+
+### 13.9 The turn machine (`scripts/run/audit_turn.py`)
+
+An audited run's wrappers export `CF_AUDIT_RULE` (the decision rule, 1) and `CF_AUDIT_ROUNDS`
+(R, one of `AUDIT_REVIEW_ROUNDS`). With `CF_AUDIT_RULE` set, `bridge-agentbox.sh` hands every turn
+of a task, after the attempt cap's check, to `bin/audit_turn.py` with its own allowlist, agentbox
+profile, host and bypass; the turn machine runs as `python3 -I`, imports no `cflib`, calls every
+agent through `agent_call.py --step` and prints tend's contract on stdout and nothing else. No
+plan exports the variable yet, and without it the bridge is what it was. It refuses (exit 78) a
+host other than `claude`, an unknown rule, an R outside `AUDIT_REVIEW_ROUNDS`, a `CF_GATE_CMD`
+that is not the locate gate with its `--gate-config`, a gate directory without the three host
+tools, and a task of more than one document; a prompt file the run did not stage is exit 66.
+The reviewer reads `reviewer-system.md` with `reviewer.md` (the auditor), `reviewer-check.md`
+(the checker) or `reviewer-skeptic.md`; the worker `worker-system.md` with `worker.md` and, in a
+revision, `worker-revision.md`. Each has the bridge's `$TEND_*` slots and `$CF_AUDIT_ROUND`,
+`$CF_AUDIT_ROUNDS`, `$CF_AUDIT_SOURCE` and `$CF_AUDIT_DOCUMENT` filled, and the turn appends a
+`## This call` block (a worker's: `## This session`) naming what is staged, the one file the call
+writes and its `inventory_audit.py validate` line.
+
+**The state** is `<tend-root>/audit/<task-id>/state.json` (`AUDIT_TURN_SCHEMA`, `cf-audit-turn/1`):
+`{round, rounds: {<k>: {document_sha256, head, worktree_id, steps, raw, decision, actionable,
+harm, audit_failed, revert_to}}, revision, pending, approved, best: {round, sha256, snapshot},
+last, rejections, counts: {reviewer_tampered, gate_resets, audit_failed, precheck_refused,
+reverts, retries, unaudited, repair_invalid}, events}`. The round files of §13's table are
+beside it in `<source-id>/`, with `raw/` (each call's envelope) and `discarded/` (a round's files
+whose document changed under it). The worktree's `.tend/audit/` is their mirror: before every
+call it is cleared and holds exactly what that call may read, and the call's output is copied
+back after, so a wiped `.tend/` loses nothing; a `.tend` that is a symlink is refused.
+
+**A reviewer turn of round k:**
+
+1. A revert pending: approve mechanically when the document's sha256 is the snapshot's, else ask
+   for it again (unrecorded; after `AUDIT_REVERT_ATTEMPTS` the turn stops, exit 1). A document
+   approved before, or a rejection recorded for this very document, is answered again as it was.
+2. The precheck, the gate's `--findings` check: exit 1 is a `request_changes` the bridge writes
+   and does not record, and the round does not move; any other failure is infrastructure (75).
+3. The snapshot `r<k>.document.json`. An `unresolved` document, or one with no passage, is
+   approved unaudited (counted).
+4. The rendering in parts (`inventory_render.py --out-dir .tend/audit --label r<k>`, from round 2
+   with `--previous r<k-1>.document.json`; `CF_AUDIT_PART_BYTES` overrides the part size).
+5. Round 1: one auditor call per part, writing `r1.audit.part<i>.json`, validated against its
+   part (`--render-index r1.render.json --part <i>`). From round 2: `collateral` (with the
+   worker's ops when they parse as JSON), then one checker call per part that owes a verdict of
+   the last round (placed by its start) or a collateral entry, writing `r<k>.audit.part<i>.json`
+   against `--expect r<k>.check.part<i>.expect.json`; the worker's repair file goes on only when
+   it validates, else it is counted (`repair_invalid`).
+6. `strip`, then one skeptic call per part with flags or disputes (round 1: also any part with an
+   unflagged formal passage, the hunt's), each seeing the part's rendering and
+   `r<k>.flags.part<i>.json` and never the auditor's or the checker's file, validated against
+   its part; the parts are combined into `r<k>.skeptic.json` (a missed entry once per item and
+   verdict, an examined passage once, the estimates summed, the summaries joined within
+   `AUDIT_SUMMARY_WORDS`).
+7. `merge --gate-config`: `r<k>.verdicts.json` and the reviewer's result.
+
+An agent step whose output is missing or invalid is called again `AUDIT_OUTPUT_RETRIES` time, with
+the validator's lines and its last output staged; still invalid, or files the strip or the merge
+refuse, and the round is `merge --audit-failed`: approve, counted. A step that validated for the
+round's document is not called again: a call that fails as infrastructure exits 124, 75, 64 or
+128 + N, tend retries the turn, and only what is left is paid for. Around every reviewer call the
+tamper guard compares HEAD, the tracked changes and the untracked files outside `.tend/`; a
+change is undone (`git reset --hard`, then `git clean -fd -e .tend`) and counted.
+
+**The decision.** `approve` ends the task's audit. `request_changes` moves the round to k + 1,
+opens the revision of round k's verdicts, and is recorded as a genuine rejection
+(`attempt_cap.record`, with the round's last agent envelope); the merge never rejects in the
+final round, so a task takes at most R − 1, under `LOCATE_ATTEMPT_CAP`. `revert` is a request the
+bridge writes and does not record: the next worker turn writes `r<j>.document.json`'s bytes to
+the document and commits them with no agent call, and the next reviewer turn approves when the
+sha256 matches. After every merge `best` names the best reviewed snapshot: of the rounds whose
+check found no harm, the one with the fewest actionable verdicts, the later on a tie.
+
+**A worker turn.** The first call, and every re-run of it before a review, is `worker.md` alone,
+with no step; a re-run with a discussion adds `## THIS IS A RE-RUN — the validation gate refused
+your last commit` and the last `AUDIT_DISCUSSION_TAIL` bytes of `.tend/discussion.md` (never "a
+reviewer rejected", since no reviewer did). A revision runs sessions of at most
+`AUDIT_REPAIR_VERDICTS_PER_SESSION` verdicts, each a fresh `revision` call of `worker.md`,
+`worker-revision.md` and its block (its verdict ids; `r<k>.verdicts.json`, `r<k>.document.json`
+and the ops and repair files so far staged), the worker's `r<k>.ops.json` and `r<k>.repair.json`
+copied back after each; an interrupted revision resumes at its next session. A committed revision
+that comes back without a review was refused by tend's pre-review gate or by the precheck: it is
+re-run on the gate's words, and at the `AUDIT_GATE_RESETS`th refusal the worktree is reset to
+round k's reviewed commit with no agent call, so the next review finds no progress.
+
+**The cap.** In an audited run `attempt_cap.py` never writes UNRESOLVED when the state names a
+best snapshot: the worker side writes its bytes (checked against `best.sha256`), puts every other
+path back as the unaudited cap does and commits, and the reviewer side approves exactly that
+change set. `attempt_cap.py count` prints a task's count.
+
+**The envelopes** of an audited run's calls name their step (`AUDIT_STEPS`: `audit`, `skeptic`,
+`check`, `revision`); the watchdog reads both names, counts every envelope towards the spend,
+and records `spend_by_step` for a root that has stepped envelopes.

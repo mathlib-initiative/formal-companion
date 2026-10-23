@@ -31,7 +31,18 @@ A task a reviewer keeps rejecting used to loop until the run was stopped.  Now:
   the locate gate's rule 7 accepts;
 * ``reviewer`` -- a task at the cap whose change set is exactly those
   documents and its task file's status is approved mechanically, without an
-  agent; exit 10 otherwise.
+  agent; exit 10 otherwise;
+* ``count`` -- prints the task's count of genuine rejections.
+
+**An audited run** (``CF_AUDIT_RULE`` set; references/locate-documents.md section
+13.9) never ends a task UNRESOLVED at the cap, since that would throw a gate-clean
+cut away: the worker side restores the task's best reviewed snapshot instead --
+the bytes ``audit_turn.py`` recorded as ``best`` in ``<tend-root>/audit/<task-id>/
+state.json``, checked against their sha256 -- into the document's path, puts every
+other path back as above, commits, and the reviewer side approves exactly that
+change set.  The turn machine keeps genuine rejections at or under its review
+rounds less one, below the cap, so this is the backstop; a task whose state names
+no snapshot (none was ever reviewed) is capped as before.
 
 The harvest receipt counts these documents apart from the worker's own
 ``unresolved`` ones.  Standard library only: it runs on the run host.
@@ -59,6 +70,10 @@ EXIT_NOT_CAPPED = 10
 #: configuration errors)
 EXIT_CONFIG = 78
 UNRESOLVED_ATTEMPT_CAP = "attempt_cap"
+#: an audited run's turn state: ``<tend-root>/AUDIT_DIR/<task-id>/AUDIT_STATE``
+#: (``audit_turn.py`` writes it; the cap reads its ``best`` snapshot)
+AUDIT_DIR = "audit"
+AUDIT_STATE = "state.json"
 #: COPIED from ``cflib.vocab.LOCATE_ATTEMPT_CAP`` (no cflib on the host): the
 #: count at or above which ``gate/verify_locate.py`` accepts a ``by: attempt_cap``
 #: document; tests/test_locate_contract.py pins the three together
@@ -173,6 +188,50 @@ def record(root: Path, task: str, raw_path: Path, result_text: str,
         return count
     finally:
         os.close(fd)
+
+
+def audit_task_dir(root: Path, task: str) -> Path:
+    """``<tend-root>/audit/<task-id>/``: an audited task's state and round files."""
+    if not _safe(task):
+        raise ValueError(f"unsafe task id {task!r}")
+    return root / AUDIT_DIR / task
+
+
+def audit_state_path(root: Path, task: str) -> Path:
+    return audit_task_dir(root, task) / AUDIT_STATE
+
+
+def audited() -> bool:
+    """Is this an audited run's turn (the wrappers export ``CF_AUDIT_RULE``)?"""
+    return bool(os.environ.get("CF_AUDIT_RULE"))
+
+
+def _sha256(data: bytes) -> str:
+    import hashlib  # noqa: PLC0415 - only the audited cap hashes
+    return hashlib.sha256(data).hexdigest()
+
+
+def best_snapshot(root: Path, task: str) -> dict | None:
+    """``{round, document, bytes}`` of the audited task's best reviewed snapshot, or None.
+
+    The state names the snapshot by a path under the task's audit directory and its
+    sha256; a path outside that directory, a missing file or bytes of another sha are
+    no snapshot.
+    """
+    try:
+        state = json.loads(audit_state_path(root, task).read_text(encoding="utf-8"))
+        best = state.get("best")
+        document = str(state.get("document") or "")
+        base = audit_task_dir(root, task).resolve()
+        path = (root / str(best["snapshot"])).resolve()
+        if base not in path.parents or not path.is_file() or path.is_symlink():
+            return None
+        data = path.read_bytes()
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+    if _sha256(data) != best.get("sha256") or not document:
+        return None
+    return {"round": best.get("round"), "document": document, "bytes": data}
 
 
 def cap_from_env() -> int:
@@ -389,6 +448,77 @@ def write_unresolved(worktree: Path, manifests: Path, task: str, count: int,
     return paths
 
 
+def _restored_path(manifests: Path, task: str, best: dict) -> str:
+    """The one document an audited task holds, as its manifest and the state name it."""
+    manifest = load_manifest(manifests, task)
+    sources = [str(d.get("source_id") or "") for d in manifest.get("documents") or []]
+    if len(sources) != 1 or not _safe(sources[0]):
+        raise ValueError(f"task {task}'s manifest names {len(sources)} documents, not one")
+    rel = f"findings/{task}/{sources[0]}.json"
+    if best["document"] != rel:
+        raise ValueError(f"the audit state names {best['document']!r}, not {rel!r}")
+    return rel
+
+
+def write_best(worktree: Path, manifests: Path, task: str, best: dict, count: int,
+               base: str = "main") -> list[str]:
+    """Restore and commit an audited task's best reviewed snapshot; returns the paths.
+
+    As :func:`write_unresolved`, but the document is the snapshot's bytes."""
+    rel = _restored_path(manifests, task, best)
+    base_commit = merge_base(worktree, base)
+    task_rel = f"tasks/{task}.yaml"
+    restore_outside(worktree, base_commit, {rel})
+    path = worktree / rel
+    for part in (worktree / "findings", worktree / "findings" / task, path):
+        if part.is_symlink():
+            raise RuntimeError(f"{part} is a symlink; the snapshot is not written through it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(best["bytes"])
+    task_file = worktree / task_rel
+    if task_file.is_file():
+        task_file.write_text(complete_task_file(task_file.read_text(encoding="utf-8")),
+                             encoding="utf-8")
+    paths = [rel] + ([task_rel] if task_file.is_file() else [])
+    added = _git(worktree, "add", "-A", "--", f"findings/{task}", *paths[1:])
+    if added.returncode != 0:
+        raise RuntimeError(f"git add failed: {added.stderr.strip()[:300]}")
+    staged = _git(worktree, "diff", "--cached", "--quiet")
+    if staged.returncode != 0:
+        done = _git(worktree, "commit", "-q", "-m",
+                    f"The attempt cap restores round {best['round']}'s reviewed snapshot "
+                    f"({count} rejections), task {task}")
+        if done.returncode != 0:
+            raise RuntimeError(f"git commit failed: {done.stderr.strip()[:300]}")
+    return paths
+
+
+def is_restored_contribution(worktree: Path, manifests: Path, task: str, best: dict,
+                             base: str = "main") -> bool:
+    """Does the worktree hold exactly the best snapshot's bytes as its document, and change
+    nothing else since the merge base but its task file's status?"""
+    try:
+        rel = _restored_path(manifests, task, best)
+        base_commit = merge_base(worktree, base)
+        changed = change_set(worktree, base_commit)
+        have = (worktree / rel).read_bytes()
+    except (OSError, ValueError, RuntimeError):
+        return False
+    task_rel = f"tasks/{task}.yaml"
+    if not set(changed) <= {rel, task_rel} or any(s == "D" for s in changed.values()):
+        return False
+    if task_rel in changed:
+        before = _at(worktree, base_commit, task_rel)
+        try:
+            after = (worktree / task_rel).read_text(encoding="utf-8")
+        except OSError:
+            return False
+        if before is None or complete_task_file(before) != after:
+            return False
+    present = sorted(p.name for p in (worktree / "findings" / task).iterdir() if p.is_file())
+    return present == [Path(rel).name] and have == best["bytes"]
+
+
 def is_capped_contribution(worktree: Path, manifests: Path, task: str,
                            base: str = "main") -> bool:
     """Does the worktree hold exactly the attempt-cap documents of this task, and change
@@ -443,10 +573,12 @@ def is_capped_contribution(worktree: Path, manifests: Path, task: str,
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="attempt_cap.py", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("worker", "reviewer", "record"):
+    for name in ("worker", "reviewer", "record", "count"):
         p = sub.add_parser(name)
         p.add_argument("--root", required=True, help="the tend root (attempts/ lives here)")
         p.add_argument("--task", default=os.environ.get("TEND_TASK_ID", ""))
+        if name == "count":
+            continue
         if name != "record":
             p.add_argument("--manifests", default=os.environ.get("CF_TASK_MANIFESTS", ""))
             p.add_argument("--worktree", default=os.getcwd())
@@ -461,6 +593,12 @@ def main(argv: list[str] | None = None) -> int:
                                 "may be missing")
     args = ap.parse_args(argv)
     root = Path(args.root)
+    if args.cmd == "count":
+        if not _safe(args.task):
+            print(f"attempt_cap: no usable task id ({args.task!r})", file=sys.stderr)
+            return 64
+        print(read_count(root, args.task))
+        return 0
     if args.cmd != "record" and 0 < args.cap < LOCATE_ATTEMPT_CAP:
         print(f"attempt_cap: a cap of {args.cap} (CF_ATTEMPT_CAP) is under the locate gate's "
               f"{LOCATE_ATTEMPT_CAP}: the gate refuses a by: attempt_cap document at a lower "
@@ -482,6 +620,9 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
     manifests, worktree = Path(args.manifests), Path(args.worktree)
+    best = best_snapshot(root, args.task) if audited() else None
+    if best is not None:
+        return _audited_cap(args, root, manifests, worktree, best, count)
     if args.cmd == "worker":
         try:
             paths = write_unresolved(worktree, manifests, args.task, count, args.base)
@@ -500,6 +641,33 @@ def main(argv: list[str] | None = None) -> int:
                           "notes": f"approved mechanically: task {args.task} is at the attempt cap "
                                    f"({count} genuine rejections) and holds exactly its "
                                    f"attempt-cap UNRESOLVED documents"}))
+        return 0
+    return EXIT_NOT_CAPPED
+
+
+def _audited_cap(args, root: Path, manifests: Path, worktree: Path, best: dict,
+                 count: int) -> int:
+    """The cap of an audited run: the best reviewed snapshot, never UNRESOLVED."""
+    if args.cmd == "worker":
+        try:
+            paths = write_best(worktree, manifests, args.task, best, count, args.base)
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"attempt_cap: could not restore task {args.task}'s best snapshot: {exc}",
+                  file=sys.stderr)
+            return 1
+        print(json.dumps({"schema_version": 1, "status": "completed",
+                          "summary": f"attempt cap: {count} genuine reviewer rejections; the "
+                                     f"bridge restored round {best['round']}'s reviewed "
+                                     f"snapshot (no agent call)",
+                          "files_changed": paths[:50],
+                          "notes": "audited run: the cap restores the best reviewed snapshot, "
+                                   "never UNRESOLVED"}))
+        return 0
+    if is_restored_contribution(worktree, manifests, args.task, best, args.base):
+        print(json.dumps({"schema_version": 1, "verdict": "approve",
+                          "notes": f"approved mechanically: task {args.task} is at the attempt "
+                                   f"cap ({count} genuine rejections) and holds exactly round "
+                                   f"{best['round']}'s reviewed snapshot"}))
         return 0
     return EXIT_NOT_CAPPED
 

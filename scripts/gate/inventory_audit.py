@@ -538,9 +538,14 @@ def validate_audit(data: Any, doc: dict, *, expect: list[str] | None = None) -> 
 
 
 def validate_check(data: Any, doc: dict, previous: dict, collateral: dict | None, *,
-                   round_: int, expect: list[str] | None = None) -> list[str]:
+                   round_: int, expect: list[str] | None = None,
+                   expect_collateral: list[str] | None = None) -> list[str]:
     """A checker file of round ``round_``: every verdict the last round asked for judged once,
-    every collateral change judged once, new defects on passages of the document."""
+    every collateral change judged once, new defects on passages of the document.
+
+    A part file judges the verdicts ``expect`` names; with ``expect_collateral`` (the
+    collateral ids of a part's expectation, possibly none) it judges exactly those
+    collateral changes, and without it any it judges must be entries of the file."""
     problems: list[str] = []
     if not check_record(data, "check", "check", problems):
         return problems
@@ -557,8 +562,13 @@ def validate_check(data: Any, doc: dict, previous: dict, collateral: dict | None
         if row["status"] != "applied" and not row["reason"].strip():
             problems.append(f"check.checked[{i}]: status {row['status']} gives no reason")
     entries = [e["id"] for e in (collateral or {}).get("collateral") or []]
-    if expect is None:
-        _exactly_once([r["id"] for r in data["collateral"]], entries, "collateral change",
+    if expect is None or expect_collateral is not None:
+        wanted = entries if expect_collateral is None else \
+            [e for e in entries if e in set(expect_collateral)]
+        if expect_collateral is not None:
+            for key in sorted(set(expect_collateral) - set(entries)):
+                problems.append(f"check: the part names {key}, which is no collateral entry")
+        _exactly_once([r["id"] for r in data["collateral"]], wanted, "collateral change",
                       "check.collateral", problems)
     else:
         for i, row in enumerate(data["collateral"]):
@@ -584,9 +594,14 @@ def validate_check(data: Any, doc: dict, previous: dict, collateral: dict | None
     return problems
 
 
-def validate_skeptic(data: Any, doc: dict, flags: dict, *, round_: int) -> list[str]:
+def validate_skeptic(data: Any, doc: dict, flags: dict, *, round_: int,
+                     expect: list[str] | None = None) -> list[str]:
     """The skeptic's file: every flag and every dispute judged once, its hunt over passages
-    no flag names, at least the floor of them in round 1."""
+    no flag names, at least the floor of them in round 1.
+
+    ``expect`` is a part's formal passages (a chunked skeptic call, its flags the part's):
+    the hunt is then over that part's unflagged formal passages, and its floor theirs.
+    The floor is superadditive, so parts that each meet theirs meet the document's."""
     problems: list[str] = []
     if not check_record(data, "skeptic", "skeptic", problems):
         return problems
@@ -613,10 +628,13 @@ def validate_skeptic(data: Any, doc: dict, flags: dict, *, round_: int) -> list[
                   [d["verdict_id"] for d in flags.get("disputes") or []], "dispute",
                   "skeptic.disputes", problems)
     flagged = {f["item"] for f in flags.get("flags") or []}
-    unflagged = [i for i in formal_items(doc) if i not in flagged]
+    unflagged = [i for i in formal_items(doc) if i not in flagged
+                 and (expect is None or i in set(expect))]
     for i, item in enumerate(data["examined"]):
         if item not in items:
             problems.append(f"skeptic.examined[{i}]: {item} is no passage of the document")
+        elif expect is not None and item not in set(expect) and item not in flagged:
+            problems.append(f"skeptic.examined[{i}]: {item} is no formal passage of this part")
         elif item in flagged:
             problems.append(f"skeptic.examined[{i}]: {item} is flagged; the hunt is over the "
                             f"passages no flag names")
@@ -1389,13 +1407,19 @@ def cmd_validate(args) -> int:
         problems = validate_audit(data, doc, expect=expect)
     elif args.kind == "skeptic":
         flags = read_json(_need(args.flags, "--flags"), "flags file")
-        problems = validate_skeptic(data, doc, flags, round_=flags.get("round"))
+        expect = None
+        if args.render_index:
+            expect = _part_items(args.render_index, args.part, args.document, doc)
+        problems = validate_skeptic(data, doc, flags, round_=flags.get("round"), expect=expect)
     elif args.kind == "check":
         previous = read_json(_need(args.previous, "--previous"), "previous verdicts")
         collateral_doc = read_json(_need(args.collateral, "--collateral"), "collateral file")
-        problems = validate_check(data, doc, previous, collateral_doc,
-                                  round_=int(previous.get("round") or 0) + 1,
-                                  expect=_expect(args.expect))
+        expect = _expect(args.expect)
+        problems = validate_check(
+            data, doc, previous, collateral_doc, round_=int(previous.get("round") or 0) + 1,
+            expect=None if expect is None else [x for x in expect if not COLLATERAL_ID.match(x)],
+            expect_collateral=None if expect is None else
+            [x for x in expect if COLLATERAL_ID.match(x)])
     elif args.kind == "repair":
         verdicts = read_json(_need(args.verdicts, "--verdicts"), "verdicts file")
         problems = validate_repair(data, verdicts, source_id=str(doc.get("source_id")))
@@ -1544,10 +1568,12 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--previous")
     v.add_argument("--collateral")
     v.add_argument("--verdicts")
-    v.add_argument("--expect", help="a JSON list of the items (audit) or verdict ids (check) "
-                                    "this part file judges")
-    v.add_argument("--render-index", help="an audit part: the rendering's r<k>.render.json")
-    v.add_argument("--part", type=int, help="an audit part: its number in --render-index")
+    v.add_argument("--expect", help="a JSON list of the items (audit), or the verdict ids and "
+                                    "collateral ids (check), this part file judges")
+    v.add_argument("--render-index", help="an audit or skeptic part: the rendering's "
+                                          "r<k>.render.json")
+    v.add_argument("--part", type=int, help="an audit or skeptic part: its number in "
+                                            "--render-index")
     s = sub.add_parser("strip", help="write the flags file the skeptic sees")
     s.add_argument("--round", type=int, required=True)
     s.add_argument("--document", required=True)

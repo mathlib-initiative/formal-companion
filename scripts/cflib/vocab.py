@@ -1003,6 +1003,24 @@ AUDIT_REPAIR_VERDICTS_PER_SESSION = 40
 AUDIT_KIND_RULE_RULE = 6
 #: the first words the rendering hints as a connective start
 AUDIT_CONNECTIVE_HINTS = ("and", "so", "hence", "thus", "therefore", "then", "but")
+#: the turn machine (``run/audit_turn.py``, references/locate-documents.md section 13.9),
+#: which runs an audited task's turns when the wrappers export ``CF_AUDIT_RULE``; it
+#: keeps its own copy of these, and ``run/agent_call.py`` and ``run/watchdog.py`` copy
+#: ``AUDIT_STEPS``; a test pins every copy.  ``AUDIT_TURN_SCHEMA`` is the ``schema`` of
+#: ``<tend-root>/audit/<task-id>/state.json``
+AUDIT_TURN_SCHEMA = "cf-audit-turn/1"
+#: ``agent_call.py --step``: what an audited run's agent call was, in its envelope's name
+AUDIT_STEPS = ("audit", "skeptic", "check", "revision")
+#: re-calls of a step whose output stays invalid before the round is ``audit_failed``
+AUDIT_OUTPUT_RETRIES = 1
+#: refused revisions of one round (tend's pre-review gate or the bridge's precheck)
+#: before the bridge resets the worktree to the round's reviewed commit
+AUDIT_GATE_RESETS = 3
+#: the bytes of ``.tend/discussion.md`` a revision prompt carries (the bridge's tail)
+AUDIT_DISCUSSION_TAIL = 6000
+#: bridge-written revert requests whose restore the reviewer finds unmatched before the
+#: turn stops with an error
+AUDIT_REVERT_ATTEMPTS = 3
 
 # --- the challenge plan (section 5): why a record is in a challenge task, and
 # what the plan says it is owed

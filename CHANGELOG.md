@@ -42,6 +42,23 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The audited inventory's turn machine, dormant without `CF_AUDIT_RULE`**
+  (`references/locate-documents.md` §13.9). No plan exports the variable yet, and without it
+  the bridge makes the calls and prints the contracts it did (a test runs the base commit's
+  bridge beside it). With it, `bridge-agentbox.sh` hands every turn of a task to
+  `scripts/run/audit_turn.py`, which keeps the round and its files in
+  `<tend-root>/audit/<task-id>/` outside the worktree, stages `.tend/audit/` before every call,
+  runs the audit, check and skeptic in parts of the rendering through `agent_call.py --step`
+  (envelopes `<task>.<role>.<step>.<stamp>.<pid>.json`, which the watchdog reads beside the old
+  name), re-calls an invalid output once and then approves the round as `audit_failed`, reuses a
+  step valid for the same document, undoes a reviewer's change to the worktree, resets a revision
+  the gate refuses three times to the reviewed commit, and reverts to the best reviewed snapshot
+  with no agent call. The round moves only on the merge's rejection, so a task takes at most
+  R − 1 genuine rejections; in an audited run the attempt cap restores the best snapshot instead
+  of writing UNRESOLVED, and `attempt_cap.py count` prints the count. `audit_turn.py` is staged
+  in every locate root's `bin/` (`BRIDGE_HELPERS`). `inventory_audit.py validate` holds a skeptic
+  part to its part's hunt (`--render-index --part`) and a check part to the collateral ids its
+  `--expect` names.
 - **The inventory audit's host tools, dormant** (`references/locate-documents.md` §13,
   `cf-inventory-audit/1`). Nothing plans an audited run yet, so an unaudited plan stages,
   renders and gates exactly as before. `scripts/gate/inventory_render.py` renders a document

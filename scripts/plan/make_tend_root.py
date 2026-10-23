@@ -57,8 +57,11 @@ BIN_HELPERS = ("normalize_result.py", "extract_final_json.py", "agent_call.py",
                "attempt_cap.py")
 
 #: every helper of ``run.manifest.BRIDGE_FILES`` (the list plus the bridges; a
-#: test pins it): what a locate root's bin/ holds, ``tend_root.LOCATE_BIN_HELPERS``.
-BRIDGE_HELPERS = BIN_HELPERS + ("watchdog.py",)
+#: test pins it): what a locate root's bin/ holds, ``tend_root.LOCATE_BIN_HELPERS``:
+#: the watchdog, and ``audit_turn.py``, the turn machine the bridge hands an audited
+#: run's turns to (``CF_AUDIT_RULE``; references/locate-documents.md section 13.9),
+#: which an unaudited run's bridge never calls.
+BRIDGE_HELPERS = BIN_HELPERS + ("watchdog.py", "audit_turn.py")
 #: the bridges whose agent call runs under ``agent_call.py``, the reader of
 #: ``CF_AGENT_TIMEOUT``: a timeout staged for any other bridge would reach nothing
 TIMED_BRIDGES = ("bridge-agentbox.sh", "bridge-claude-p.sh")
