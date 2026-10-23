@@ -910,10 +910,14 @@ class Blocks:
         ``dd`` that is no display block also ends it, included, when the block
         before is a paragraph, a ``dd`` or a display (``CONTINUED_FROM``) and the
         ``dd`` finishes it.  Any other ``dd`` or display block is passed over while
-        it introduces, as without.  No end rule reads it.
+        it introduces, as without.  The kinds guard reads D as well as the block
+        before: from a D outside ``CONTINUED_FROM`` (a ``dt`` term, a quotation) no
+        ``dd`` ends the run and a paragraph ends it only when it continues, however
+        many ``dd`` blocks come between.  No end rule reads it.
         """
         out: list[Block] = []
         last = block
+        head = set(block.kinds) <= CONTINUED_FROM
         while True:
             if "li" in last.kinds or last.theorem_box or not self.introduces(last):
                 return []
@@ -921,11 +925,12 @@ class Blocks:
             if following is None:
                 return []
             if set(following.kinds) == {CONTINUATION_BLOCK}:
-                done = self.finishes(following, last) if wide else self.continues(following)
+                done = self.continues(following) or (
+                    wide and head and self.finishes(following, last))
                 return out + [following] if done else []
             if "li" in following.kinds or not set(following.kinds) <= {"dd", BLOCK_MATH}:
                 return []
-            if wide and "dd" in following.kinds and not self.is_display(following) \
+            if wide and head and "dd" in following.kinds and not self.is_display(following) \
                     and set(last.kinds) <= CONTINUED_FROM and self.finishes(following, last):
                 return out + [following]
             out.append(following)

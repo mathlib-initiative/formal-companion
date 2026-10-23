@@ -183,6 +183,11 @@ def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None
             absorbed = [find(d, where) for d in drops]
             if keep is None or any(a is None for a in absorbed) or len(problems) > before:
                 continue
+            if any(a is keep for a in absorbed) or \
+                    len({id(a) for a in absorbed}) != len(absorbed):
+                # op_problems refuses a repeated item; this guards one passage named twice
+                problems.append(f"{where}: merge names one passage twice")
+                continue
             for item, d in zip(drops, absorbed):
                 # the merged passage's provisional span orders the next drop against it
                 # (passage_ids.py writes the real one)

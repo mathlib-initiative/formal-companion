@@ -37,8 +37,9 @@ fresh call with the revision prompt.  What this file adds to tend's loop:
 * **The tamper guard.**  Around every reviewer call: a changed HEAD, a changed
   tracked file or a new untracked file outside ``.tend/`` is undone with ``git reset
   --hard <head>`` and ``git clean -fd -e .tend``, and counted.
-* **audit_failed.**  A step still invalid after its one retry, or round files the
-  merge refuses, end the round as ``merge --audit-failed``: approve, counted.
+* **audit_failed.**  A step still invalid after its one retry, round files the
+  merge refuses, or a rendering or collateral that fails on its input (any exit but
+  0 or 3), end the round as ``merge --audit-failed``: approve, counted.
 * **Revert.**  The merge's ``revert`` is a request the bridge writes and does not
   record; the next worker turn restores the snapshot's bytes and commits them with
   no agent call, and the reviewer approves when the document's sha256 is the
@@ -46,6 +47,10 @@ fresh call with the revision prompt.  What this file adds to tend's loop:
 * **The gate-loop reset.**  A revision tend's pre-review gate (or the precheck)
   refuses ``GATE_RESETS`` times is reset to the round's reviewed commit with no agent
   call, so the next review finds no progress and approves.
+* **No progress.**  A reviewer turn whose document is the very bytes the last round
+  rejected approves mechanically, with no agent call and counted (``no_progress``): a
+  check of an unchanged document has nothing to judge, and the last round's ops file
+  would be re-applied as collateral the document does not hold.
 * **The revision prompt** is chosen by the last event: the round's verdicts after a
   rejection, the gate's refusal after a refused commit -- never "a reviewer rejected"
   after a gate failure.
@@ -135,6 +140,11 @@ class Infra(Exception):
 
 class Refused(Exception):
     """The turn could not finish (exit 1); logged, never a verdict."""
+
+
+class StepFailed(Exception):
+    """A host tool of the round failed on its input: the round is ``audit_failed``, so a
+    deterministic failure never loops the reviewer turn on exit 1."""
 
 
 def stamp() -> str:
@@ -297,7 +307,7 @@ class Turn:
                 "last": None, "rejections": 0, "worktrees": [],
                 "counts": {"reviewer_tampered": 0, "gate_resets": 0, "audit_failed": 0,
                            "precheck_refused": 0, "reverts": 0, "retries": 0,
-                           "unaudited": 0, "repair_invalid": 0},
+                           "unaudited": 0, "repair_invalid": 0, "no_progress": 0},
                 "events": []}
 
     def load(self) -> dict:
@@ -590,8 +600,12 @@ class Turn:
         if code != 0:
             raise Infra(EXIT_TEMPFAIL, f"the precheck gate could not run (exit {code}): "
                                        f"{(err or out).strip()[-300:]}")
-        state["approved"] = None
         k = state["round"]
+        prior = state["rounds"].get(str(k - 1)) if k > 1 else None
+        if prior and prior.get("decision") == "request_changes" \
+                and prior.get("document_sha256") == sha:
+            return self.no_progress(state, k, sha)
+        state["approved"] = None
         rd = state["rounds"].get(str(k))
         if rd is not None and rd.get("document_sha256") != sha:
             self.discard(k)
@@ -612,8 +626,24 @@ class Turn:
             self.event(state, "approved", decision="approve", sha256=sha, unaudited=True)
             return self.emit(self.review("approve", f"Audit round {k}: not audited ({why}); "
                                                     f"approved after the gate's check."))
-        verdicts = self.round1(state, rd) if k == 1 else self.round_later(state, rd, k)
+        try:
+            verdicts = self.round1(state, rd) if k == 1 else self.round_later(state, rd, k)
+        except StepFailed as exc:
+            verdicts = self.failed(state, k, str(exc))
         return self.decided(state, rd, k, verdicts)
+
+    def no_progress(self, state: dict, k: int, sha: str | None) -> int:
+        """Round k's document is the one round k - 1 rejected (a gate-loop reset, or a
+        revision that changed nothing): approve it mechanically, counted."""
+        counts = state["counts"]
+        counts["no_progress"] = int(counts.get("no_progress") or 0) + 1
+        state["revision"] = None
+        why = f"no progress since round {k - 1}"
+        state["approved"] = {"round": k - 1, "sha256": sha, "why": why}
+        self.event(state, "approved", decision="approve", sha256=sha, no_progress=k - 1)
+        return self.emit(self.review("approve", f"Audit round {k}: approved mechanically, {why}: "
+                                                f"the document is the one round {k - 1} "
+                                                f"reviewed (no agent call)."))
 
     def reverted(self, state: dict, pending: dict, sha: str | None) -> int:
         if sha == pending.get("sha256"):
@@ -691,7 +721,10 @@ class Turn:
             args += ["--previous", self.m(previous)]
         if self.part_bytes:
             args += ["--part-bytes", self.part_bytes]
-        self.need(self.tool("inventory_render.py", *args), "the rendering")
+        code, out, err = self.tool("inventory_render.py", *args)
+        if code != 0:
+            raise StepFailed(f"the rendering failed (exit {code}): "
+                             + "; ".join(invalid_lines(out, err)[:5]))
         for path in self.mirror.iterdir():
             if path.name.startswith(f"r{k}.render.") or path.name == f"r{k}.diff.md":
                 self.collect(path.name)
@@ -861,7 +894,10 @@ class Turn:
                  self.doc_rel, "--verdicts", self.m(prev), "--out", self.m(coll)]
         if has_ops:
             cargs += ["--ops", self.m(ops)]
-        self.need(self.tool("inventory_audit.py", *cargs), "the collateral")
+        code, out, err = self.tool("inventory_audit.py", *cargs)
+        if code != 0:
+            raise StepFailed(f"the collateral failed (exit {code}): "
+                             + "; ".join(invalid_lines(out, err)[:5]))
         self.collect(coll)
         has_repair = self.repair_valid(k - 1)
         if not has_repair and (self.auth / repair).is_file():
@@ -1039,8 +1075,8 @@ class Turn:
 
     def revision_call(self, state: dict, k: int, session: int | None, sessions: int,
                       ids: list[str], tail: str) -> Path:
-        files = [f"r{k}.verdicts.json", f"r{k}.document.json", f"r{k}.ops.json",
-                 f"r{k}.repair.json"]
+        files = [f"r{k}.verdicts.json", f"r{k}.document.json", f"r{k}.collateral.json",
+                 f"r{k}.ops.json", f"r{k}.repair.json"]
         self.stage(files)
         ops_check = ["validate", "--kind", "ops", "--file", self.m(f"r{k}.ops.json"),
                      "--document", self.doc_rel, "--verdicts", self.m(f"r{k}.verdicts.json")]
@@ -1062,6 +1098,9 @@ class Turn:
                       + (", ".join(ids) if ids else "none") + " (any others belong to the "
                       "other sessions).",
                       f"- The snapshot they name: {self.m(f'r{k}.document.json')}."]
+            if (self.auth / f"r{k}.collateral.json").is_file():
+                lines.append(f"- The collateral a `revert` verdict names: "
+                             f"{self.m(f'r{k}.collateral.json')}.")
         lines += [f"- Your files: {self.m(f'r{k}.ops.json')} and {self.m(f'r{k}.repair.json')}; "
                   f"earlier sessions' entries are in them: keep them and add yours.",
                   f"- Check them before you finish: {self.validate_line(ops_check)} and, at "

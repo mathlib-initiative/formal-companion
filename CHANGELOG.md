@@ -106,6 +106,28 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **Review fixes to the audited inventory and the wide bound**, before any run names either.
+  *The wide bound's kinds guard reads the run's head* (`locate_text.Blocks.runs_on(…, wide=True)`,
+  docs/proposals/statement-cut.md §3.1): a `dt` term or a quotation no longer runs on into a
+  second `dd`, or into a paragraph that opens with a formula, once an introducing `dd` sits
+  between; a quotation's sentence still runs on into a paragraph that continues it. Over the
+  pilots' 83 articles no wide run and no wide extent moves (969 runs, every block start), and
+  inv-pilot-2 re-gated under (3, 3, 3) still counts 0 widened, 15 wide starts, 1 unheld.
+  *The rule card says what the gate allows*: a text-only `dd` that starts with a capital stays
+  refused (one that goes on lower-case is admitted), and a mark is crossed before any block that
+  finishes the sentence; C7 says `statement` carries the hypotheses and objects so it reads on
+  its own (and `statement_misstates` names C7), and C9 that a theorem stated only in parts takes
+  the passage that states its first part. *A merge that drops one passage twice* is refused by
+  `validate --kind ops` and by `inventory_edit.apply` (it once raised in `list.remove`, which
+  crashed `collateral` and left the reviewer turn exiting 1 on every retry), and a rendering or
+  collateral that fails on its input ends the round as `audit_failed` instead of exit 1.
+  *No progress is mechanical*: a reviewer turn whose document is the bytes the last round
+  rejected (a gate-loop reset, or a revision that changed nothing) approves with no agent call,
+  counted as `no_progress`, so no check is paid for and the stale ops file is never re-applied
+  as collateral. *A `revert` verdict reaches the worker it is meant for*: the revision stages
+  `r<k>.collateral.json` and its prompt says how to put an entry's `before` back. Tests cover
+  every refusal of `audit_turn.py`'s configuration (exit 78), the missing prompt (66), a `.tend`
+  symlink and the revert-attempt limit (exit 1). The unaudited path is unchanged.
 - **The flip of the wide bound: `cf plan-locate` writes statement-cut rule 3**
   (`docs/proposals/statement-cut.md` §7). Every gate.json it plans now names `judgment_rules` 3,
   `span_end_rule` 3 and `statement_cut_rule` 3 (`cflib.vocab.STATEMENT_CUT_RULE =
@@ -143,7 +165,8 @@ release has something to say.
   `dd` that finishes the sentence or into a paragraph that opens with a formula is admitted.
   Its refusal has words of its own. Rule 1's and rule 2's checks, messages and counts are the
   ones they were, and so is the refusal of span-end rule 3 without a statement-cut rule, which
-  only a broken gate.json prints. The pair (3, 3) is admitted, (3, 1) and (3, 2) are exit 3.
+  only a broken gate.json prints. The pair (3, 3) is admitted beside (2, 1) and (3, 2);
+  statement-cut rule 3 with span-end rule 1 or 2, (1, 3) and (2, 3), is exit 3.
   Under rule 3 the receipt's `cut` block adds `widened` (formal passages past their loose
   extent: the merges only the wide bound admits), `wide_starts` and `wide_unheld` (over
   `Blocks.wide_tails`), in `harvest.gate_corpus.CUT_COUNTS_3`, with a `cut, wide:` receipt

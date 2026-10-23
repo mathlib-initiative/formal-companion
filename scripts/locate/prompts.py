@@ -148,10 +148,12 @@ _GATE_BOUNDS = {
         "except that it runs on into the displays its last sentence introduces and the block "
         "that finishes that sentence after them, and over the items of one list of a compound "
         "statement (statement-cut rule {rule}). Finishing the sentence includes crossing a "
-        "footnote mark before its display, a `dd` that holds text with its display, and a "
-        "paragraph that opens with a formula when the sentence before it has not ended. A "
-        "text-only `dd`, and a capitalised \"Then\" between two displays, stay refused. A "
-        "merge that needs more than that is refused at the gate: say so in its reason."),
+        "footnote mark between the blocks, and a `dd` or paragraph whose first word goes on "
+        "with the sentence (lower-case, or a formula followed by a lower-case word after a "
+        "sentence that ends with a word), from a paragraph, a `dd` or a display but never "
+        "from a `dt` term or a quotation. A text-only `dd` that starts with a capital, and a "
+        "capitalised \"Then\" between two displays, stay refused. A merge that needs more "
+        "than that is refused at the gate: say so in its reason."),
 }
 
 
