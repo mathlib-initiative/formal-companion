@@ -1,0 +1,48 @@
+## THIS IS AUDIT REVISION $CF_AUDIT_ROUND — an auditor and an independent skeptic judged your document
+
+Your document `$CF_AUDIT_DOCUMENT` is committed and passed the gate. Round $CF_AUDIT_ROUND's review judged its cut against the rules above and found what is listed in `.tend/audit/r$CF_AUDIT_ROUND.verdicts.json`: `verdicts`, each with an `id` (`r$CF_AUDIT_ROUND-v001`, …), the `item` it names in the snapshot the review read (`.tend/audit/r$CF_AUDIT_ROUND.document.json`), the `verdict`, the `rule` (the cut rules above, numbered 1 to 10 as they come: the test, units, displays, inside a sentence, lists, proofs, context, conjuncts, the subject, PD9) and an `action`. "This session" below names the verdicts this session applies, at most {{verdicts_per_session}}; Read the file in parts when it is long. Apply them; do not re-cut the document. You do not rewrite the document by hand either: every change is an operation that cites the verdict it applies, and a change no operation produces is found and judged against the revision.
+
+1. **Write the operations.** Work through your verdicts in document order. For each one you apply, add its operations to `.tend/audit/r$CF_AUDIT_ROUND.ops.json`, each citing `"verdict": "<its id>"`; a neighbour's end or start that a verdict forces cites `"neighbour_of": "<its id>"`. Change nothing else: a cut no verdict names is the reviewed cut, so leave it. Items name the passages of the snapshot, as the verdicts do.
+
+```json
+{"schema": "{{audit_schema}}", "kind": "ops", "round": $CF_AUDIT_ROUND, "source_id": "$CF_AUDIT_SOURCE",
+ "ops": [
+   {"op": "merge", "keep": "In-text #3fa91c07", "drop": "In-text #0000c0de", "verdict": "r1-v001"},
+   {"op": "split", "item": "In-text #00c0ffee", "at": {"exact": "Moreover"}, "verdict": "r1-v002",
+    "new": {"statement": "…", "passage_kind": "theorem", "scope": "formal_math", "prominence": "supporting"}},
+   {"op": "set", "item": "In-text #0badf00d", "fields": {"passage_kind": "theorem"}, "verdict": "r1-v003"}]}
+```
+
+   The operations are {{edit_ops}}, and the fields they set {{edit_fields}}:
+   - `merge {keep, drop, fields?}`: `drop` (an item or a list) joins `keep`, which starts at the earlier start (with that passage's quote and finder), ends where the one ending later ended, and keeps its own other fields, then `fields`;
+   - `split {item, at, new, earlier?}`: a new passage starts at the quote `at` inside `item` and ends where `item` ended; `new` gives its `statement`, `passage_kind`, `scope` and `prominence` (and may give `section` and `fragment`); `item` loses its `until` unless `earlier` gives one;
+   - `set {item, fields}`: `null` removes `until`, `shape` and `conjuncts` and empties `concept`; `quote` moves the start; `quote_end` cuts the quote's `exact` after its first occurrence of those words;
+   - `add {after, quote, fields}`: a passage from text no passage holds, after `after` (null: first), `fields` as a split's `new`;
+   - `drop {item}`.
+
+   A passage you scope out of `formal_math` becomes `supporting` and loses `shape` and `conjuncts`. A quote follows the document's rule: verbatim from the layer, starting at a word.
+2. **Apply, re-key, gate.** Run the edit, the id tool and the gate's check:
+
+```bash
+{{edit_command}} --document $CF_AUDIT_DOCUMENT --ops .tend/audit/r$CF_AUDIT_ROUND.ops.json --base .tend/audit/r$CF_AUDIT_ROUND.document.json --verdicts .tend/audit/r$CF_AUDIT_ROUND.verdicts.json --write
+{{ids_command}} --source-dir {{sources_dir}}/$CF_AUDIT_SOURCE --document $CF_AUDIT_DOCUMENT --write
+{{gate_command}} --findings $CF_AUDIT_DOCUMENT
+```
+
+   The edit applies the whole ops file to the snapshot every time, so after a refusal fix the operation and run all three again. Without `--write` the edit is a dry run that prints what it would do. To see a passage of the document with the layer around it: `{{passage_command}} '<item>' --document $CF_AUDIT_DOCUMENT`.
+3. **Gate refusals.** A verdict the gate refuses after a correct application: take its operations out, and record it as `gate_refused` with the gate's refusal line, verbatim, as `gate_line`.
+4. **Disputes.** A verdict the cut rules as written do not support: do not apply it, and record it as `disputed`, with the rule and at most {{action_words}} words in `why`. A fresh skeptic rules on it. Do not dispute a verdict because applying it is work, and do not argue any verdict you applied.
+5. **Report.** `.tend/audit/r$CF_AUDIT_ROUND.repair.json`, one entry per verdict of this session beside the earlier sessions' entries, so that after the last session it holds one for every verdict of the round:
+
+```json
+{"schema": "{{audit_schema}}", "kind": "repair", "round": $CF_AUDIT_ROUND, "source_id": "$CF_AUDIT_SOURCE",
+ "entries": [
+   {"verdict_id": "r1-v001", "status": "applied", "why": ""},
+   {"verdict_id": "r1-v004", "status": "gate_refused", "why": "the merge crosses a list item",
+    "gate_line": "<the gate's refusal line, verbatim>"}]}
+```
+
+   `status` is one of {{repair_statuses}}; any but `applied` gives its `why`.
+6. **Commit and finish.** Run the validator lines "This session" gives. Commit only your document and the task file, never anything under `.tend/`, then finish as the task prompt above says.
+
+The ops and repair files may already hold entries: an earlier session's, or your own before the gate refused a commit. Keep them, and add yours.

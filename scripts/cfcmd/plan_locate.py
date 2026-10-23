@@ -8,6 +8,14 @@ planner: "sourceset-scoped, not companion-scoped") with the three presets
     cf plan-locate --preset locate --sourceset wpm --universe u1 --inventory-run inv-1
     cf plan-locate --preset locate-challenge --sourceset wpm --universe u1 --challenge-of loc-1
 
+An inventory plan with ``--audit-rounds 2|3`` is **audited** (references/
+locate-documents.md section 13): each document is judged in up to that many review
+rounds by an auditor or checker and a skeptic, and repaired in between with recorded
+edits.  The plan records ``locate.audit`` in ``run.yaml``, renders the audit's prompts
+(``locate.prompts.AUDIT_TEMPLATES``), stages the audit's host tools in the gate directory
+and exports ``CF_AUDIT_RULE`` and ``CF_AUDIT_ROUNDS`` with the audit's allowlists in both
+wrappers (``locate.tend_root.wrapper_env``).  Without it a plan is what it always was.
+
 Writes ``runs/<run-id>/`` in the layout of references/locate-documents.md
 section 9: ``run.yaml`` (with its ``locate`` block: the sourceset pin, the
 universe and its two databases, the arm, the skill commit, the sha of every
@@ -61,6 +69,9 @@ NAME = "plan-locate"
 #: ``locate.config_shas.gate_files``, with any file naming a run path, since their bytes
 #: differ between two runs of one configuration and would refuse every A/A replicate
 RUN_SPECIFIC_STAGED = ("gate/gate.json", "gate/tasks/*", "bin/*-agent.sh")
+#: the one bridge that hands an audited run's turns to ``audit_turn.py``, with the one
+#: agent CLI it calls (``plan.make_tend_root.BRIDGE_SCRIPTS``)
+AUDIT_BRIDGE = "agentbox-claude"
 
 
 def register(subparsers) -> None:
@@ -127,6 +138,13 @@ def register(subparsers) -> None:
                    help="the host's owner agreed to this run; recorded in run.yaml")
     p.add_argument("--allow-sandbox-bypass", action="store_true",
                    help="stage CF_ALLOW_SANDBOX_BYPASS=1: the agents run with approvals off")
+    p.add_argument("--audit-rounds", type=int, default=None, metavar="R",
+                   choices=vocab.AUDIT_REVIEW_ROUNDS,
+                   help="locate-inventory: audit each document in at most R review rounds "
+                        f"({' or '.join(map(str, vocab.AUDIT_REVIEW_ROUNDS))}): an auditor or "
+                        "checker and a skeptic judge the cut, a fixed table decides, and the "
+                        "worker repairs with recorded edits (references/locate-documents.md "
+                        "section 13); recorded in run.yaml locate.audit")
     p.add_argument("--agent-timeout", default=None, metavar="DURATION",
                    help="stage CF_AGENT_TIMEOUT=DURATION into the run's two wrappers, so every "
                         "agent call runs under it rather than the bridge's default "
@@ -158,6 +176,10 @@ def _check_mode_flags(args) -> None:
         raise CfError("--source does not narrow a challenge: it judges every required record "
                       "of the --challenge-of runs",
                       hint="challenge fewer locate runs per plan, or lower the sample rates")
+    if args.audit_rounds is not None and args.preset != vocab.LOCATE_INVENTORY:
+        raise CfError("--audit-rounds belongs to the locate-inventory preset",
+                      hint="the audit judges an inventory's cut; a locate run's records are "
+                           "judged by its challenge")
     if args.max_open_tasks is not None and args.max_open_tasks < 1:
         raise CfError(f"--max-open-tasks must be at least 1, not {args.max_open_tasks}",
                       hint="omit it to leave tend's open tasks unbounded")
@@ -192,6 +214,17 @@ def _check_run_id(paths, args, run_id: str, preset) -> None:
                           f"{previous.get('preset') if isinstance(previous, dict) else '?'!r}, "
                           f"not {preset.name!r}",
                           hint="re-planning keeps a run's preset; use a new --run-id")
+        # an audit is no option of a re-plan: its prompts, gate tools and wrappers would be
+        # left beside an unaudited plan's, or missing from an audited one's
+        was = (previous.get("locate") or {}).get("audit")
+        now = lplan.audit_block(getattr(args, "audit_rounds", None))
+        if was != now:
+            def said(block):
+                return (f"audited in {block['review_rounds']} review rounds"
+                        if isinstance(block, dict) else "unaudited")
+            raise CfError(f"run {run_id} exists and was planned {said(was)}, not {said(now)}",
+                          hint="re-planning keeps a run's audit (--audit-rounds); use a new "
+                               "--run-id")
 
 
 def _check_harvested_challenge(paths, run_id: str, doc: dict) -> None:
@@ -237,6 +270,11 @@ def run(args) -> int:
     _check_mode_flags(args)
     agent_timeout = check_agent_timeout(args.agent_timeout)
     preset = lp.get(args.preset)
+    audit = lplan.audit_block(args.audit_rounds)
+    if audit is not None and preset.bridge != AUDIT_BRIDGE:
+        raise CfError(f"preset {preset.name}'s bridge {preset.bridge!r} cannot run an audit",
+                      hint=f"the turn machine runs on the {AUDIT_BRIDGE} bridge only "
+                           "(references/locate-documents.md section 13.9)")
     run_id = args.run_id or f"{preset.name}-{_dt.date.today().isoformat()}"
     _check_run_id(paths, args, run_id, preset)
     # from the statement cut's flip on, a plan over an inventory or locate run of the
@@ -357,7 +395,8 @@ def run(args) -> int:
     lplan.write_tasks(tasks, paths.tasks_dir(run_id), layout=layouts["host"],
                       max_open_tasks=args.max_open_tasks)
     ctx = lprompts.build_context(preset, run_id=run_id, host=layouts["host"],
-                                 universe=universe, per_task=args.per_task)
+                                 universe=universe, per_task=args.per_task,
+                                 audit_rounds=args.audit_rounds)
     prompts = lprompts.render_prompts(preset, ctx, paths.prompts_dir(run_id))
     agent = {k: v for k, v in {"agent_model": model,
                                "reviewer_agent_model": ws.model("reviewer") or model,
@@ -366,7 +405,7 @@ def run(args) -> int:
         layout_host=layouts["host"], layout_local=layouts["local"], preset=preset,
         run_id=run_id, gate_config=gate_remote, prompts=prompts, tasks=tasks, model=model,
         agent=agent, allow_sandbox_bypass=bool(args.allow_sandbox_bypass),
-        agent_timeout=agent_timeout,
+        agent_timeout=agent_timeout, audit_rounds=args.audit_rounds,
         context={"sourceset_pin": f"{manifest.sourceset_id} v{manifest.version} "
                                   f"{manifest.sha256[:12]}",
                  "universe_pin": f"{universe.id} {universe.sha256[:12]}",
@@ -440,7 +479,7 @@ def run(args) -> int:
                 preset, built_root["gate_files"], Path(layouts["local"]["tend_root"]),
                 run_paths=[layouts["host"]["tend_root"], layouts["host"]["gate_dir"],
                            layouts["host"]["entrypoint"], str(rd)],
-                agents=built_root["agents"]),
+                agents=built_root["agents"], audited=audit is not None),
             "per_task": args.per_task if preset.mode == vocab.LOCATE else None,
             "subject_only": bool(args.subject_only),
             "seed": args.seed if preset.mode == vocab.LOCATE_CHALLENGE else None,
@@ -461,6 +500,10 @@ def run(args) -> int:
     status = lplan.status_rule() if preset.mode == vocab.LOCATE else None
     if status is not None:
         run_doc["locate"]["status_rule"] = status
+    # an audited inventory's decision rule and review rounds (references/
+    # locate-documents.md section 13); absent, the run is unaudited
+    if audit is not None:
+        run_doc["locate"]["audit"] = audit
     # `cf campaign plan` stamped this shard; a re-plan (of the same preset:
     # _check_run_id) keeps the stamp, so the export still seals it
     # under its campaign rather than as `run:<id>` (export.campaign_token), the
@@ -487,6 +530,9 @@ def run(args) -> int:
           f"{limits['reviewers']} reviewers ({limits['source']['reviewers']})")
     if agent_timeout:
         print(f"  timeout  : CF_AGENT_TIMEOUT={agent_timeout} in both wrappers (bin/*-agent.sh)")
+    if audit is not None:
+        print(f"  audit    : rule {audit['rule']}, at most {audit['review_rounds']} review "
+              f"rounds a document (CF_AUDIT_RULE, CF_AUDIT_ROUNDS in both wrappers)")
     if skipped:
         print(f"  skipped  : {len(skipped)} source(s) — listed in run.yaml locate.skipped")
     if not consent and args.host != lplan.LOCAL:
@@ -497,11 +543,12 @@ def run(args) -> int:
 
 
 def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
-                run_paths: list[str], agents: dict) -> dict[str, dict]:
+                run_paths: list[str], agents: dict, audited: bool = False) -> dict[str, dict]:
     """``locate.config_shas``: the configuration a run was planned with, free of its id.
 
     ``prompts`` is the sha256 of each ``templates/prompts/`` file the plan
-    rendered (the rendered prompts embed the run's own paths, and
+    rendered (an audited plan's include the audit's; the rendered prompts embed the
+    run's own paths, and
     ``run.yaml``'s ``prompts`` keeps their shas); ``gate_files`` is
     ``locate.gate_files`` less what is the run's own -- ``gate/gate.json``, the
     task manifests, the ``bin/*-agent.sh`` wrappers, and any staged file whose
@@ -517,7 +564,7 @@ def config_shas(preset, gate_files: dict[str, str], tend_root: Path, *,
     """
     tdir = templates_dir() / "prompts"
     prompts = {name: sha256_file(tdir / name)
-               for name in sorted(set(lprompts.template_files(preset).values()))}
+               for name in sorted(set(lprompts.template_files(preset, audited).values()))}
     needles = [p.encode("utf-8") for p in run_paths if p]
     kept: dict[str, str] = {}
     for rel, sha in sorted(gate_files.items()):

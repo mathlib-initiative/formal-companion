@@ -1322,10 +1322,9 @@ class TestOnlyAnAuditedPlanStagesTheTools(Campaign):
         self.assertEqual(ltr.gate_file_rows(), ltr.GATE_FILES)
 
     def test_an_audited_plan_stages_and_pins_all_three(self):
-        staged = functools.partial(ltr.stage, audited=True)
-        with mock.patch.object(ltr, "stage", staged):
-            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
-                                "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-a")
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-a",
+                            "--audit-rounds", "3")
         self.assertEqual(code, 0, out + err)
         gate_dir = self.paths.tend_root("inv-a") / "gate"
         pins = read_yaml(self.paths.run_yaml("inv-a"))["locate"]["gate_files"]
@@ -1339,11 +1338,10 @@ class TestOnlyAnAuditedPlanStagesTheTools(Campaign):
     def test_a_missing_tool_is_a_planning_error_for_an_audited_plan(self):
         absent = "/".join(("scripts", "gate", "no_such_tool.py"))   # not a citation
         rows = (*ltr.AUDIT_GATE_FILES, (absent, "no_such_tool.py"))
-        staged = functools.partial(ltr.stage, audited=True)
-        with mock.patch.object(ltr, "AUDIT_GATE_FILES", rows), \
-                mock.patch.object(ltr, "stage", staged):
+        with mock.patch.object(ltr, "AUDIT_GATE_FILES", rows):
             code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
-                                "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-b")
+                                "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-b",
+                                "--audit-rounds", "2")
         self.assertNotEqual(code, 0)
         self.assertIn("no_such_tool.py", out + err)
 

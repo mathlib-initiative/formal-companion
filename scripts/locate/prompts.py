@@ -10,8 +10,23 @@ locate run writes those four names from ``templates/prompts/locate-*.md.tmpl``:
 * ``worker.md`` -- the mode's own task prompt (``locate-inventory.md.tmpl``,
   ``locate.md.tmpl`` or ``locate-challenge.md.tmpl``) with the document shape
   of references/locate-documents.md sections 2-4;
-* ``reviewer-system.md`` and ``reviewer.md`` -- form and gate output only:
-  judgment lives in the L5 challenge, not in the tend reviewer.
+* ``reviewer-system.md`` and ``reviewer.md`` -- in an unaudited run, form and gate
+  output only: judgment lives in the L5 challenge, not in the tend reviewer.
+
+An **audited** inventory plan (``cf plan-locate --audit-rounds``, references/
+locate-documents.md section 13) judges the cut in the review instead, so its reviewer
+prompts are the audit's and it stages three more (:data:`AUDIT_TEMPLATES`):
+``reviewer-system.md`` from ``locate-inventory-audit-system.md.tmpl``, the rule card
+(the statement cut's rules 1-10 as docs/proposals/statement-cut.md section 3.4 numbers
+them, C1 to C10, a test holding the two together), what the gate's bound allows
+(:func:`gate_bound`) and the reviewer's tools; ``reviewer.md`` the auditor,
+``reviewer-check.md`` the checker, ``reviewer-skeptic.md`` the skeptic, and
+``worker-revision.md`` the repair, which ``audit_turn.py`` appends to ``worker.md``
+in a revision session.  Their slots are the plan's (``{{...}}``) and the turn's
+(``$CF_AUDIT_ROUND``, ``$CF_AUDIT_ROUNDS``, ``$CF_AUDIT_SOURCE``, ``$CF_AUDIT_DOCUMENT``,
+section 13.9), and ``audit_turn.py`` appends each call's own block: what is staged, the
+one file it writes and its validator line.  An unaudited plan renders the four prompts it
+always rendered, byte for byte.
 
 Every invocation is rendered from the run's own host paths, and the renderer
 (``plan.render``) refuses a template with an unfilled slot.
@@ -40,6 +55,16 @@ from plan.render_prompts import finish_sentence
 from . import presets as locate_presets
 
 PROMPT_FILES = ("worker-system.md", "worker.md", "reviewer-system.md", "reviewer.md")
+#: what an audited inventory plan renders each reviewer prompt and the revision from
+#: (references/locate-documents.md section 13.9); its worker prompts are the unaudited ones
+AUDIT_TEMPLATES = {"reviewer-system.md": "locate-inventory-audit-system.md.tmpl",
+                   "reviewer.md": "locate-inventory-audit.md.tmpl",
+                   "reviewer-check.md": "locate-inventory-check.md.tmpl",
+                   "reviewer-skeptic.md": "locate-inventory-skeptic.md.tmpl",
+                   "worker-revision.md": "locate-inventory-revision.md.tmpl"}
+#: the seven prompt files of an audited plan, the turn machine's (``audit_turn.PROMPT_FILES``)
+AUDIT_PROMPT_FILES = PROMPT_FILES + ("reviewer-check.md", "reviewer-skeptic.md",
+                                     "worker-revision.md")
 
 #: the locate gate's exit vocabulary and the lines it prints with each
 #: (``scripts/gate/verify_locate.py``; a test pins these to the gate's own
@@ -99,9 +124,84 @@ def phrase_list(phrases) -> str:
     return ", ".join(f'"{p[:-1]}…"' if p.endswith("*") else f'"{p}"' for p in phrases)
 
 
+def prompt_files(audited: bool = False) -> tuple[str, ...]:
+    """The prompt files a plan renders: the four, or an audited plan's seven."""
+    return AUDIT_PROMPT_FILES if audited else PROMPT_FILES
+
+
+#: what the gate's bound lets a passage cross, by the statement-cut rule a plan writes
+#: (docs/proposals/statement-cut.md sections 3.1 and 3.3): the rule card says it, so an
+#: auditor asks for no merge the gate refuses without saying so
+_GATE_BOUNDS = {
+    vocab.STATEMENT_CUT_CONTINUED: (
+        "The gate holds a passage to its block (a paragraph, a list item, a theorem box), "
+        "except that it runs on into the displays its last sentence introduces and the "
+        "paragraph that finishes that sentence after them, and over the items of one list "
+        "of a compound statement (statement-cut rule {rule}). A merge that needs more than "
+        "that is refused at the gate: say so in its reason."),
+    vocab.STATEMENT_CUT_WIDE: (
+        "The gate holds a passage to its block (a paragraph, a list item, a theorem box), "
+        "except that it runs on into the displays its last sentence introduces and the block "
+        "that finishes that sentence after them, and over the items of one list of a compound "
+        "statement (statement-cut rule {rule}). Finishing the sentence includes crossing a "
+        "footnote mark before its display, a `dd` that holds text with its display, and a "
+        "paragraph that opens with a formula when the sentence before it has not ended. A "
+        "text-only `dd`, and a capitalised \"Then\" between two displays, stay refused. A "
+        "merge that needs more than that is refused at the gate: say so in its reason."),
+}
+
+
+def gate_bound(rule: int | None = None) -> str:
+    """The rule card's "What the gate allows", for the statement-cut rule a plan writes."""
+    rule = vocab.STATEMENT_CUT_RULE if rule is None else rule
+    if rule not in _GATE_BOUNDS:
+        raise ValueError(f"no rule card describes statement-cut rule {rule}")
+    return _GATE_BOUNDS[rule].format(rule=rule)
+
+
+def _ticks(values) -> str:
+    return ", ".join(f"`{v}`" for v in values)
+
+
+def audit_context(host: Mapping[str, str], review_rounds: int) -> dict[str, Any]:
+    """The slots only the audit's templates read (references/locate-documents.md section 13)."""
+    from .tend_root import audit_commands
+    cmd = audit_commands(host["gate_dir"])
+    return {
+        "audited": True,
+        "review_rounds": review_rounds,
+        "audit_rule": vocab.INVENTORY_AUDIT_RULE,
+        "audit_schema": vocab.INVENTORY_AUDIT_SCHEMA,
+        "prompts_dir": host["prompts_dir"],
+        "passage_command": cmd["show"],
+        "edit_command": cmd["edit"],
+        "validate_command": cmd["validate"],
+        "gate_bound": gate_bound(),
+        "audit_verdicts": _ticks(v for v in vocab.AUDIT_VERDICTS if v != "should_be_formal"),
+        "audit_origins": _ticks(vocab.AUDIT_ORIGINS),
+        "check_statuses": _ticks(vocab.AUDIT_CHECK_STATUSES),
+        "repair_statuses": _ticks(vocab.AUDIT_REPAIR_STATUSES),
+        "edit_ops": _ticks(vocab.AUDIT_EDIT_OPS),
+        "edit_fields": _ticks(vocab.AUDIT_EDIT_FIELDS),
+        "reason_words": vocab.AUDIT_REASON_WORDS,
+        "action_words": vocab.AUDIT_ACTION_WORDS,
+        "evidence_words": vocab.AUDIT_EVIDENCE_WORDS,
+        "summary_words": vocab.AUDIT_SUMMARY_WORDS,
+        "max_patterns": vocab.AUDIT_MAX_PATTERNS,
+        "skeptic_floor": vocab.AUDIT_SKEPTIC_FLOOR,
+        "kind_rule_rule": vocab.AUDIT_KIND_RULE_RULE,
+        "verdicts_per_session": vocab.AUDIT_REPAIR_VERDICTS_PER_SESSION,
+    }
+
+
 def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
-                  universe, per_task: int, merge_target_branch: str = "main") -> dict[str, Any]:
-    """Every slot the locate templates read, from the run's host paths and its universe."""
+                  universe, per_task: int, merge_target_branch: str = "main",
+                  audit_rounds: int | None = None) -> dict[str, Any]:
+    """Every slot the locate templates read, from the run's host paths and its universe.
+
+    ``audit_rounds`` (an audited inventory plan's R) adds the audit's slots
+    (:func:`audit_context`); the unaudited templates read none of them.
+    """
     gate_dir = host["gate_dir"]
     # the TOOLS database (references/locate-documents.md section 9): the one the
     # allowlist pins the two tools to, never the gate's check database
@@ -111,7 +211,7 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         lines.append(f"- `{lid}` — {lib.get('repo') or '(no repo url)'} at "
                      f"`{str(lib['commit'])[:12]}`")
     channel = preset.finish_channel
-    return {
+    ctx = {
         "run_id": run_id,
         "mode": preset.mode,
         "schema": vocab.LOCATE_DOCUMENT_SCHEMA,
@@ -156,26 +256,38 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         "finish_via_file": channel == "agent_result",
         "finish_via_stdout": channel == "stdout",
     }
+    if audit_rounds is not None:
+        ctx.update(audit_context(host, audit_rounds))
+    return ctx
 
 
-def template_files(preset: Preset) -> dict[str, str]:
+def template_files(preset: Preset, audited: bool = False) -> dict[str, str]:
     """``{prompt name: the templates/prompts/ file it is rendered from}`` for one preset.
 
     ``run.yaml``'s ``locate.config_shas.prompts`` hashes these files, so a run's
-    prompt configuration is pinned apart from the paths rendered into it.
+    prompt configuration is pinned apart from the paths rendered into it.  An audited
+    plan (an inventory's only) renders its reviewer prompts and the revision from
+    :data:`AUDIT_TEMPLATES`.
     """
-    return {"worker-system.md": "locate-worker-system.md.tmpl",
-            "worker.md": locate_presets.shape(preset.name).worker_template,
-            "reviewer-system.md": "locate-reviewer-system.md.tmpl",
-            "reviewer.md": "locate-reviewer.md.tmpl"}
+    out = {"worker-system.md": "locate-worker-system.md.tmpl",
+           "worker.md": locate_presets.shape(preset.name).worker_template,
+           "reviewer-system.md": "locate-reviewer-system.md.tmpl",
+           "reviewer.md": "locate-reviewer.md.tmpl"}
+    if audited:
+        if preset.mode != vocab.LOCATE_INVENTORY:
+            raise ValueError(f"an audit reviews an inventory, not a {preset.mode} run")
+        out.update(AUDIT_TEMPLATES)
+    return out
 
 
 def render_prompts(preset: Preset, ctx: Mapping[str, Any], out_dir: pathlib.Path | None = None,
                    *, tdir: pathlib.Path | None = None) -> dict[str, str]:
-    """The four prompts of one locate run; written to ``out_dir`` when given."""
+    """The prompts of one locate run, the four or an audited plan's seven (``ctx`` from
+    :func:`build_context`, ``audited`` with the audit's slots); written to ``out_dir`` when
+    given."""
     tdir = pathlib.Path(tdir or (templates_dir() / "prompts"))
     out = {name: render_file(tdir / template, ctx)
-           for name, template in template_files(preset).items()}
+           for name, template in template_files(preset, bool(ctx.get("audited"))).items()}
     if out_dir is not None:
         out_dir.mkdir(parents=True, exist_ok=True)
         for name, text in out.items():

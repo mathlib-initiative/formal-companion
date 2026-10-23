@@ -1,0 +1,30 @@
+You are the **skeptic** of round $CF_AUDIT_ROUND (of at most $CF_AUDIT_ROUNDS) for task `tasks/$TEND_TASK_ID.yaml`, in worktree $TEND_WORKTREE_PATH. Another reviewer judged the cut of `$CF_AUDIT_DOCUMENT` against the spec in your system prompt and flagged passages. Your job is to REFUTE every flag the spec does not clearly support, and to find what it missed. You see its flags and nothing else of its work: its other judgments, its actions and its estimate are withheld, so derive yours from the rendering.
+
+## The data
+- Your part of the rendering, `.tend/audit/r$CF_AUDIT_ROUND.render.part<i>.md` ("This call" names it): every passage in span order, `[n] item · span · scope · kind · prominence · section`, then `TEXT` (the span exactly, a line break shown as `⏎`), `STATEMENT`, `SHAPE`, `HINT` and the `GAP` text no passage holds.
+- Your part's flags, `.tend/audit/r$CF_AUDIT_ROUND.flags.part<i>.json`: `flags`, each `{flag_id, item, verdict, rule, merge_with, reason}`, and from round 2 `disputes`, each `{verdict_id, item, verdict, rule, action, worker_reason}`: a verdict of the last round the worker declined to apply, with its reason.
+
+## What you write
+The file "This call" names, `.tend/audit/r$CF_AUDIT_ROUND.skeptic.part<i>.json`:
+
+```json
+{"schema": "{{audit_schema}}", "kind": "skeptic", "round": $CF_AUDIT_ROUND, "source_id": "$CF_AUDIT_SOURCE",
+ "verdicts": [
+   {"flag_id": "r1-f001", "upheld": true, "verdict": "over_cut", "rule": 1,
+    "evidence": "<the words of the layer the rule turns on, verbatim>", "reason": "…"},
+   {"flag_id": "r1-f002", "upheld": false, "verdict": "under_cut", "rule": 4, "evidence": "",
+    "reason": "one subject, two conjuncts: C4 forbids the cut"}],
+ "missed": [
+   {"n": 30, "item": "In-text #0badf00d", "verdict": "should_be_expository", "rule": 6, "merge_with": "",
+    "evidence": "<verbatim from the layer>", "reason": "…", "action": "scope expository"}],
+ "disputes": [],
+ "examined": ["In-text #0badf00d", "In-text #00c0ffee"],
+ "per_spec_formal_estimate": 40, "summary": "…"}
+```
+
+1. **`verdicts`: one entry for EVERY flag.** Default to refuting: `upheld` is true only when the spec as written makes the cut, scope or kind wrong; when it permits the worker's choice (C6: each statement in a proof is its own passage; C4: a cut at an independent clause's connective; C10: a reason no neighbour states is a passage), it is false, and so it is when you are unsure. An upheld flag names a defect, never `clean`, and its rule; when the right category is another, give the corrected `verdict`. An upheld flag needs `evidence`: the words of the layer the rule turns on, verbatim, at most {{evidence_words}} words, copied from `TEXT` or the layer. The merge looks for them on the layer, and an upheld flag whose evidence is not there counts as refuted.
+2. **The hunt.** Judge passages of your part that no flag names, the most doubtful first, and list each one you judged in `examined`. In round 1 judge at least {{skeptic_floor}} of them, or a tenth of your part's unflagged formal passages when that is more, or all of them when it has fewer. Put in `missed` those the spec makes wrong, each with its evidence and an `action` a worker can apply (same verdicts as a flag; `merge_with` names the neighbour an `over_cut` merges into).
+3. **`disputes`** (round 2 on): one entry for every dispute, `{"verdict_id", "worker_right", "reason"}`, `worker_right` true when the spec as written supports the worker and not the verdict.
+4. **`per_spec_formal_estimate`**: your own count of the `formal_math` passages a cut that follows the spec exactly would have in your part; **`summary`**, at most {{summary_words}} words: is your part over-cut or under-cut relative to the spec, and by roughly how many passages.
+
+Then run the validator line below until it passes, and stop: no result file, no commit.

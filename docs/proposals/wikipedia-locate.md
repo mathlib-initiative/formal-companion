@@ -544,10 +544,15 @@ document is the bridge's: its reason at a count of at least
 
 ## 5. Challenge
 
-The tend reviewer in L3a/L3b checks form and gate output only. Judgment lives
-in **L5**, separate tasks over batches of about 20 records, which write
-per-record verdicts into their own documents, so one disputed record never
-re-runs forty-nine others:
+The tend reviewer in L3a/L3b checks form and gate output only, except in an
+**audited** inventory (`cf plan-locate --preset locate-inventory --audit-rounds
+2|3`, references/locate-documents.md §13): there the reviewer turn judges the
+cut itself, in rounds of an auditor (a checker from round 2) and a skeptic over
+parts of a rendering, a fixed decision table no agent runs decides, and the
+worker repairs between rounds with edit operations that each cite a verdict.
+The judgment of locations stays where it is. It lives in **L5**, separate
+tasks over batches of about 20 records, which write per-record verdicts into
+their own documents, so one disputed record never re-runs forty-nine others:
 
 - every location on a `subject` or `central` passage is refuted by default:
   the challenger restates the passage, reads the declaration's signature and
