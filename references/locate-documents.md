@@ -13,7 +13,8 @@ planner side (`scripts/locate/`: §5's candidates, §6's sealed set, §9's run,
 4 challenge document · 5 candidates file · 6 sealed record set · 7 sourcesets and
 rendered web sources · 8 universes, library indexes and `corpus.sqlite` · 9 a
 locate run on disk · 10 harvested rows and passage outcomes · 11 campaigns · 12 carry-over
-maps · 13 inventory audit records (13.9 the turn machine)
+maps · 13 inventory audit records (13.9 the turn machine, 13.10 the harvest's `audit`
+block)
 
 Every example is synthetic: a made-up article ("Widget lemma", page id 1001,
 revision 2002), made-up libraries `alpha` and `beta`, made-up declarations.
@@ -2357,6 +2358,7 @@ rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
 | `usage.jsonl` | a campaign shard only: the sequencer's `<campaign dir>/usage-<run-id>.jsonl` (§11) |
 | `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<run-id>.json` (§11), `scripts/run/canary_scan.py`'s `{scanned, hits, canaries, canary_sha256}`, the last the sha256 of each canary's UTF-8 bytes it looked for; `cf bench score` refuses a scan that does not list its bench's canary (references/locate-bench.md §8) |
 | `envelopes/` | the tend root's `usage/` `*.json`: the bridge's kept envelope of each agent call, and the record of each call that left none (§9) |
+| `audit/` | an audited inventory run only (`run.yaml` `locate.audit`): the tend root's `audit/` `*.json`, the turn machine's state and round files (§13.9), which the receipt's `audit` block is read from (§13.10) |
 
 A shard is a run whose `run.yaml` carries `locate.campaign` and which that
 campaign's `campaign.yaml` lists; the campaign directory is the rendered
@@ -2371,9 +2373,10 @@ fetched: false, reason, kept_previous?}}` (a shard's rows also carry
 `campaign`) and `host_artifacts_missing`, the EXPECTED files that did not come
 home. `gate.jsonl` is expected — every merged task ran the gate, which logs
 each call — so a harvest without it is **INCOMPLETE** and exits 1, a previous
-harvest's copy notwithstanding; `usage.jsonl` and `canary.json` are not, and
+harvest's copy notwithstanding, and so is an audited run's `audit/`, since every
+task it merged was reviewed by the turn machine, which keeps its state there; `usage.jsonl` and `canary.json` are not, and
 one the host lacks is `absent on the host`, never a failed harvest
-(`envelopes/` is a directory: `test -d`, then its `*.json` files only, its row
+(`envelopes/` and `audit/` are directories: `test -d`, then their `*.json` files only, each row
 carrying `files` and the sha256 over its sorted `path<TAB>sha256` lines). The
 receipt's `cost` block is priced from the first of: `--transcripts`, a landed
 `usage.jsonl`, the landed `envelopes/`. From envelopes (`basis: envelopes`,
@@ -2383,10 +2386,13 @@ under the envelope's `model`, else the run's), and the block carries
 `envelope_count`, `messages_by_model`, `usd_by_model`, `usd_from_price_table`
 (the same tokens priced with `budget.prices`, a cross-check) and
 `unpriced_calls`/`unpriced_seconds` (records of calls that left no priced
-envelope, which make `usd` a lower bound: `cf harvest` warns `LOWER BOUND`, and
-`NO RESPONSES priced` when no envelope was priced, on whichever block the receipt
-carries, and `cf bench score` refuses such a receipt unless `--article-costs`
-prices every article). `cf tally --locate` prints every
+envelope, which make `usd` a lower bound), and, when any envelope's name carries an
+audited call's step (§13.9), `by_step`: `{<step, or the role of a call that names
+none>: {envelopes, usd, unpriced_calls}}`, which a run with no stepped envelope does
+not get. Of a lower bound `cf harvest` warns `LOWER BOUND`, and `NO RESPONSES
+priced` when no envelope was priced, on whichever block the receipt carries, and
+`cf bench score` refuses such a receipt unless `--article-costs` prices every
+article. `cf tally --locate` prints every
 read run's cost line — its source and envelope count — and records it under
 `cost` in the tally report. The harvest then merges `runs.<run-id>` of the sourceset's
 `state.json` through `Sourceset.record_state` — `{status: harvested,
@@ -3151,3 +3157,49 @@ change set. `attempt_cap.py count` prints a task's count.
 **The envelopes** of an audited run's calls name their step (`AUDIT_STEPS`: `audit`, `skeptic`,
 `check`, `revision`); the watchdog reads both names, counts every envelope towards the spend,
 and records `spend_by_step` for a root that has stepped envelopes.
+
+### 13.10 The harvest: the receipt's `audit` block
+
+A remote `cf harvest` of an audited run also fetches the tend root's `audit/` (its `*.json`:
+each task's `state.json` and round files, §10) to `runs/<run-id>/host/audit/`, an expected
+artifact, and `scripts/harvest/audit_summary.py` reads it beside the corpus that landed. A harvest
+that fetched nothing (a local `--from`, a failed transfer) reads the copy a previous harvest left
+there (`source: kept`). The receipt then carries, for a run whose `run.yaml` names
+`locate.audit` and for no other (an unaudited receipt is what it was):
+
+```
+audit: {rule, review_rounds, source: fetched | kept | null, documents, audited,
+  outcomes: {approved, reverted, audit_failed, not_audited, capped, stale, unaudited},
+  stale: [source ids], unaudited: [source ids], not_harvested: [task ids], unreadable: [paths],
+  rounds: {"<k>": {documents, decisions: {approve, request_changes, revert}, rejected,
+                   audit_failed, harm, counts: {<the verdicts files' counts, summed>, by_verdict}}},
+  residual: {documents, actionable, by_verdict, formal, per_formal,
+             kind_other_formal_before, kind_other_formal_after,
+             kind_other_in_proof_or_example_before, kind_other_in_proof_or_example_after},
+  turns: {tasks, rejections, <the states' counts, summed>},
+  per_source: {<source id>: {task_id, outcome, document_sha256, rounds, final_round, decision,
+                             reviewed_round, actionable_by_round, residual?, formal?}},
+  cost_usd: {worker_initial, worker_revision, audit, skeptic, check} | null, cost_calls,
+  cost_unpriced_calls}
+```
+
+- **The outcome** (`AUDIT_OUTCOMES`) of a harvested document is judged by its sha256: the
+  state's `approved` sha256 makes it `approved`, or `reverted`, `audit_failed` or `not_audited`
+  when that approval was a revert, an audit whose output stayed invalid, or an unresolved or empty
+  document; the state's `best` sha256 makes it `capped` (the audited cap's restore); a task the
+  audit saw whose bytes match neither is `stale`, and one the audit directory holds nothing of
+  `unaudited`. `cf harvest` warns of each, and of an audited run with no `audit/` here at all;
+  neither changes `complete`, which the expected artifact's absence already decides.
+- **The rounds** sum each round's verdicts files (§13.7): the decisions, the files' `counts`
+  (round 1's `flagged`, `upheld`, `refuted`, `missed_added`, `kind_rule`, …; a later round's
+  `status_<s>` for each check status, `collateral`, `collateral_harmful`, `regressions`, `new`,
+  …), their `by_verdict`, and how many found harm.
+- **The residual** is the verdicts of the round that reviewed the harvested bytes, the latest
+  whose `document_sha256` is the document's (the last round's, or the one a revert or the cap
+  restored), per formal passage; the kind rule's counts are taken before (round 1) and after
+  over the same documents.
+- **The cost** is the fetched envelopes' dollars by step (`cost.fleet.envelope_by_step`,
+  `AUDIT_COST_STEPS`): a worker envelope named with no step is the first call
+  (`worker_initial`), `revision` its revisions; a reviewer envelope with no step would be
+  named under `reviewer`. The receipt's own `cost` block, priced from those envelopes, carries
+  the same split as `by_step` (§10).

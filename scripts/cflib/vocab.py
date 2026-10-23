@@ -1021,6 +1021,18 @@ AUDIT_DISCUSSION_TAIL = 6000
 #: bridge-written revert requests whose restore the reviewer finds unmatched before the
 #: turn stops with an error
 AUDIT_REVERT_ATTEMPTS = 3
+#: the harvest's ``audit`` block (``harvest/audit_summary.py``, references/locate-documents.md
+#: section 13.10): what became of each harvested document of an audited run.  ``approved``,
+#: ``reverted`` (to the best reviewed snapshot), ``audit_failed`` and ``not_audited`` (an
+#: unresolved document, or one with no passage) are the audit's approvals of exactly the
+#: bytes harvested; ``capped`` is the audited cap's best snapshot; ``stale`` a document the
+#: audit did not approve as harvested; ``unaudited`` one the audit directory never saw
+AUDIT_OUTCOMES = ("approved", "reverted", "audit_failed", "not_audited", "capped", "stale",
+                  "unaudited")
+#: the cost of an audited run's calls by what they were: the worker's first call (an
+#: envelope named with no step), its revisions, and the reviewer's three steps
+AUDIT_COST_STEPS = {"worker_initial": "worker", "worker_revision": "revision",
+                    "audit": "audit", "skeptic": "skeptic", "check": "check"}
 
 # --- the challenge plan (section 5): why a record is in a challenge task, and
 # what the plan says it is owed

@@ -25,6 +25,7 @@ from cflib.yamlio import read_yaml
 
 from cost import fleet as cost_fleet
 from cost import pricing
+from harvest import audit_summary as audit_mod
 from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
 from harvest import harvest_journal, record as record_mod
@@ -150,6 +151,8 @@ def run(args) -> int:
                  "in this corpus was checked against the source text and no witness was "
                  "checked at all. Every number computed from it is unvalidated. Re-run "
                  f"`cf harvest {args.run_id} --gate-config <file>` when you have one.")
+    for line in audit_mod.problems(receipt.get("audit")):
+        log.warn(f"AUDIT of run {args.run_id}: {line}.")
     if not (receipt.get("edition") or {}).get("ok", True):
         log.warn("harvest REFUSED the edition: findings judged against another edition are in "
                  "this corpus. Re-run them against the pinned edition, or pass "
@@ -315,7 +318,35 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
         verify_sha=args.verify_sha, execute=True,
         allow_edition_mismatch=args.allow_edition_mismatch,
         gate_runner=gate_runner(workspace, args, locate=locate, run_doc=data), cost=cost,
-        host_artifacts=host)
+        host_artifacts=host,
+        audit_runner=audit_runner(data, host_dir, host) if locate else None)
+
+
+def audit_runner(data: dict, host_dir: Path, host: dict | None):
+    """An audited run's ``audit`` block builder (``harvest.audit_summary``), else None.
+
+    It reads ``runs/<run>/host/audit/``: what this harvest fetched from the tend root
+    (``source: fetched``), or, when nothing was fetched -- a local ``--from``, a failed
+    transfer -- the copy a previous harvest left there (``kept``); with neither every
+    document is ``unaudited`` and the harvest says so.  The cost by step is read from
+    ``runs/<run>/host/envelopes/`` beside it.  A run whose ``run.yaml`` names no
+    ``locate.audit`` gets None, and its receipt no block.
+    """
+    plan = audit_mod.plan_of(data)
+    if plan is None:
+        return None
+    audit_dir = Path(host_dir) / host_mod.AUDIT
+    envelopes = Path(host_dir) / host_mod.ENVELOPES
+    fetched = bool(((host or {}).get(host_mod.AUDIT) or {}).get("fetched"))
+
+    def _summarise(dest: Path) -> dict:
+        here = audit_dir.is_dir() and not audit_dir.is_symlink()
+        return audit_mod.summarise(
+            dest, plan, audit_dir=audit_dir if here else None,
+            source=(audit_mod.SOURCE_FETCHED if fetched else audit_mod.SOURCE_KEPT),
+            envelopes=envelopes if envelopes.is_dir() else None)
+
+    return _summarise
 
 
 def _check_remote_source(workspace, args, source: dict) -> None:

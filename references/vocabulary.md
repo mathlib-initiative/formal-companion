@@ -1055,6 +1055,14 @@ of a round before the bridge resets the worktree to the round's reviewed commit)
 the bridge's own tail) and `AUDIT_REVERT_ATTEMPTS` (3: the revert requests whose restore the
 reviewer may find unmatched before the turn stops).
 
+**The harvest's values** (`references/locate-documents.md` §13.10, the `audit` block
+`scripts/harvest/audit_summary.py` adds to an audited run's `RECEIPT.json`):
+
+| enum | values |
+|---|---|
+| `AUDIT_OUTCOMES` | `approved` · `reverted` (to the best reviewed snapshot) · `audit_failed` · `not_audited` (an unresolved document, or one with no passage, approved after the precheck) — the audit approved exactly the bytes harvested; `capped` (the audited attempt cap's best snapshot) · `stale` (the audit saw the task, and approved other bytes or none) · `unaudited` (the audit directory holds nothing of the task) — what became of each harvested document of an audited run |
+| `AUDIT_COST_STEPS` | `worker_initial` (a worker envelope named with no step) · `worker_revision` (`revision`) · `audit` · `skeptic` · `check` — the block's `cost_usd`, the envelopes' dollars by what each call was |
+
 **The benchmark's values** (the proposal's §8 and §9):
 
 | enum | values |

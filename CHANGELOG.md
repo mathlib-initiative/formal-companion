@@ -42,6 +42,19 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **`cf harvest` of an audited inventory run carries an `audit` block** (`references/locate-documents.md`
+  §10 and §13.10). The remote harvest also fetches the tend root's `audit/` (its `*.json`: the
+  turn machine's state and round files) to `runs/<run>/host/audit/`, an expected artifact, and
+  `scripts/harvest/audit_summary.py` reads it beside the landed corpus. The receipt's `audit`
+  block gives each document's outcome by its sha256 (`approved`, `reverted`, `audit_failed`,
+  `not_audited`, `capped`, `stale`, `unaudited`), the rounds' verdicts files summed, the residual
+  verdicts of the round that reviewed the harvested bytes per formal passage with the kind
+  rule's counts before and after, the turn machine's counts, and the envelopes' dollars by step.
+  The envelope cost block gains `by_step` (`cost.fleet.envelope_by_step`) when any envelope names
+  a step. A run whose `run.yaml` names no audit fetches nothing more and gets neither key, so its
+  receipt is what it was. The locate e2e driver runs an audited inventory through the planned
+  wrappers, the bridge and the turn machine with a fake agentbox: round 1 rejects, the fake
+  worker applies the operations, round 2 approves, and the receipt carries the block.
 - **`cf plan-locate --audit-rounds 2|3` plans an audited inventory** (`references/locate-documents.md`
   §9 and §13.9). The flag belongs to the locate-inventory preset, and a re-plan keeps a run's
   audit. `run.yaml` records `locate.audit: {rule: 1, review_rounds: R}`, and

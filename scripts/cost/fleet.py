@@ -154,6 +154,60 @@ def _model_usage(entry: Any) -> dict[str, int] | None:
     return out
 
 
+#: the ``by_step`` key of an envelope whose file name is neither form ``agent_call.py`` writes
+STEP_UNNAMED = "unnamed"
+
+
+def envelope_step(name: str) -> tuple[str, bool]:
+    """``(key, stepped)`` of a kept envelope's file name, for ``by_step``.
+
+    An audited run's call is named ``<task>.<role>.<step>.<stamp>.<pid>.json`` and files
+    under its step; any other call under its role (``worker``, ``reviewer``), and a name
+    that is neither form under :data:`STEP_UNNAMED`.  The names are read by
+    ``run.watchdog.envelope_name``, the one reader of both forms
+    (references/locate-documents.md section 13.9).
+    """
+    from run.watchdog import envelope_name  # noqa: PLC0415 - the host reader, stdlib only
+
+    named = envelope_name(name)
+    if not named:
+        return STEP_UNNAMED, False
+    return (named["step"], True) if named["step"] else (named["role"], False)
+
+
+def _add_step(by_step: dict[str, dict], name: str, cost: float | None) -> bool:
+    key, stepped = envelope_step(name)
+    row = by_step.setdefault(key, {"envelopes": 0, "usd": 0.0, "unpriced_calls": 0})
+    row["envelopes"] += 1
+    if cost is None:
+        row["unpriced_calls"] += 1
+    else:
+        row["usd"] = round(row["usd"] + max(0.0, cost), 6)
+    return stepped
+
+
+def envelope_by_step(path: str | Path) -> dict[str, dict]:
+    """``{step or role: {envelopes, usd, unpriced_calls}}`` over the envelopes under *path*.
+
+    Every readable JSON object counts, as :func:`envelope_cost_block` counts it: its
+    ``total_cost_usd`` is the dollars, and a record of a call that left no envelope is
+    an unpriced call (:func:`envelope_step` names the key).  An absent *path* is ``{}``.
+    """
+    root = Path(path)
+    if not root.exists():
+        return {}
+    by_step: dict[str, dict] = {}
+    for file in sorted(p for p in (root.rglob("*.json") if root.is_dir() else [root])
+                       if p.is_file()):
+        try:
+            data = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            _add_step(by_step, file.name, _number(data.get("total_cost_usd")))
+    return dict(sorted(by_step.items()))
+
+
 def envelope_cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]],
                         table_source: str, model: str | None = None) -> dict:
     """The receipt's ``cost`` block from the bridge's kept agent envelopes.
@@ -167,7 +221,11 @@ def envelope_cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, An
     empty stdout) is counted under ``unpriced_calls`` with its seconds, never
     priced at 0, and makes ``usd`` a lower bound.  The tokens are also priced
     with *table* (``usd_from_price_table``), a cross-check of the CLI's own
-    figure.  ``basis`` is ``envelopes``.
+    figure.  ``basis`` is ``envelopes``.  When any envelope's name carries an audited
+    call's step (``agent_call.py --step``), the block also has ``by_step``: every
+    envelope's dollars, count and unpriced calls under its step, or its role when it
+    names none (:func:`envelope_step`); a run with no stepped envelope gets no such
+    key, so its block is what it was.
     """
     root = Path(path)
     if not root.exists():
@@ -180,6 +238,8 @@ def envelope_cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, An
     usd = 0.0
     envelopes = unpriced_calls = unreadable = without_usage = 0
     unpriced_seconds = 0.0
+    by_step: dict[str, dict] = {}
+    stepped = False
 
     def add(name: str, counts: dict[str, int], dollars: float | None) -> None:
         block = tokens.setdefault(name, usage_mod.zero())
@@ -200,6 +260,7 @@ def envelope_cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, An
             continue
         envelopes += 1
         cost = _number(data.get("total_cost_usd"))
+        stepped = _add_step(by_step, file.name, cost) or stepped
         if cost is None:
             call = data.get("cf_agent_call") if isinstance(data.get("cf_agent_call"), dict) else {}
             unpriced_calls += 1
@@ -227,7 +288,7 @@ def envelope_cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, An
         priced = pricing.price(tokens, table)
     except ValueError as exc:
         raise CfError(str(exc), hint="fix workspace.yaml budget.prices (or the --prices file)")
-    return {
+    block = {
         "basis": BASIS_ENVELOPES,
         "source": {"kind": BASIS_ENVELOPES, "path": source_label(path),
                    "files": {"envelopes": envelopes, "unreadable": unreadable}},
@@ -252,6 +313,9 @@ def envelope_cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, An
         "skipped_without_usage": without_usage,
         "unreadable_lines": unreadable,
     }
+    if stepped:
+        block["by_step"] = dict(sorted(by_step.items()))
+    return block
 
 
 def describe(block: Mapping[str, Any], indent: str = "  ") -> list[str]:
@@ -303,6 +367,11 @@ def _describe_envelopes(block: Mapping[str, Any], indent: str) -> list[str]:
                      f"stdout), so the total is a lower bound")
     if block.get("unpriced"):
         lines.append(f"{indent}  not in the price table: {', '.join(block['unpriced'])}")
+    if isinstance(block.get("by_step"), Mapping):
+        lines.append(f"{indent}  by step: " + ", ".join(
+            f"{key} {pricing.format_usd(float(row.get('usd') or 0.0))} "
+            f"({row.get('envelopes', 0)} envelope(s))"
+            for key, row in sorted(block["by_step"].items())))
     lines.append(f"{indent}  prices: {block.get('price_table_source')} "
                  f"(sha256 {str(block.get('price_table_sha256') or '')[:12]})")
     return lines

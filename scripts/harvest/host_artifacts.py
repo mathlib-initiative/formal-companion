@@ -14,7 +14,12 @@ three files the bench and ``cf campaign status`` read stayed on the host:
   ``<campaign dir>/canary-<run-id>.json``;
 * the bridge's kept agent envelopes, ``<tend root>/usage/*.json`` (one per
   agent call, scripts/run/agent_call.py), a directory: what prices a run
-  that has no transcripts and no usage export (``cost.fleet.envelope_cost_block``).
+  that has no transcripts and no usage export (``cost.fleet.envelope_cost_block``);
+* for an audited inventory run (``run.yaml`` ``locate.audit``,
+  references/locate-documents.md section 13.10), the turn machine's
+  ``<tend root>/audit/`` (its ``*.json``: each task's state and round files),
+  a directory, which ``harvest.audit_summary`` reads for the receipt's
+  ``audit`` block.
 
 They land in ``runs/<run>/host/`` (``WorkspacePaths.run_host_dir``), never under
 ``corpus/<run>/``, whose tree is the receipt's manifest.
@@ -22,7 +27,10 @@ They land in ``runs/<run>/host/`` (``WorkspacePaths.run_host_dir``), never under
 **Expected or not.**  The gate log is EXPECTED: every task the host merged ran
 the gate, which appends a line per call, so a remote locate run without one
 lost the record of every gate call; a harvest that cannot bring it home is
-INCOMPLETE (the receipt names it in ``host_artifacts_missing``).  The usage
+INCOMPLETE (the receipt names it in ``host_artifacts_missing``).  So is an
+audited run's ``audit/``: every task the host merged was reviewed by the turn
+machine, which writes its state there, and without it no document's audit is
+known.  The usage
 export and the canary scan are not: a shard run with no ``CF_TRANSCRIPT_DIRS``
 exports no usage at all, and a file the host does not have is recorded as
 absent, never an error.
@@ -47,6 +55,7 @@ from typing import Callable, Sequence
 from cflib import hashing
 from cflib.jsonio import read_json
 from cflib.yamlio import read_yaml
+from harvest import audit_summary
 
 #: the local names, in ``runs/<run>/host/``
 GATE_LOG = "gate.jsonl"
@@ -54,6 +63,8 @@ USAGE = "usage.jsonl"
 CANARY = "canary.json"
 #: a directory: the agent envelopes ``agent_call.py`` kept in the tend root's ``usage/``
 ENVELOPES = "envelopes"
+#: a directory: an audited run's ``<tend root>/audit/`` (``run/audit_turn.py``'s records)
+AUDIT = "audit"
 
 
 def host_tend_root(data: dict, log_dir: str = "") -> str:
@@ -122,6 +133,9 @@ def remote_files(workspace, run_id: str, data: dict) -> list[dict]:
     if tend_root:
         out.append({"name": ENVELOPES, "remote": f"{tend_root}/usage", "dir": True,
                     "expected": False})
+    if tend_root and audit_summary.plan_of(data):
+        out.append({"name": AUDIT, "remote": f"{tend_root}/audit", "dir": True,
+                    "expected": True})
     return out
 
 
@@ -149,7 +163,8 @@ def rsync_argv(ssh_host: str, remote: str, local: Path, *, directory: bool = Fal
     """A plain copy of what the host was asked about first (:func:`exists_argv`).
 
     No ``--ignore-missing-args``: rsync 2.6.9, the one macOS ships, rejects it.
-    A directory (the envelopes) brings its ``*.json`` files and nothing else.
+    A directory (the envelopes, an audit's records) brings its ``*.json`` files and
+    nothing else.
     """
     if directory:
         return ["rsync", "-a", "--no-links", "--prune-empty-dirs", "--include=*.json",
