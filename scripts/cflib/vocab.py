@@ -945,6 +945,65 @@ GATE_CALLER_DIRECTORY = "directory"
 GATE_CALLERS = (GATE_CALLER_VALIDATION, GATE_CALLER_PRE_MERGE, GATE_CALLER_FINDINGS,
                 GATE_CALLER_DIRECTORY)
 
+# --- the inventory audit (references/locate-documents.md section 13): the files an
+# audited inventory run's reviewer turn reads and writes.  ``gate/inventory_audit.py``,
+# which runs on the host with no cflib, keeps a copy of every value; a test pins it
+INVENTORY_AUDIT_SCHEMA = "cf-inventory-audit/1"
+#: the decision table's version (``audit/<n>`` in every verdicts file)
+INVENTORY_AUDIT_RULE = 1
+#: the review rounds an audited plan may name
+AUDIT_REVIEW_ROUNDS = (2, 3)
+#: what an auditor, a checker's new entry or a skeptic says of a passage
+AUDIT_VERDICT_CLEAN = "clean"
+AUDIT_VERDICTS = (AUDIT_VERDICT_CLEAN, "over_cut", "under_cut", "should_be_expository",
+                  "should_be_non_math", "should_be_formal", "redundant", "wrong_kind",
+                  "wrong_prominence", "statement_misstates")
+#: a merged verdict's verdict for a change the checker judged harmful
+AUDIT_VERDICT_REVERT = "revert"
+#: where an audited passage sits
+AUDIT_ORIGINS = ("lead", "theorem_box", "statement_section", "proof", "example", "list_item",
+                 "application_or_extension", "history", "other")
+#: what a checker says of a verdict the round before asked for, and the statuses whose
+#: verdict goes back to the worker
+AUDIT_CHECK_STATUSES = ("applied", "partial", "missing", "wrong", "gate_refused_ok",
+                        "gate_refused_doubtful", "disputed")
+AUDIT_CHECK_ACTIONABLE = ("partial", "missing", "wrong", "gate_refused_doubtful")
+#: what a worker says it did with a verdict
+AUDIT_REPAIR_STATUSES = ("applied", "not_applied", "gate_refused", "disputed")
+#: where a merged verdict came from
+AUDIT_VERDICT_ORIGINS = ("auditor", "skeptic_missed", "kind_rule", "carried", "check_new",
+                         "dispute_refuted", "collateral", "regression")
+#: the decision table's outcomes
+AUDIT_DECISIONS = ("approve", "request_changes", "revert")
+#: the edit tool's operations and the fields they set
+AUDIT_EDIT_OPS = ("merge", "split", "set", "add", "drop")
+AUDIT_EDIT_FIELDS = ("scope", "passage_kind", "prominence", "statement", "shape", "conjuncts",
+                     "until", "concept", "quote", "quote_end")
+#: what a collateral entry says changed
+AUDIT_COLLATERAL_CHANGES = ("hand_edit", "moved", "uncited_op", "ops_refused")
+#: T = max(min, ceil(share * formal passages)): a middle round with fewer actionable
+#: verdicts approves rather than reject for a handful of residuals
+AUDIT_THRESHOLD_MIN = 5
+AUDIT_THRESHOLD_SHARE = 0.03
+#: the round-1 skeptic's hunt: at least max(floor, share * unflagged formal passages)
+AUDIT_SKEPTIC_FLOOR = 10
+AUDIT_SKEPTIC_SHARE = 0.10
+#: word caps of a reason, an action, a skeptic's verbatim evidence and its summary, and
+#: the auditor's patterns
+AUDIT_REASON_WORDS = 30
+AUDIT_ACTION_WORDS = 40
+AUDIT_EVIDENCE_WORDS = 25
+AUDIT_SUMMARY_WORDS = 80
+AUDIT_MAX_PATTERNS = 5
+#: the bytes of rendering one audit, skeptic or check call reads, and the verdicts one
+#: repair session applies
+AUDIT_PART_BYTES = 50_000
+AUDIT_REPAIR_VERDICTS_PER_SESSION = 40
+#: the kind rule: the 3.4 rule its mechanical wrong_kind verdict names
+AUDIT_KIND_RULE_RULE = 6
+#: the first words the rendering hints as a connective start
+AUDIT_CONNECTIVE_HINTS = ("and", "so", "hence", "thus", "therefore", "then", "but")
+
 # --- the challenge plan (section 5): why a record is in a challenge task, and
 # what the plan says it is owed
 CHALLENGE_RULE_REFUTE = "refute_by_default"

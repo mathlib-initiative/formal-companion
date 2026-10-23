@@ -41,6 +41,23 @@ Nothing is released yet: there is no tag, and the version has been `0.2.0`
 since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
+### Added
+- **The inventory audit's host tools, dormant** (`references/locate-documents.md` §13,
+  `cf-inventory-audit/1`). Nothing plans an audited run yet, so an unaudited plan stages,
+  renders and gates exactly as before. `scripts/gate/inventory_render.py` renders a document
+  against its pinned layer (exit 3 on a layer or table that is not the pin): whole, as parts of
+  about 50 KB cut between passages with an index, one passage with `--show`, and a diff against
+  the last snapshot with `--previous`, with the hints `kind-other`, `kind-rule`, `in-proof`,
+  `in-example`, `connective-start` and `widened`. `scripts/gate/inventory_edit.py` applies
+  `merge`, `split`, `set`, `add` and `drop`, each citing a verdict (an operation that cites none
+  is refused), with `concept` and `quote_end` among the fields, and writes only the document it
+  is named. `scripts/gate/inventory_audit.py` holds the one schema: `validate` (callable by an
+  agent), `strip` (what the skeptic sees), `collateral` (every change the cited operations do not
+  produce), and `merge`, the decision table (`audit/1`) with the mechanical `wrong_kind` verdict
+  on a formal `other` passage in a proof or example section and the revert to the best reviewed
+  snapshot. The vocabulary is `cflib.vocab`'s new audit block; `locate.tend_root.AUDIT_GATE_FILES`
+  stages the three only when `stage(audited=True)`, which no planner passes yet.
+
 ### Changed
 - **The gate and the receipt know statement-cut rule 3** (docs/proposals/statement-cut.md
   §2.2 and §3.3). The planner still writes (3, 3, 2), so nothing a run planned now is held to

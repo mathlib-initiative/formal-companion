@@ -47,6 +47,12 @@ returns the sha256 of every file it staged into ``gate/`` and ``bin/`` (the
 task manifests aside), which ``run.yaml`` pins as ``locate.gate_files``, and
 the wrappers' run-independent settings (:func:`agent_settings`), which it pins
 as ``locate.config_shas.agents``.
+
+An audited inventory plan (references/locate-documents.md section 13) stages three
+more host tools beside them, ``AUDIT_GATE_FILES``: ``inventory_render.py``,
+``inventory_edit.py`` and ``inventory_audit.py``, which import the gate and each
+other from the directory and nothing else.  Every other plan stages none of them,
+so its gate directory and its ``locate.gate_files`` pins are the ones it had.
 """
 from __future__ import annotations
 
@@ -76,6 +82,13 @@ GATE_FILES = (
     ("scripts/locate/records.py", "locate_records.py"),
     ("scripts/corpus/corpus_search.py", "corpus_search.py"),
     ("scripts/corpus/corpus_show.py", "corpus_show.py"),
+)
+#: the audit's host tools (references/locate-documents.md section 13), staged beside
+#: ``GATE_FILES`` only for an audited inventory plan
+AUDIT_GATE_FILES = (
+    ("scripts/gate/inventory_audit.py", "inventory_audit.py"),
+    ("scripts/gate/inventory_render.py", "inventory_render.py"),
+    ("scripts/gate/inventory_edit.py", "inventory_edit.py"),
 )
 #: what a locate run's ``bin/`` adds to every run's helpers
 LOCATE_BIN_HELPERS = BRIDGE_HELPERS
@@ -121,6 +134,12 @@ def agent_settings(settings: dict[str, Any], env: dict[str, dict[str, str]]) -> 
             "merge_target": common["CF_MERGE_TARGET"]}
 
 
+def gate_file_rows(audited: bool = False) -> tuple[tuple[str, str], ...]:
+    """The gate directory's files: ``GATE_FILES``, and ``AUDIT_GATE_FILES`` too when the
+    plan is audited."""
+    return GATE_FILES + (AUDIT_GATE_FILES if audited else ())
+
+
 def _copy_tree(src: Path, dest: Path) -> list[Path]:
     if dest.exists():
         shutil.rmtree(dest)
@@ -131,11 +150,13 @@ def _copy_tree(src: Path, dest: Path) -> list[Path]:
 def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
           gate_config: dict, prompts: dict[str, str], tasks: list[TaskSpec], model: str | None,
           agent: dict[str, Any] | None, allow_sandbox_bypass: bool,
-          context: dict[str, Any], agent_timeout: str | None = None) -> dict[str, Any]:
+          context: dict[str, Any], agent_timeout: str | None = None,
+          audited: bool = False) -> dict[str, Any]:
     """Write the root and its locate gate directory; ``{"files", "warnings", "gate_files",
-    "agents"}``."""
+    "agents"}``.  ``audited`` stages the audit's host tools too (:func:`gate_file_rows`)."""
     root = skill_root()
-    missing = [str(root / rel) for rel, _name in GATE_FILES if not (root / rel).is_file()]
+    rows = gate_file_rows(audited)
+    missing = [str(root / rel) for rel, _name in rows if not (root / rel).is_file()]
     if missing:
         # before anything is written: a root whose gate cannot import must never exist
         raise CfError("gate file missing: " + ", ".join(missing),
@@ -158,7 +179,7 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
         context=context, generator="cf plan-locate")
     built["agents"] = agent_settings(built["agent_settings"], env)
     gate = plan.local / "gate"
-    for rel, name in GATE_FILES:
+    for rel, name in rows:
         shutil.copy2(root / rel, gate / name)
         built["files"].append(str(gate / name))
     vendor_dest = gate / "vendor"
