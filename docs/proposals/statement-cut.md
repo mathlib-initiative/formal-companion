@@ -4,11 +4,12 @@
 (constants, keys, prompt slots and the tests that pin them), the four packages of §6.2 (cut,
 gate, fixes and carry), merged, the carry package's `scripts/bench/gold.py` share after the
 fixes package, and the flip (§7), but for what §9 lists as not built; then inv-pilot-1's fixes
-(the continued cut: §2.2, §3.1–3.4) and their own flip (§7). From the flip the planner writes the
-new versions into every run it plans and refuses a run of the earlier flow, and from the second
-it writes span-end rule 3 and statement-cut rule 2; every run planned before either is gated,
-tallied and exported as before (§7's proof). Commands and paths
-written in *italics* are not implemented.**
+(the continued cut: §2.2, §3.1–3.4) and their own flip (§7); then the wide bound of
+inv-pilot-2's repairs (§3.1, §3.3) and its flip (§7). From the flip the planner writes the
+new versions into every run it plans and refuses a run of the earlier flow, from the second
+it writes span-end rule 3 and statement-cut rule 2, and from the third statement-cut rule 3;
+every run planned before any of them is gated, tallied and exported as before (§7's proof).
+Commands and paths written in *italics* are not implemented.**
 
 This document turns the maintainer's answers of 2026-10-21 on statement-level extraction into
 rules precise enough that four builders working in parallel agree on every name. It extends
@@ -228,7 +229,7 @@ compute it and put it on the claim as `relation`; no document writes it.
 |---|---|---|---|
 | `judgment_rules` | gate.json, every mode (as today) | rule 9 of locate and challenge documents; the bench holds gold to it | 1 R1–R7; 2 PD5–PD9; **3** the cut: J1–J4, the challenge rules of §1.4, A1–A3's gate rules |
 | `span_end_rule` | gate.json, every mode (as today) | rule 2's end check of an inventory passage | 1 the end of `until`, else the paragraph; 2 the end of `until`, else the earlier of the extent and the next passage's start (§3.2); **3** the same with the continued extent (§3.1–3.2) |
-| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | 1; **2** rule 10 (b) against the loose continued bound, (h) at most one subject, the receipt's further counts (§3.3); 3 rule 10 (b) against the wide bound, and three more counts (§3.3) |
+| `statement_cut_rule` | gate.json, every mode (new) | rule 10 of an inventory document (§3.3) | 1; 2 rule 10 (b) against the loose continued bound, (h) at most one subject, the receipt's further counts (§3.3); **3** rule 10 (b) against the wide bound, and three more counts (§3.3) |
 | `status_rule` | a locate run's `run.yaml` (`locate.status_rule`); its record set's seal (new) | `derive_status`, the outcomes' owed hunt, the record-set format | 1 decision D1 (absent means 1); **2** the bundle's relation, the owed hunt, `cf-locate-recordset/2` |
 
 `cf plan-locate` writes all four from the flip on (`vocab.JUDGMENT_RULES` is
@@ -236,9 +237,10 @@ compute it and put it on the claim as `relation`; no document writes it.
 beside it), the versions in bold: `span_end_rule` 2 and `statement_cut_rule` 1 from the flip,
 and `span_end_rule` 3 and `statement_cut_rule` 2, the continued cut of inv-pilot-1's fixes
 (`vocab.SPAN_END_CONTINUED`, `STATEMENT_CUT_CONTINUED`), from the flip of those fixes (§7),
-which the gate and `passage_ids.py` knew a commit before. `statement_cut_rule` 3
-(`vocab.STATEMENT_CUT_WIDE`, the wide bound of inv-pilot-2's repairs) the gate knows, and the
-planner does not write yet. Each binds a run only when its
+which the gate and `passage_ids.py` knew a commit before, and `statement_cut_rule` 3
+(`vocab.STATEMENT_CUT_WIDE`, the wide bound of inv-pilot-2's repairs) beside the same
+`span_end_rule` 3 from the flip of the wide bound (§7), which the gate knew before it.
+Each binds a run only when its
 own gate.json or run.yaml names it, so a re-gate, a re-tally and a re-export of a run planned
 before the flip are what they were.
 
@@ -576,7 +578,8 @@ the planner writes it from the flip of inv-pilot-1's fixes on, §7) is rule 1 wi
 **Statement-cut rule 3** (`vocab.STATEMENT_CUT_WIDE`; inv-pilot-2's repairs, whose 16 refused
 merges sat at shapes the loose bound stops at) is rule 2 with two changes. It reads span-end
 rule 3, as rule 2 does (§2.2): no default end moves, so `passage_ids.py`, every `passage_key`
-and the carry are what they are under rule 2. The gate knows it before the planner writes it.
+and the carry are what they are under rule 2. The gate knew it before the planner wrote it,
+from the flip of the wide bound (§7).
 
 - **(b)** reads the wide extent (§3.1) in place of the loose one, so an `until` that keeps a
   sentence's words across a footnote mark, into an indented line (`dd`) that finishes it, or
@@ -1014,6 +1017,27 @@ test that plans as the planner did between the two flips uses
 (2, 1) — keeps the versions its gate.json names, and a locate run planned now over its inventory
 is admitted (§2.2), since locate reads only the inventory's conjuncts. Its proof is the one
 below, over the operator's workspace on the base and on the head.
+
+**The flip of the wide bound** is one commit after the gate learnt statement-cut rule 3 (§2.2,
+§3.3) and the inventory audit that judges the merges it admits was built
+(`references/locate-documents.md` §13): `vocab.STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE`, and
+the gate's inlined copy, so the planner writes `judgment_rules` 3, `span_end_rule` 3 and
+`statement_cut_rule` 3 into every gate.json it plans, the last two a pair the gate reads
+together (`STATEMENT_CUT_SPAN_END`). No prompt
+word changes with it: the worker's prompts ask for no end past the loose bound, which the wide
+bound contains, so no commit renders a prompt that asks for what its own gate refuses; an
+audited plan's rule card says what the wide bound allows (`locate.prompts.gate_bound`, which
+reads the rule the plan writes), and its checker judges every `widened` passage. No default
+end, `passage_key` or carry moves, since rule 3 reads span-end rule 3 as rule 2 does. The e2e
+driver's runs name (3, 3, 3), and its receipt check reads statement-cut rule 3's counts, with
+`widened`, `wide_starts` and `wide_unheld` 0 (its recorded pages hold no footnote mark, no `dd`
+and no paragraph that opens with a formula, so their layers and figures stay). An unaudited
+plan made now is the one the commit before the audit made, but for `statement_cut_rule` in its
+three gate.json files, the shas of the staged files whose source changed, and the inventory
+worker prompt's kind sentence (`tests/test_locate_audit_plan.py`). A test that plans as the
+planner did between the second flip and this one uses `tests/_locate_fixtures.before_the_wide`.
+A run planned before — inv-pilot-2 names (3, 3, 2) — keeps the versions its gate.json names, and
+a locate run planned now over its inventory is admitted. Its proof is the one below.
 
 **What stays as it was**, and how each package proves it before it merges (and the flip once
 more):

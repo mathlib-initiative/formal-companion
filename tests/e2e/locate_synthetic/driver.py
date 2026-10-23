@@ -16,9 +16,10 @@ the shipped producer, not a fixture of the next stage's format:
     L2         cf locate candidates with a synthetic 1000.yaml-shaped list
 
     Every run is planned under the statement cut (docs/proposals/statement-cut.md,
-    from its flip on, and the continued cut of inv-pilot-1's fixes from theirs:
-    judgment rules 3, span-end rule 3, statement-cut rule 2, and a locate run's status
-    rule 2), and its documents take its shapes:
+    from its flip on, the continued cut of inv-pilot-1's fixes from theirs, and the
+    wide cut of inv-pilot-2's repairs from the flip of the wide bound: judgment rules
+    3, span-end rule 3, statement-cut rule 3, and a locate run's status rule 2), and
+    its documents take its shapes:
 
     L3a        cf plan-locate --preset locate-inventory; a worker's documents cut
                one passage per statement (a compound statement's conjuncts and
@@ -527,13 +528,18 @@ class Pipeline:
             check(code == 0, f"the staged gate refused the good inventory of {sid}:\n{text}")
         self._inventory_refusals(paths)
         self.harvest("inv-1", out)
-        # the receipt's cut block is statement-cut rule 2's: the subject, continuation and
-        # connective counts beside the first version's, one subject on every page
+        # the receipt's cut block is statement-cut rule 3's: the subject, continuation and
+        # connective counts beside the first version's, and the wide bound's, one subject
+        # on every page; the recorded pages hold no footnote mark, no dd and no paragraph
+        # opening with a formula, so nothing runs on past the loose bound
         from harvest import gate_corpus
 
         cut = self.read_json(paths.receipt_json("inv-1"))["gate"]["cut"]
-        check(set(gate_corpus.CUT_COUNTS_2) <= set(cut) and "by_connective" in cut,
-              f"inv-1's receipt does not count statement-cut rule 2's measures: {sorted(cut)}")
+        check(set(gate_corpus.CUT_COUNTS_3) <= set(cut) and "by_connective" in cut,
+              f"inv-1's receipt does not count statement-cut rule 3's measures: {sorted(cut)}")
+        check((cut["widened"], cut["wide_starts"], cut["wide_unheld"]) == (0, 0, 0),
+              f"inv-1's receipt counts what the wide bound alone reaches: "
+              f"{ {k: cut[k] for k in ('widened', 'wide_starts', 'wide_unheld')} }")
         check({sid: row.get("subjects") for sid, row in cut["by_source"].items()}
               == {sid: 1 for sid in self.inventory_docs},
               f"inv-1's receipt does not count one subject per page: {cut['by_source']}")
@@ -673,10 +679,10 @@ class Pipeline:
               f"the moved end was refused, but not by the span-end rule:\n{text}")
 
     # ------------------------------------------------------------------ L3b
-    #: the version keys of a run planned after the flip of inv-pilot-1's fixes
+    #: the version keys of a run planned after the flip of the wide bound
     #: (docs/proposals/statement-cut.md section 7), which every run here is: the
-    #: statement cut's judgment rules and the continued cut's end and rule 10
-    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 3, "statement_cut_rule": 2}
+    #: statement cut's judgment rules, the continued cut's end and the wide cut's rule 10
+    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 3, "statement_cut_rule": 3}
     #: the widget theorem's conjuncts, as the cut's inventory writes them (synthetic)
     BOX_CONJUNCTS = [{"id": "c1", "text": "each finite widget has a spanning gadget"},
                      {"id": "c2", "text": "that gadget's size divides the order"}]
@@ -1805,7 +1811,7 @@ class Pipeline:
               f"the carry-over map is no cf-locate-carry/1 map of every page: {report}")
         check((report["old"]["span_end_rule"], report["old"]["statement_cut_rule"],
                report["new"]["span_end_rule"], report["new"]["statement_cut_rule"])
-              == (3, 2, 3, 2), f"the map does not name the two cuts' rules: {report['old']}, "
+              == (3, 3, 3, 3), f"the map does not name the two cuts' rules: {report['old']}, "
                                f"{report['new']}")
         page = next(pg for pg in report["pages"] if pg["new"]["source_id"] == WIDGET)
         check(page["same_layer"] is True, "the re-cut of one revision is on another layer")

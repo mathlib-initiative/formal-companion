@@ -751,8 +751,8 @@ CANDIDATE_PART_PHRASES = ("only part", "part of the passage", "one clause",
 #: sentence) and the receipt's three wide counts.  Each reads one span-end rule,
 #: ``STATEMENT_CUT_SPAN_END`` (versions 2 and 3 both read span-end rule 3, since no end
 #: rule reads the wide bound): a gate.json naming another pair, or span-end rule 3
-#: without a statement-cut rule, is broken (exit 3).  The gate knows version 3; the
-#: planner does not write it yet.
+#: without a statement-cut rule, is broken (exit 3).  The gate knew version 3 before
+#: the planner wrote it (the proposal's section 7).
 STATEMENT_CUT_FIRST = 1
 STATEMENT_CUT_CONTINUED = 2
 STATEMENT_CUT_WIDE = 3
@@ -762,12 +762,12 @@ STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
 #: The statement-cut rule (gate rule 10, the inventory's cut checks; the proposal's
 #: section 3): the version a gate.json names as ``statement_cut_rule``.  ``cf
 #: plan-locate`` writes it into every gate.json from the flip on (version 1 until the
-#: flip of inv-pilot-1's fixes, version 2 from it, beside span-end rule 3:
+#: flip of inv-pilot-1's fixes, version 2 from it to the flip of the wide bound, version
+#: 3 from that, each beside span-end rule 3:
 #: ``STATEMENT_CUT_SPAN_END[STATEMENT_CUT_RULE] == SPAN_END_RULE``); a gate.json without
 #: the key is gated without rule 10, as every run planned before it is, and one naming
-#: a version by that version (1, 2, or 3, which the gate knows before the planner
-#: writes it).
-STATEMENT_CUT_RULE = STATEMENT_CUT_CONTINUED
+#: a version by that version (1, 2 or 3).
+STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE
 #: The status rule (the proposal's section 2): the version of the derivation a locate
 #: run's outcomes are derived under, recorded in its ``run.yaml`` (``locate.status_rule``)
 #: and in the seal of its record set.  Version 1 (``STATUS_RULE_D1``) is decision D1 as

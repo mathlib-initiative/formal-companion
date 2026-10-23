@@ -352,9 +352,10 @@ RULES_PD5_PD9 = 2
 #: section 7).  Statement-cut rule 3 (cflib.vocab.STATEMENT_CUT_WIDE; inv-pilot-2's
 #: repairs) is rule 2 with (b) read against the wide bound (``locate_text.Blocks.runs_on``
 #: with ``wide=True``: across footnote marks, and into a ``dd`` or a paragraph that
-#: finishes the sentence) and three more counts; it reads span-end rule 3 too, and the
-#: gate knows it before the planner writes it.  A statement-cut rule reads exactly one
-#: span-end rule (STATEMENT_CUT_SPAN_END)
+#: finishes the sentence) and three more counts; it reads span-end rule 3 too, and
+#: ``cf plan-locate`` writes it from the flip of the wide bound on (the proposal's
+#: section 7).  A statement-cut rule reads exactly one span-end rule
+#: (STATEMENT_CUT_SPAN_END)
 RULES_STATEMENT_CUT = 3
 SPAN_END_STATEMENT_CUT = 2
 SPAN_END_CONTINUED = 3
@@ -364,10 +365,11 @@ STATEMENT_CUT_WIDE = 3
 STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
                           STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED,
                           STATEMENT_CUT_WIDE: SPAN_END_CONTINUED}
-STATEMENT_CUT_RULE = STATEMENT_CUT_CONTINUED
+STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE
 #: the versions the planner writes (cflib.vocab.JUDGMENT_RULES, SPAN_END_RULE and
 #: STATEMENT_CUT_RULE: the statement cut's from its flip on, the continued cut's from
-#: the flip of inv-pilot-1's fixes on): a gate.json names the version its run was planned
+#: the flip of inv-pilot-1's fixes on, the wide cut's from the flip of the wide bound
+#: on): a gate.json names the version its run was planned
 #: under as ``judgment_rules`` and ``span_end_rule``, and one without ``span_end_rule``
 #: (a run planned before it, whose inventories ``passage_ids.py`` wrote without
 #: ``until``) is gated without the end check
@@ -730,9 +732,10 @@ class GateConfig:
         """A statement-cut rule reads exactly one span-end rule, and span-end rule 3 only
         with statement-cut rule 2 or 3 (docs/proposals/statement-cut.md section 2.2): any
         other pair is a broken gate.json (exit 3).  No key, span-end rule 1 or 2 alone,
-        (2, 1) and (3, 2) are what runs planned so far name, and stay admitted, and (3, 3)
-        is statement-cut rule 3's.  The message for span-end rule 3 with no statement-cut
-        rule, which only a broken gate.json prints, is the one it was."""
+        (2, 1) and (3, 2) are what runs planned before the flip of the wide bound name, and
+        stay admitted, and (3, 3) is what the planner writes from it.  The message for
+        span-end rule 3 with no statement-cut rule, which only a broken gate.json prints,
+        is the one it was."""
         cut, end = self.statement_cut_rule, self.span_end_rule
         if cut:
             if cut == STATEMENT_CUT_FIRST and end < SPAN_END_STATEMENT_CUT:

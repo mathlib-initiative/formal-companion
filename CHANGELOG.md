@@ -106,6 +106,24 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **The flip of the wide bound: `cf plan-locate` writes statement-cut rule 3**
+  (`docs/proposals/statement-cut.md` §7). Every gate.json it plans now names `judgment_rules` 3,
+  `span_end_rule` 3 and `statement_cut_rule` 3 (`cflib.vocab.STATEMENT_CUT_RULE =
+  STATEMENT_CUT_WIDE`, and the gate's inlined copy; `KNOWN_STATEMENT_CUT_RULE` stays 3). A newly
+  planned inventory's rule 10 (b) holds an end to the wide bound, so an `until` that keeps a
+  sentence's words across a footnote mark, into an indented line that finishes it, or into a
+  paragraph that opens with a formula is admitted, and its receipt's `cut` block carries
+  `widened`, `wide_starts` and `wide_unheld`. No default end, `passage_key` or carry moves (rule
+  3 reads span-end rule 3, as rule 2 does), and no prompt word changes: the worker's prompts ask
+  for no end past the loose bound, which the wide bound contains, and an audited plan's rule card
+  says what the wide bound allows. An unaudited plan differs from the one the commit before the
+  audit made only in `statement_cut_rule` in its three gate.json files, the shas of the staged
+  files whose source changed, and the worker prompt's kind sentence, and a test holds it there.
+  A run planned before keeps the versions its gate.json names and re-gates, re-tallies and
+  re-exports as it did; a locate run planned now over inv-pilot-2's (3, 3, 2) inventory is
+  admitted. The e2e driver's runs name (3, 3, 3), and it checks the receipt's rule-3 counts
+  (0 widened: its recorded pages hold none of the three shapes). The version pins move to
+  (3, 3, 3); `tests/_locate_fixtures.before_the_wide` plans as the planner did before.
 - **The inventory prompt says the kind rule in one sentence** (`templates/prompts/locate-inventory.md.tmpl`,
   "What a passage is"): a step of a proof, a derivation or a worked example that asserts a fact
   or an equation is kind `theorem`, never `other`. It is the rule the audit's merge applies
