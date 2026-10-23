@@ -1013,6 +1013,35 @@ calls run under the launching environment's `CF_AGENT_TIMEOUT`, else `AGENT_TIME
 `--findings` check) · `directory` (a directory of documents: a harvest, a hand check). The
 host-side scripts that cannot import `cflib` keep copies of these, which tests pin.
 
+**The inventory audit's values** (`references/locate-documents.md` §13, the files an audited
+inventory run's reviewer turn reads and writes; every one in `cflib.vocab`'s audit block, which
+`scripts/gate/inventory_audit.py` copies for the run host and a test pins). No plan names an
+audit yet.
+
+| enum | values |
+|---|---|
+| `INVENTORY_AUDIT_SCHEMA` | `cf-inventory-audit/1`: the `schema` of every audit file; `INVENTORY_AUDIT_RULE` 1 is the decision table's version, `audit/1` in a verdicts file |
+| `AUDIT_VERDICTS` | `clean` · `over_cut` (on the passage that merges into its `merge_with`) · `under_cut` · `should_be_expository` · `should_be_non_math` · `should_be_formal` (an expository flag, once flagged) · `redundant` · `wrong_kind` · `wrong_prominence` · `statement_misstates` — what an auditor, a checker's new entry or a skeptic says of a passage; a merged verdict for a change the checker judged harmful is `revert` (`AUDIT_VERDICT_REVERT`) |
+| `AUDIT_ORIGINS` | `lead` · `theorem_box` · `statement_section` · `proof` · `example` · `list_item` · `application_or_extension` · `history` · `other` — where an audited passage sits |
+| `AUDIT_CHECK_STATUSES` | `applied` · `partial` · `missing` · `wrong` · `gate_refused_ok` · `gate_refused_doubtful` · `disputed` — what a checker says of a verdict the round before asked for; `AUDIT_CHECK_ACTIONABLE` (`partial`, `missing`, `wrong`, `gate_refused_doubtful`) go back to the worker |
+| `AUDIT_REPAIR_STATUSES` | `applied` · `not_applied` · `gate_refused` (with the gate's line) · `disputed` — what the worker says it did with a verdict |
+| `AUDIT_VERDICT_ORIGINS` | `auditor` · `skeptic_missed` · `kind_rule` (the mechanical `wrong_kind` on a formal `other` passage in a proof or example section) · `carried` · `check_new` · `dispute_refuted` · `collateral` · `regression` — where a merged verdict came from |
+| `AUDIT_DECISIONS` | `approve` · `request_changes` · `revert` (to the best reviewed snapshot) — the decision table's outcomes |
+| `AUDIT_EDIT_OPS` | `merge` · `split` · `set` · `add` · `drop` — the edit tool's operations, each citing a verdict |
+| `AUDIT_EDIT_FIELDS` | `scope` · `passage_kind` · `prominence` · `statement` · `shape` · `conjuncts` · `until` · `concept` · `quote` · `quote_end` (the words the quote is cut to end with) — what an operation sets |
+| `AUDIT_COLLATERAL_CHANGES` | `hand_edit` · `moved` · `uncited_op` · `ops_refused` — what a collateral entry says changed |
+
+Bounds, also in `cflib.vocab`: `AUDIT_REVIEW_ROUNDS` (2 or 3, the rounds an audited plan may
+name), `AUDIT_THRESHOLD_MIN` and `AUDIT_THRESHOLD_SHARE` (T = max(5, ⌈0.03 · formal⌉): a middle
+round with fewer actionable verdicts approves), `AUDIT_SKEPTIC_FLOOR` and `AUDIT_SKEPTIC_SHARE`
+(the round-1 skeptic examines at least max(10, a tenth) of the unflagged formal passages, never
+more than there are), the word caps `AUDIT_REASON_WORDS` (30), `AUDIT_ACTION_WORDS` (40),
+`AUDIT_EVIDENCE_WORDS` (25) and `AUDIT_SUMMARY_WORDS` (80), `AUDIT_MAX_PATTERNS` (5),
+`AUDIT_PART_BYTES` (50,000 bytes of rendering a call reads), `AUDIT_REPAIR_VERDICTS_PER_SESSION`
+(40), `AUDIT_KIND_RULE_RULE` (6, the rule the kind verdict names) and `AUDIT_CONNECTIVE_HINTS`
+(`and` · `so` · `hence` · `thus` · `therefore` · `then` · `but`, the rendering's
+`connective-start` hint).
+
 **The benchmark's values** (the proposal's §8 and §9):
 
 | enum | values |

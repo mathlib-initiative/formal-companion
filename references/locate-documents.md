@@ -13,7 +13,7 @@ planner side (`scripts/locate/`: §5's candidates, §6's sealed set, §9's run,
 4 challenge document · 5 candidates file · 6 sealed record set · 7 sourcesets and
 rendered web sources · 8 universes, library indexes and `corpus.sqlite` · 9 a
 locate run on disk · 10 harvested rows and passage outcomes · 11 campaigns · 12 carry-over
-maps
+maps · 13 inventory audit records
 
 Every example is synthetic: a made-up article ("Widget lemma", page id 1001,
 revision 2002), made-up libraries `alpha` and `beta`, made-up declarations.
@@ -2012,7 +2012,8 @@ like a faithfulness run:
   (`scripts/locate/records.py`, the record builder, which needs no `cflib`), the
   two host tools of §8 (`corpus_show.py` imports `corpus_search.py`), `vendor/`
   with both vendored packages and their manifests, whose shas the gate verifies
-  at start, `tasks/` and `gate.json`. The tend root's `bin/` holds the bridge with
+  at start, `tasks/` and `gate.json`; an audited inventory plan adds the audit's three
+  host tools (§13), and no other plan stages them. The tend root's `bin/` holds the bridge with
   `normalize_result.py`, `extract_final_json.py`, `agent_call.py` and
   `attempt_cap.py` — for every run, a faithfulness one too — and, for a locate
   run, `watchdog.py`. No library checkout is named to the challenger: nothing
@@ -2799,3 +2800,221 @@ new revision, scope changes both ways, a conjunct change and a refused page, wit
 test vector. A consumer that
 ports the map (`docs/proposals/statement-cut.md` §8) runs the same cases; `tests/test_locate_carry.py`
 runs them against `locate.carry.map_page`.
+
+## 13. Inventory audit records (`cf-inventory-audit/1`)
+
+An **audited** inventory run reviews each inventory document in rounds, after the worker has
+committed it and the gate has passed it: an auditor (round 1) or a checker (round 2 on) judges
+the cut against the inventory prompt's rules, a skeptic judges the flags it raised, a merge that
+no agent runs turns the two into the round's verdicts and decides by a fixed table, and on a
+rejection the worker repairs the document with recorded edit operations, each citing the verdict
+it applies. Nothing plans an audited run yet: `cf plan-locate` writes no audit, and an
+unaudited run stages, renders and gates exactly as before. This section is the format the stage
+is built on and the three host tools that read and write it.
+
+**The tools.** `scripts/gate/inventory_render.py`, `scripts/gate/inventory_edit.py` and
+`scripts/gate/inventory_audit.py` are standard library only and import no `cflib`; the planner
+copies them into the gate directory (§9) only for an audited plan
+(`locate.tend_root.AUDIT_GATE_FILES`, pinned in `locate.gate_files` with the rest), and they run
+there as `python3 -I <gate>/<tool>`, importing `verify_locate.py` and each other from the
+directory. Each reads a source only through the gate's pinned view (`verify_locate.SourceView`):
+a `layer.txt`, `formulas.json` or `paragraphs.json` that is not the pinned bytes is exit 3 in the
+gate's own words. Exit 0 is success, 1 an invalid input (`inventory_audit.py`'s `INVALID:` lines)
+or a refused operation (`inventory_edit.py`'s `REFUSED:` lines, nothing written), 2 an input that
+cannot be read or a path refused, 3 a `gate.json` or a pinned file that cannot be read. The
+vocabulary is `cflib.vocab`'s audit block, which `inventory_audit.py` copies and a test pins
+(`references/vocabulary.md` §1.11).
+
+**Where the files are.** In the task's worktree, under `.tend/audit/` (never committed: gate
+rule 7 refuses any committed `.tend/` path). `inventory_render.py` and `inventory_audit.py` write
+only into `<cwd>/.tend/audit/` and to `<cwd>/.tend/agent_result.json`, through no symlink;
+`inventory_edit.py` writes only the document it is named, `findings/<task>/<source>.json` of the
+working directory. Round `k`'s files are `r<k>.<name>.json` (and `.md`):
+
+| file | written by | kind |
+|---|---|---|
+| `r<k>.render.part<i>.md`, `r<k>.render.json`, `r<k>.diff.md` | `inventory_render.py` | the rendering, its index, the diff since the last snapshot |
+| `r<k>.document.json` | the bridge | the snapshot round `k` reviewed |
+| `r1.audit.json` (or `r1.audit.part<i>.json`) | the auditor | `audit` |
+| `r<k>.audit.json` (or parts), `k` ≥ 2 | the checker | `check` |
+| `r<k>.collateral.json`, `k` ≥ 2 | `inventory_audit.py collateral` | `collateral` |
+| `r<k>.flags.json` | `inventory_audit.py strip` | `flags` |
+| `r<k>.skeptic.json` | the skeptic | `skeptic` |
+| `r<k>.verdicts.json` | `inventory_audit.py merge` | `verdicts` |
+| `r<k>.ops.json`, `r<k>.repair.json` | the worker | `ops`, `repair` |
+
+**Common rules.** Every file is a JSON object with `schema` (`cf-inventory-audit/1`), `kind`,
+`round` and `source_id`, the document's. A passage is named by its item, `In-text #<8 hex>`, of
+the document the round reviewed; a verdict by `r<k>-v<nnn>`, a flag by `r<k>-f<nnn>`, a
+collateral entry by `r<k>-x<nnn>`. A key a record does not take is refused, and so is a
+`reason` of more than 30 words, an `action` or a `why` of more than 40, an `evidence` of more
+than 25 and a `summary` of more than 80 (words are runs of non-space). `rule` is a rule of the
+statement cut's prompt (`docs/proposals/statement-cut.md` §3.4), 1 to 10, and 0 only on a
+`clean` verdict.
+
+### 13.1 The rendering
+
+`inventory_render.py --gate-config <gate>/gate.json --document <doc>` prints every passage in
+span order: `[n] item · span · scope · kind · prominence · section`, then `TEXT` (the span, a
+line break shown as `⏎`), `STATEMENT`, `SHAPE` with its conjuncts on a compound statement, and
+`HINT` (`kind-other`: a formal passage of kind `other`; `kind-rule`: one the kind rule of §13.7
+judges; `in-proof` and `in-example`: its section path names a proof or an example, `\bproofs?\b`
+or `\bexamples?\b` case-folded; `connective-start`: its first word is one of
+`AUDIT_CONNECTIVE_HINTS`; `widened`: it ends past its loose extent, so only statement-cut rule
+3's wide bound lets it run, a merge the checker judges); before each passage a `GAP` line, the
+layer text no passage holds (past 400 characters, its first and last 200); at the end the gap to
+the end and the skips. `--out-dir .tend/audit --label r<k>` writes it as parts of at most about
+`--part-bytes` (default `AUDIT_PART_BYTES`, 50,000), cut only between two passages (a passage
+longer than that is a part of its own), each opening with the rendering's header and `Part i of
+n: passages [a] to [b] of N.`, and `r<k>.render.json`, `{schema, kind: "render", label,
+source_id, document_sha256, layer_sha256, passages, formal, part_bytes, parts: [{file, bytes,
+first, last, items, formal}], diff}` — the coverage a chunked call is held to. With `--previous
+<snapshot>` it also writes `r<k>.diff.md`: each passage changed (with the fields that changed),
+added (with the earlier passages its span overlaps) or removed (with the passages now holding
+its text), before and after, passages matched by item and then by start. `--show <item>
+[--context N]` prints one passage with N characters (default 300) of layer on either side.
+
+### 13.2 The auditor's file (`kind: audit`)
+
+```json
+{"schema": "cf-inventory-audit/1", "kind": "audit", "round": 1, "source_id": "enwiki-1001-2002",
+ "passages": [{"item": "In-text #0000c0de", "origin": "statement_section", "verdict": "over_cut",
+               "rule": 1, "merge_with": "In-text #3fa91c07",
+               "reason": "one statement with the definition before it",
+               "action": "merge into #3fa91c07; keep its start; end after 'spanning gadget.'"}],
+ "expository_flags": [{"item": "In-text #00c0ffee", "rule": 7, "reason": "…", "action": "…"}],
+ "per_spec_formal_estimate": 12, "patterns": ["…"], "subject_check": "…"}
+```
+
+Every `formal_math` passage the call judges (all of them, or a part's `formal` items:
+`inventory_audit.py validate --kind audit --render-index r1.render.json --part <i>`, which
+refuses an index of another document) has exactly one row, and no other passage has one. `origin` is one of `lead`, `theorem_box`,
+`statement_section`, `proof`, `example`, `list_item`, `application_or_extension`, `history`,
+`other`. `verdict` is one of `clean`, `over_cut` (on the passage that merges into `merge_with`,
+which it must name), `under_cut`, `should_be_expository`, `should_be_non_math`, `redundant`,
+`wrong_kind`, `wrong_prominence`, `statement_misstates`; a non-clean row gives its `reason` and
+an `action` a worker can apply without judging again. `kind_other_ok: true`, on a passage of kind
+`other` only and with a reason, says `other` is right for it, which exempts it from the kind
+rule. `expository_flags` names passages not scoped `formal_math` that should be
+(`should_be_formal` once flagged); `patterns` holds at most five entries. A row may carry `n`, the
+rendering's number.
+
+### 13.3 The flags file (`kind: flags`)
+
+What the skeptic sees, and nothing else: `inventory_audit.py strip` writes `{flags: [{flag_id,
+item, verdict, rule, merge_with, reason}], disputes: [{verdict_id, item, verdict, rule, action,
+worker_reason}]}`, in reading order. In round 1 the flags are the auditor's non-clean rows and
+its expository flags; the auditor's actions, patterns, estimate and clean judgments are withheld.
+From round 2 they are the checker's `new` entries, and `disputes` are the verdicts the worker
+reported `disputed`.
+
+### 13.4 The skeptic's file (`kind: skeptic`)
+
+`{verdicts: [{flag_id, upheld, verdict, rule, evidence, reason}], missed: [{item, verdict, rule,
+merge_with, evidence, reason, action}], disputes: [{verdict_id, worker_right, reason}], examined:
+[items], per_spec_formal_estimate, summary}`. Every flag and every dispute is judged exactly once.
+An upheld flag names a defect (never `clean`) and its rule, and may correct the verdict; its
+`evidence` is a quote of the layer the rule turns on, which the merge looks for on the layer
+(whitespace and the rendering's `⏎` folded): an upheld flag without it counts as refuted.
+`examined` names the formal passages no flag names that the skeptic judged; in round 1 it holds
+at least `min(clean, max(AUDIT_SKEPTIC_FLOOR, ⌈AUDIT_SKEPTIC_SHARE · clean⌉))` of them (10, or a
+tenth), and `missed` holds what it found wrong among any passages, each with its evidence.
+
+### 13.5 The checker's file (`kind: check`, round 2 on)
+
+`{checked: [{verdict_id, status, reason}], collateral: [{id, harmful, reason}], new: [{item,
+verdict, rule, merge_with, reason, action}], regressions: [{verdict_id, reason}]}`. Every verdict
+of the last round's verdicts file is checked exactly once, with a status: `applied`, `partial`,
+`missing`, `wrong` (applied in a way the spec makes wrong), `gate_refused_ok` (the worker quotes a
+gate refusal the gate's bound really makes), `gate_refused_doubtful` or `disputed` (left to the
+skeptic). Every collateral entry is judged harmful or not; `new` holds defects of changed passages
+and their neighbours only, and `regressions` verdicts of an earlier round that the latest change
+undid. A part file judges the verdicts it names; the parts together judge every one once.
+
+### 13.6 The collateral file (`kind: collateral`)
+
+`inventory_audit.py collateral --snapshot <r(k-1) document> --document <doc> --ops <ops>
+--verdicts <r(k-1) verdicts>` re-applies the worker's operations to the snapshot
+(`inventory_edit.apply`) and compares the result with the document on every field but `item`,
+`span` and `head_words`: `{collateral: [{id, change, item, fields, before, after, …}]}`, where
+`change` is `hand_edit` (a passage the operations do not produce, or one they produce that the
+document lacks), `moved` (a passage no operation names whose span still moved: a neighbour's
+merge or drop moved its default end), `uncited_op` (an operation citing a verdict the round did
+not ask for) or `ops_refused` (operations the edit tool refuses on the snapshot; every change is
+then a hand edit). This is how an edit no verdict names is found without a gate rule.
+
+### 13.7 The verdicts file and the decision table (`kind: verdicts`)
+
+`inventory_audit.py merge` validates every input against this section, then writes `{round,
+review_rounds, final, decision_rule: "audit/1", run_id, task_id, source_id, document_sha256,
+verdicts: [{id, item, start, verdict, rule, merge_with, action, origin, …}], refuted, set_aside,
+history, kind_other_ok, kind_seen, counts, harm, estimates, rounds: [{round, actionable, harm,
+document_sha256}], T, decision, revert_to, audit_failed, why}` and, with `--result`, the
+reviewer's `.tend/agent_result.json` (`verdict`, `notes`, and on a rejection a `feedback_text` of
+at most 1,500 characters naming the verdicts file). `verdicts` are the **actionable** ones, the
+next repair's work, each with its `origin`:
+
+- `auditor`: an auditor's flag the skeptic upheld with evidence (the skeptic's verdict, the
+  auditor's action); `skeptic_missed`: a skeptic's missed entry with evidence, not `clean` and
+  not already a verdict;
+- `kind_rule`: the mechanical `wrong_kind` (rule 6) on every `formal_math` passage of kind
+  `other` whose section path names a proof or an example, unless the auditor gave
+  `kind_other_ok` with a reason or another verdict already settles its kind (`wrong_kind`,
+  `should_be_expository`, `should_be_non_math`, `redundant`, `over_cut`); from round 2 only on
+  passages no earlier `wrong_kind` judged (`kind_seen`, by start);
+- from round 2, for each verdict the last round asked for: `applied` goes to `history`;
+  `gate_refused_ok` to `set_aside`; `partial`, `missing`, `wrong` and `gate_refused_doubtful` are
+  `carried`; a verdict the worker disputed follows the skeptic: `worker_right` sets it aside,
+  otherwise it is `dispute_refuted`; a harmful collateral entry is a `revert` verdict
+  (`collateral`); a regression re-issues the regressed verdict (`regression`); a checker's `new`
+  entry the skeptic upheld with evidence is `check_new`.
+
+`harm` is true when the round's check found a `wrong` application, harmful collateral or a
+regression. With T = max(`AUDIT_THRESHOLD_MIN`, ⌈`AUDIT_THRESHOLD_SHARE` · formal⌉) (5, or 3% of
+the formal passages), the decision (`approve`, `request_changes` or `revert`) is:
+
+| round | decision |
+|---|---|
+| 1 | `request_changes` when any verdict is actionable, else `approve` |
+| 1 < k < R | `request_changes` when at least T are actionable and fewer than round k−1's; otherwise as an approval below |
+| an approval from round 2 on (the final round's always is one) | `approve` when `harm` is false, else `revert` to `revert_to`, the best reviewed snapshot: of the rounds without harm the one with the fewest actionable verdicts, the later on a tie (round 1 always qualifies) |
+
+R, the plan's review rounds, is one of `AUDIT_REVIEW_ROUNDS` (2 or 3). `merge --audit-failed
+<reason>` records an audit whose output stayed invalid: no verdicts, `decision: approve`,
+`audit_failed: true`, counted. The counts include the formal passages of kind `other`
+(`kind_other_formal`) and those the kind rule judges (`kind_other_in_proof_or_example`).
+
+### 13.8 The worker's ops and repair files (`kind: ops`, `kind: repair`)
+
+`{ops: [{op, verdict | neighbour_of, …}]}`: each operation cites exactly one verdict of the
+round, `verdict` (the verdict it applies) or `neighbour_of` (a neighbour's end or start that
+verdict forces); one that cites none, or a verdict the round did not ask for, is refused.
+`inventory_edit.py --document findings/<task>/<source>.json --ops <ops> [--base <snapshot>]
+[--verdicts <verdicts>] [--write]` applies them in order, items naming the passages of `--base`
+(the snapshot the round reviewed; without it the document), so the whole file can be applied
+again after a gate refusal; without `--write` it is a dry run. The operations are `merge`,
+`split`, `set`, `add` and `drop`, each field one of
+`scope`, `passage_kind`, `prominence`, `statement`, `shape`, `conjuncts`, `until`, `concept`,
+`quote` and `quote_end`:
+
+- `merge {keep, drop, fields?}`: `drop` (an item or a list) joins `keep`, which starts at the
+  earlier start (with that passage's quote and finder), ends where the one ending later ended
+  (its `until`, or none), and keeps its other fields, then `fields`;
+- `split {item, at, new, earlier?}`: a new passage starts at the quote `at` inside `item`, ends
+  where `item` ended, and takes `new` (`statement`, `passage_kind`, `scope` and `prominence`
+  required, `section` and `fragment` allowed); `item` loses its `until` unless `earlier` gives
+  one;
+- `set {item, fields}`: `null` removes `until`, `shape` and `conjuncts` and empties `concept`;
+  `quote` moves the start; `quote_end` cuts the quote's `exact` after its first occurrence of those
+  words, the start kept and the `suffix` dropped;
+- `add {after, quote, fields}`: a passage from text no passage holds, after `after` (null: first);
+- `drop {item}`.
+
+A passage an operation scopes out of `formal_math` becomes `supporting` and loses `shape` and
+`conjuncts` unless the operation says otherwise. The tool computes no offsets: `passage_ids.py
+--write` places and re-keys the passages afterwards, and the gate judges the result.
+`r<k>.repair.json` is `{entries: [{verdict_id, status, why, gate_line?}]}`, one per verdict the
+round asked for: `applied`, `not_applied`, `gate_refused` (with the gate's refusal line,
+verbatim, as `gate_line`) or `disputed` (the spec as written does not support the verdict; `why`
+says so). `inventory_audit.py validate --kind audit|skeptic|check|repair|ops` holds one file to
+this section and is the call an agent makes before it finishes.
