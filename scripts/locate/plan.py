@@ -384,6 +384,23 @@ def rule_versions() -> dict[str, int]:
     return versions
 
 
+def audit_block(review_rounds: int | None) -> dict[str, int] | None:
+    """``run.yaml`` ``locate.audit`` of an inventory plan made with ``--audit-rounds``.
+
+    ``{rule, review_rounds}``: the decision table's version (``vocab.INVENTORY_AUDIT_RULE``,
+    the ``CF_AUDIT_RULE`` both wrappers export) and R, the review rounds a task takes at
+    most (``CF_AUDIT_ROUNDS``, one of ``vocab.AUDIT_REVIEW_ROUNDS``), references/
+    locate-documents.md section 13.  None, and the key left out, for an unaudited plan:
+    its ``run.yaml`` is the one it always was.
+    """
+    if review_rounds is None:
+        return None
+    if review_rounds not in vocab.AUDIT_REVIEW_ROUNDS:
+        raise CfError(f"an audit takes {' or '.join(map(str, vocab.AUDIT_REVIEW_ROUNDS))} review "
+                      f"rounds, not {review_rounds}")
+    return {"rule": vocab.INVENTORY_AUDIT_RULE, "review_rounds": review_rounds}
+
+
 def status_rule() -> int | None:
     """The status rule a locate run planned now records (``run.yaml`` ``locate.status_rule``).
 

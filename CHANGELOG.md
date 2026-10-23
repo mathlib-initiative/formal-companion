@@ -42,6 +42,23 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **`cf plan-locate --audit-rounds 2|3` plans an audited inventory** (`references/locate-documents.md`
+  §9 and §13.9). The flag belongs to the locate-inventory preset, and a re-plan keeps a run's
+  audit. `run.yaml` records `locate.audit: {rule: 1, review_rounds: R}`, and
+  `config_shas.agents` its `audit`. The plan renders seven prompts: the worker's two as before,
+  and five new templates under `templates/prompts/locate-inventory-*.md.tmpl`. Those are the
+  reviewer's system prompt (the rule card, the statement cut's rules 1-10 of
+  `docs/proposals/statement-cut.md` §3.4 as C1-C10 with the kind rule, and what the gate's bound
+  allows under the statement-cut rule the plan writes), the auditor, the checker (who also judges
+  every `widened` passage), the skeptic (refute by default, with evidence from the layer), and
+  the revision (operations that cite their verdicts, applied with `inventory_edit.py --base`,
+  then `passage_ids.py` and the gate). The plan stages the audit's three host tools in the gate
+  directory, and both wrappers export `CF_AUDIT_RULE` and `CF_AUDIT_ROUNDS`. The worker's
+  allowlist adds the edit tool, the rendering's `--show` and `inventory_audit.py validate`. The
+  reviewer's becomes Read, Glob, Grep, `git diff|show|log|status`, the gate's `--findings`
+  check, `--show` and the validator. A plan without the flag is byte for byte the base commit's,
+  apart from the skill commit and the staged files whose source changed (a test plans it with
+  both).
 - **The audited inventory's turn machine, dormant without `CF_AUDIT_RULE`**
   (`references/locate-documents.md` §13.9). No plan exports the variable yet, and without it
   the bridge makes the calls and prints the contracts it did (a test runs the base commit's

@@ -24,7 +24,14 @@ bridge reads:
   rejections a task may take, and ``CF_MERGE_TARGET`` -- the branch the bridge
   reads a capped task's change set against, as the gate does;
 * ``CF_FINDINGS_GLOB`` -- the task's own nested documents, for the bridge's
-  observable-state fallback.
+  observable-state fallback;
+* in an audited inventory plan only (``--audit-rounds``, references/locate-documents.md
+  section 13.9), ``CF_AUDIT_RULE`` and ``CF_AUDIT_ROUNDS`` in both wrappers, which hand
+  every turn to ``bin/audit_turn.py``, and the audit's own allowlists
+  (:func:`audit_tools`): the worker's ``CF_EXTRA_TOOLS`` adds the edit tool, the
+  rendering's ``--show`` and the validator, and the reviewer's ``CF_REVIEWER_TOOLS``
+  is read-only git by subcommand, the gate's ``--findings`` check, the rendering's
+  ``--show`` and the validator.  An unaudited plan's wrappers export what they did.
 
 ``bin/`` carries the bridge with every helper (``plan.make_tend_root.
 BIN_HELPERS``) and, for a locate run, ``watchdog.py`` and ``audit_turn.py`` (the
@@ -97,9 +104,45 @@ LOCATE_BIN_HELPERS = BRIDGE_HELPERS
 VENDORED = ("literature_links", "formal_companion_annotations")
 
 
+def audit_commands(host_gate_dir: str) -> dict[str, str]:
+    """The audit's host-tool invocations an audited plan's prompts render and its allowlists
+    admit as prefixes (references/locate-documents.md section 13): one passage of the
+    rendering (``--show`` first, so the prefix holds it), the edit tool and the validator
+    (``validate`` first: its other subcommands are the bridge's)."""
+    return {"show": (f"python3 {host_gate_dir}/inventory_render.py --gate-config "
+                     f"{host_gate_dir}/gate.json --show"),
+            "edit": f"python3 {host_gate_dir}/inventory_edit.py",
+            "validate": f"python3 {host_gate_dir}/inventory_audit.py validate"}
+
+
+def audit_tools(host_gate_dir: str, gate_command: str) -> dict[str, list[str]]:
+    """``{role: [allowlist entry]}`` an audited inventory plan adds or sets.
+
+    The worker keeps its list and adds the edit tool, the rendering's ``--show`` and
+    the validator.  The reviewer's is narrowed: Read, Glob and Grep, the read-only git
+    subcommands, the gate's ``--findings`` check, the rendering's ``--show`` and the
+    validator -- it writes its one output file into ``.tend/audit/`` (the permission
+    mode's edits in the worktree), and ``audit_turn.py`` undoes any change it makes to
+    the worktree besides.
+    """
+    cmd = audit_commands(host_gate_dir)
+    show, edit, validate = (f"Bash({cmd['show']}:*)", f"Bash({cmd['edit']}:*)",
+                            f"Bash({cmd['validate']}:*)")
+    git = [f"Bash(git {sub}:*)" for sub in ("diff", "show", "log", "status")]
+    return {"worker": [edit, show, validate],
+            "reviewer": ["Read", "Glob", "Grep", *git, f"Bash({gate_command} --findings:*)",
+                         show, validate]}
+
+
 def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str,
-                merge_target: str = "main") -> dict[str, dict[str, str]]:
-    """``{role: {VAR: value}}`` the locate wrappers export (see the module docstring)."""
+                merge_target: str = "main",
+                audit_rounds: int | None = None) -> dict[str, dict[str, str]]:
+    """``{role: {VAR: value}}`` the locate wrappers export (see the module docstring).
+
+    ``audit_rounds`` (an audited inventory plan's R, one of ``vocab.AUDIT_REVIEW_ROUNDS``)
+    adds ``CF_AUDIT_RULE`` and ``CF_AUDIT_ROUNDS`` to both and the audit's allowlists
+    (:func:`audit_tools`); without it the map is the one an unaudited plan always had.
+    """
     tools = [f"Bash(python3 {host_gate_dir}/corpus_search.py --db {host_tools_db}:*)",
              f"Bash(python3 {host_gate_dir}/corpus_show.py --db {host_tools_db}:*)"]
     if preset.mode == vocab.LOCATE_INVENTORY:
@@ -114,6 +157,16 @@ def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str,
     # the same entry for a worker from CF_GATE_CMD)
     gate_command = f"python3 {host_gate_dir}/{GATE_SCRIPT} --gate-config {host_gate_dir}/gate.json"
     reviewer_tools = f"Read,Glob,Grep,Bash(git:*),Bash({gate_command} --findings:*)"
+    if audit_rounds is not None:
+        if preset.mode != vocab.LOCATE_INVENTORY or audit_rounds not in vocab.AUDIT_REVIEW_ROUNDS:
+            raise CfError(f"an audit of {audit_rounds!r} review rounds on a {preset.mode} plan",
+                          hint=f"--audit-rounds is one of {vocab.AUDIT_REVIEW_ROUNDS}, on a "
+                               f"locate-inventory plan only")
+        audit = audit_tools(host_gate_dir, gate_command)
+        tools += audit["worker"]
+        reviewer_tools = ",".join(audit["reviewer"])
+        common.update({"CF_AUDIT_RULE": str(vocab.INVENTORY_AUDIT_RULE),
+                       "CF_AUDIT_ROUNDS": str(audit_rounds)})
     return {"worker": {**common, "CF_EXTRA_TOOLS": ",".join(tools)},
             "reviewer": {**common, "CF_REVIEWER_TOOLS": reviewer_tools}}
 
@@ -125,15 +178,21 @@ def agent_settings(settings: dict[str, Any], env: dict[str, dict[str, str]]) -> 
     ``CF_MODEL``, ``CF_ALLOW_SANDBOX_BYPASS``, ``CF_AGENTBOX_PROFILE``, and
     ``CF_AGENT_TIMEOUT`` as ``agent_timeout`` only when the plan set one) and
     ``env`` is :func:`wrapper_env`'s map, whose ``CF_ATTEMPT_CAP`` and
-    ``CF_MERGE_TARGET`` both roles export.  The
+    ``CF_MERGE_TARGET`` both roles export (and, in an audited plan, ``audit``: its
+    ``CF_AUDIT_RULE`` and ``CF_AUDIT_ROUNDS``).  The
     wrappers' own shas name the run's paths, so ``config_shas.gate_files`` leaves
     them out; this map is what the bench's A/A check compares instead, since
     without it a run whose agents ran with the sandbox bypass was accepted as a
     replicate of one whose agents did not.
     """
     common = env["worker"]
-    return {**settings, "attempt_cap": int(common["CF_ATTEMPT_CAP"]),
-            "merge_target": common["CF_MERGE_TARGET"]}
+    out = {**settings, "attempt_cap": int(common["CF_ATTEMPT_CAP"]),
+           "merge_target": common["CF_MERGE_TARGET"]}
+    if "CF_AUDIT_RULE" in common:
+        # only an audited plan: an unaudited one pins the map it pinned before the audit
+        out["audit"] = {"rule": int(common["CF_AUDIT_RULE"]),
+                        "review_rounds": int(common["CF_AUDIT_ROUNDS"])}
+    return out
 
 
 def gate_file_rows(audited: bool = False) -> tuple[tuple[str, str], ...]:
@@ -153,11 +212,13 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
           gate_config: dict, prompts: dict[str, str], tasks: list[TaskSpec], model: str | None,
           agent: dict[str, Any] | None, allow_sandbox_bypass: bool,
           context: dict[str, Any], agent_timeout: str | None = None,
-          audited: bool = False) -> dict[str, Any]:
+          audit_rounds: int | None = None) -> dict[str, Any]:
     """Write the root and its locate gate directory; ``{"files", "warnings", "gate_files",
-    "agents"}``.  ``audited`` stages the audit's host tools too (:func:`gate_file_rows`)."""
+    "agents"}``.  ``audit_rounds`` (an audited inventory plan's R) stages the audit's host
+    tools too (:func:`gate_file_rows`) and exports the audit in the wrappers
+    (:func:`wrapper_env`)."""
     root = skill_root()
-    rows = gate_file_rows(audited)
+    rows = gate_file_rows(audit_rounds is not None)
     missing = [str(root / rel) for rel, _name in rows if not (root / rel).is_file()]
     if missing:
         # before anything is written: a root whose gate cannot import must never exist
@@ -171,7 +232,7 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
                         prompts_dir=layout_host["prompts_dir"],
                         gate_script=GATE_SCRIPT)
     env = wrapper_env(preset, layout_host["gate_dir"], layout_host["tools_corpus_db"],
-                      plan.merge_target_branch)
+                      plan.merge_target_branch, audit_rounds=audit_rounds)
     built = make_tend_root(
         plan, preset, run_id=run_id, gate_config=gate_config, prompts=prompts, agent=agent,
         task_count=len(tasks), model=model, allow_sandbox_bypass=allow_sandbox_bypass,

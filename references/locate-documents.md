@@ -2089,9 +2089,18 @@ like a faithfulness run:
   challenged_runs, arm, agent_timeout, skill_commit, gate_files, config_shas, per_task,
   subject_only, seed, sample_rate, strong_sample_rate, absence_sample_rate,
   documents, passages, source_ids, skipped}` (the three rates null outside a
-  challenge run; a run planned before the two later rates records neither), and
+  challenge run; a run planned before the two later rates records neither),
   `status_rule` on a locate run planned under the statement cut (above; absent
-  is status rule 1).
+  is status rule 1), and `audit: {rule, review_rounds}` on an inventory planned
+  with `--audit-rounds 2|3` (§13; absent, the run is unaudited and its plan is the
+  one an unaudited plan always was).
+  `audit` is the decision table's version (`cflib.vocab.INVENTORY_AUDIT_RULE`) and R, the
+  review rounds a document takes at most (`AUDIT_REVIEW_ROUNDS`); the flag belongs to
+  the locate-inventory preset and the `agentbox-claude` bridge, and a re-plan keeps a
+  run's audit, as it keeps its preset. An audited plan renders seven prompts (§13.9),
+  stages the audit's three host tools in the gate directory, and exports
+  `CF_AUDIT_RULE` and `CF_AUDIT_ROUNDS` in both wrappers with the audit's allowlists
+  (below).
   `agent_timeout` is the `CF_AGENT_TIMEOUT` the plan staged into both wrappers
   (`--agent-timeout`, a duration the bridge reads, `100m`, `90s`, `2h` or seconds,
   within `cflib.vocab.AGENT_TIMEOUT_MIN` and `AGENT_TIMEOUT_MAX`, refused otherwise
@@ -2113,7 +2122,7 @@ like a faithfulness run:
   of the run's own id and paths: `{prompts: {<templates/prompts/ file the plan
   rendered>: sha256 of its bytes}, gate_files: {<path as in gate_files>:
   sha256}, agents: {agent_host, model, allow_sandbox_bypass, agentbox_profile,
-  attempt_cap, merge_target[, agent_timeout]}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
+  attempt_cap, merge_target[, agent_timeout][, audit]}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
   the `bin/*-agent.sh` wrappers and any staged file whose bytes name one of the
   run's paths, and whose `agents` is what those wrappers run with that names no
   run, as the planner decided it (never read back from the wrappers): the
@@ -2124,7 +2133,9 @@ like a faithfulness run:
   null when the plan exports none and the bridge takes the host user's), the
   attempt cap (`CF_ATTEMPT_CAP`), the merge target (`CF_MERGE_TARGET`), and the
   agent timeout (`CF_AGENT_TIMEOUT`) only when `--agent-timeout` staged one, so a
-  plan without it pins the map it pinned before the option. Two plans of one
+  plan without it pins the map it pinned before the option, and the audit
+  (`{rule, review_rounds}`, `CF_AUDIT_RULE` and `CF_AUDIT_ROUNDS`) only in an audited
+  plan, whose `prompts` hash the audit's templates in place of the form reviewer's. Two plans of one
   configuration that differ only in run id
   record equal `config_shas` — what the bench's A/A check compares, so a run whose
   agents ran with the bypass is no replicate of one whose agents did not, while the
@@ -2241,7 +2252,15 @@ and in an inventory run the passage-id tool — worker role only),
 check, which its prompt has it run, as the whole gate command with `--findings`;
 reviewer role only) and `CF_FINDINGS_GLOB`
 (`findings/$TEND_TASK_ID/*.json` for the nested layout), all exported by the
-generated wrappers in `bin/`; the planner stages every helper the bridge runs
+generated wrappers in `bin/`; in an audited inventory plan (§13.9) both wrappers also
+export `CF_AUDIT_RULE` and `CF_AUDIT_ROUNDS`, the worker's `CF_EXTRA_TOOLS` adds
+`Bash(python3 <gate>/inventory_edit.py:*)`, the rendering's one-passage view
+`Bash(python3 <gate>/inventory_render.py --gate-config <gate>/gate.json --show:*)` and
+the validator `Bash(python3 <gate>/inventory_audit.py validate:*)`, and the reviewer's
+`CF_REVIEWER_TOOLS` is `Read,Glob,Grep`, `git diff`, `git show`, `git log` and `git
+status` (never `Bash(git:*)`), the gate's `--findings` check, the same view and the
+validator: `strip`, `collateral` and `merge` are the bridge's, and no agent's list
+admits them; the planner stages every helper the bridge runs
 (`agent_call.py`, `attempt_cap.py`, `normalize_result.py`,
 `extract_final_json.py`, and for a locate run `watchdog.py`) beside it in
 `bin/`. Both roles' default allowlists in the bridge also carry the gate,
@@ -2811,8 +2830,9 @@ committed it and the gate has passed it: an auditor (round 1) or a checker (roun
 the cut against the inventory prompt's rules, a skeptic judges the flags it raised, a merge that
 no agent runs turns the two into the round's verdicts and decides by a fixed table, and on a
 rejection the worker repairs the document with recorded edit operations, each citing the verdict
-it applies. Nothing plans an audited run yet: `cf plan-locate` writes no audit, and an
-unaudited run stages, renders and gates exactly as before. This section is the format the stage
+it applies. `cf plan-locate --preset locate-inventory --audit-rounds 2|3` plans one
+(`run.yaml` `locate.audit`, §9); a run planned without it stages, renders and gates
+exactly as before. This section is the format the stage
 is built on and the three host tools that read and write it.
 
 **The tools.** `scripts/gate/inventory_render.py`, `scripts/gate/inventory_edit.py` and
@@ -3036,14 +3056,25 @@ An audited run's wrappers export `CF_AUDIT_RULE` (the decision rule, 1) and `CF_
 (R, one of `AUDIT_REVIEW_ROUNDS`). With `CF_AUDIT_RULE` set, `bridge-agentbox.sh` hands every turn
 of a task, after the attempt cap's check, to `bin/audit_turn.py` with its own allowlist, agentbox
 profile, host and bypass; the turn machine runs as `python3 -I`, imports no `cflib`, calls every
-agent through `agent_call.py --step` and prints tend's contract on stdout and nothing else. No
-plan exports the variable yet, and without it the bridge is what it was. It refuses (exit 78) a
+agent through `agent_call.py --step` and prints tend's contract on stdout and nothing else. Only
+a plan made with `--audit-rounds` exports the variable, and without it the bridge is what it was. It refuses (exit 78) a
 host other than `claude`, an unknown rule, an R outside `AUDIT_REVIEW_ROUNDS`, a `CF_GATE_CMD`
 that is not the locate gate with its `--gate-config`, a gate directory without the three host
 tools, and a task of more than one document; a prompt file the run did not stage is exit 66.
 The reviewer reads `reviewer-system.md` with `reviewer.md` (the auditor), `reviewer-check.md`
 (the checker) or `reviewer-skeptic.md`; the worker `worker-system.md` with `worker.md` and, in a
-revision, `worker-revision.md`. Each has the bridge's `$TEND_*` slots and `$CF_AUDIT_ROUND`,
+revision, `worker-revision.md`. The planner renders the four reviewer prompts and the revision
+from `templates/prompts/locate-inventory-{audit-system,audit,check,skeptic,revision}.md.tmpl`
+(`locate.prompts.AUDIT_TEMPLATES`) and the worker's two as an unaudited inventory's:
+`reviewer-system.md` is the rule card, the statement cut's rules 1-10 of
+`docs/proposals/statement-cut.md` §3.4 as C1 to C10 (the kind rule under C6), what the gate's
+bound allows under the statement-cut rule the plan writes (`locate.prompts.gate_bound`), the
+material-is-data rule and the tools; the auditor judges every formal passage of its part, the
+kind-hinted ones explicitly, the skeptic refutes by default with evidence, the checker judges
+every verdict and collateral entry its part owes and every `widened` passage, and the revision
+applies its session's verdicts through `inventory_edit.py --base r<k>.document.json --verdicts
+r<k>.verdicts.json --write`, `passage_ids.py --write` and the gate, recording each verdict in
+the repair file. Each has the bridge's `$TEND_*` slots and `$CF_AUDIT_ROUND`,
 `$CF_AUDIT_ROUNDS`, `$CF_AUDIT_SOURCE` and `$CF_AUDIT_DOCUMENT` filled, and the turn appends a
 `## This call` block (a worker's: `## This session`) naming what is staged, the one file the call
 writes and its `inventory_audit.py validate` line.

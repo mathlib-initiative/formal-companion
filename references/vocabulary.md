@@ -1015,8 +1015,9 @@ host-side scripts that cannot import `cflib` keep copies of these, which tests p
 
 **The inventory audit's values** (`references/locate-documents.md` §13, the files an audited
 inventory run's reviewer turn reads and writes; every one in `cflib.vocab`'s audit block, which
-`scripts/gate/inventory_audit.py` copies for the run host and a test pins). No plan names an
-audit yet.
+`scripts/gate/inventory_audit.py` copies for the run host and a test pins). An inventory plan
+names one with `cf plan-locate --audit-rounds`, R one of `AUDIT_REVIEW_ROUNDS`, recorded as
+`run.yaml` `locate.audit: {rule: INVENTORY_AUDIT_RULE, review_rounds: R}`.
 
 | enum | values |
 |---|---|
