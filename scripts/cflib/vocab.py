@@ -1038,7 +1038,8 @@ AUDIT_BACK_MATTER = ("references", "notes", "footnotes", "citations", "sources",
                      "works cited", "notes and references")
 #: the soft threshold: a section, not furniture, is mostly skipped when at least
 #: AUDIT_MOSTLY_SKIPPED_MIN of its math paragraphs lie under a skip and no passage, and
-#: more than AUDIT_MOSTLY_SKIPPED_SHARE of them do; reported, never refusing
+#: at least AUDIT_MOSTLY_SKIPPED_SHARE of them do (at least half: "more than half" missed
+#: a section skipped 6 of 12 in inv-pilot-3's CRT); reported, never refusing
 AUDIT_MOSTLY_SKIPPED_MIN = 2
 AUDIT_MOSTLY_SKIPPED_SHARE = 0.5
 #: a skip verdict's statements: at most this many a row, each starting at 3 to 12 words of

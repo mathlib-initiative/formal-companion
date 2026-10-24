@@ -197,9 +197,16 @@ class TestASkipThatHidesStatements(SkipTurnCase):
         self.assertTrue(all(args[-2:] == ["--rule", "2"] for args in self.tool_lines()),
                         self.tool_lines())
         for call in self.runner.steps():
-            self.assertIn("--rule 2", call.prompt.split("Check it before you finish:")[1])
+            line = call.prompt.split("Check it before you finish:")[1].splitlines()[0]
+            self.assertIn("--rule 2", line)
             self.assertIn("- The skips this part shows: r1-s001, r1-s002, r1-s003, r1-s004.",
                           call.prompt)
+            # the agent's line reads the layer (each skip statement's at and skip evidence
+            # held to the skip's text); the turn's own acceptance check does not
+            self.assertRegex(line, r" --gate-config \S*gate\.json --rule 2$")
+        validates = [a for a in self.tool_lines() if a[:1] == ["validate"]]
+        self.assertTrue(validates)
+        self.assertFalse(any("--gate-config" in a for a in validates), validates)
         self.assertEqual(self.state()["rule"], 2)
         # the revision: unskip and the adds, through the edit tool, the ids and the gate
         self.agents.edit = self.repair(self.proof_ops)

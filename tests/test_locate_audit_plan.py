@@ -198,16 +198,28 @@ class TestTheFlag(Audited):
         code, out, err = self.plan("inv-a", "--audit-rounds", "3")
         self.assertEqual(code, 0, out + err)
         self.assertEqual(snapshot("inv-a"), before)
-        for run_id, extra, said in (("inv-a", (), "audited in 3 review rounds, not unaudited"),
+        rule = f"audited under audit rule {vocab.INVENTORY_AUDIT_RULE} in"
+        for run_id, extra, said in (("inv-a", (), f"{rule} 3 review rounds, not unaudited"),
                                     ("inv-a", ("--audit-rounds", "2"),
-                                     "audited in 3 review rounds, not audited in 2"),
+                                     f"{rule} 3 review rounds, not {rule} 2"),
                                     ("inv-1", ("--audit-rounds", "3"),
-                                     "unaudited, not audited in 3 review rounds")):
+                                     f"unaudited, not {rule} 3 review rounds")):
             with self.subTest(run_id=run_id, extra=extra):
                 code, out, err = self.plan(run_id, *extra)
                 self.assertNotEqual(code, 0)
                 self.assertIn(said, out + err)
         self.assertEqual(snapshot("inv-a"), before)
+        # a run planned under the other audit rule (before the skip audit's flip, or after
+        # it) keeps it: a re-plan with the same rounds is refused, and says both rules
+        other = 3 - vocab.INVENTORY_AUDIT_RULE
+        with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", other):
+            code, out, err = self.plan("inv-r", "--audit-rounds", "3")
+            self.assertEqual(code, 0, out + err)
+        code, out, err = self.plan("inv-r", "--audit-rounds", "3")
+        self.assertNotEqual(code, 0)
+        self.assertIn(f"was planned audited under audit rule {other} in 3 review rounds, not "
+                      f"{rule} 3 review rounds", out + err)
+        self.assertIn("keeps a run's audit, its rule and its rounds", out + err)
 
     def test_the_audit_tools_are_staged_and_pinned(self):
         pins = read_yaml(self.paths.run_yaml("inv-a"))["locate"]["gate_files"]

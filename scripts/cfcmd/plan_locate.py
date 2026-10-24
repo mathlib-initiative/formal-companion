@@ -215,16 +215,19 @@ def _check_run_id(paths, args, run_id: str, preset) -> None:
                           f"not {preset.name!r}",
                           hint="re-planning keeps a run's preset; use a new --run-id")
         # an audit is no option of a re-plan: its prompts, gate tools and wrappers would be
-        # left beside an unaudited plan's, or missing from an audited one's
+        # left beside an unaudited plan's, or missing from an audited one's; nor is its rule,
+        # whose prompts, schema and decision table the run's rounds were written under
         was = (previous.get("locate") or {}).get("audit")
         now = lplan.audit_block(getattr(args, "audit_rounds", None))
         if was != now:
             def said(block):
-                return (f"audited in {block['review_rounds']} review rounds"
+                return (f"audited under audit rule {block.get('rule')} in "
+                        f"{block.get('review_rounds')} review rounds"
                         if isinstance(block, dict) else "unaudited")
             raise CfError(f"run {run_id} exists and was planned {said(was)}, not {said(now)}",
-                          hint="re-planning keeps a run's audit (--audit-rounds); use a new "
-                               "--run-id")
+                          hint="re-planning keeps a run's audit, its rule and its rounds "
+                               "(--audit-rounds; a plan made now writes audit rule "
+                               f"{vocab.INVENTORY_AUDIT_RULE}); use a new --run-id")
 
 
 def _check_harvested_challenge(paths, run_id: str, doc: dict) -> None:

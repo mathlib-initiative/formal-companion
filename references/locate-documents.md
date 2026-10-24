@@ -3254,14 +3254,16 @@ rule-2 key is refused as any unknown key is, and a `/2` file under rule 1 by its
 skip overlaps and no passage holds is *under a skip*, what the gate's `skipped.math_paragraphs`
 counts. The *furniture* is the lead (an empty section path) and the back matter (a top heading
 of `AUDIT_BACK_MATTER`, case-folded). A section, not furniture, is *mostly skipped* when at least
-`AUDIT_MOSTLY_SKIPPED_MIN` (2) of its math paragraphs are under a skip and more than
+`AUDIT_MOSTLY_SKIPPED_MIN` (2) of its math paragraphs are under a skip and at least
 `AUDIT_MOSTLY_SKIPPED_SHARE` (half) of them are: the soft threshold, reported and never
 refusing. A skip is named `r<k>-s<nnn>`, round k's numbering of the snapshot's skips in span
 order (ties by their place in `skips`); the name holds for that round only.
 `inventory_audit.skip_facts` computes what everything below reads of a skip: its outermost
 blocks (each math when an entry inside it is, and held or not), its math paragraphs and those
 under it and no passage (`unheld`, and `unheld_outside` the furniture), its sections, and
-whether it is furniture (every block in the lead or the back matter), in a proof or an example
+whether it is furniture (every block in the lead or the back matter; a skip of no block when it
+ends before the first block of a section, as a short description or an infobox does), in a proof
+or an example
 section, in a mostly skipped one, *partial* (it starts or ends inside a block), *inside* a kept
 passage (a finder nested in one), and whether the **skip rule** applies: it overlaps a math
 paragraph no passage holds, outside the furniture, whose section path names a proof or an
@@ -3281,29 +3283,32 @@ SKIP r1-s002 · [5200, 6100] · 900 chars · 4 block(s), 3 math paragraph(s), 3 
   HINT: skip-rule in-proof mostly-skipped
 ```
 
-One `¶` line per outermost block, its span clipped to the skip (`(block [a, b])` when the block
-runs past it), so a repair copies spans into `unskip`: a math block in full to 1,500 characters
-(its first and last 700 past that), any other block as a `GAP` line is clipped, a run of three or
-more list items with no math one `… [a, b] N list items, no math: <first> … <last>` line, and
-text no block holds (a heading) a `⋯` line. The hints are `AUDIT_SKIP_HINTS`: `skip-rule`,
-`in-proof`, `in-example`, `mostly-skipped`, `partial` and `furniture`. Past
-`AUDIT_SKIP_BLOCK_BYTES` (20,000) every further block is one line of its first and last 100
-characters and the block ends `… the rest in full: --show <id>`. A skip whose text lies inside
-kept passages is one entry of a closing `SKIPS inside kept passages: <id> [a, b] <reason>; …`
-line, judged like any other. The header gains `Skips: N (r1-s001 to r1-s0NN); M math
-paragraph(s) lie under them and no passage, O of them outside the lead and the back matter.`
-(`Skips: none.` without one) and, when a section is mostly skipped, `ATTENTION: mostly skipped
-sections: <section> <under> of <math>; …`. `r<k>.render.json` gains `rule: 2` and `skips`, one
-row per skip `{id, span, reason, part, blocks, math, unheld, unheld_outside, furniture, rule,
-sections, inside}`, and each part's row its `skips`: the part that shows a skip owns it (a skip
-just before a part's first passage is that part's; the tail's and the closing line's are the last
-part's). `--rule 2 --show r<k>-s<nnn>` prints one skip whole, with `--context` characters of
-layer before and after it, through the same command prefix as `--show <item>`. With `--previous`
-and `--previous-verdicts r<k-1>.verdicts.json`, the diff gains a `SKIPS` section — every skip of
-the snapshot removed (`REMOVED SKIP`), changed (`CHANGED SKIP`, before and after) or added
-(`ADDED SKIP`) — and one `SKIP VERDICT <id> on <skip> [a, b]: <n> math paragraph(s) unheld
-before, <m> now; <h> of its <s> statement(s) now start inside a passage; the skip is gone.` (or
-the skips that remain in its span) line per skip verdict of the last round.
+One `¶` line per outermost block, its span clipped to the skip (`(block [a, b])` when the block runs
+past it), so a repair copies spans into `unskip`: a math block in full to 1,500 characters (its
+first and last 700 past that), any other block, and a math block of the back matter, as a `GAP` line
+is clipped, a run of three or more list items with no math one `… [a, b] N list items, no math:
+<first> … <last>` line, and text no block holds (a heading) a `⋯` line. The hints are
+`AUDIT_SKIP_HINTS`: `skip-rule`, `in-proof`, `in-example`, `mostly-skipped`, `partial` and
+`furniture`. Past `AUDIT_SKIP_BLOCK_BYTES` (20,000) every further block is one line of its first and
+last 100 characters and the block ends `… the rest in full: --show <id>`. A skip whose text lies
+inside kept passages is one entry of a closing `SKIPS inside kept passages: <id> [a, b] <reason>; …`
+line, judged like any other. The header gains `Skips: N (r1-s001 to r1-s0NN); M math paragraph(s)
+lie under them and no passage, O of them outside the lead and the back matter.` with the SKIP
+blocks' two-line legend before it (`Skips: none.` and no legend without one) and, when a section is
+mostly skipped, `ATTENTION: mostly skipped sections: <section> <under> of <math>; …`.
+`r<k>.render.json` gains `rule: 2` and `skips`, one row per skip `{id, span, reason, part, blocks,
+math, unheld, unheld_outside, furniture, rule, sections, inside}`, and each part's row its `skips`:
+the part that shows a skip owns it (a skip just before a part's first passage is that part's; the
+tail's and the closing line's are the last part's). A part's budget counts its SKIP blocks as it
+counts its GAP lines, and the tail (the gap to the end and the skips after the last passage) rides
+with the last passage, so only one passage with what precedes it, or the last with the tail, makes a
+part past the budget. `--rule 2 --show r<k>-s<nnn>` prints one skip whole, with `--context`
+characters of layer before and after it, through the same command prefix as `--show <item>`. With
+`--previous` and `--previous-verdicts r<k-1>.verdicts.json`, the diff gains a `SKIPS` section —
+every skip of the snapshot removed (`REMOVED SKIP`), changed (`CHANGED SKIP`, before and after) or
+added (`ADDED SKIP`) — and one `SKIP VERDICT <id> on <skip> [a, b]: <n> math paragraph(s) unheld
+before, <m> now; <h> of its <s> statement(s) now start inside a passage; the skip is gone.` (or the
+skips that remain in its span) line per skip verdict of the last round.
 
 **The auditor's file** gains the required `skips`: one row for every skip its part owns (all of
 them in a whole-document file), each judged exactly once:
@@ -3331,6 +3336,12 @@ verbatim from the layer inside the skip where it starts, `until` at most 12 (its
 rule judges (HINT `skip-rule`) from it, as `kind_other_ok` does a passage from the kind rule.
 `validate --kind audit --rule 2 --render-index r1.render.json --part <i>` holds a part to the
 skips its index row names; without an index, `--gate-config` reads the facts from the source.
+With `--gate-config` it also holds each statement's `at` to the skip's own text (an `at` the merge
+would drop: often the sentence that introduces a skipped display, which lies before the skip),
+and a skeptic file's evidence for an upheld skip flag or a missed skip likewise (what the merge
+would refute or drop); the auditor's and the skeptic's validator lines carry it, while the turn
+machine's own acceptance check does not, so such a slip costs a statement or a flag, never the
+round.
 
 **The flags and the skeptic.** `strip --rule 2` adds one flag per `skipped_statements` row,
 `{flag_id, item: "", skip, span, verdict, rule, merge_with, reason}`, placed among the passage
@@ -3348,14 +3359,18 @@ skeptic call even with no flag and no formal passage. A dispute of a skip verdic
 
 **The merge** (`merge --rule 2`; round 1 and later). A skip verdict's record is `{id, item: "",
 skip, skips, span, start, verdict: "skipped_statements", rule, merge_with, action, origin,
-statements, unheld, …}`: its target is the span, `skips` the skips of the round's snapshot that
-overlap it (`skip` the one when there is one), `unheld` the math paragraphs under them no passage
-holds; verdict ids number every verdict by where its target starts. An upheld skip flag is an
+statements, unheld, …}`: its target is the span; a verdict that judges one skip of the round's
+snapshot (an upheld flag, a missed skip, the skip rule) names that skip alone (`skip`, and
+`skips` its one id), and one carried by its span from an earlier round names the snapshot's
+skips that overlap the span (`skips`, `skip` the one when there is one), so two overlapping or
+nested skips are two verdicts and a skip two carried verdicts name is unskipped once; `unheld`
+is the math paragraphs under them no passage holds; verdict ids number every verdict by where its
+target starts. An upheld skip flag is an
 `auditor` verdict with the auditor's action and the statements whose `at` starts inside the skip
 (the others dropped and counted, `statements_dropped`; the verdict stands on its evidence); an
 evidenced missed skip is `skeptic_missed`; then **the skip rule** adds `skipped_statements`
 (origin `skip_rule`, rule `AUDIT_SKIP_RULE_RULE`, no statements, `AUDIT_SKIP_RULE_ACTION`) on every
-skip it applies to that no skip verdict of the round already settles, the auditor did not exempt
+skip it applies to that no skip verdict of the round already names, the auditor did not exempt
 with `skip_ok`, and that lies inside no span of `skip_seen` (the spans an earlier round exempted
 or set aside). A refuted skip flag does not stop it. From round 2, a skip verdict the check
 leaves `partial`, `missing`, `wrong` or `gate_refused_doubtful` (or a dispute refuted, or a
@@ -3380,33 +3395,36 @@ outside the furniture (`skip_report`'s `math_paragraphs` less `furniture_math_pa
 Round 1 and the final round are as before, so at most R − 1 rejections still hold.
 
 **The repair.** `inventory_edit.py --rule 2` adds `unskip {skip, keep?, verdict | neighbour_of}`
-(`AUDIT_SKIP_OPS`): the skip — an id of the base snapshot's numbering, `r<k>-s<nnn>` of the
-round the ops file names — gives up its text but the pieces `keep` names, `[{span: [a, b],
-reason?}]`, each inside its span, non-empty, disjoint and in order (a piece without a reason keeps
-the skip's); no `keep` (or `[]`) drops it, one piece shrinks it, two split it. It refuses an
-unknown id, another round's id, a skip named twice, a piece outside the skip or overlapping
-another, and no citation. **No operation adds or widens a skip.** The statements are `add`
-operations as any (`scope: formal_math`, the kind the verdict proposes, `prominence:
-supporting`), each math paragraph of the freed text no statement holds an `add` of an
-expository passage (narration inside a proof is expository, never a skip), and the partial case a
-`set` of `until` on the passage `merge_with` names; every operation cites the skip verdict.
-`named_skips` gives the skips the operations name. The gate, the run's own, validates the result
-unchanged: rule 8 refuses a skip that still holds a whole added passage (an `unskip` forgotten),
-the coverage floor a freed math paragraph no passage holds (narration forgotten). `collateral
---rule 2` also compares the skips: each difference between the document's and what the cited
-operations make of the snapshot's is a `skip_edit` entry (`AUDIT_SKIP_COLLATERAL`), `{id,
-change: "skip_edit", skip, before: {span, reason} | null, after: {span, reason} | null}` — a skip
-changed (both), removed (no `after`) or added (no `before`) by hand, `skip` the snapshot's skip
-that holds it — which the checker judges harmful or not like any collateral; no operation puts
-back a skip removed by hand (the final round's revert to the best snapshot does). The checker
-gives each skip verdict a status like any verdict (`applied` when no statement is left under a
-skip in its span and the statements it named are held), reading the diff's SKIP VERDICT lines.
+(`AUDIT_SKIP_OPS`): the skip — an id of the base snapshot's numbering, `r<k>-s<nnn>` of the round
+the ops file names — gives up its text but the pieces `keep` names, `[{span: [a, b], reason?}]`,
+each inside its span, non-empty, disjoint and in order (a piece without a reason keeps the skip's);
+no `keep` (or `[]`) drops it, one piece shrinks it, two split it. It refuses an unknown id, another
+round's id, a skip named twice, a piece outside the skip or overlapping another, and no citation.
+**No operation adds or widens a skip.** The statements are `add` operations as any (`scope:
+formal_math`, the kind the verdict proposes, `prominence: supporting`), each math paragraph of the
+freed text no statement holds an `add` of an expository passage (narration inside a proof is
+expository, never a skip), and the partial case a `set` of `until` on the passage `merge_with`
+names; every operation cites the skip verdict. The gate, the run's own, validates the result
+unchanged: rule 8 refuses a skip that still holds a whole added passage (an `unskip` forgotten), the
+coverage floor a freed math paragraph no passage holds (narration forgotten). `collateral --rule 2`
+also compares the skips: each difference between the document's and what the cited operations make
+of the snapshot's is a `skip_edit` entry (`AUDIT_SKIP_COLLATERAL`), `{id, change: "skip_edit", skip,
+before: {span, reason} | null, after: {span, reason} | null}` — a skip changed (both), removed (no
+`after`) or added (no `before`) by hand, `skip` the snapshot's skip that holds it, in the reviewed
+snapshot's numbering — which the checker judges harmful or not like any collateral. A harmful one's
+`revert` verdict names the skip the hand edit left in the merged round's numbering, the base the
+next revision's `unskip` takes, and the `unskip` that reverts it (an added skip dropped, a widened
+one kept to its span before); no operation puts back a skip removed or narrowed by hand (the final
+round's revert to the best snapshot does). The checker gives each skip verdict a status like any
+verdict (`applied` when no statement is left under a skip in its span and the statements it named
+are held), reading the diff's SKIP VERDICT lines.
 
 **The turn machine** (`CF_AUDIT_RULE=2`) passes `--rule 2` to every host tool call and into every
-validator line it gives an agent, records `rule: 2` in `state.json` (a state of another rule is
-refused), stages the last round's verdicts for the rendering's diff, names each part's skips in
-the call's block, places a skip flag in the part that shows its skip, runs the skip hunt's
-skeptic calls, combines the parts' `examined_skips` and `missed_skips`, gives the `audit_failed`
-merge `--gate-config`, and **weighs** the revision's sessions: a skip verdict weighs max(1, its
-statements, its `unheld`) and any other verdict 1, a session holds up to
-`AUDIT_REPAIR_VERDICTS_PER_SESSION` (40) of weight, and a heavier verdict has a session of its own.
+validator line it gives an agent (an auditor's and a skeptic's also `--gate-config`), records `rule:
+2` in `state.json` (a state of another rule is refused), stages the last round's verdicts for the
+rendering's diff, names each part's skips in the call's block, places a skip flag in the part that
+shows its skip, runs the skip hunt's skeptic calls, combines the parts' `examined_skips` and
+`missed_skips`, gives the `audit_failed` merge `--gate-config`, and **weighs** the revision's
+sessions: a skip verdict weighs max(1, its statements, its `unheld`) and any other verdict 1, a
+session holds up to `AUDIT_REPAIR_VERDICTS_PER_SESSION` (40) of weight, and a heavier verdict has a
+session of its own.

@@ -79,12 +79,6 @@ SUPPORTING = "supporting"
 REMOVABLE = ("until", "shape", "conjuncts")
 
 
-def named_skips(ops: list) -> set[str]:
-    """Every skip id an ``unskip`` names (rule 2)."""
-    return {op["skip"] for op in ops if isinstance(op, dict) and op.get("op") == "unskip"
-            and isinstance(op.get("skip"), str)}
-
-
 def named_items(ops: list) -> set[str]:
     """Every base item an operation names (its own passage, a merge's two, an add's anchor)."""
     out: set[str] = set()

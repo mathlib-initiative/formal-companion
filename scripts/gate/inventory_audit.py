@@ -18,7 +18,8 @@ auditor's ``skips`` (``clean`` or ``skipped_statements``), the skeptic hunts the
 flag names, the merge keeps an upheld skip flag whose evidence is inside the skip and adds
 the mechanical **skip rule** (:func:`skip_facts`), ``collateral`` reports ``skip_edit``,
 the decision table ``audit/2`` adds one clause, and every verdicts file carries the
-round's :func:`skip_report`.
+round's :func:`skip_report`.  ``validate --rule 2 --gate-config`` also reads the layer and
+names what the merge would drop of a valid file (:func:`skip_text_problems`).
 
 It runs on the run host from the gate directory, like the gate: standard
 library only, no ``cflib`` (``cflib.vocab`` holds the vocabulary, and
@@ -668,10 +669,10 @@ def section_counts(doc: dict, paragraphs: list[dict]) -> dict[str, dict]:
 
 def mostly_skipped(counts: dict[str, dict]) -> list[str]:
     """The sections, not furniture, with at least :data:`MOSTLY_SKIPPED_MIN` math paragraphs
-    under a skip and no passage and more than :data:`MOSTLY_SKIPPED_SHARE` of theirs so."""
+    under a skip and no passage and at least :data:`MOSTLY_SKIPPED_SHARE` of theirs so."""
     rows = [(row["first"], key) for key, row in counts.items()
             if not row["furniture"] and row["skipped"] >= MOSTLY_SKIPPED_MIN
-            and row["skipped"] > MOSTLY_SKIPPED_SHARE * row["math"]]
+            and row["skipped"] >= MOSTLY_SKIPPED_SHARE * row["math"]]
     return [key for _first, key in sorted(rows)]
 
 
@@ -723,15 +724,21 @@ def skip_facts(doc: dict, paragraphs: list[dict], round_: int) -> list[dict]:
     math, held, section}``, ``math`` when an entry inside it is), ``math`` and ``unheld``
     (the math entries it overlaps, and those no passage holds), ``unheld_outside`` (those
     outside the furniture), ``sections`` (its blocks' sections, in order), ``furniture``
-    (every block in the lead or the back matter), ``in_proof``, ``in_example``, ``mostly``
-    (a section of its is mostly skipped), ``partial`` (it starts or ends inside a block),
-    ``inside`` (it lies inside a kept passage) and ``rule``: the skip rule applies -- it
+    (every block in the lead or the back matter; a skip that overlaps no block, when it lies
+    in the lead by offset: it ends before the first block of a section, as a short
+    description or an infobox ahead of the first paragraph does), ``in_proof``,
+    ``in_example``, ``mostly`` (a section of its is mostly skipped), ``partial`` (it starts
+    or ends inside a block), ``inside`` (it lies inside a kept passage) and ``rule``: the
+    skip rule applies -- it
     overlaps a math entry no passage holds, outside the furniture, whose section names a
     proof or an example or is mostly skipped.
     """
     kept = [s for p in doc.get("passages") or [] if (s := span_of(p))]
     rows = _paragraph_rows(paragraphs)
     mostly = set(mostly_skipped(section_counts(doc, paragraphs)))
+    # where the lead ends by offset: the first block of a section (all lead: the last end)
+    lead_end = next((p["span"][0] for p in rows if p["section"]),
+                    rows[-1]["span"][1] if rows else None)
     out = []
     for n, (index, skip) in enumerate(skip_order(doc), 1):
         a, b = span_of(skip)
@@ -759,7 +766,8 @@ def skip_facts(doc: dict, paragraphs: list[dict], round_: int) -> list[dict]:
             "reason": str(skip.get("reason") or ""), "blocks": blocks,
             "math": len(math), "unheld": len(unheld), "unheld_outside": len(outside),
             "sections": sections,
-            "furniture": bool(blocks) and all(is_furniture(path) for path in paths),
+            "furniture": (all(is_furniture(path) for path in paths) if blocks
+                          else lead_end is not None and b <= lead_end),
             "in_proof": any(re.search(r"\bproofs?\b", s, re.IGNORECASE)
                             for path in paths for s in path),
             "in_example": any(re.search(r"\bexamples?\b", s, re.IGNORECASE)
@@ -983,6 +991,58 @@ def validate_skip_rows(rows: list[dict], where: str, facts: list[dict], items: d
                                 f"judge (no HINT skip-rule)")
 
 
+def skip_text_problems(data: Any, kind: str, facts: list[dict], layer: str,
+                       flags: dict | None = None) -> list[str]:
+    """Rule 2, with the layer: what the merge would drop of a valid audit or skeptic file
+    because it does not lie in the skip's own text -- a skip statement whose ``at`` is not
+    inside its skip (:func:`_statements`; often the sentence that introduces a skipped
+    display, which lies before the skip, in the GAP), and the ``evidence`` of an upheld skip
+    flag or a missed skip (:func:`_in_skip`).  The merge drops and counts them; ``validate
+    --gate-config`` names them, so the agent that wrote them can mend them."""
+    problems: list[str] = []
+    if not isinstance(data, dict):
+        return problems
+    by_id = {f["id"]: f for f in facts}
+
+    def statements(rows: list, where: str) -> None:
+        for i, row in enumerate(rows):
+            fact = by_id.get(row.get("skip")) if isinstance(row, dict) else None
+            if fact is None or row.get("verdict") != SKIP_VERDICT:
+                continue
+            a, b = fact["span"]
+            for j, st in enumerate(row.get("statements") or []):
+                at = str(st.get("at") or "") if isinstance(st, dict) else ""
+                if at.strip() and find_folded(layer, a, b, at) is None:
+                    problems.append(
+                        f"{where}[{i}].statements[{j}].at {at[:60]!r} is not in the text of "
+                        f"{fact['id']} [{a}, {b}]: anchor it at the words, inside the skip, "
+                        f"where the statement starts (a sentence that introduces a skipped "
+                        f"display lies before the skip; name the passage it opens in "
+                        f"merge_with, or anchor at the display), or the merge drops it")
+            if where.endswith("missed_skips") and not _in_skip(str(row.get("evidence") or ""),
+                                                               layer, fact["span"]):
+                problems.append(f"{where}[{i}].evidence is not in the text of {fact['id']} "
+                                f"[{a}, {b}]: quote words inside the skip, or the merge drops "
+                                f"the row")
+
+    if kind == "audit":
+        statements(data.get("skips") or [], "audit.skips")
+    elif kind == "skeptic":
+        statements(data.get("missed_skips") or [], "skeptic.missed_skips")
+        skip_flags = {f["flag_id"]: f for f in (flags or {}).get("flags") or []
+                      if isinstance(f, dict) and f.get("skip")}
+        for i, row in enumerate(data.get("verdicts") or []):
+            flag = skip_flags.get(row.get("flag_id")) if isinstance(row, dict) else None
+            span = (flag or {}).get("span")
+            if not (flag and row.get("upheld") and isinstance(span, list) and len(span) == 2):
+                continue
+            if not _in_skip(str(row.get("evidence") or ""), layer, span):
+                problems.append(f"skeptic.verdicts[{i}].evidence is not in the text of "
+                                f"{flag['skip']} [{span[0]}, {span[1]}]: an upheld skip flag "
+                                f"quotes words inside the skip, or the merge refutes it")
+    return problems
+
+
 def validate_check(data: Any, doc: dict, previous: dict, collateral: dict | None, *,
                    round_: int, expect: list[str] | None = None,
                    expect_collateral: list[str] | None = None,
@@ -1107,8 +1167,9 @@ def _skeptic_skips(data: dict, doc: dict, flags: dict, *, round_: int,
                    skips: list[dict] | None, expect_skips: list[str] | None,
                    problems: list[str]) -> None:
     """Rule 2's part of a skeptic file: the verdicts on skip flags, the skip hunt and its
-    missed skips."""
-    facts = skips if skips is not None else bare_skips(doc, 1)
+    missed skips (without facts, the skips named by ids alone in the round's numbering)."""
+    facts = skips if skips is not None else bare_skips(
+        doc, round_ if isinstance(round_, int) and round_ >= 1 else 1)
     by_id = {f["id"]: f for f in facts}
     items = by_item(doc)
     kinds = {f["flag_id"]: bool(f.get("skip")) for f in flags.get("flags") or []}
@@ -1548,6 +1609,32 @@ def skip_edits(snapshot: dict, expected: dict, doc: dict, snapshot_round: int) -
     return sorted(out, key=lambda e: (e["after"] or e["before"])["span"])
 
 
+def _skip_edit_now(entry: dict, facts: list[dict], round_: int) -> str:
+    """What the ``revert`` of a harmful ``skip_edit`` entry adds to its action: the skip the
+    hand edit left, named in round ``round_``'s numbering -- the base the next revision's
+    ``unskip`` names, where the entry's own ``skip`` is the reviewed snapshot's, the round
+    before's -- and the ``unskip`` that reverts it (a skip added by hand dropped, one widened
+    by hand shrunk back to its span before).  Nothing for a skip removed or narrowed by hand,
+    which no operation puts back."""
+    after = entry.get("after")
+    if not isinstance(after, dict) or not isinstance(after.get("span"), list):
+        return ""
+    span = list(after["span"])
+    fact = next((f for f in facts if f["span"] == span and f["reason"] == after.get("reason")),
+                None) or next((f for f in facts if f["span"] == span), None)
+    if fact is None:
+        return ""
+    sid, (a, b) = fact["id"], span
+    before = entry.get("before")
+    if not isinstance(before, dict) or not before.get("span"):
+        how = f"unskip {sid}"
+    elif a <= before["span"][0] < before["span"][1] <= b:
+        how = f"unskip {sid} keeping [{before['span'][0]}, {before['span'][1]}]"
+    else:
+        how = "no operation widens a skip back"
+    return f"; the skip is {sid} [{a}, {b}] in round {round_}'s numbering ({how})"
+
+
 # --------------------------------------------------------------------------- #
 # merge: the round's verdicts and the decision table
 # --------------------------------------------------------------------------- #
@@ -1762,12 +1849,17 @@ def _statements(rows: list[dict], layer: str | None, span, counts: dict) -> list
 
 
 def _skip_record(*, span, facts: list[dict], verdict: str, rule: int, merge_with: str,
-                 action: str, origin: str, statements: list[dict], **extra) -> dict:
-    """A skip verdict: its target is the span, and ``skips`` the skips of the round's
-    snapshot that overlap it (``skip`` the one when there is one); ``unheld`` the math
-    paragraphs under them that no passage holds (what a revision session weighs)."""
+                 action: str, origin: str, statements: list[dict], fact: dict | None = None,
+                 **extra) -> dict:
+    """A skip verdict: its target is the span; ``skips`` is ``fact``'s id alone when the
+    verdict judges one skip of the round's snapshot (an upheld flag, a missed skip, the skip
+    rule), else -- a verdict carried by its span from an earlier round -- the snapshot's
+    skips that overlap the span (``skip`` the one when there is one); ``unheld`` the math
+    paragraphs under them that no passage holds (what a revision session weighs).  So two
+    overlapping or nested skips are two verdicts, each naming its own skip once."""
     span = [int(span[0]), int(span[1])]
-    under = [f for f in facts if f["span"][0] < span[1] and span[0] < f["span"][1]]
+    under = [fact] if fact is not None else \
+        [f for f in facts if f["span"][0] < span[1] and span[0] < f["span"][1]]
     ids = [f["id"] for f in under]
     return {"item": "", "skip": ids[0] if len(ids) == 1 else "", "skips": ids, "span": span,
             "start": span[0], "verdict": verdict, "rule": rule, "merge_with": merge_with,
@@ -1798,7 +1890,8 @@ def _add_missed_skips(skeptic: dict, facts: list[dict], actionable: list[dict], 
         actionable.append(_skip_record(
             span=fact["span"], facts=facts, verdict=SKIP_VERDICT, rule=row["rule"],
             merge_with=row["merge_with"], action=row["action"], origin="skeptic_missed",
-            statements=statements, skeptic_reason=row["reason"], evidence=row["evidence"]))
+            statements=statements, fact=fact, skeptic_reason=row["reason"],
+            evidence=row["evidence"]))
 
 
 def _skip_rule(facts: list[dict], actionable: list[dict], counts: dict, *,
@@ -1814,9 +1907,12 @@ def _skip_rule(facts: list[dict], actionable: list[dict], counts: dict, *,
         if any(x <= a and b <= y for x, y in seen):
             continue
         counts["skip_rule"] += 1
-        actionable.append(_skip_record(
+        record = _skip_record(
             span=fact["span"], facts=facts, verdict=SKIP_VERDICT, rule=SKIP_RULE_RULE,
-            merge_with="", action=SKIP_RULE_ACTION, origin="skip_rule", statements=[]))
+            merge_with="", action=SKIP_RULE_ACTION, origin="skip_rule", statements=[],
+            fact=fact)
+        settled.update(record["skips"])
+        actionable.append(record)
 
 
 def _skips_round1(doc: dict, audits: list[dict], skeptic: dict, flags: dict,
@@ -1856,8 +1952,9 @@ def _skips_round1(doc: dict, audits: list[dict], skeptic: dict, flags: dict,
         actionable.append(_skip_record(
             span=fact["span"], facts=facts, verdict=SKIP_VERDICT, rule=ruling["rule"],
             merge_with=flag["merge_with"], action=row["action"], origin="auditor",
-            statements=statements, flag_id=flag["flag_id"], auditor_reason=flag["reason"],
-            skeptic_reason=ruling["reason"], evidence=ruling["evidence"]))
+            statements=statements, fact=fact, flag_id=flag["flag_id"],
+            auditor_reason=flag["reason"], skeptic_reason=ruling["reason"],
+            evidence=ruling["evidence"]))
     _add_missed_skips(skeptic, facts, actionable, counts, layer)
     exempt = [{"skip": sid, "span": by_id[sid]["span"], "reason": row["reason"]}
               for sid, row in rows.items()
@@ -1992,13 +2089,16 @@ def merge_later(round_: int, doc: dict, checks: list[dict], skeptic: dict, previ
             item = entry.get("item") or (entry.get("before") or {}).get("item") or ""
             what = ", ".join([str(entry.get("change")), *(entry.get("fields") or [])])
             start = _start(doc, item) if item else None
-            if start is None and entry.get("change") == "skip_edit":
-                start = ((entry.get("after") or entry.get("before") or {}).get("span")
-                         or [None])[0]
+            where = ""
+            if entry.get("change") == "skip_edit":
+                if start is None:
+                    start = ((entry.get("after") or entry.get("before") or {}).get("span")
+                             or [None])[0]
+                where = _skip_edit_now(entry, facts, round_)
             actionable.append({"item": item, "start": start,
                                "verdict": VERDICT_REVERT, "rule": 0, "merge_with": "",
                                "action": f"revert collateral {row['id']} ({what}): "
-                                         f"{row['reason']}",
+                                         f"{row['reason']}{where}",
                                "origin": "collateral", "of": row["id"]})
     known = {h["id"]: h for h in history}
     known.update({v["id"]: v for v in previous.get("verdicts") or []})
@@ -2262,15 +2362,20 @@ def _audit_files(paths: list[str], doc: dict, problems: list[str], rule: int = D
     return audits
 
 
-def _facts(args, doc: dict, index: dict | None, round_: int) -> list[dict] | None:
-    """The skip facts a rule-2 check reads: the rendering index's rows when one is given,
-    else the source's (``--gate-config``), else None (ids alone)."""
-    if index is not None:
-        return list(index.get("skips") or [])
+def _facts(args, doc: dict, index: dict | None, round_: int
+           ) -> tuple[list[dict] | None, str | None]:
+    """``(facts, layer)`` a rule-2 check reads: the skip facts -- the rendering index's rows
+    when one is given, else the source's (``--gate-config``), else None (ids alone) -- and,
+    with ``--gate-config``, the layer the skips' text is read on (else None)."""
+    view = None
     if getattr(args, "gate_config", None):
         _cfg, view = load_source(args.gate_config, str(doc.get("source_id")))
-        return skip_facts(doc, view.paragraphs(), round_)
-    return None
+    layer = view.layer if view is not None else None
+    if index is not None:
+        return list(index.get("skips") or []), layer
+    if view is not None:
+        return skip_facts(doc, view.paragraphs(), round_), layer
+    return None, None
 
 
 def cmd_validate(args) -> int:
@@ -2284,9 +2389,11 @@ def cmd_validate(args) -> int:
             expect = _part_items(args.render_index, args.part, args.document, doc)
             if rule >= 2:
                 index, expect_skips = _part_skips(args.render_index, args.part)
-        skips = _facts(args, doc, index, 1) if rule >= 2 else None
+        skips, layer = _facts(args, doc, index, 1) if rule >= 2 else (None, None)
         problems = validate_audit(data, doc, expect=expect, rule=rule, skips=skips,
                                   expect_skips=expect_skips)
+        if not problems and layer is not None:
+            problems = skip_text_problems(data, "audit", skips, layer)
     elif args.kind == "skeptic":
         flags = read_json(_need(args.flags, "--flags"), "flags file")
         expect = index = expect_skips = None
@@ -2295,10 +2402,12 @@ def cmd_validate(args) -> int:
             if rule >= 2:
                 index, expect_skips = _part_skips(args.render_index, args.part)
         round_ = flags.get("round")
-        skips = _facts(args, doc, index, round_ if isinstance(round_, int) else 1) \
-            if rule >= 2 else None
+        skips, layer = _facts(args, doc, index, round_ if isinstance(round_, int) else 1) \
+            if rule >= 2 else (None, None)
         problems = validate_skeptic(data, doc, flags, round_=round_, expect=expect,
                                     rule=rule, skips=skips, expect_skips=expect_skips)
+        if not problems and layer is not None:
+            problems = skip_text_problems(data, "skeptic", skips, layer, flags)
     elif args.kind == "check":
         previous = read_json(_need(args.previous, "--previous"), "previous verdicts")
         collateral_doc = read_json(_need(args.collateral, "--collateral"), "collateral file")
@@ -2499,8 +2608,10 @@ def main(argv: list[str] | None = None) -> int:
                                           "r<k>.render.json")
     v.add_argument("--part", type=int, help="an audit or skeptic part: its number in "
                                             "--render-index")
-    v.add_argument("--gate-config", help="rule 2 without --render-index: the run's gate.json, "
-                                         "whose source the skips are judged on")
+    v.add_argument("--gate-config", help="rule 2: the run's gate.json, whose source the "
+                                         "skips are judged on (without --render-index) and "
+                                         "whose layer holds each skip statement's at and "
+                                         "each skip evidence to the skip's own text")
     _rule_arg(v)
     s = sub.add_parser("strip", help="write the flags file the skeptic sees")
     s.add_argument("--round", type=int, required=True)
