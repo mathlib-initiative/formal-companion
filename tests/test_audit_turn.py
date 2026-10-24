@@ -325,7 +325,8 @@ class TurnCase(TL.HostCase):
 
 class TestTheHostCopiesAreCflibs(unittest.TestCase):
 
-    PAIRS = {"TURN_SCHEMA": "AUDIT_TURN_SCHEMA", "AUDIT_RULE": "INVENTORY_AUDIT_RULE",
+    PAIRS = {"TURN_SCHEMA": "AUDIT_TURN_SCHEMA", "AUDIT_RULES": "INVENTORY_AUDIT_RULES",
+             "SKIP_VERDICT": "AUDIT_SKIP_VERDICT",
              "AUDIT_REVIEW_ROUNDS": "AUDIT_REVIEW_ROUNDS", "AUDIT_STEPS": "AUDIT_STEPS",
              "OUTPUT_RETRIES": "AUDIT_OUTPUT_RETRIES", "GATE_RESETS": "AUDIT_GATE_RESETS",
              "DISCUSSION_TAIL": "AUDIT_DISCUSSION_TAIL",
@@ -967,7 +968,7 @@ class TestTheConfigurationIsRefused(TurnCase):
         self.assertIn("calls claude, not 'codex'", self.refused("--host", "codex"))
 
     def test_an_unknown_rule(self):
-        for rule in ("2", "", "audit/1"):
+        for rule in ("3", "", "audit/1", "0"):
             with self.subTest(rule=rule):
                 self.env["CF_AUDIT_RULE"] = rule
                 self.assertIn("is not a rule this bridge knows", self.refused())

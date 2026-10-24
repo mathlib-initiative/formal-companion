@@ -42,6 +42,21 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The turn machine runs audit rule 2** (`scripts/run/audit_turn.py`, `references/locate-documents.md`
+  §13.9 and §13.11; dormant until a plan exports `CF_AUDIT_RULE=2`). It accepts rule 1 or 2,
+  records the rule in `state.json` and refuses a state of the other, passes `--rule 2` to every
+  host tool call and into every validator line it gives an agent, names each part's skips in
+  the call's block, places a skip flag in the part that shows its skip, runs the round-1 skip
+  hunt's skeptic call for a part with an unflagged skip over math no passage holds (even with
+  no flag and no formal passage), combines the parts' `examined_skips` and `missed_skips`,
+  stages the last round's verdicts for the diff's SKIP VERDICT lines, and weighs the revision's
+  sessions: a skip verdict weighs max(1, its statements, the math paragraphs under it), up to
+  40 a session. Under rule 1 its calls, prompts, command lines and round files are the base
+  commit's: `tests/test_audit_turn_skips.py` runs one rule-1 run through f523584's turn machine
+  and this one and compares them, and drives a skip verdict through fake agents end to end
+  (flagged, upheld with evidence inside the skip, repaired with `unskip` and adds through the
+  staged edit tool, the id tool and the gate, checked applied, approved), the skip rule and
+  `skip_ok`, and the random-outcome property under rule 2.
 - **Audit rule 2: the inventory audit's host tools judge the skips** (`references/locate-documents.md`
   §13.11; dormant: no plan writes rule 2 yet, and every tool called without `--rule` is rule 1,
   byte for byte the base commit's). inv-pilot-3's CRT worker recorded its proofs and worked
