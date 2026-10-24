@@ -42,6 +42,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The receipt of a rule-2 audited run counts the skips** (`scripts/harvest/audit_summary.py`,
+  `references/locate-documents.md` §13.10 and §13.11). When a verdicts file is `audit/2`, the
+  receipt's `audit` block gains `skips`: round 1's skip reports summed (`before`), the reviewed
+  round's (`after`), and each document's two whole, with the math paragraphs under skips by
+  section and the mostly skipped sections; `cf harvest` prints one line of it. Reported, never
+  refusing; a rule-1 receipt (inv-pilot-3's) has no such key and is byte for byte what it was.
 - **The audit's prompts carry audit rule 2** (`templates/prompts/locate-inventory-{audit-system,audit,skeptic,check,revision}.md.tmpl`,
   `locate.prompts.audit_context`; `references/locate-documents.md` §13.11). The rule card says when
   a skip is right (furniture, text with no statement and no math paragraph) and that a proof, a
