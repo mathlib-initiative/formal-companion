@@ -1058,7 +1058,7 @@ Rule 2's bounds (`references/locate-documents.md` §13.11): `AUDIT_BACK_MATTER` 
 links` · `see also` · `works cited` · `notes and references`: a top heading of the back matter,
 case-folded; with the lead, the page furniture), `AUDIT_MOSTLY_SKIPPED_MIN` (2) and
 `AUDIT_MOSTLY_SKIPPED_SHARE` (0.5: a section, not furniture, is mostly skipped when at least 2 of
-its math paragraphs lie under a skip and no passage and more than half of them do; the soft
+its math paragraphs lie under a skip and no passage and at least half of them do; the soft
 threshold, reported and never refusing), `AUDIT_SKIP_STATEMENTS_MAX` (40 statements a skip
 verdict lists), `AUDIT_SKIP_AT_WORDS` (3 to 12 words: where a statement starts, verbatim inside
 the skip) and `AUDIT_SKIP_UNTIL_WORDS` (12: its last words), `AUDIT_SKIP_RULE_RULE` (6, the rule

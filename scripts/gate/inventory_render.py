@@ -71,9 +71,10 @@ SKIPS_MAX = 3000
 CONTEXT_DEFAULT = 300
 CONTEXT_MAX = 5000
 LABEL = re.compile(r"r[1-9][0-9]?\Z")
-#: rule 2's skip blocks: a math block in full to MATH_MAX characters (its first and last
-#: MATH_SIDE past that), a run of LIST_RUN or more list items with no math one line (each
-#: end LIST_SIDE characters), and past ia.SKIP_BLOCK_BYTES one clipped line a block
+#: rule 2's skip blocks: a math block (but the back matter's) in full to MATH_MAX characters
+#: (its first and last MATH_SIDE past that), a run of LIST_RUN or more list items with no
+#: math one line (each end LIST_SIDE characters), and past ia.SKIP_BLOCK_BYTES one clipped
+#: line a block
 MATH_MAX = 1500
 MATH_SIDE = 700
 LIST_RUN = 3
@@ -98,13 +99,14 @@ EXPLAIN_SKIPS = [
     "SKIP blocks are the document's skips, in place, each named r<k>-s<nnn> (this round's "
     "numbering, in span order): SKIP id · span · chars · its blocks, their math paragraphs and "
     "how many of those no passage holds · its sections; REASON (the worker's); one ¶ line per "
-    "block with its span inside the skip (a math block in full, a run of list items with no "
-    "math as one … line); ⋯ for text no block holds; HINT.",
+    "block with its span inside the skip (a math block in full but in the back matter, a run "
+    "of list items with no math as one … line); ⋯ for text no block holds; HINT.",
     "Skip HINTs: skip-rule (it covers math no passage holds in a proof, an example or a "
     "mostly skipped section: the stage gives it a skipped_statements verdict unless the audit "
     "says, with a reason, that the skip is right); in-proof; in-example; mostly-skipped (a "
     "section of it is mostly skipped); partial (it starts or ends inside a block); furniture "
-    "(every block is in the lead or the back matter).",
+    "(every block is in the lead or the back matter, or it holds no block and lies in the "
+    "lead).",
 ]
 
 
@@ -165,15 +167,18 @@ def passage_lines(n: int, passage: dict, layer: str, blocks) -> list[str]:
 
 def header(doc: dict, skips: dict | None = None) -> list[str]:
     """The rendering's header; under rule 2 (``skips``, :func:`skip_summary`) also the
-    skips' line and, when a section is mostly skipped, the ATTENTION line."""
+    skips' line, the SKIP blocks' legend when the document has a skip (every part repeats
+    the header, so a document with none pays for no legend) and, when a section is mostly
+    skipped, the ATTENTION line."""
     rows = doc.get("passages") or []
     formal = sum(ia.is_formal(p) for p in rows)
     notes = flat(str(doc.get("notes") or "")).strip() or "(none)"
     if skips is None:
         return [f"# {doc.get('source_id')}: inventory, {len(rows)} passages ({formal} formal)",
                 "", *EXPLAIN, f"Worker notes: {notes}", ""]
+    legend = EXPLAIN_SKIPS if skips["report"]["skips"] else []
     return [f"# {doc.get('source_id')}: inventory, {len(rows)} passages ({formal} formal)", "",
-            *EXPLAIN, *EXPLAIN_SKIPS, f"Worker notes: {notes}", *skips["lines"], ""]
+            *EXPLAIN, *legend, f"Worker notes: {notes}", *skips["lines"], ""]
 
 
 def skip_summary(doc: dict, facts: list[dict], paragraphs: list[dict]) -> dict:
@@ -197,6 +202,12 @@ def skip_summary(doc: dict, facts: list[dict], paragraphs: list[dict]) -> dict:
 
 def clip(text: str, cap: int, side: int) -> str:
     return text if len(text) <= cap else text[:side] + " … " + text[-side:]
+
+
+def _back_matter(section: list[str]) -> bool:
+    """A block of the back matter: furniture, not the lead (whose math may state the
+    subject, and is shown in full)."""
+    return bool(section) and ia.is_furniture(section)
 
 
 def skip_lines(fact: dict, layer: str, *, cap: bool = True) -> list[str]:
@@ -253,9 +264,11 @@ def skip_lines(fact: dict, layer: str, *, cap: bool = True) -> list[str]:
             text = flat(layer[x:y])
             if capped:
                 text = clip(text, 2 * CAPPED_SIDE, CAPPED_SIDE)
-            elif block["math"]:
+            elif block["math"] and not _back_matter(block["section"]):
                 text = clip(text, MATH_MAX, MATH_SIDE)
             else:
+                # prose, and a math block of the back matter (a bibliography entry with a
+                # formula in its title): clipped as a GAP line is
                 text = clip(text, GAP_MAX, GAP_SIDE)
             mark = (" · math" + ("" if block["held"] else " · held by no passage")
                     if block["math"] else "")
@@ -376,8 +389,13 @@ def parts(doc: dict, layer: str, blocks, part_bytes: int = ia.PART_BYTES, *,
         head = header(doc)
     groups: list[list[tuple[int, dict, list[str]]]] = [[]]
     size = nbytes(head)
-    for row in rows:
-        cost = nbytes(row[2])
+    # under rule 2 the tail (the gap to the end and the skips after the last passage, each
+    # SKIP block up to ia.SKIP_BLOCK_BYTES) rides with the last passage, so it counts
+    # toward the last part as a passage's gap and skips count toward theirs; rule 1's tail
+    # is the base commit's, one capped line, and its parts are the base commit's
+    tail_cost = nbytes(tail) if rule >= 2 else 0
+    for j, row in enumerate(rows):
+        cost = nbytes(row[2]) + (tail_cost if j == len(rows) - 1 else 0)
         if groups[-1] and size + cost > part_bytes:
             groups.append([])
             size = nbytes(head)

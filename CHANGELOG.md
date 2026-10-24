@@ -165,6 +165,37 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **Review fixes to the skip audit (audit rule 2)**, before any run names it
+  (`references/locate-documents.md` §13.11). *The diff's SKIP VERDICT line counts
+  `paragraphs.json` entries* (two entries of one span, a theorem box and its paragraph, are two,
+  as the skip report counts them), and `cflib.vocab` says a repair session's bound is a weight
+  under rule 2 (d250758, which had no entry here). *Overlapping and nested skips* (the gate admits
+  both): a verdict that judges one skip of the round (an upheld flag, a missed skip, the skip rule)
+  names that skip alone, so two such skips are two verdicts whose weights are their own, an upheld
+  flag no longer settles the skip it overlaps, and the repair unskips each skip once (the edit
+  tool refuses a skip unskipped twice); a verdict carried by its span still names every skip of the
+  new snapshot there, and the revision prompt says a skip two verdicts name is one `unskip`.
+  *The SKIP blocks after the last passage count toward its part*, as a gap's skips count toward
+  theirs (rule 1's parts are unchanged). *`validate --gate-config` reads the layer*: a skip
+  statement whose `at` is not in the skip's text (often the sentence that introduces a skipped
+  display, which lies before the skip) and skip evidence from outside the skip are named, where the
+  merge dropped or refuted them with no word to the agent; the auditor's and the skeptic's
+  validator lines carry `--gate-config`, and the turn's own acceptance check does not, so a slip
+  costs a statement, never the round. *The `revert` of a harmful `skip_edit`* names the skip in
+  the merged round's numbering, the id the next revision's `unskip` takes, with the `keep` that
+  shrinks a widened skip back. *The soft threshold is at least half* of a section's math
+  paragraphs under skips (and at least 2): "more than half" missed a section of inv-pilot-3's
+  CRT skipped 6 of 12, by one paragraph; over pilots 1–3 the change raises the skip rule on that
+  section's two skips and on no other. *A skip of no block that ends before the
+  first block of a section* (a short description, an infobox) is furniture. *The rule card says a
+  skip is right* on furniture and, outside a proof, a derivation or a worked example, on text that
+  holds no statement, formulas or none, as the validator and the skeptic have it; nothing in a
+  proof or a worked example is skipped, and the skip rule raises a skip of its narration over a
+  math paragraph. *The rendering is smaller*: the SKIP blocks' legend only in a document with a
+  skip, and a math block of the back matter clipped as prose. *A re-plan names the audit rule*:
+  re-planning a run planned audited at rule 1 (inv-pilot-3) is refused, as it has been since the
+  flip, and the refusal now says both rules. `inventory_edit.named_skips`, which nothing called, is
+  gone. Rule 1 is unchanged, byte for byte.
 - **The flip of the skip audit: a new audited plan writes audit rule 2** (`cflib.vocab.INVENTORY_AUDIT_RULE`
   2; `references/locate-documents.md` §13.11, `docs/design/stage_map.md` §4.0's fifth versioned key,
   `locate.audit.rule`). `cf plan-locate --audit-rounds` now records `locate.audit: {rule: 2, …}`,

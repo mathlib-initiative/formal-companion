@@ -264,11 +264,33 @@ class TestTheFactsAndTheReport(unittest.TestCase):
         def counts(skipped, math, furniture=False):
             return {"S": {"skipped": skipped, "math": math, "furniture": furniture,
                           "path": ["S"], "first": 0}}
-        for (skipped, math, furniture), want in (((2, 3, False), ["S"]), ((2, 4, False), []),
-                                                 ((1, 1, False), []), ((3, 3, True), []),
-                                                 ((5, 9, False), ["S"])):
+        # at least 2, and at least half (6 of 12 is mostly skipped, 2 of 5 is not)
+        for (skipped, math, furniture), want in (((2, 3, False), ["S"]), ((2, 4, False), ["S"]),
+                                                 ((2, 5, False), []), ((6, 12, False), ["S"]),
+                                                 ((1, 1, False), []), ((1, 2, False), []),
+                                                 ((3, 3, True), []), ((5, 9, False), ["S"])):
             with self.subTest(skipped=skipped, math=math, furniture=furniture):
                 self.assertEqual(ia.mostly_skipped(counts(skipped, math, furniture)), want)
+
+    def test_a_skip_of_no_block_is_furniture_in_the_lead_only(self):
+        doc = doc_of(proof=False)
+        # the title, ahead of the first paragraph (a short description or an infobox the
+        # paragraphs omit), and the Proof heading, past the first block of a section
+        title = [0, len(F.SKIP_TITLE)]
+        heading = [F.SKIP_SPANS["H_PROOF"][0], F.SKIP_SPANS["H_PROOF"][1]]
+        doc["skips"] = sorted(doc["skips"] + [{"span": title, "reason": "the title"},
+                                              {"span": heading, "reason": "a heading"}],
+                              key=lambda s: s["span"])
+        got = {f["reason"]: f for f in facts(doc)}
+        self.assertEqual((got["the title"]["blocks"], got["the title"]["furniture"]), ([], True))
+        self.assertEqual(ia.skip_hints(got["the title"]), ["furniture"])
+        self.assertEqual((got["a heading"]["blocks"], got["a heading"]["furniture"]),
+                         ([], False))
+        self.assertEqual(ia.skip_hints(got["a heading"]), [])
+        text = ir.render(doc, LAYER, None, rule=2, paragraphs=PARAGRAPHS)
+        block = text[text.index(f"SKIP {got['the title']['id']} "):]
+        self.assertIn("0 block(s)", block.splitlines()[0])
+        self.assertEqual(block.splitlines()[3], "  HINT: furniture")
 
     def test_partial_and_inside(self):
         f3b = {f["reason"]: f for f in facts(doc_of(proof=False, remark=True))}["a remark"]
@@ -427,6 +449,57 @@ class TestTheRendering(SkipCase):
             text = (self.fx.root / ".tend" / "audit" / part["file"]).read_text()
             self.assertIn("Skips: 4 (r1-s001 to r1-s004)", text)
             self.assertIn("ATTENTION: mostly skipped sections: Proof 4 of 4", text)
+
+    def test_the_skips_after_the_last_passage_count_toward_its_part(self):
+        # the whole end of the page skipped after the statement: the tail's SKIP block
+        rows = [r for r in F.skip_rows() if r["section"] != ["Gadget bound"]]
+        doc = placed(rows, [{"span": [F.SKIP_SPANS["GB1"][0], F.SKIP_SPANS["REF3"][1]],
+                             "reason": "the rest of the page"}])
+        tail = ir.entries2(doc, LAYER, None, facts(doc))[1]
+        head = ir.header(doc, ir.skip_summary(doc, facts(doc), PARAGRAPHS))
+        self.assertTrue(any(line.startswith("SKIP r1-s") for line in tail))
+        for slack in (200, 400, 600, 900, 1200, 1600, 2400):
+            budget = ir.nbytes(head) + slack
+            with self.subTest(budget=budget):
+                cut = ir.parts(doc, LAYER, None, budget, rule=2, paragraphs=PARAGRAPHS)
+                for part in cut:
+                    if len(part["items"]) < 2:
+                        continue        # one passage over the budget is a part of its own
+                    lines = part["text"].split("\n")
+                    body = [x for x in lines if not x.startswith("Part ")]
+                    self.assertLessEqual(ir.nbytes(body) - 2, budget, part["items"])
+                self.assertIn("the rest of the page", cut[-1]["text"])
+                self.assertEqual(cut[-1]["skips"][-1], facts(doc)[-1]["id"])
+        # rule 1's parts are the base commit's: its tail is one capped line, not budgeted
+        one = ir.parts(doc, LAYER, None, ir.nbytes(ir.header(doc)) + 600)
+        self.assertIn("SKIPS: [", one[-1]["text"])
+
+    def test_the_legend_only_when_the_document_skips(self):
+        none = doc_of(proof=False, furniture=False)
+        text = ir.render(none, LAYER, None, rule=2, paragraphs=PARAGRAPHS)
+        self.assertIn("\nSkips: none.\n", text)
+        for line in ir.EXPLAIN_SKIPS:
+            self.assertNotIn(line, text)
+            self.assertIn(line, ir.render(doc_of(), LAYER, None, rule=2, paragraphs=PARAGRAPHS))
+
+    def test_a_math_block_of_the_back_matter_is_clipped_as_prose(self):
+        layer = "x" * 100 + "".join(chr(ord("a") + i % 26) for i in range(1000))
+
+        def lines(section):
+            fact = {"id": "r1-s001", "span": [100, 1100], "reason": "the end",
+                    "blocks": [{"span": [100, 1100], "block": "li", "math": True,
+                                "held": False, "section": section}],
+                    "math": 1, "unheld": 1, "sections": [" > ".join(section)], "rule": False,
+                    "in_proof": False, "in_example": False, "mostly": False,
+                    "partial": False, "furniture": ia.is_furniture(section)}
+            return ir.skip_lines(fact, layer)
+        whole = next(x for x in lines(["Proof"]) if x.startswith("  ¶"))
+        self.assertIn(layer[100:1100], whole)
+        for section in (["References"], ["See also"]):
+            clipped = next(x for x in lines(section) if x.startswith("  ¶"))
+            self.assertIn(layer[100:300] + " … " + layer[900:1100], clipped)
+        lead = next(x for x in lines([]) if x.startswith("  ¶"))
+        self.assertIn(layer[100:1100], lead)            # the lead's math stays whole
 
     def test_attention_only_on_a_mostly_skipped_section(self):
         self.write_body(proof=False)
@@ -626,6 +699,81 @@ class TestTheSkipRows(unittest.TestCase):
                                                flags, round_=1, rule=2, skips=self.facts),
                            "r1-s042 is no skip of the document")
 
+    def test_a_later_skeptic_without_facts_names_the_rounds_skips(self):
+        """With neither an index nor the source, a round-k skeptic file is held to the
+        skips' ids in round k's numbering, as the rendering it read spells them."""
+        flags = {"schema": SCHEMA2, "kind": "flags", "round": 2, "source_id": SID,
+                 "flags": [], "disputes": []}
+        data = skeptic2(flags, self.doc, examined_skips=["r2-s003"], round_=2)
+        self.assertEqual(ia.validate_skeptic(data, self.doc, flags, round_=2, rule=2), [])
+        self.assertInvalid(ia.validate_skeptic(dict(data, examined_skips=["r1-s003"]), self.doc,
+                                               flags, round_=2, rule=2),
+                           "r1-s003 is no skip of the document")
+        missed = dict(PROOF_FLAG, skip="r2-s003", evidence="has at most n")
+        self.assertEqual(ia.validate_skeptic(dict(data, examined_skips=[],
+                                                  missed_skips=[missed]),
+                                             self.doc, flags, round_=2, rule=2), [])
+
+
+class TestTheValidatorReadsTheSkipsText(SkipCase):
+    """``validate --gate-config`` (the line an auditor or a skeptic is given) holds each skip
+    statement's ``at`` and each skip evidence to the skip's own text, which the merge drops
+    or refutes silently; without the layer the file is valid, as the turn accepts it."""
+
+    def validate(self, kind: str, data: dict, *extra: str) -> subprocess.CompletedProcess:
+        path = self.fx.root / ".tend" / "audit" / f"r1.{kind}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return self.tool("inventory_audit.py", "validate", "--kind", kind, "--file",
+                         str(path.relative_to(self.fx.root)), "--document", self.doc_rel,
+                         "--rule", "2", *extra)
+
+    def test_a_statement_anchored_before_its_skip(self):
+        doc = self.doc()
+        # the statement's own words, above the proof skip: on the layer, not in the skip
+        outside = dict(PROOF_FLAG, statements=[{"at": "has at most n", "until": "",
+                                                "passage_kind": "theorem"},
+                                               {"at": "Every finite widget W", "until": "",
+                                                "passage_kind": "theorem"}])
+        data = audit2(doc, {"r1-s003": outside})
+        self.assertEqual(self.validate("audit", data).returncode, 0)
+        proc = self.validate("audit", data, "--gate-config", self.gate_json)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("INVALID: audit.skips[2].statements[1].at 'Every finite widget W' is not "
+                      "in the text of r1-s003 [355, 621]", proc.stdout)
+        self.assertNotIn("statements[0]", proc.stdout)          # "has at most n" is inside
+        good = self.validate("audit", audit2(doc, {"r1-s003": PROOF_FLAG}), "--gate-config",
+                             self.gate_json)
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+
+    def test_skip_evidence_from_outside_the_skip(self):
+        doc = self.doc()
+        audit = audit2(doc, {"r1-s003": PROOF_FLAG})
+        flags = ia.strip(1, doc, audits=[audit], rule=2)
+        flags_path = self.fx.root / ".tend" / "audit" / "r1.flags.json"
+        flags_path.parent.mkdir(parents=True, exist_ok=True)
+        flags_path.write_text(json.dumps(flags), encoding="utf-8")
+        rel = str(flags_path.relative_to(self.fx.root))
+        missed = dict(PROOF_FLAG, skip="r1-s003", evidence="of order n")
+        for evidence, ok in (("has at most n", True), ("of order n", False)):
+            with self.subTest(evidence=evidence):
+                data = skeptic2(flags, doc, upheld=["r1-s003"], evidence={"r1-s003": evidence})
+                self.assertEqual(self.validate("skeptic", data, "--flags", rel).returncode, 0)
+                proc = self.validate("skeptic", data, "--flags", rel, "--gate-config",
+                                     self.gate_json)
+                self.assertEqual(proc.returncode, 0 if ok else 1, proc.stdout + proc.stderr)
+                if not ok:
+                    self.assertIn("skeptic.verdicts[0].evidence is not in the text of r1-s003",
+                                  proc.stdout)
+        bare = audit2(doc)
+        flags = ia.strip(1, doc, audits=[bare], rule=2)
+        flags_path.write_text(json.dumps(flags), encoding="utf-8")
+        data = skeptic2(flags, doc, examined_skips=["r1-s003"], missed_skips=[missed])
+        proc = self.validate("skeptic", data, "--flags", rel, "--gate-config", self.gate_json)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("skeptic.missed_skips[0].evidence is not in the text of r1-s003",
+                      proc.stdout)
+
 
 # --------------------------------------------------------------------------- #
 # strip and merge under rule 2
@@ -745,6 +893,114 @@ class TestStripAndMerge(unittest.TestCase):
         # the final round never rejects
         self.assertEqual(ia.decide(3, 3, 1, 3, False, 100, rounds, rule=2, skip_actionable=1,
                                    skip_math=0, previous_skip_math=4)[0], "approve")
+
+
+def placed(rows: list[dict], skips: list[dict]) -> dict:
+    """A skip document of ``rows`` and ``skips`` (the furniture's added), placed by
+    ``passage_ids`` under span-end rule 3."""
+    from locate import passage_ids
+    doc = {**doc_of(), "passages": rows,
+           "skips": sorted([dict(s) for s in F.FURNITURE_SKIPS] + skips,
+                           key=lambda s: s["span"])}
+    problems = passage_ids.place(doc, LAYER, F.SKIP_FORMULAS, PARAGRAPHS,
+                                 rule=vocab.SPAN_END_CONTINUED)
+    assert not problems, problems
+    return doc
+
+
+#: two skips that share the proof's second paragraph, and a skip nested in the proof's
+OVERLAP_A = {"span": F.skip_span("PF1", "PF2"), "reason": "proof narration A"}
+OVERLAP_B = {"span": F.skip_span("PF2", "PF4"), "reason": "proof narration B"}
+NESTED = {"span": F.skip_span("PF3"), "reason": "the proof's display"}
+
+
+class TestOverlappingAndNestedSkips(unittest.TestCase):
+    """The gate admits overlapping and nested skips; each skip of a round is judged, and
+    raised by the skip rule, as itself: two skips are two verdicts, each naming its own skip
+    once, so the repair unskips each once and no shared paragraph settles the other."""
+
+    def setUp(self):
+        self.overlap = placed(F.skip_rows(), [OVERLAP_A, OVERLAP_B])
+        self.nested = placed(F.skip_rows(), [dict(F.PROOF_SKIP), NESTED])
+
+    def ids(self, doc: dict) -> dict[str, str]:
+        return {f["reason"]: f["id"] for f in facts(doc)}
+
+    def all_clean(self, doc: dict) -> dict:
+        audit = audit2(doc)
+        return merge1(doc, audit, skeptic2(ia.strip(1, doc, audits=[audit], rule=2), doc))
+
+    def test_the_skip_rule_names_each_skip_alone(self):
+        ids = self.ids(self.overlap)
+        a, b = ids["proof narration A"], ids["proof narration B"]
+        merged = self.all_clean(self.overlap)
+        self.assertEqual([(v["skip"], v["skips"], v["origin"], v["unheld"])
+                          for v in merged["verdicts"]],
+                         [(a, [a], "skip_rule", 2), (b, [b], "skip_rule", 3)])
+        self.assertEqual(merged["counts"]["skip_rule"], 2)
+        ids = self.ids(self.nested)
+        whole, display = ids[F.PROOF_SKIP["reason"]], ids["the proof's display"]
+        merged = self.all_clean(self.nested)
+        self.assertEqual([(v["skip"], v["skips"], v["span"]) for v in merged["verdicts"]],
+                         [(whole, [whole], F.PROOF_SKIP["span"]),
+                          (display, [display], NESTED["span"])])
+
+    def test_an_upheld_flag_settles_its_own_skip_not_the_one_it_overlaps(self):
+        ids = self.ids(self.overlap)
+        a, b = ids["proof narration A"], ids["proof narration B"]
+        audit = audit2(self.overlap, {b: PROOF_FLAG})
+        flags = ia.strip(1, self.overlap, audits=[audit], rule=2)
+        merged = merge1(self.overlap, audit, skeptic2(flags, self.overlap, upheld=[b],
+                                                      evidence={b: "has at most n"}))
+        self.assertEqual([(v["skip"], v["skips"], v["origin"]) for v in merged["verdicts"]],
+                         [(a, [a], "skip_rule"), (b, [b], "auditor")])
+        self.assertEqual((merged["counts"]["skips_upheld"], merged["counts"]["skip_rule"]),
+                         (1, 1))
+        # a missed skip of the skeptic's names its skip alone too
+        audit = audit2(self.overlap, {a: {"skip_ok": True, "reason": "a synthetic exemption"},
+                                      b: {"skip_ok": True, "reason": "a synthetic exemption"}})
+        flags = ia.strip(1, self.overlap, audits=[audit], rule=2)
+        missed = dict(PROOF_FLAG, skip=b, evidence="has at most n")
+        merged = merge1(self.overlap, audit, skeptic2(flags, self.overlap,
+                                                      missed_skips=[missed]))
+        self.assertEqual([(v["skip"], v["skips"], v["origin"]) for v in merged["verdicts"]],
+                         [(b, [b], "skeptic_missed")])
+
+    def test_the_repair_unskips_each_named_skip_once(self):
+        for doc in (self.overlap, self.nested):
+            verdicts = self.all_clean(doc)["verdicts"]
+            ops = [{"op": "unskip", "skip": sid, "verdict": v["id"]}
+                   for v in verdicts for sid in v["skips"]]
+            out, _log, problems = ie.apply(doc, ops, verdict_ids={v["id"] for v in verdicts},
+                                           rule=2, round_=1)
+            self.assertEqual(problems, [])
+            self.assertEqual(len(out["skips"]), len(F.FURNITURE_SKIPS))
+
+    def test_a_carried_verdict_names_the_snapshots_skips_its_span_overlaps(self):
+        r1 = doc_of()
+        audit = audit2(r1, {"r1-s003": PROOF_FLAG})
+        flags = ia.strip(1, r1, audits=[audit], rule=2)
+        previous = verdicts1(r1, merge1(r1, audit, skeptic2(
+            flags, r1, upheld=["r1-s003"], evidence={"r1-s003": "has at most n"})))
+        (v,) = previous["verdicts"]
+        # the worker split the proof skip by hand into the two overlapping ones
+        check = {"schema": SCHEMA2, "kind": "check", "round": 2, "source_id": SID,
+                 "checked": [{"verdict_id": v["id"], "status": "partial",
+                              "reason": "still skipped"}],
+                 "collateral": [], "new": [], "regressions": []}
+        skeptic = {"schema": SCHEMA2, "kind": "skeptic", "round": 2, "source_id": SID,
+                   "verdicts": [], "missed": [], "disputes": [], "examined": [],
+                   "per_spec_formal_estimate": 8, "summary": "", "examined_skips": [],
+                   "missed_skips": []}
+        merged = ia.merge_later(2, self.overlap, [check], skeptic, previous, None,
+                                {"collateral": []}, layer=LAYER, rule=2,
+                                paragraphs=PARAGRAPHS)
+        ids = self.ids(self.overlap)
+        both = sorted([ids["proof narration A"], ids["proof narration B"]])
+        both = [i.replace("r1-", "r2-") for i in both]
+        self.assertEqual([(x["origin"], x["skip"], x["skips"]) for x in merged["verdicts"]],
+                         [("carried", "", both)])
+        self.assertEqual(merged["counts"]["skip_rule"], 0)          # both settled by the carry
 
 
 class TestLaterRounds(unittest.TestCase):
@@ -869,11 +1125,6 @@ class TestUnskip(unittest.TestCase):
         _out, _log, problems = ie.apply(self.doc, [{"op": "unskip", "skip": "r1-s003",
                                                     "verdict": "r1-v001"}])
         self.assertTrue(any("'unskip', not one of merge" in p for p in problems), problems)
-
-    def test_named_skips(self):
-        self.assertEqual(ie.named_skips([{"op": "unskip", "skip": "r1-s003"},
-                                         {"op": "set", "item": "In-text #00000000"}]),
-                         {"r1-s003"})
 
 
 class TestTheRepairOnTheHost(SkipCase):
@@ -1001,6 +1252,48 @@ class TestTheSkipEditCollateral(unittest.TestCase):
                          ("r1-s001", F.skip_span("INFOBOX"), infobox["span"]))
         # rule 1 compares passages only, as it always did
         self.assertEqual(ia.collateral(2, self.snapshot, doc, None, None)["collateral"], [])
+
+    def test_a_harmful_skip_edit_reverts_by_the_next_bases_id(self):
+        """The entry's ``skip`` is the reviewed snapshot's id (round 1's); the ``revert``
+        verdict names the skip as the next revision's base numbers it (round 2's), with the
+        ``unskip`` that puts it back: drop one added, shrink one widened, none for a skip
+        removed by hand."""
+        audit = audit2(self.snapshot)
+        previous = verdicts1(self.snapshot, merge1(self.snapshot, audit, skeptic2(
+            ia.strip(1, self.snapshot, audits=[audit], rule=2), self.snapshot)))
+        (v,) = previous["verdicts"]
+        doc = copy.deepcopy(self.snapshot)
+        doc["skips"].append({"span": F.skip_span("GB2"), "reason": "a display"})
+        infobox = next(s for s in doc["skips"] if s["reason"] == "infobox")
+        infobox["span"] = [infobox["span"][0] - 3, infobox["span"][1]]
+        doc["skips"] = [s for s in doc["skips"] if s["reason"] != "references"]
+        coll = ia.collateral(2, self.snapshot, doc, None, previous, rule=2)
+        entries = [e for e in coll["collateral"] if e["change"] == "skip_edit"]
+        self.assertEqual(len(entries), 3)
+        check = {"schema": SCHEMA2, "kind": "check", "round": 2, "source_id": SID,
+                 "checked": [{"verdict_id": v["id"], "status": "missing", "reason": "untouched"}],
+                 "collateral": [{"id": e["id"], "harmful": True, "reason": "hides text"}
+                                for e in entries], "new": [], "regressions": []}
+        skeptic = {"schema": SCHEMA2, "kind": "skeptic", "round": 2, "source_id": SID,
+                   "verdicts": [], "missed": [], "disputes": [], "examined": [],
+                   "per_spec_formal_estimate": 8, "summary": "", "examined_skips": [],
+                   "missed_skips": []}
+        merged = ia.merge_later(2, doc, [check], skeptic, previous, None, coll, layer=LAYER,
+                                rule=2, paragraphs=PARAGRAPHS)
+        now = {f["reason"]: f for f in facts(doc, 2)}
+        actions = sorted(x["action"] for x in merged["verdicts"] if x["verdict"] == "revert")
+        added, widened = now["a display"], now["infobox"]
+        self.assertEqual(len(actions), 3)
+        self.assertTrue(any(a.endswith(
+            f"; the skip is {added['id']} [{added['span'][0]}, {added['span'][1]}] in round "
+            f"2's numbering (unskip {added['id']})") for a in actions), actions)
+        before = F.skip_span("INFOBOX")
+        self.assertTrue(any(a.endswith(
+            f"(unskip {widened['id']} keeping [{before[0]}, {before[1]}])") for a in actions),
+            actions)
+        # the references skip removed by hand: no id to name, no operation to put it back
+        self.assertEqual(sum("numbering" not in a for a in actions), 1, actions)
+        self.assertTrue(all(x["id"].startswith("r2-") for x in facts(doc, 2)))
 
 
 if __name__ == "__main__":

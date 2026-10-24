@@ -56,7 +56,8 @@ fresh call with the revision prompt.  What this file adds to tend's loop:
   after a gate failure.
 
 Under ``CF_AUDIT_RULE=2`` (section 13.11, audit rule 2: the skips audited too) every host
-tool call and every validator line an agent is given carries ``--rule 2``, the state records
+tool call and every validator line an agent is given carries ``--rule 2`` (an auditor's and
+a skeptic's also ``--gate-config``, :meth:`Turn.advised`), the state records
 the rule, a part showing an unflagged skip over math no passage holds gets the round-1 skip
 hunt's skeptic call, a skip flag goes to the part that shows its skip, the rendering's diff
 reads the last round's verdicts, and the revision's sessions are weighed (:meth:`Turn.sessions`).
@@ -782,6 +783,16 @@ class Turn:
                 return i
         return self.part_at(firsts, starts.get(item))
 
+    def advised(self, step: str, validate: list[str]) -> list[str]:
+        """The validator line an agent is given: the turn's own check, and under rule 2 for
+        an auditor or a skeptic also ``--gate-config``, so the agent's run of it names a
+        skip statement anchored outside its skip and skip evidence from elsewhere (what the
+        merge would drop); the turn accepts the file without it, so such a slip costs a
+        statement or a flag, never the round."""
+        if self.rule >= 2 and step in ("audit", "skeptic"):
+            return [*validate, "--gate-config", self.gate_config]
+        return validate
+
     def brief(self, step: str, k: int, part: int, parts: int, index_part: dict, out: str,
               inputs: list[str], validate: list[str]) -> str:
         lines = [
@@ -796,7 +807,8 @@ class Turn:
         lines += [
             f"- Staged for you under {'/'.join(MIRROR)}/: " + ", ".join(inputs) + ".",
             f"- Write exactly one file: {self.m(out)}.",
-            f"- Check it before you finish: {self.validate_line(self.ruled(validate))}",
+            f"- Check it before you finish: "
+            f"{self.validate_line(self.ruled(self.advised(step, validate)))}",
         ]
         return "\n".join(lines)
 
