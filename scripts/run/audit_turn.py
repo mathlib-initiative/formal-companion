@@ -55,6 +55,13 @@ fresh call with the revision prompt.  What this file adds to tend's loop:
   rejection, the gate's refusal after a refused commit -- never "a reviewer rejected"
   after a gate failure.
 
+Under ``CF_AUDIT_RULE=2`` (section 13.11, audit rule 2: the skips audited too) every host
+tool call and every validator line an agent is given carries ``--rule 2``, the state records
+the rule, a part showing an unflagged skip over math no passage holds gets the round-1 skip
+hunt's skeptic call, a skip flag goes to the part that shows its skip, the rendering's diff
+reads the last round's verdicts, and the revision's sessions are weighed (:meth:`Turn.sessions`).
+Under rule 1 every call, prompt and command line is the base commit's.
+
 Every agent call goes through ``agent_call.py --step`` (its session slot, timeout and
 kept envelope; the envelope's name carries the step).  Standard library only, no
 cflib, run as ``python3 -I``: the host tools are run from the gate directory, the
@@ -90,7 +97,9 @@ import normalize_result  # noqa: E402  (bin/'s sibling: the one shape of a contr
 # --------------------------------------------------------------------------- #
 
 TURN_SCHEMA = "cf-audit-turn/1"
-AUDIT_RULE = 1
+#: the audit rules this machine runs (CF_AUDIT_RULE): rule 1 audits the passages, rule 2 the
+#: skips too (references/locate-documents.md section 13.11)
+AUDIT_RULES = (1, 2)
 AUDIT_REVIEW_ROUNDS = (2, 3)
 AUDIT_STEPS = ("audit", "skeptic", "check", "revision")
 OUTPUT_RETRIES = 1
@@ -99,6 +108,7 @@ DISCUSSION_TAIL = 6000
 REVERT_ATTEMPTS = 3
 REPAIR_VERDICTS_PER_SESSION = 40
 SUMMARY_WORDS = 80
+SKIP_VERDICT = "skipped_statements"
 
 EXIT_FAILED = 1
 EXIT_USAGE = 64
@@ -236,9 +246,13 @@ class Turn:
             raise Config(f"no usable task id ({self.task!r}, TEND_TASK_ID)")
         self.worktree_id = str(env.get("TEND_WORKTREE_ID") or "")
         rule = str(env.get("CF_AUDIT_RULE") or "")
-        if rule != str(AUDIT_RULE):
+        if rule not in {str(r) for r in AUDIT_RULES}:
             raise Config(f"CF_AUDIT_RULE={rule!r} is not a rule this bridge knows "
-                         f"({AUDIT_RULE})")
+                         f"({', '.join(map(str, AUDIT_RULES))})")
+        self.rule = int(rule)
+        #: what every host tool call and validator line carries: nothing under rule 1, so
+        #: a rule-1 run's calls are inv-pilot-3's byte for byte
+        self.rule_args = ["--rule", str(self.rule)] if self.rule >= 2 else []
         try:
             self.review_rounds = int(env.get("CF_AUDIT_ROUNDS") or "")
         except ValueError:
@@ -300,7 +314,7 @@ class Turn:
             pass
 
     def fresh(self) -> dict:
-        return {"schema": TURN_SCHEMA, "rule": AUDIT_RULE, "task_id": self.task,
+        return {"schema": TURN_SCHEMA, "rule": self.rule, "task_id": self.task,
                 "source_id": self.source, "document": self.doc_rel,
                 "review_rounds": self.review_rounds, "round": 1, "rounds": {},
                 "revision": None, "pending": None, "approved": None, "best": None,
@@ -320,6 +334,9 @@ class Turn:
         if state.get("schema") != TURN_SCHEMA or state.get("task_id") != self.task \
                 or state.get("source_id") != self.source:
             raise Refused(f"{self.state_path} is not task {self.task}'s audit state")
+        if state.get("rule", self.rule) != self.rule:
+            raise Refused(f"{self.state_path} records audit rule {state.get('rule')!r}; this "
+                          f"turn runs rule {self.rule} (CF_AUDIT_RULE)")
         if self.worktree_id and self.worktree_id not in state["worktrees"]:
             state["worktrees"].append(self.worktree_id)
         return state
@@ -499,6 +516,10 @@ class Turn:
     def validate_line(self, args: list[str]) -> str:
         return " ".join(shlex.quote(a) for a in
                         ["python3", str(self.gate_dir / "inventory_audit.py"), *args])
+
+    def ruled(self, args: list) -> list:
+        """A host tool's arguments with the run's rule (none under rule 1)."""
+        return [*args, *self.rule_args]
 
     def discussion_tail(self) -> str:
         path = self.worktree.joinpath(*DISCUSSION)
@@ -714,14 +735,17 @@ class Turn:
     # the rounds
 
     def render(self, k: int, previous: str | None) -> dict:
-        self.stage([previous] if previous else [])
+        verdicts = f"r{k - 1}.verdicts.json" if previous and self.rule >= 2 else None
+        self.stage(([previous] if previous else []) + ([verdicts] if verdicts else []))
         args = ["--gate-config", self.gate_config, "--document", self.doc_rel,
                 "--out-dir", "/".join(MIRROR), "--label", f"r{k}"]
         if previous:
             args += ["--previous", self.m(previous)]
+        if verdicts:
+            args += ["--previous-verdicts", self.m(verdicts)]
         if self.part_bytes:
             args += ["--part-bytes", self.part_bytes]
-        code, out, err = self.tool("inventory_render.py", *args)
+        code, out, err = self.tool("inventory_render.py", *self.ruled(args))
         if code != 0:
             raise StepFailed(f"the rendering failed (exit {code}): "
                              + "; ".join(invalid_lines(out, err)[:5]))
@@ -760,16 +784,21 @@ class Turn:
 
     def brief(self, step: str, k: int, part: int, parts: int, index_part: dict, out: str,
               inputs: list[str], validate: list[str]) -> str:
-        return "\n".join([
+        lines = [
             f"## This call: the {step} of round {k}, part {part} of {parts}",
             "",
             f"- The rendering of this part: {self.m(index_part['file'])} (passages "
             f"[{index_part['first']}] to [{index_part['last']}]); its index is "
-            f"{self.m(f'r{k}.render.json')}.",
+            f"{self.m(f'r{k}.render.json')}."]
+        if self.rule >= 2 and isinstance(index_part.get("skips"), list):
+            lines.append("- The skips this part shows: "
+                         + (", ".join(index_part["skips"]) or "none") + ".")
+        lines += [
             f"- Staged for you under {'/'.join(MIRROR)}/: " + ", ".join(inputs) + ".",
             f"- Write exactly one file: {self.m(out)}.",
-            f"- Check it before you finish: {self.validate_line(validate)}",
-        ])
+            f"- Check it before you finish: {self.validate_line(self.ruled(validate))}",
+        ]
+        return "\n".join(lines)
 
     def agent_step(self, state: dict, rd: dict, *, step: str, k: int, part: int, parts: int,
                    index_part: dict, out: str, inputs: list[str], validate: list[str]) -> bool:
@@ -798,7 +827,7 @@ class Turn:
             rd["raw"] = self.rel(raw)
             if self.collect(out):
                 self.stage(inputs + [out])
-                vcode, vout, verr = self.tool("inventory_audit.py", *validate)
+                vcode, vout, verr = self.tool("inventory_audit.py", *self.ruled(validate))
             else:
                 vcode, vout, verr = 1, f"INVALID: the call wrote no {self.m(out)}", ""
             if vcode == 0:
@@ -824,17 +853,19 @@ class Turn:
         if previous:
             args += ["--previous", self.m(previous[0])]
         args += ["--out", self.m(f"r{k}.verdicts.json"), "--result", "/".join(RESULT)]
-        self.need(self.tool("inventory_audit.py", *args), "the audit_failed merge")
+        if self.rule >= 2:
+            # the round's skip report, when the source still reads (else none)
+            args += ["--gate-config", self.gate_config]
+        self.need(self.tool("inventory_audit.py", *self.ruled(args)), "the audit_failed merge")
         self.collect(f"r{k}.verdicts.json")
         return self.read_auth(f"r{k}.verdicts.json")
 
     def merge(self, state: dict, k: int, inputs: list[str], args: list) -> dict:
         self.stage(inputs)
-        code, out, err = self.tool("inventory_audit.py", "merge", "--round", k,
-                                   "--review-rounds", self.review_rounds, "--gate-config",
-                                   self.gate_config, "--document", self.doc_rel, *args,
-                                   "--out", self.m(f"r{k}.verdicts.json"),
-                                   "--result", "/".join(RESULT))
+        code, out, err = self.tool("inventory_audit.py", *self.ruled([
+            "merge", "--round", k, "--review-rounds", self.review_rounds, "--gate-config",
+            self.gate_config, "--document", self.doc_rel, *args,
+            "--out", self.m(f"r{k}.verdicts.json"), "--result", "/".join(RESULT)]))
         if code in (1, 2):
             return self.failed(state, k, "the merge refused the round's files: "
                                          + "; ".join(invalid_lines(out, err)[:5]))
@@ -859,8 +890,9 @@ class Turn:
             audits.append(out)
         audit_args = [a for name in audits for a in ("--audit", self.m(name))]
         self.stage(audits)
-        code, out, err = self.tool("inventory_audit.py", "strip", "--round", 1, "--document",
-                                   self.doc_rel, *audit_args, "--out", self.m("r1.flags.json"))
+        code, out, err = self.tool("inventory_audit.py", *self.ruled([
+            "strip", "--round", 1, "--document", self.doc_rel, *audit_args,
+            "--out", self.m("r1.flags.json")]))
         if code in (1, 2):
             return self.failed(state, 1, "the audit parts do not hold together: "
                                          + "; ".join(invalid_lines(out, err)[:5]))
@@ -877,9 +909,9 @@ class Turn:
         if not (self.auth / name).is_file():
             return False
         self.stage([name, verdicts])
-        code, _out, _err = self.tool("inventory_audit.py", "validate", "--kind", "repair",
-                                     "--file", self.m(name), "--document", self.doc_rel,
-                                     "--verdicts", self.m(verdicts))
+        code, _out, _err = self.tool("inventory_audit.py", *self.ruled([
+            "validate", "--kind", "repair", "--file", self.m(name), "--document", self.doc_rel,
+            "--verdicts", self.m(verdicts)]))
         return code == 0
 
     def round_later(self, state: dict, rd: dict, k: int) -> dict:
@@ -894,7 +926,7 @@ class Turn:
                  self.doc_rel, "--verdicts", self.m(prev), "--out", self.m(coll)]
         if has_ops:
             cargs += ["--ops", self.m(ops)]
-        code, out, err = self.tool("inventory_audit.py", *cargs)
+        code, out, err = self.tool("inventory_audit.py", *self.ruled(cargs))
         if code != 0:
             raise StepFailed(f"the collateral failed (exit {code}): "
                              + "; ".join(invalid_lines(out, err)[:5]))
@@ -937,9 +969,9 @@ class Turn:
             (["--repair", self.m(repair)] if has_repair else [])
         support = [prev, coll] + ([repair] if has_repair else [])
         self.stage(checks + support)
-        code, out, err = self.tool("inventory_audit.py", "strip", "--round", k, "--document",
-                                   self.doc_rel, *check_args, *tail,
-                                   "--out", self.m(f"r{k}.flags.json"))
+        code, out, err = self.tool("inventory_audit.py", *self.ruled([
+            "strip", "--round", k, "--document", self.doc_rel, *check_args, *tail,
+            "--out", self.m(f"r{k}.flags.json")]))
         if code in (1, 2):
             return self.failed(state, k, "the check parts do not hold together: "
                                          + "; ".join(invalid_lines(out, err)[:5]))
@@ -961,8 +993,13 @@ class Turn:
         geometry = self.geometry(index)
         _items, firsts, _starts = geometry
         mine = {i: {"flags": [], "disputes": []} for i in range(1, len(parts) + 1)}
+        # rule 2: a skip is the part's that shows it (the index), its flag with it
+        owner = {row["id"]: row.get("part") or 1 for row in index.get("skips") or []}
         for flag in flags.get("flags") or []:
-            mine[self.part_of(geometry, flag["item"])]["flags"].append(flag)
+            if flag.get("skip"):
+                mine[owner.get(flag["skip"], 1)]["flags"].append(flag)
+            else:
+                mine[self.part_of(geometry, flag["item"])]["flags"].append(flag)
         asked = {v["id"]: v.get("start") for v in (previous or {}).get("verdicts") or []}
         for dispute in flags.get("disputes") or []:
             mine[self.part_at(firsts, asked.get(dispute["verdict_id"]))]["disputes"].append(dispute)
@@ -971,6 +1008,12 @@ class Turn:
             held = mine[i]
             flagged = {f["item"] for f in held["flags"]}
             hunt = k == 1 and any(item not in flagged for item in part["formal"])
+            if self.rule >= 2 and k == 1:
+                # the skip hunt: every unflagged skip of the part over math no passage holds
+                skips = {f["skip"] for f in held["flags"] if f.get("skip")}
+                hunt = hunt or any(row["id"] not in skips and row.get("unheld_outside")
+                                   for row in index.get("skips") or []
+                                   if owner.get(row["id"]) == i)
             if not held["flags"] and not held["disputes"] and not hunt:
                 continue
             own = f"r{k}.flags.part{i}.json"
@@ -989,7 +1032,8 @@ class Turn:
         return names
 
     def combine(self, k: int, names: list[str], flags: dict) -> None:
-        """The skeptic's parts as the one file the merge reads."""
+        """The skeptic's parts as the one file the merge reads (under rule 2 with the skip
+        hunt's ``examined_skips`` and ``missed_skips``, each skip once)."""
         parts = [self.read_auth(name) for name in names]
         missed, seen, examined = [], set(), []
         for p in parts:
@@ -1003,7 +1047,7 @@ class Turn:
                     examined.append(item)
         summary = " | ".join(str(p.get("summary") or "").strip() for p in parts
                              if str(p.get("summary") or "").strip())
-        self.write_auth(f"r{k}.skeptic.json", {
+        combined = {
             "schema": flags["schema"], "kind": "skeptic", "round": k,
             "source_id": flags["source_id"],
             "verdicts": [v for p in parts for v in p.get("verdicts") or []],
@@ -1013,7 +1057,18 @@ class Turn:
             "per_spec_formal_estimate": sum(int(p.get("per_spec_formal_estimate") or 0)
                                             for p in parts),
             "summary": cap_words(summary or "no flags or disputes to judge: no skeptic call",
-                                 SUMMARY_WORDS)})
+                                 SUMMARY_WORDS)}
+        if self.rule >= 2:
+            skips, missed_skips = [], []
+            for p in parts:
+                for sid in p.get("examined_skips") or []:
+                    if sid not in skips:
+                        skips.append(sid)
+                for row in p.get("missed_skips") or []:
+                    if all(row.get("skip") != r.get("skip") for r in missed_skips):
+                        missed_skips.append(row)
+            combined.update(examined_skips=skips, missed_skips=missed_skips)
+        self.write_auth(f"r{k}.skeptic.json", combined)
 
     # ------------------------------- worker ---------------------------- #
 
@@ -1046,9 +1101,8 @@ class Turn:
             revision.update(complete=False, gatefix=True)
             self.event(state, "gate_refused", after=last)
             self.save(state)
-        ids = [v["id"] for v in self.read_auth(f"r{k}.verdicts.json").get("verdicts") or []]
-        sessions = [ids[i:i + REPAIR_VERDICTS_PER_SESSION]
-                    for i in range(0, len(ids), REPAIR_VERDICTS_PER_SESSION)] or [[]]
+        verdicts = self.read_auth(f"r{k}.verdicts.json").get("verdicts") or []
+        sessions = self.sessions(verdicts)
         revision["sessions"] = len(sessions)
         raw = None
         if revision.get("gatefix"):
@@ -1066,6 +1120,28 @@ class Turn:
         self.event(state, "worker", revision=k)
         return self.emit(self.worker_contract(raw))
 
+    def sessions(self, verdicts: list[dict]) -> list[list[str]]:
+        """The revision's sessions, in verdict order: at most REPAIR_VERDICTS_PER_SESSION
+        verdicts each (rule 1); under rule 2 at most that much weight, a skip verdict
+        weighing max(1, its statements, the math paragraphs under it no passage holds) and
+        any other 1, a heavier verdict a session of its own."""
+        ids = [v["id"] for v in verdicts]
+        if self.rule < 2:
+            return [ids[i:i + REPAIR_VERDICTS_PER_SESSION]
+                    for i in range(0, len(ids), REPAIR_VERDICTS_PER_SESSION)] or [[]]
+        out: list[list[str]] = []
+        load = 0
+        for v in verdicts:
+            weight = 1
+            if v.get("verdict") == SKIP_VERDICT:
+                weight = max(1, len(v.get("statements") or []), int(v.get("unheld") or 0))
+            if not out or load + weight > REPAIR_VERDICTS_PER_SESSION:
+                out.append([])
+                load = 0
+            out[-1].append(v["id"])
+            load += weight
+        return out or [[]]
+
     def gate_block(self, tail: str) -> str:
         return ("## THIS IS A RE-RUN — the validation gate refused your last commit\n\n"
                 "The gate's output is in the discussion below. Fix exactly what it names, run "
@@ -1078,11 +1154,12 @@ class Turn:
         files = [f"r{k}.verdicts.json", f"r{k}.document.json", f"r{k}.collateral.json",
                  f"r{k}.ops.json", f"r{k}.repair.json"]
         self.stage(files)
-        ops_check = ["validate", "--kind", "ops", "--file", self.m(f"r{k}.ops.json"),
-                     "--document", self.doc_rel, "--verdicts", self.m(f"r{k}.verdicts.json")]
-        repair_check = ["validate", "--kind", "repair", "--file", self.m(f"r{k}.repair.json"),
-                        "--document", self.doc_rel, "--verdicts",
-                        self.m(f"r{k}.verdicts.json")]
+        ops_check = self.ruled(["validate", "--kind", "ops", "--file", self.m(f"r{k}.ops.json"),
+                                "--document", self.doc_rel, "--verdicts",
+                                self.m(f"r{k}.verdicts.json")])
+        repair_check = self.ruled(["validate", "--kind", "repair", "--file",
+                                   self.m(f"r{k}.repair.json"), "--document", self.doc_rel,
+                                   "--verdicts", self.m(f"r{k}.verdicts.json")])
         slots = {"CF_AUDIT_ROUND": k}
         lines = []
         if session is None:
