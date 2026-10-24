@@ -2102,7 +2102,8 @@ like a faithfulness run:
   is status rule 1), and `audit: {rule, review_rounds}` on an inventory planned
   with `--audit-rounds 2|3` (§13; absent, the run is unaudited and its plan is the
   one an unaudited plan always was).
-  `audit` is the decision table's version (`cflib.vocab.INVENTORY_AUDIT_RULE`) and R, the
+  `audit` is the audit rule, the decision table's version (`cflib.vocab.INVENTORY_AUDIT_RULE`:
+  2 from the skip audit's flip, §13.11, 1 for a plan made before it) and R, the
   review rounds a document takes at most (`AUDIT_REVIEW_ROUNDS`); the flag belongs to
   the locate-inventory preset and the `agentbox-claude` bridge, and a re-plan keeps a
   run's audit, as it keeps its preset. An audited plan renders seven prompts (§13.9),

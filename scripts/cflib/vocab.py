@@ -954,8 +954,8 @@ GATE_CALLERS = (GATE_CALLER_VALIDATION, GATE_CALLER_PRE_MERGE, GATE_CALLER_FINDI
 #: ``CF_AUDIT_RULE``, and every tool runs at the rule its run names (``--rule``)
 INVENTORY_AUDIT_RULES = (1, 2)
 #: the decision table's version a new audited plan writes (``audit/<n>`` in every verdicts
-#: file)
-INVENTORY_AUDIT_RULE = 1
+#: file): 2 from the flip of the skip audit, 1 before (inv-pilot-3's)
+INVENTORY_AUDIT_RULE = 2
 #: the ``schema`` of every audit file of a rule's run
 INVENTORY_AUDIT_SCHEMAS = {1: "cf-inventory-audit/1", 2: "cf-inventory-audit/2"}
 #: rule 1's schema, the one inv-pilot-3's files carry
