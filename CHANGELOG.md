@@ -42,6 +42,32 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **Audit rule 2: the inventory audit's host tools judge the skips** (`references/locate-documents.md`
+  §13.11; dormant: no plan writes rule 2 yet, and every tool called without `--rule` is rule 1,
+  byte for byte the base commit's). inv-pilot-3's CRT worker recorded its proofs and worked
+  examples as skips, and the stage audited passages only, so it could not see them. Under
+  `--rule 2`, files carry `schema: cf-inventory-audit/2`, and:
+  `inventory_render.py` draws every skip in place as a SKIP block (its id `r<k>-s<nnn>` in span
+  order, its blocks with their spans, the math paragraphs no passage holds, its sections, the
+  worker's reason and the hints `skip-rule`, `in-proof`, `in-example`, `mostly-skipped`, `partial`
+  and `furniture`), adds the header's Skips and ATTENTION lines (the mostly skipped sections:
+  at least 2 math paragraphs under skips and more than half of the section's, the lead and back
+  matter excluded), the index's `skips` with the part that shows each, `--show <skip id>`, and
+  the diff's SKIPS section and SKIP VERDICT lines; `inventory_audit.py` holds the auditor to one
+  row per skip (`clean` or the new `skipped_statements`, with the statements it hides or the
+  passage it finishes, `skip_ok` the exemption), the skeptic to evidence inside the skip and a
+  hunt over every unflagged skip with math, and the merge adds the mechanical skip rule (a skip
+  over math no passage holds in a proof, an example or a mostly skipped section), carries a skip
+  verdict by its span onto the next snapshot's skips, reports `skip_edit` collateral, decides by
+  `audit/2` (a middle round also rejects for a skip verdict when it made progress) and writes
+  each round's `skip_report`; `inventory_edit.py` gains `unskip` (shrink, split or drop a skip,
+  never widen one). The gate is unchanged: its rule 8 and coverage floor judge a repair. The
+  vocabulary is `cflib.vocab`'s (`INVENTORY_AUDIT_RULES`, `INVENTORY_AUDIT_SCHEMAS`,
+  `AUDIT_SKIP_*`, `AUDIT_BACK_MATTER`, `AUDIT_MOSTLY_SKIPPED_*`), pinned against the host copy.
+  `tests/_locate_fixtures.py` gains a made-up "Widget bounds" page with the design's fixtures
+  (a skipped proof, legitimate skips, a skipped display, a skip inside a paragraph), and
+  `tests/test_locate_inventory_skips.py` holds the tools to them, rule 1 to the base commit's
+  renderer on each.
 - **`cf harvest` of an audited inventory run carries an `audit` block** (`references/locate-documents.md`
   §10 and §13.10). The remote harvest also fetches the tend root's `audit/` (its `*.json`: the
   turn machine's state and round files) to `runs/<run>/host/audit/`, an expected artifact, and

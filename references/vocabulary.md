@@ -1024,7 +1024,8 @@ names one with `cf plan-locate --audit-rounds`, R one of `AUDIT_REVIEW_ROUNDS`, 
 
 | enum | values |
 |---|---|
-| `INVENTORY_AUDIT_SCHEMA` | `cf-inventory-audit/1`: the `schema` of every audit file; `INVENTORY_AUDIT_RULE` 1 is the decision table's version, `audit/1` in a verdicts file |
+| `INVENTORY_AUDIT_RULES` | `1` · `2` — the audit rules the host tools (`--rule`, default 1), the turn machine (`CF_AUDIT_RULE`) and the harvest know: rule 1 audits the passages (inv-pilot-3's run), rule 2 the skips too (`references/locate-documents.md` §13.11); `INVENTORY_AUDIT_RULE` is the one a new audited plan writes, the decision table's version `audit/<rule>` in a verdicts file |
+| `INVENTORY_AUDIT_SCHEMAS` | `cf-inventory-audit/1` (rule 1) · `cf-inventory-audit/2` (rule 2) — the `schema` of every audit file of a run of that rule; `INVENTORY_AUDIT_SCHEMA` is rule 1's |
 | `AUDIT_VERDICTS` | `clean` · `over_cut` (on the passage that merges into its `merge_with`) · `under_cut` · `should_be_expository` · `should_be_non_math` · `should_be_formal` (an expository flag, once flagged) · `redundant` · `wrong_kind` · `wrong_prominence` · `statement_misstates` — what an auditor, a checker's new entry or a skeptic says of a passage; a merged verdict for a change the checker judged harmful is `revert` (`AUDIT_VERDICT_REVERT`) |
 | `AUDIT_ORIGINS` | `lead` · `theorem_box` · `statement_section` · `proof` · `example` · `list_item` · `application_or_extension` · `history` · `other` — where an audited passage sits |
 | `AUDIT_CHECK_STATUSES` | `applied` · `partial` · `missing` · `wrong` · `gate_refused_ok` · `gate_refused_doubtful` · `disputed` — what a checker says of a verdict the round before asked for; `AUDIT_CHECK_ACTIONABLE` (`partial`, `missing`, `wrong`, `gate_refused_doubtful`) go back to the worker |
@@ -1034,6 +1035,11 @@ names one with `cf plan-locate --audit-rounds`, R one of `AUDIT_REVIEW_ROUNDS`, 
 | `AUDIT_EDIT_OPS` | `merge` · `split` · `set` · `add` · `drop` — the edit tool's operations, each citing a verdict |
 | `AUDIT_EDIT_FIELDS` | `scope` · `passage_kind` · `prominence` · `statement` · `shape` · `conjuncts` · `until` · `concept` · `quote` · `quote_end` (the words the quote is cut to end with) — what an operation sets |
 | `AUDIT_COLLATERAL_CHANGES` | `hand_edit` · `moved` · `uncited_op` · `ops_refused` — what a collateral entry says changed |
+| `AUDIT_SKIP_VERDICTS` | `clean` · `skipped_statements` (`AUDIT_SKIP_VERDICT`: the skip hides a definition, a theorem, an equation or a declarative statement no passage keeps, or part of a kept passage's sentence) — rule 2: what an auditor, a skeptic or the skip rule says of a skip, the only verdicts a skip row takes; no passage takes `skipped_statements` |
+| `AUDIT_SKIP_ORIGINS` | `skip_rule` — rule 2's origin beside `AUDIT_VERDICT_ORIGINS`: the mechanical `skipped_statements` on a skip over a math paragraph no passage holds, outside the furniture, in a section that names a proof or an example or is mostly skipped, unless the auditor said `skip_ok` with a reason |
+| `AUDIT_SKIP_OPS` | `unskip` — rule 2's operation beside `AUDIT_EDIT_OPS`: a skip shrunk, split or dropped (`keep`), never widened |
+| `AUDIT_SKIP_COLLATERAL` | `skip_edit` — rule 2's change beside `AUDIT_COLLATERAL_CHANGES`: the document's skips differ from what the cited operations make of the snapshot's |
+| `AUDIT_SKIP_HINTS` | `skip-rule` · `in-proof` · `in-example` · `mostly-skipped` · `partial` · `furniture` — the hints of a SKIP block of a rule-2 rendering |
 
 Bounds, also in `cflib.vocab`: `AUDIT_REVIEW_ROUNDS` (2 or 3, the rounds an audited plan may
 name), `AUDIT_THRESHOLD_MIN` and `AUDIT_THRESHOLD_SHARE` (T = max(5, ⌈0.03 · formal⌉): a middle
@@ -1042,9 +1048,23 @@ round with fewer actionable verdicts approves), `AUDIT_SKEPTIC_FLOOR` and `AUDIT
 more than there are), the word caps `AUDIT_REASON_WORDS` (30), `AUDIT_ACTION_WORDS` (40),
 `AUDIT_EVIDENCE_WORDS` (25) and `AUDIT_SUMMARY_WORDS` (80), `AUDIT_MAX_PATTERNS` (5),
 `AUDIT_PART_BYTES` (50,000 bytes of rendering a call reads), `AUDIT_REPAIR_VERDICTS_PER_SESSION`
-(40), `AUDIT_KIND_RULE_RULE` (6, the rule the kind verdict names) and `AUDIT_CONNECTIVE_HINTS`
-(`and` · `so` · `hence` · `thus` · `therefore` · `then` · `but`, the rendering's
-`connective-start` hint).
+(40; under rule 2 a weight, a skip verdict weighing max(1, its statements, the math paragraphs
+under it no passage holds)), `AUDIT_KIND_RULE_RULE` (6, the rule the kind verdict names) and
+`AUDIT_CONNECTIVE_HINTS` (`and` · `so` · `hence` · `thus` · `therefore` · `then` · `but`, the
+rendering's `connective-start` hint).
+
+Rule 2's bounds (`references/locate-documents.md` §13.11): `AUDIT_BACK_MATTER` (`references` ·
+`notes` · `footnotes` · `citations` · `sources` · `bibliography` · `further reading` · `external
+links` · `see also` · `works cited` · `notes and references`: a top heading of the back matter,
+case-folded; with the lead, the page furniture), `AUDIT_MOSTLY_SKIPPED_MIN` (2) and
+`AUDIT_MOSTLY_SKIPPED_SHARE` (0.5: a section, not furniture, is mostly skipped when at least 2 of
+its math paragraphs lie under a skip and no passage and more than half of them do; the soft
+threshold, reported and never refusing), `AUDIT_SKIP_STATEMENTS_MAX` (40 statements a skip
+verdict lists), `AUDIT_SKIP_AT_WORDS` (3 to 12 words: where a statement starts, verbatim inside
+the skip) and `AUDIT_SKIP_UNTIL_WORDS` (12: its last words), `AUDIT_SKIP_RULE_RULE` (6, the rule
+the skip rule's verdict names) with `AUDIT_SKIP_RULE_ACTION` (its fixed action), and
+`AUDIT_SKIP_BLOCK_BYTES` (20,000 bytes of a SKIP block shown in full; past them each block is
+one clipped line, and `--show <skip id>` prints it whole).
 
 **The turn machine's values** (`references/locate-documents.md` §13.9, the turns an audited
 run's bridge hands to `scripts/run/audit_turn.py`, which copies them; `agent_call.py` and

@@ -948,9 +948,18 @@ GATE_CALLERS = (GATE_CALLER_VALIDATION, GATE_CALLER_PRE_MERGE, GATE_CALLER_FINDI
 # --- the inventory audit (references/locate-documents.md section 13): the files an
 # audited inventory run's reviewer turn reads and writes.  ``gate/inventory_audit.py``,
 # which runs on the host with no cflib, keeps a copy of every value; a test pins it
-INVENTORY_AUDIT_SCHEMA = "cf-inventory-audit/1"
-#: the decision table's version (``audit/<n>`` in every verdicts file)
+#: the audit rules the host tools, the turn machine and the harvest know: rule 1 audits the
+#: passages (inv-pilot-3's), rule 2 the skips too (section 13.11).  A plan writes
+#: INVENTORY_AUDIT_RULE into ``run.yaml`` ``locate.audit.rule`` and both wrappers'
+#: ``CF_AUDIT_RULE``, and every tool runs at the rule its run names (``--rule``)
+INVENTORY_AUDIT_RULES = (1, 2)
+#: the decision table's version a new audited plan writes (``audit/<n>`` in every verdicts
+#: file)
 INVENTORY_AUDIT_RULE = 1
+#: the ``schema`` of every audit file of a rule's run
+INVENTORY_AUDIT_SCHEMAS = {1: "cf-inventory-audit/1", 2: "cf-inventory-audit/2"}
+#: rule 1's schema, the one inv-pilot-3's files carry
+INVENTORY_AUDIT_SCHEMA = INVENTORY_AUDIT_SCHEMAS[1]
 #: the review rounds an audited plan may name
 AUDIT_REVIEW_ROUNDS = (2, 3)
 #: what an auditor, a checker's new entry or a skeptic says of a passage
@@ -1003,6 +1012,47 @@ AUDIT_REPAIR_VERDICTS_PER_SESSION = 40
 AUDIT_KIND_RULE_RULE = 6
 #: the first words the rendering hints as a connective start
 AUDIT_CONNECTIVE_HINTS = ("and", "so", "hence", "thus", "therefore", "then", "but")
+#: --- audit rule 2, the skips (references/locate-documents.md section 13.11).  A skip of
+#: the round's snapshot is named ``r<k>-s<nnn>``, round k's numbering of its skips in span
+#: order, and every skip is judged once: ``clean`` or ``skipped_statements`` (the statements
+#: it hides, which no passage keeps), the one verdict a skip row takes and no passage does
+AUDIT_SKIP_VERDICT = "skipped_statements"
+AUDIT_SKIP_VERDICTS = (AUDIT_VERDICT_CLEAN, AUDIT_SKIP_VERDICT)
+#: where a merged skip verdict came from beyond AUDIT_VERDICT_ORIGINS: the skip rule's
+#: mechanical verdict (a skip over math no passage holds, in a proof, an example or a
+#: mostly skipped section, that the auditor did not exempt with ``skip_ok``)
+AUDIT_SKIP_ORIGINS = ("skip_rule",)
+#: the edit operation rule 2 adds: a skip shrunk, split or dropped, never widened
+AUDIT_SKIP_OPS = ("unskip",)
+#: the collateral change rule 2 adds: the document's skips differ from what the cited
+#: operations make of the snapshot's
+AUDIT_SKIP_COLLATERAL = ("skip_edit",)
+#: the hints a skip block of the rendering carries
+AUDIT_SKIP_HINTS = ("skip-rule", "in-proof", "in-example", "mostly-skipped", "partial",
+                    "furniture")
+#: the page furniture: the lead (an empty section path) and the back matter, a top heading
+#: of these (case-folded); a skip there is legitimate, and the skip rule never fires on it
+AUDIT_BACK_MATTER = ("references", "notes", "footnotes", "citations", "sources",
+                     "bibliography", "further reading", "external links", "see also",
+                     "works cited", "notes and references")
+#: the soft threshold: a section, not furniture, is mostly skipped when at least
+#: AUDIT_MOSTLY_SKIPPED_MIN of its math paragraphs lie under a skip and no passage, and
+#: more than AUDIT_MOSTLY_SKIPPED_SHARE of them do; reported, never refusing
+AUDIT_MOSTLY_SKIPPED_MIN = 2
+AUDIT_MOSTLY_SKIPPED_SHARE = 0.5
+#: a skip verdict's statements: at most this many a row, each starting at 3 to 12 words of
+#: the layer inside the skip and ending at most 12
+AUDIT_SKIP_STATEMENTS_MAX = 40
+AUDIT_SKIP_AT_WORDS = (3, 12)
+AUDIT_SKIP_UNTIL_WORDS = 12
+#: the skip rule's verdict: the 3.4 rule it names and its fixed action
+AUDIT_SKIP_RULE_RULE = 6
+AUDIT_SKIP_RULE_ACTION = ("cut each definition, theorem, equation or declarative statement "
+                          "under this skip into a passage of its own (C6); proof narration "
+                          "becomes expository; keep a skip only on furniture")
+#: the bytes a skip block of the rendering shows in full before its remaining blocks are
+#: one clipped line each (``--show <skip id>`` prints it whole)
+AUDIT_SKIP_BLOCK_BYTES = 20_000
 #: the turn machine (``run/audit_turn.py``, references/locate-documents.md section 13.9),
 #: which runs an audited task's turns when the wrappers export ``CF_AUDIT_RULE``; it
 #: keeps its own copy of these, and ``run/agent_call.py`` and ``run/watchdog.py`` copy

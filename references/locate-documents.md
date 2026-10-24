@@ -2836,7 +2836,7 @@ test vector. A consumer that
 ports the map (`docs/proposals/statement-cut.md` §8) runs the same cases; `tests/test_locate_carry.py`
 runs them against `locate.carry.map_page`.
 
-## 13. Inventory audit records (`cf-inventory-audit/1`)
+## 13. Inventory audit records (`cf-inventory-audit/1`, `cf-inventory-audit/2`)
 
 An **audited** inventory run reviews each inventory document in rounds, after the worker has
 committed it and the gate has passed it: an auditor (round 1) or a checker (round 2 on) judges
@@ -2846,7 +2846,9 @@ rejection the worker repairs the document with recorded edit operations, each ci
 it applies. `cf plan-locate --preset locate-inventory --audit-rounds 2|3` plans one
 (`run.yaml` `locate.audit`, §9); a run planned without it stages, renders and gates
 exactly as before. This section is the format the stage
-is built on and the three host tools that read and write it.
+is built on and the three host tools that read and write it, under **audit rule 1**, which
+audits the passages; **audit rule 2** (§13.11, what a plan writes from its flip on) audits the
+skips too, and §13.1-13.10 hold under it but where §13.11 says otherwise.
 
 **The tools.** `scripts/gate/inventory_render.py`, `scripts/gate/inventory_edit.py` and
 `scripts/gate/inventory_audit.py` are standard library only and import no `cflib`; the planner
@@ -2882,7 +2884,8 @@ working directory. Round `k`'s files are `r<k>.<name>.json` (and `.md`):
 | `r<k>.result.json` | the bridge | the contract the round's decision printed |
 | `r<k>.ops.json`, `r<k>.repair.json` | the worker | `ops`, `repair` |
 
-**Common rules.** Every file is a JSON object with `schema` (`cf-inventory-audit/1`), `kind`,
+**Common rules.** Every file is a JSON object with `schema` (`cf-inventory-audit/1`; a rule-2
+run's `cf-inventory-audit/2`, §13.11), `kind`,
 `round` and `source_id`, the document's. A passage is named by its item, `In-text #<8 hex>`, of
 the document the round reviewed; a verdict by `r<k>-v<nnn>`, a flag by `r<k>-f<nnn>`, a
 collateral entry by `r<k>-x<nnn>`. A key a record does not take is refused, and so is a
@@ -3023,7 +3026,8 @@ the formal passages), the decision (`approve`, `request_changes` or `revert`) is
 | 1 < k < R | `request_changes` when at least T are actionable and fewer than round k−1's; otherwise as an approval below |
 | an approval from round 2 on (the final round's always is one) | `approve` when `harm` is false, else `revert` to `revert_to`, the best reviewed snapshot: of the rounds without harm the one with the fewest actionable verdicts, the later on a tie (round 1 always qualifies) |
 
-R, the plan's review rounds, is one of `AUDIT_REVIEW_ROUNDS` (2 or 3). `merge --audit-failed
+R, the plan's review rounds, is one of `AUDIT_REVIEW_ROUNDS` (2 or 3); `audit/2` adds one
+clause for a middle round (§13.11). `merge --audit-failed
 <reason>` records an audit whose output stayed invalid: no verdicts, `decision: approve`,
 `audit_failed: true`, counted. The counts include the formal passages of kind `other`
 (`kind_other_formal`) and those the kind rule judges (`kind_other_in_proof_or_example`).
@@ -3069,7 +3073,7 @@ this section and is the call an agent makes before it finishes.
 
 ### 13.9 The turn machine (`scripts/run/audit_turn.py`)
 
-An audited run's wrappers export `CF_AUDIT_RULE` (the decision rule, 1) and `CF_AUDIT_ROUNDS`
+An audited run's wrappers export `CF_AUDIT_RULE` (the audit rule, 1 or 2) and `CF_AUDIT_ROUNDS`
 (R, one of `AUDIT_REVIEW_ROUNDS`). With `CF_AUDIT_RULE` set, `bridge-agentbox.sh` hands every turn
 of a task, after the attempt cap's check, to `bin/audit_turn.py` with its own allowlist, agentbox
 profile, host and bypass; the turn machine runs as `python3 -I`, imports no `cflib`, calls every
@@ -3220,3 +3224,176 @@ audit: {rule, review_rounds, source: fetched | kept | null, documents, audited,
   (`worker_initial`), `revision` its revisions; a reviewer envelope with no step would be
   named under `reviewer`. The receipt's own `cost` block, priced from those envelopes, carries
   the same split as `by_step` (§10).
+
+### 13.11 Skips under rule 2 (`cf-inventory-audit/2`)
+
+Rule 1 audits passages only, so a skip a worker should not have made — a proof or a worked
+example skipped whole, a display skipped from the sentence that introduces it — passes every
+round unseen. **Audit rule 2** (`INVENTORY_AUDIT_RULES`, the `--rule 2` of every host tool,
+`CF_AUDIT_RULE=2`, `run.yaml` `locate.audit.rule: 2`) audits the skips too: each is judged once,
+a skip that hides statements becomes a verdict, and the repair turns it into passages. The
+files of a rule-2 run carry `schema: cf-inventory-audit/2`; every rule-1 behaviour above is
+unchanged, and a tool called without `--rule` is rule 1, byte for byte (a rule-1 file with a
+rule-2 key is refused as any unknown key is, and a `/2` file under rule 1 by its schema).
+
+**Terms.** A *skip* is a `skips` entry, `{span, reason}` (§2). A math paragraph (a
+`paragraphs.json` entry with `math: true`) is *held* when a passage's span overlaps it; one a
+skip overlaps and no passage holds is *under a skip*, what the gate's `skipped.math_paragraphs`
+counts. The *furniture* is the lead (an empty section path) and the back matter (a top heading
+of `AUDIT_BACK_MATTER`, case-folded). A section, not furniture, is *mostly skipped* when at least
+`AUDIT_MOSTLY_SKIPPED_MIN` (2) of its math paragraphs are under a skip and more than
+`AUDIT_MOSTLY_SKIPPED_SHARE` (half) of them are: the soft threshold, reported and never
+refusing. A skip is named `r<k>-s<nnn>`, round k's numbering of the snapshot's skips in span
+order (ties by their place in `skips`); the name holds for that round only.
+`inventory_audit.skip_facts` computes what everything below reads of a skip: its outermost
+blocks (each math when an entry inside it is, and held or not), its math paragraphs and those
+under it and no passage (`unheld`, and `unheld_outside` the furniture), its sections, and
+whether it is furniture (every block in the lead or the back matter), in a proof or an example
+section, in a mostly skipped one, *partial* (it starts or ends inside a block), *inside* a kept
+passage (a finder nested in one), and whether the **skip rule** applies: it overlaps a math
+paragraph no passage holds, outside the furniture, whose section path names a proof or an
+example (the kind rule's `\bproofs?\b|\bexamples?\b`) or is mostly skipped.
+
+**The rendering** (`inventory_render.py --rule 2`). Each skip that does not lie inside kept
+passages is a SKIP block in place, in the gap before the next passage (the gap's text split
+around it):
+
+```
+SKIP r1-s002 · [5200, 6100] · 900 chars · 4 block(s), 3 math paragraph(s), 3 held by no passage · Proof
+  REASON: proof narration; it argues the theorem above
+  ¶ [5200, 5310] p · math · held by no passage: Suppose W is a finite widget with n nodes.
+  ¶ [5311, 5420] p · math · held by no passage: Then every gadget of W has at most n edges.
+  ¶ [5421, 5600] dd · math · held by no passage: e(G) ≤ n
+  ¶ [5601, 6100] p: This completes the proof.
+  HINT: skip-rule in-proof mostly-skipped
+```
+
+One `¶` line per outermost block, its span clipped to the skip (`(block [a, b])` when the block
+runs past it), so a repair copies spans into `unskip`: a math block in full to 1,500 characters
+(its first and last 700 past that), any other block as a `GAP` line is clipped, a run of three or
+more list items with no math one `… [a, b] N list items, no math: <first> … <last>` line, and
+text no block holds (a heading) a `⋯` line. The hints are `AUDIT_SKIP_HINTS`: `skip-rule`,
+`in-proof`, `in-example`, `mostly-skipped`, `partial` and `furniture`. Past
+`AUDIT_SKIP_BLOCK_BYTES` (20,000) every further block is one line of its first and last 100
+characters and the block ends `… the rest in full: --show <id>`. A skip whose text lies inside
+kept passages is one entry of a closing `SKIPS inside kept passages: <id> [a, b] <reason>; …`
+line, judged like any other. The header gains `Skips: N (r1-s001 to r1-s0NN); M math
+paragraph(s) lie under them and no passage, O of them outside the lead and the back matter.`
+(`Skips: none.` without one) and, when a section is mostly skipped, `ATTENTION: mostly skipped
+sections: <section> <under> of <math>; …`. `r<k>.render.json` gains `rule: 2` and `skips`, one
+row per skip `{id, span, reason, part, blocks, math, unheld, unheld_outside, furniture, rule,
+sections, inside}`, and each part's row its `skips`: the part that shows a skip owns it (a skip
+just before a part's first passage is that part's; the tail's and the closing line's are the last
+part's). `--rule 2 --show r<k>-s<nnn>` prints one skip whole, with `--context` characters of
+layer before and after it, through the same command prefix as `--show <item>`. With `--previous`
+and `--previous-verdicts r<k-1>.verdicts.json`, the diff gains a `SKIPS` section — every skip of
+the snapshot removed (`REMOVED SKIP`), changed (`CHANGED SKIP`, before and after) or added
+(`ADDED SKIP`) — and one `SKIP VERDICT <id> on <skip> [a, b]: <n> math paragraph(s) unheld
+before, <m> now; <h> of its <s> statement(s) now start inside a passage; the skip is gone.` (or
+the skips that remain in its span) line per skip verdict of the last round.
+
+**The auditor's file** gains the required `skips`: one row for every skip its part owns (all of
+them in a whole-document file), each judged exactly once:
+
+```json
+"skips": [
+  {"skip": "r1-s002", "verdict": "skipped_statements", "rule": 6, "merge_with": "",
+   "reason": "a proof skipped whole; two steps assert facts",
+   "action": "unskip r1-s002; add the two statements; the narration paragraphs become expository",
+   "statements": [{"at": "Then every gadget of W has", "until": "at most n edges.", "passage_kind": "theorem"},
+                  {"at": "e(G) ≤ n", "until": "", "passage_kind": "theorem"}]},
+  {"skip": "r1-s001", "verdict": "clean", "rule": 0, "merge_with": "", "reason": "", "action": "",
+   "statements": []}]
+```
+
+`verdict` is `clean` or `skipped_statements` (`AUDIT_SKIP_VERDICTS`) and nothing else, and no
+passage row takes `skipped_statements`. A `skipped_statements` row names its rule (6 for a proof
+or an example, 3 for a display, 1 or 2 elsewhere), its reason and action, and at least one
+statement or a `merge_with`: the kept passage whose sentence the skipped text finishes (the
+partial case, a display skipped from its sentence); `statements` are what it hides, as the
+auditor proposes to cut them, at most `AUDIT_SKIP_STATEMENTS_MAX` (40), each `at` 3 to 12 words
+verbatim from the layer inside the skip where it starts, `until` at most 12 (its last words, or
+""), `passage_kind` one of the inventory's kinds. A clean row names rule 0, no statement and no
+`merge_with`; `skip_ok: true`, on a clean row only and with a reason, exempts a skip the skip
+rule judges (HINT `skip-rule`) from it, as `kind_other_ok` does a passage from the kind rule.
+`validate --kind audit --rule 2 --render-index r1.render.json --part <i>` holds a part to the
+skips its index row names; without an index, `--gate-config` reads the facts from the source.
+
+**The flags and the skeptic.** `strip --rule 2` adds one flag per `skipped_statements` row,
+`{flag_id, item: "", skip, span, verdict, rule, merge_with, reason}`, placed among the passage
+flags by where it starts; its statements and action are withheld. The skeptic upholds a skip
+flag only as `skipped_statements` (and a passage flag never so), with `evidence` (at most 25
+words, verbatim) that states something **inside the skip**: the merge looks for it in the skip's
+own text, the layer between its span's ends, and evidence elsewhere refutes the flag
+(`no_evidence`). It refutes a skip of narration only (PD5), of furniture, or of a statement a kept
+passage already states (C10). Its file gains `examined_skips` and `missed_skips`: in round 1,
+`examined_skips` names **every** skip of its part no flag names that holds a math paragraph no
+passage holds outside the furniture (all of them, not a floor), and `missed_skips` those it finds
+hiding statements, in the auditor's row shape with `evidence`. A part with such a skip gets a
+skeptic call even with no flag and no formal passage. A dispute of a skip verdict carries its
+`span`.
+
+**The merge** (`merge --rule 2`; round 1 and later). A skip verdict's record is `{id, item: "",
+skip, skips, span, start, verdict: "skipped_statements", rule, merge_with, action, origin,
+statements, unheld, …}`: its target is the span, `skips` the skips of the round's snapshot that
+overlap it (`skip` the one when there is one), `unheld` the math paragraphs under them no passage
+holds; verdict ids number every verdict by where its target starts. An upheld skip flag is an
+`auditor` verdict with the auditor's action and the statements whose `at` starts inside the skip
+(the others dropped and counted, `statements_dropped`; the verdict stands on its evidence); an
+evidenced missed skip is `skeptic_missed`; then **the skip rule** adds `skipped_statements`
+(origin `skip_rule`, rule `AUDIT_SKIP_RULE_RULE`, no statements, `AUDIT_SKIP_RULE_ACTION`) on every
+skip it applies to that no skip verdict of the round already settles, the auditor did not exempt
+with `skip_ok`, and that lies inside no span of `skip_seen` (the spans an earlier round exempted
+or set aside). A refuted skip flag does not stop it. From round 2, a skip verdict the check
+leaves `partial`, `missing`, `wrong` or `gate_refused_doubtful` (or a dispute refuted, or a
+regression) is re-issued by its original span, naming the new snapshot's skips there (possibly
+none); one `applied` goes to `history` with its span, where a narrowed remnant that still holds
+math in a proof section meets the skip rule again; one set aside (`gate_refused_ok`, a dispute
+upheld) adds its span to `skip_seen`. The verdicts file gains `skip_ok` (`[{skip, span,
+reason}]`), `skip_seen` (`[[a, b]]`) and `skip_report`, and its counts `skips`, `skips_judged`,
+`skips_flagged`, `skips_upheld`, `skips_refuted`, `skip_missed_added`, `skip_missed_dropped`,
+`skip_rule`, `skip_ok`, `hidden_statements` (the statements of the round's upheld skip
+verdicts), `statements_dropped` and, from round 2, `skip_carried`; `flagged`, `upheld` and
+`refuted` stay the passages'. `skip_report` is `{skips, chars, math_paragraphs,
+furniture_math_paragraphs, by_section: {<section>: {skipped, math}}, mostly_skipped: [<section>]}`
+over the round's document (`math_paragraphs` the gate's count, `by_section` the sections with a
+math paragraph under a skip, the lead named `(lead)`); an `audit_failed` merge gives one when
+`--gate-config` still reads the source.
+
+**The decision table, `audit/2`**, is `audit/1` with one clause more: a middle round also
+requests changes when any skip verdict is actionable, below T as well, provided the round made
+progress — fewer actionable verdicts than the round before, or fewer math paragraphs under skips
+outside the furniture (`skip_report`'s `math_paragraphs` less `furniture_math_paragraphs`).
+Round 1 and the final round are as before, so at most R − 1 rejections still hold.
+
+**The repair.** `inventory_edit.py --rule 2` adds `unskip {skip, keep?, verdict | neighbour_of}`
+(`AUDIT_SKIP_OPS`): the skip — an id of the base snapshot's numbering, `r<k>-s<nnn>` of the
+round the ops file names — gives up its text but the pieces `keep` names, `[{span: [a, b],
+reason?}]`, each inside its span, non-empty, disjoint and in order (a piece without a reason keeps
+the skip's); no `keep` (or `[]`) drops it, one piece shrinks it, two split it. It refuses an
+unknown id, another round's id, a skip named twice, a piece outside the skip or overlapping
+another, and no citation. **No operation adds or widens a skip.** The statements are `add`
+operations as any (`scope: formal_math`, the kind the verdict proposes, `prominence:
+supporting`), each math paragraph of the freed text no statement holds an `add` of an
+expository passage (narration inside a proof is expository, never a skip), and the partial case a
+`set` of `until` on the passage `merge_with` names; every operation cites the skip verdict.
+`named_skips` gives the skips the operations name. The gate, the run's own, validates the result
+unchanged: rule 8 refuses a skip that still holds a whole added passage (an `unskip` forgotten),
+the coverage floor a freed math paragraph no passage holds (narration forgotten). `collateral
+--rule 2` also compares the skips: each difference between the document's and what the cited
+operations make of the snapshot's is a `skip_edit` entry (`AUDIT_SKIP_COLLATERAL`), `{id,
+change: "skip_edit", skip, before: {span, reason} | null, after: {span, reason} | null}` — a skip
+changed (both), removed (no `after`) or added (no `before`) by hand, `skip` the snapshot's skip
+that holds it — which the checker judges harmful or not like any collateral; no operation puts
+back a skip removed by hand (the final round's revert to the best snapshot does). The checker
+gives each skip verdict a status like any verdict (`applied` when no statement is left under a
+skip in its span and the statements it named are held), reading the diff's SKIP VERDICT lines.
+
+**The turn machine** (`CF_AUDIT_RULE=2`) passes `--rule 2` to every host tool call and into every
+validator line it gives an agent, records `rule: 2` in `state.json` (a state of another rule is
+refused), stages the last round's verdicts for the rendering's diff, names each part's skips in
+the call's block, places a skip flag in the part that shows its skip, runs the skip hunt's
+skeptic calls, combines the parts' `examined_skips` and `missed_skips`, gives the `audit_failed`
+merge `--gate-config`, and **weighs** the revision's sessions: a skip verdict weighs max(1, its
+statements, its `unheld`) and any other verdict 1, a session holds up to
+`AUDIT_REPAIR_VERDICTS_PER_SESSION` (40) of weight, and a heavier verdict has a session of its own.
