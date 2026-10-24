@@ -43,7 +43,12 @@ The operations (each field one of ``inventory_audit.EDIT_FIELDS``):
 * ``add {after, quote, fields}`` -- a new passage from text no passage holds,
   placed after ``after`` (null: first), with ``after``'s section and fragment
   unless ``fields`` gives them;
-* ``drop {item}`` -- the passage goes.
+* ``drop {item}`` -- the passage goes;
+* ``unskip {skip, keep?}`` (``--rule 2`` only, references/locate-documents.md section 13.11)
+  -- the skip named by its id in the base's numbering (``r<k>-s<nnn>``, k the ops file's
+  round) gives up its text but the pieces ``keep`` names (``[{span, reason?}]``, inside it,
+  disjoint, in order): none drops it, one shrinks it, two split it.  No operation adds or
+  widens a skip.
 
 A passage scoped other than ``formal_math`` by an operation that does not say
 otherwise becomes ``supporting`` and loses ``shape`` and ``conjuncts``, as the
@@ -72,6 +77,12 @@ MODEL_FINDER = "model"
 SUPPORTING = "supporting"
 #: the keys an edit removes with ``null`` rather than storing a null
 REMOVABLE = ("until", "shape", "conjuncts")
+
+
+def named_skips(ops: list) -> set[str]:
+    """Every skip id an ``unskip`` names (rule 2)."""
+    return {op["skip"] for op in ops if isinstance(op, dict) and op.get("op") == "unskip"
+            and isinstance(op.get("skip"), str)}
 
 
 def named_items(ops: list) -> set[str]:
@@ -143,13 +154,15 @@ def _end(passage: dict, order: dict[int, int]) -> tuple:
     return (0, span[1]) if span else (1, order.get(id(passage), 0))
 
 
-def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None
+def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None,
+          rule: int = ia.DEFAULT_RULE, round_: int | None = None
           ) -> tuple[dict, list[str], list[str]]:
     """``(document, log, problems)``: ``ops`` applied to a copy of ``doc``, in order.
 
     Items name ``doc``'s passages; a passage an earlier operation dropped or merged away
-    cannot be named again.  Any problem leaves the result unusable: the caller writes
-    nothing.
+    cannot be named again.  Under rule 2 an ``unskip`` names a skip of ``doc`` by its id
+    in round ``round_``'s numbering (:func:`unskip`).  Any problem leaves the result
+    unusable: the caller writes nothing.
     """
     out = copy.deepcopy(doc)
     passages: list[dict] = out.setdefault("passages", [])
@@ -158,6 +171,8 @@ def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None
     gone: set[str] = set()
     log: list[str] = []
     problems: list[str] = []
+    skips = _numbered_skips(out) if rule >= 2 else {}
+    unskipped: set[str] = set()
 
     def find(item: Any, where: str) -> dict | None:
         if item in gone:
@@ -170,7 +185,7 @@ def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None
 
     for i, op in enumerate(ops):
         where = f"ops[{i}]"
-        shape = ia.op_problems(op, where, verdict_ids=verdict_ids)
+        shape = ia.op_problems(op, where, verdict_ids=verdict_ids, rule=rule)
         if shape:
             problems.extend(shape)
             continue
@@ -243,6 +258,11 @@ def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None
             order[id(new)] = order.get(id(anchor), -1) if anchor is not None else -1
             log.append(f"op {i + 1} add ({cite}): after {op['after']} "
                        f"{op['quote']['exact'][:40]!r}")
+        elif name == "unskip":
+            line = unskip(out, op, where, skips=skips, done=unskipped, round_=round_,
+                          problems=problems)
+            if line:
+                log.append(f"op {i + 1} unskip ({cite}): {line}")
         else:
             p = find(op["item"], where)
             if p is None:
@@ -251,6 +271,56 @@ def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None
             gone.add(op["item"])
             log.append(f"op {i + 1} drop ({cite}): {op['item']}")
     return out, log, problems
+
+
+def _numbered_skips(doc: dict) -> dict[int, dict]:
+    """``{n: skip}``: the document's skips by their number in span order (``r<k>-s<nnn>``
+    names the nnn-th), each the very object in ``doc["skips"]``."""
+    return {n: skip for n, (_i, skip) in enumerate(ia.skip_order(doc), 1)}
+
+
+def unskip(doc: dict, op: dict, where: str, *, skips: dict[int, dict], done: set[str],
+           round_: int | None, problems: list[str]) -> str | None:
+    """``unskip {skip, keep?}``: the skip gives up its text but the pieces ``keep`` names,
+    each ``{span, reason?}`` inside its span, non-empty, in order and disjoint (a piece
+    without a reason keeps the skip's); none drops it, one shrinks it, two split it.  It
+    never widens a skip or adds one.  Refused: an id that is no skip of the base (or of
+    another round's numbering), a skip named twice, a piece outside the skip or overlapping
+    another.  Returns the log line, or None with the problem appended."""
+    sid = op["skip"]
+    number = ia.skip_number(sid)
+    if number is None or number[1] not in skips:
+        problems.append(f"{where}: {sid} is no skip of the base document")
+        return None
+    if round_ is not None and number[0] != round_:
+        problems.append(f"{where}: {sid} is round {number[0]}'s numbering; the base is round "
+                        f"{round_}'s snapshot, whose skips are r{round_}-s<nnn>")
+        return None
+    if sid in done:
+        problems.append(f"{where}: {sid} is unskipped twice (give every piece it keeps in one "
+                        f"operation)")
+        return None
+    skip = skips[number[1]]
+    a, b = ia.span_of(skip)
+    pieces = []
+    last = a
+    for j, piece in enumerate(op.get("keep") or []):
+        x, y = piece["span"]
+        if not (a <= x < y <= b):
+            problems.append(f"{where}.keep[{j}]: [{x}, {y}] is not inside the skip [{a}, {b}]")
+            return None
+        if x < last:
+            problems.append(f"{where}.keep[{j}]: [{x}, {y}] overlaps or comes before the piece "
+                            f"before it (pieces are disjoint and in order)")
+            return None
+        last = y
+        pieces.append({"span": [x, y], "reason": piece.get("reason") or skip.get("reason")})
+    done.add(sid)
+    rows = doc["skips"]
+    at = next(i for i, s in enumerate(rows) if s is skip)
+    rows[at:at + 1] = pieces
+    kept = ", ".join(f"[{p['span'][0]}, {p['span'][1]}]" for p in pieces)
+    return f"{sid} [{a}, {b}] " + (f"keeps {kept}" if pieces else "dropped")
 
 
 def document_path(value: str) -> Path:
@@ -282,8 +352,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base", help="the snapshot the items name (default: the document)")
     ap.add_argument("--verdicts", help="the round's verdicts file: every citation must be one")
     ap.add_argument("--write", action="store_true", help="write the document (default: dry run)")
+    ap.add_argument("--rule", type=int, default=ia.DEFAULT_RULE,
+                    help="the audit rule the run names (2 adds unskip; default 1)")
     args = ap.parse_args(argv)
     try:
+        rule = ia.known_rule(args.rule)
         path = document_path(args.document)
         doc = ia.read_document(path)
         base = ia.read_document(args.base) if args.base else doc
@@ -300,9 +373,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"inventory_edit: {exc}", file=sys.stderr)
         return ia.EXIT_INPUT
     try:
-        problems = ia.validate_ops(ops, doc, verdict_ids=ids)
-        result, log, more = (apply(base, ops["ops"], verdict_ids=ids) if not problems
-                             else (None, [], []))
+        problems = ia.validate_ops(ops, doc, verdict_ids=ids, rule=rule)
+        if problems:
+            result, log, more = None, [], []
+        elif rule >= 2:
+            result, log, more = apply(base, ops["ops"], verdict_ids=ids, rule=rule,
+                                      round_=ops.get("round"))
+        else:
+            result, log, more = apply(base, ops["ops"], verdict_ids=ids)
     except ImportError as exc:
         print(f"FAIL: the gate beside this tool does not import ({exc})", file=sys.stderr)
         return ia.EXIT_BROKEN

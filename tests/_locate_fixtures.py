@@ -524,3 +524,194 @@ def default_verdict(rec: dict) -> dict:
     else:
         v["action"] = "uphold"
     return v
+
+
+# --------------------------------------------------------------------------
+# the skip audit's layer (references/locate-documents.md section 13.11): a made-up
+# "Widget bounds" page whose sections the skip rule reads -- a lead with an infobox
+# and a sidebar of formulas, a statement, a proof, a gadget bound with a display, a
+# definition and its remark, and References -- and the documents F1-F3b of the
+# skip audit's tests (F4, a hand edit, is a revision of F1's)
+# --------------------------------------------------------------------------
+
+def skip_formula(tex: str) -> str:
+    """A formula as the layer carries it: its fallback text, then its TeX annotation."""
+    return f"{tex}{{\\displaystyle {tex}}}"
+
+
+SKIP_TITLE = "Widget bounds"
+#: (name, block, section, text): the page's blocks in reading order; a ``None`` block is a
+#: heading, which no paragraphs.json entry holds
+SKIP_BLOCKS = [
+    ("TITLE", None, [], SKIP_TITLE),
+    ("LEAD", "p", [], "A widget is a finite graph of sprockets joined by gadgets."),
+    ("INFOBOX", "p", [], "Field Widget theory Introduced by a synthetic committee"),
+    ("SIDE1", "li", [], skip_formula("e(W)\\geq 0")),
+    ("SIDE2", "li", [], skip_formula("c(W)=2n")),
+    ("SIDE3", "li", [], skip_formula("g(W)\\leq n")),
+    ("H_STATEMENT", None, [], "Statement"),
+    ("STMT", "p", ["Statement"], f"Every finite widget {skip_formula('W')} of order "
+                                 f"{skip_formula('n')} has at most {skip_formula('n')} edges."),
+    ("H_PROOF", None, [], "Proof"),
+    ("PF1", "p", ["Proof"], f"Suppose {skip_formula('W')} is a finite widget with "
+                            f"{skip_formula('n')} nodes."),
+    ("PF2", "p", ["Proof"], f"Then every gadget of {skip_formula('W')} has at most "
+                            f"{skip_formula('n')} edges, so"),
+    ("PF3", "dd", ["Proof"], skip_formula("e(W)\\leq n")),
+    ("PF4", "p", ["Proof"], f"This completes the proof, since {skip_formula('n')} bounds every "
+                            f"gadget."),
+    ("H_BOUND", None, [], "Gadget bound"),
+    ("GB1", "p", ["Gadget bound"], f"The gadget bound of a connected widget "
+                                   f"{skip_formula('W')} is"),
+    ("GB2", "dd", ["Gadget bound"], skip_formula("g(W)=n-1")),
+    ("GB3", "p", ["Gadget bound"], "A widget whose gadgets are all bounded is called tame, and "
+                                   "tame widgets have no cycles."),
+    ("H_REFS", None, [], "References"),
+    ("REF1", "li", ["References"], "A. Author, Widgets, a synthetic book."),
+    ("REF2", "li", ["References"], "B. Author, Gadgets, a synthetic paper."),
+    ("REF3", "li", ["References"], "C. Author, Sprockets, a synthetic note."),
+]
+SKIP_LAYER = "\n".join(text for _n, _b, _s, text in SKIP_BLOCKS)
+
+
+def _skip_spans() -> dict[str, list[int]]:
+    out, cursor = {}, 0
+    for name, _block, _section, text in SKIP_BLOCKS:
+        a = SKIP_LAYER.index(text, cursor)
+        out[name] = [a, a + len(text)]
+        cursor = a + len(text)
+    return out
+
+
+SKIP_SPANS = _skip_spans()
+
+
+def _skip_formulas() -> list[dict]:
+    out = []
+    for name, _block, _section, text in SKIP_BLOCKS:
+        base = SKIP_SPANS[name][0]
+        at = 0
+        while True:
+            j = text.find("{\\displaystyle ", at)
+            if j < 0:
+                break
+            close, depth = j, 0
+            for close in range(j, len(text)):
+                depth += {"{": 1, "}": -1}.get(text[close], 0)
+                if depth == 0:
+                    break
+            tex = text[j + len("{\\displaystyle "):close]
+            start = j - len(tex)
+            assert text[start:j] == tex, (name, tex)
+            out.append({"span": [base + start, base + close + 1],
+                        "alttext": "{\\displaystyle " + tex + "}"})
+            at = close + 1
+    return out
+
+
+SKIP_FORMULAS = _skip_formulas()
+
+
+def _skip_paragraphs() -> list[dict]:
+    out = []
+    for name, block, section, text in SKIP_BLOCKS:
+        if block is None:
+            continue
+        n = text.count("{\\displaystyle ")
+        out.append({"span": SKIP_SPANS[name], "section": list(section), "block": block,
+                    "formulas": n, "math": n > 0})
+    return out
+
+
+SKIP_PARAGRAPHS = _skip_paragraphs()
+
+
+def skip_passage(name: str, kind: str, scope: str, *, prominence: str = "supporting",
+                 until: str | None = None, words: int = 4, at: str | None = None) -> dict:
+    """A passage the way a worker writes one: a quote of the first words at the block
+    ``name`` starts (or at the words ``at`` inside it), placed by ``passage_ids``."""
+    a = SKIP_SPANS[name][0] if at is None else SKIP_LAYER.index(at, SKIP_SPANS[name][0])
+    exact = " ".join(SKIP_LAYER[a:].split(" ")[:words])
+    section = next(s for n, _b, s, _t in SKIP_BLOCKS if n == name)
+    row = {"item": "", "head_words": 0, "span": None,
+           "quote": {"exact": exact, "prefix": "", "suffix": ""},
+           "section": list(section), "fragment": section[0] if section else None,
+           "passage_kind": kind, "prominence": prominence if scope == "formal_math"
+           else "supporting", "scope": scope,
+           "statement": f"a synthetic restatement of the {name.lower()} passage",
+           "concept": None, "finder": "model"}
+    if until is not None:
+        row["until"] = until
+    return row
+
+
+def skip_span(*names: str, start: str | None = None, end: str | None = None) -> list[int]:
+    """The span of the blocks ``names`` (first to last), or from the words ``start`` /
+    up to the end of the words ``end`` inside them."""
+    a, b = SKIP_SPANS[names[0]][0], SKIP_SPANS[names[-1]][1]
+    if start is not None:
+        a = SKIP_LAYER.index(start, a)
+    if end is not None:
+        b = SKIP_LAYER.index(end, a) + len(end)
+    return [a, b]
+
+
+#: the page furniture every document skips: the infobox (no math), the lead's sidebar (math,
+#: in the lead) and References (list items, no math)
+FURNITURE_SKIPS = [
+    {"span": skip_span("INFOBOX"), "reason": "infobox"},
+    {"span": skip_span("SIDE1", "SIDE3"), "reason": "sidebar of related formulas"},
+    {"span": skip_span("REF1", "REF3"), "reason": "references"},
+]
+PROOF_SKIP = {"span": skip_span("PF1", "PF4"),
+              "reason": "proof narration; it argues the theorem above"}
+#: F3's skip: the display the gadget bound's sentence introduces; F3b's: the remark that
+#: starts inside the definition's paragraph
+DISPLAY_SKIP = {"span": skip_span("GB2"), "reason": "a display"}
+REMARK_SKIP = {"span": skip_span("GB3", start="tame widgets have no cycles."),
+               "reason": "a remark"}
+
+
+def skip_rows(*, proof: bool = True, display: bool = False, remark: bool = False) -> list[dict]:
+    """The passages of a skip document: the lead and the statement, the proof's three
+    statements and narration unless ``proof`` skips them, the gadget bound (its display
+    held unless ``display`` skips it), and the definition (its remark kept unless
+    ``remark`` skips it)."""
+    rows = [skip_passage("LEAD", "definition", "formal_math", prominence="subject"),
+            skip_passage("STMT", "theorem", "formal_math", prominence="central")]
+    if not proof:
+        rows += [skip_passage("PF1", "other", "expository"),
+                 skip_passage("PF2", "theorem", "formal_math"),
+                 skip_passage("PF4", "other", "expository")]
+    rows.append(skip_passage("GB1", "definition", "formal_math",
+                             until="connected widget W{\\displaystyle W} is" if display
+                             else None))
+    if remark:
+        rows.append(skip_passage("GB3", "definition", "formal_math", until="called tame,",
+                                 words=5))
+    else:
+        rows += [skip_passage("GB3", "definition", "formal_math", until="called tame,",
+                              words=5),
+                 skip_passage("GB3", "theorem", "formal_math", at="tame widgets have"
+                              " no cycles.", words=4)]
+    return rows
+
+
+def skip_body(*, proof: bool = True, display: bool = False, remark: bool = False,
+              furniture: bool = True) -> dict:
+    """A skip document's body (``{passages, skips, notes}``) placed by ``passage_ids`` under
+    span-end rule 3: F1 (``proof``: the proof skipped whole), F2 (``proof=False``: the
+    furniture alone skipped), F3 (``display``) and F3b (``remark``)."""
+    skips = [dict(s) for s in FURNITURE_SKIPS] if furniture else []
+    if proof:
+        skips.append(dict(PROOF_SKIP))
+    if display:
+        skips.append(dict(DISPLAY_SKIP))
+    if remark:
+        skips.append(dict(REMARK_SKIP))
+    doc = {"passages": skip_rows(proof=proof, display=display, remark=remark),
+           "skips": sorted(skips, key=lambda s: s["span"]), "notes": ""}
+    problems = passage_ids.place(doc, SKIP_LAYER, SKIP_FORMULAS, SKIP_PARAGRAPHS,
+                                 rule=vocab.SPAN_END_CONTINUED)
+    assert not problems, problems
+    return doc

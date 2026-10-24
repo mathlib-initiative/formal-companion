@@ -131,7 +131,8 @@ MERGE_DEF = {"verdict": "over_cut", "rule": 1, "reason": "one statement with its
 class TestTheVocabularyIsOneDefinition(unittest.TestCase):
     """CLAUDE.md S4: cflib.vocab defines the audit's values; the host copy is pinned."""
 
-    PAIRS = {"AUDIT_SCHEMA": "INVENTORY_AUDIT_SCHEMA", "AUDIT_RULE": "INVENTORY_AUDIT_RULE",
+    PAIRS = {"AUDIT_SCHEMA": "INVENTORY_AUDIT_SCHEMA", "AUDIT_RULES": "INVENTORY_AUDIT_RULES",
+             "AUDIT_SCHEMAS": "INVENTORY_AUDIT_SCHEMAS",
              "AUDIT_REVIEW_ROUNDS": "AUDIT_REVIEW_ROUNDS", "VERDICT_CLEAN": "AUDIT_VERDICT_CLEAN",
              "AUDIT_VERDICTS": "AUDIT_VERDICTS", "VERDICT_REVERT": "AUDIT_VERDICT_REVERT",
              "AUDIT_ORIGINS": "AUDIT_ORIGINS", "CHECK_STATUSES": "AUDIT_CHECK_STATUSES",
@@ -163,7 +164,7 @@ class TestTheVocabularyIsOneDefinition(unittest.TestCase):
         self.assertIn(ia.FORMAL, vl.SCOPES)
         self.assertEqual(ia.ITEM.pattern, vl.ITEM.pattern)
         self.assertEqual(ia.QID.pattern, vl.QID.pattern)
-        self.assertEqual(ia.AUDIT_RULE, 1)
+        self.assertEqual(ia.DEFAULT_RULE, 1)
 
     def test_every_value_is_documented(self):
         vocabulary = (SKILL / "references" / "vocabulary.md").read_text(encoding="utf-8")
