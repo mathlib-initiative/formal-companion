@@ -238,6 +238,51 @@ class TestTheBlock(unittest.TestCase):
         self.assertIn("residual: 3 actionable verdict(s) over 40 formal passage(s)", text)
 
 
+def skip_report(skips: int, math: int, furniture: int, mostly: list[str], **by_section) -> dict:
+    return {"skips": skips, "chars": 100 * skips, "math_paragraphs": math,
+            "furniture_math_paragraphs": furniture,
+            "by_section": {k: {"skipped": a, "math": b} for k, (a, b) in by_section.items()},
+            "mostly_skipped": mostly}
+
+
+class TestTheSkipsBlock(unittest.TestCase):
+    """Audit rule 2's ``audit.skips`` (references/locate-documents.md section 13.11): before
+    (round 1's skip report) and after (the reviewed round's), by source; none for rule 1."""
+
+    def test_rule_1_verdicts_files_give_no_skips_key(self):
+        block = Fixture(self).summarise()
+        self.assertNotIn("skips", block)
+        self.assertFalse(any("skips:" in line for line in A.describe(block)))
+
+    def test_rule_2_gives_before_after_and_by_section(self):
+        fx = Fixture(self)
+        s = fx.shas
+        first = skip_report(4, 7, 3, ["Proof"], **{"(lead)": (3, 3), "Proof": (4, 4)})
+        last = skip_report(3, 3, 3, [], **{"(lead)": (3, 3)})
+        for k, report, sha_, decision in ((1, first, "old-a", "request_changes"),
+                                          (2, last, s["a"], "approve")):
+            v = verdicts(k, sha_, decision, ["skipped_statements"] if k == 1 else [],
+                         extra={"skips": report["skips"], "skip_rule": int(k == 1)})
+            v.update(schema=vocab.INVENTORY_AUDIT_SCHEMAS[2], decision_rule="audit/2",
+                     skip_report=report)
+            write(fx.audit / "t-a" / "s-a" / f"r{k}.verdicts.json", v)
+        block = fx.summarise()
+        skips = block["skips"]
+        self.assertEqual(skips["before"], {"skips": 4, "chars": 400, "math_paragraphs": 7,
+                                           "furniture_math_paragraphs": 3, "outside": 4,
+                                           "mostly_skipped": 1, "documents": 1})
+        self.assertEqual((skips["after"]["skips"], skips["after"]["outside"],
+                          skips["after"]["mostly_skipped"]), (3, 0, 0))
+        self.assertEqual(skips["by_source"], {"s-a": {"before": first, "after": last}})
+        self.assertEqual(skips["by_source"]["s-a"]["before"]["by_section"]["Proof"],
+                         {"skipped": 4, "math": 4})
+        # the round rows sum the skip counts as any count
+        self.assertEqual(block["rounds"]["1"]["counts"]["skip_rule"], 1)
+        self.assertIn("skips: 4 -> 3, holding 4 -> 0 math paragraph(s) outside the lead and "
+                      "back matter; 1 -> 0 mostly skipped section(s)",
+                      "\n".join(A.describe(block)))
+
+
 def _envelopes(directory: Path) -> Path:
     for name, usd in (("t-a.worker.20261022T101010Z.11.json", 4.0),
                       ("t-a.reviewer.audit.20261022T101011Z.12.json", 2.0),

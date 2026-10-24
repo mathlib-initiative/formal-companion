@@ -24,7 +24,11 @@ approved exactly those bytes:
 * ``turns``: the turn machine's counts summed over the tasks (rejections, precheck
   refusals, retries, audit_failed, reverts, gate resets, tampering);
 * ``cost_usd``: the envelopes' dollars by step (``cost.fleet.envelope_by_step``),
-  named by :data:`cflib.vocab.AUDIT_COST_STEPS`.
+  named by :data:`cflib.vocab.AUDIT_COST_STEPS`;
+* ``skips``, only when a verdicts file is ``audit/2`` (section 13.11, audit rule 2): what
+  the documents skip, before (round 1's ``skip_report``) and after (the reviewed round's,
+  the one ``residual`` reads), summed, and by source with each section's count
+  (:func:`skips_block`).  Reported, never refusing.
 
 A run whose ``run.yaml`` names no audit gets no block, so its receipt is what it
 was.  Nothing here judges a cut: the counts are the merge's, read back.
@@ -200,6 +204,50 @@ def _round_rows(per_round: dict[int, list[dict]]) -> dict[str, dict]:
     return out
 
 
+#: the summed fields of a round's ``skip_report`` (``inventory_audit.skip_report``)
+SKIP_SUMS = ("skips", "chars", "math_paragraphs", "furniture_math_paragraphs")
+
+
+def _skip_sum(reports: list[dict]) -> dict:
+    """Reports summed: their fields, the math paragraphs outside the furniture, and how many
+    mostly skipped sections and documents they hold."""
+    out: dict[str, Any] = {key: 0 for key in SKIP_SUMS}
+    out.update(outside=0, mostly_skipped=0, documents=len(reports))
+    for report in reports:
+        for key in SKIP_SUMS:
+            if _int(report.get(key)):
+                out[key] += report[key]
+        out["mostly_skipped"] += len(report.get("mostly_skipped") or [])
+    out["outside"] = out["math_paragraphs"] - out["furniture_math_paragraphs"]
+    return out
+
+
+def skips_block(per_source_rounds: dict[str, tuple[int | None, dict[int, dict]]]) -> dict | None:
+    """The receipt's ``audit.skips``: ``{before, after, by_source}`` over the documents whose
+    verdicts files are ``audit/2``, ``before`` round 1's ``skip_report`` summed and ``after``
+    the reviewed round's; ``by_source`` each document's two reports whole (``by_section``
+    and ``mostly_skipped`` with them).  None when no verdicts file is ``audit/2``, so a rule-1
+    receipt is what it was."""
+    if not any(str(v.get("decision_rule")) == "audit/2"
+               for _reviewed, rounds in per_source_rounds.values() for v in rounds.values()):
+        return None
+    before, after, by_source = [], [], {}
+    for sid, (reviewed, rounds) in sorted(per_source_rounds.items()):
+        first = (rounds.get(1) or {}).get("skip_report")
+        last = (rounds.get(reviewed) or {}).get("skip_report") if reviewed else None
+        if not isinstance(first, dict) and not isinstance(last, dict):
+            continue
+        row = {}
+        if isinstance(first, dict):
+            before.append(first)
+            row["before"] = first
+        if isinstance(last, dict):
+            after.append(last)
+            row["after"] = last
+        by_source[sid] = row
+    return {"before": _skip_sum(before), "after": _skip_sum(after), "by_source": by_source}
+
+
 def _cost(envelopes: Path | None) -> tuple[dict | None, dict | None, int]:
     """``(cost_usd, cost_calls, unpriced_calls)`` by :data:`vocab.AUDIT_COST_STEPS`."""
     if envelopes is None or not Path(envelopes).exists():
@@ -240,6 +288,7 @@ def summarise(corpus_dir: Path, plan: Mapping[str, Any], *, audit_dir: Path | No
             by_source[sid] = (task_id, state, entry["sources"].get(sid, {}))
     outcomes = {name: 0 for name in vocab.AUDIT_OUTCOMES}
     per_source: dict[str, dict] = {}
+    skip_rounds: dict[str, tuple[int | None, dict[int, dict]]] = {}
     per_round: dict[int, list[dict]] = {}
     residual: dict[str, Any] = {"documents": 0, "actionable": 0, "by_verdict": {}, "formal": 0}
     kind = {"kind_other_formal_before": 0, "kind_other_formal_after": 0,
@@ -252,6 +301,7 @@ def summarise(corpus_dir: Path, plan: Mapping[str, Any], *, audit_dir: Path | No
         outcome = _outcome(doc["sha256"], state, rounds)
         outcomes[outcome] += 1
         reviewed = _reviewed_round(doc["sha256"], rounds)
+        skip_rounds[sid] = (reviewed, rounds)
         for k, verdicts in rounds.items():
             per_round.setdefault(k, []).append(verdicts)
         last = rounds[max(rounds)] if rounds else {}
@@ -295,7 +345,7 @@ def summarise(corpus_dir: Path, plan: Mapping[str, Any], *, audit_dir: Path | No
             _add_counts(turns, state["counts"])
     harvested_tasks = {d["task_id"] for d in docs.values()}
     cost_usd, cost_calls, unpriced = _cost(envelopes)
-    return {
+    out = {
         "rule": plan.get("rule"), "review_rounds": plan.get("review_rounds"),
         "source": source if audit_dir is not None else None,
         "documents": len(docs),
@@ -313,6 +363,10 @@ def summarise(corpus_dir: Path, plan: Mapping[str, Any], *, audit_dir: Path | No
         "cost_calls": cost_calls,
         "cost_unpriced_calls": unpriced,
     }
+    skips = skips_block(skip_rounds)
+    if skips is not None:
+        out["skips"] = skips
+    return out
 
 
 def problems(block: Mapping[str, Any] | None) -> list[str]:
@@ -359,6 +413,13 @@ def describe(block: Mapping[str, Any], indent: str = "  ") -> list[str]:
                  + (f" ({per} a passage)" if per is not None else "")
                  + f"; formal passages of kind other {res.get('kind_other_formal_before', 0)} "
                    f"before, {res.get('kind_other_formal_after', 0)} after")
+    skips = block.get("skips")
+    if isinstance(skips, Mapping):
+        a, b = skips.get("before") or {}, skips.get("after") or {}
+        lines.append(f"{indent}  skips: {a.get('skips', 0)} -> {b.get('skips', 0)}, holding "
+                     f"{a.get('outside', 0)} -> {b.get('outside', 0)} math paragraph(s) outside "
+                     f"the lead and back matter; {a.get('mostly_skipped', 0)} -> "
+                     f"{b.get('mostly_skipped', 0)} mostly skipped section(s)")
     turns = block.get("turns") or {}
     lines.append(f"{indent}  turns: " + ", ".join(f"{k} {v}" for k, v in turns.items()))
     if block.get("cost_usd"):
