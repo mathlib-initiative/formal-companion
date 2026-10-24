@@ -790,8 +790,10 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         return out
 
     def yaml_left(self, then_yaml: dict, now_yaml: dict) -> tuple[dict, dict]:
-        """Both run.yaml files with what may differ popped: the commit, the staged files'
-        pins and the audit templates' shas."""
+        """Both run.yaml files with what may differ popped: the time each was made (two
+        fresh plans), the commit, the staged files' pins and the audit templates' shas."""
+        for doc in (then_yaml, now_yaml):
+            doc.pop("created")
         for block in (then_yaml["locate"], now_yaml["locate"]):
             block.pop("skill_commit")
             block.pop("gate_files")

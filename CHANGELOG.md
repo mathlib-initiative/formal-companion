@@ -165,6 +165,17 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **The flip of the skip audit: a new audited plan writes audit rule 2** (`cflib.vocab.INVENTORY_AUDIT_RULE`
+  2; `references/locate-documents.md` §13.11, `docs/design/stage_map.md` §4.0's fifth versioned key,
+  `locate.audit.rule`). `cf plan-locate --audit-rounds` now records `locate.audit: {rule: 2, …}`,
+  exports `CF_AUDIT_RULE=2` in both wrappers and renders the audit's prompts with their skip
+  text, so the stage judges every skip, raises the skip rule, repairs with `unskip` and counts
+  the skips in the receipt. No gate file changes: an unaudited plan is what it was, and a run
+  planned before (inv-pilot-3, rule 1) runs, re-gates, re-harvests, tallies, exports and carries
+  as it did. The locate e2e driver's audited run is now rule 2's: the widget page's worker skips
+  a corollary, round 1 flags and upholds the skip, the fake revision unskips it and adds its
+  statement, round 2 approves, and the receipt's `audit.skips` holds one skip of one math
+  paragraph before and none after.
 - **Review fixes to the audited inventory and the wide bound**, before any run names either.
   *The wide bound's kinds guard reads the run's head* (`locate_text.Blocks.runs_on(…, wide=True)`,
   docs/proposals/statement-cut.md §3.1): a `dt` term or a quotation no longer runs on into a
