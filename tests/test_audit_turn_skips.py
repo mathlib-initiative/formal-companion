@@ -333,6 +333,7 @@ class TestEveryPathEndsUnderRule2(SkipTurnCase, TA.TestEveryPathEnds):
                 state = self.state()
                 self.assertLessEqual(state["round"], got["rounds"])
                 self.assertEqual(state["rule"], 2)
+                self.assertNotIn("unresolved", json.loads(self.doc_file.read_text()))
                 self.assertEqual(ia.sha256_file(self.doc_file), state["approved"]["sha256"])
 
 

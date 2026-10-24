@@ -1005,7 +1005,8 @@ AUDIT_EVIDENCE_WORDS = 25
 AUDIT_SUMMARY_WORDS = 80
 AUDIT_MAX_PATTERNS = 5
 #: the bytes of rendering one audit, skeptic or check call reads, and the verdicts one
-#: repair session applies
+#: repair session applies (under audit rule 2 a weight: a skip verdict weighs max(1, its
+#: statements, the math paragraphs under it no passage holds), any other verdict 1)
 AUDIT_PART_BYTES = 50_000
 AUDIT_REPAIR_VERDICTS_PER_SESSION = 40
 #: the kind rule: the 3.4 rule its mechanical wrong_kind verdict names

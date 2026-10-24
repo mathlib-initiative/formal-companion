@@ -547,8 +547,9 @@ def skip_diff(previous: dict, doc: dict, layer: str, paragraphs: list[dict], *,
         lines += [f"REMOVED SKIP {q['id']}: [{q['span'][0]}, {q['span'][1]}] · "
                   f"{flat(q['reason'])}"]
     kept = [s for p in doc.get("passages") or [] if (s := ia.span_of(p))]
-    under_now = {tuple(p["span"]) for p in ia.math_under_skips(doc, paragraphs)}
-    under_then = {tuple(p["span"]) for p in ia.math_under_skips(previous, paragraphs)}
+    # the math entries, as the skip report counts them (two entries of one span are two)
+    under_now = [p["span"] for p in ia.math_under_skips(doc, paragraphs)]
+    under_then = [p["span"] for p in ia.math_under_skips(previous, paragraphs)]
     for v in (verdicts or {}).get("verdicts") or []:
         if v.get("verdict") != ia.SKIP_VERDICT or not v.get("span"):
             continue
