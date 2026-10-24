@@ -42,6 +42,18 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The audit's prompts carry audit rule 2** (`templates/prompts/locate-inventory-{audit-system,audit,skeptic,check,revision}.md.tmpl`,
+  `locate.prompts.audit_context`; `references/locate-documents.md` §13.11). The rule card says when
+  a skip is right (furniture, text with no statement and no math paragraph) and that a proof, a
+  derivation or a worked example is never skipped whole; the auditor reads the SKIP blocks and
+  writes one `skips` row per skip; the skeptic upholds a skip flag only with evidence inside the
+  skip and hunts every unflagged skip with math; the checker reads the diff's SKIPS section and
+  SKIP VERDICT lines and `skip_edit` collateral; the revision applies a `skipped_statements`
+  verdict with `unskip` and adds (the narration expository, never a skip), weighed sessions, and
+  every host tool line names `--rule 2`. The text sits in `{{#if audit_skips}}` blocks a rule-1
+  plan renders empty, so a rule-1 audited plan is byte for byte f523584's but for the staged
+  tools and the templates' shas (`tests/test_locate_audit_plan.py` plans one with the base
+  commit and with this one under each rule); the planner still writes rule 1.
 - **The turn machine runs audit rule 2** (`scripts/run/audit_turn.py`, `references/locate-documents.md`
   §13.9 and §13.11; dormant until a plan exports `CF_AUDIT_RULE=2`). It accepts rule 1 or 2,
   records the rule in `state.json` and refuses a state of the other, passes `--rule 2` to every
