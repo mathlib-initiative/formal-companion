@@ -26,7 +26,10 @@ in a revision session.  Their slots are the plan's (``{{...}}``) and the turn's
 (``$CF_AUDIT_ROUND``, ``$CF_AUDIT_ROUNDS``, ``$CF_AUDIT_SOURCE``, ``$CF_AUDIT_DOCUMENT``,
 section 13.9), and ``audit_turn.py`` appends each call's own block: what is staged, the
 one file it writes and its validator line.  An unaudited plan renders the four prompts it
-always rendered, byte for byte.
+always rendered, byte for byte.  Audit rule 2's text (section 13.11: the skips, the skip
+verdict, ``unskip``, ``--rule 2`` on the tools' command lines) sits in ``{{#if audit_skips}}``
+blocks that render empty under rule 1, so a rule-1 plan's prompts are the ones the base
+commit rendered.
 
 Every invocation is rendered from the run's own host paths, and the renderer
 (``plan.render``) refuses a template with an unfilled slot.
@@ -170,14 +173,26 @@ def _ticks(values) -> str:
 
 
 def audit_context(host: Mapping[str, str], review_rounds: int) -> dict[str, Any]:
-    """The slots only the audit's templates read (references/locate-documents.md section 13)."""
+    """The slots only the audit's templates read (references/locate-documents.md section 13).
+
+    The audit rule is the one a new plan writes (``vocab.INVENTORY_AUDIT_RULE``); under rule
+    2 ``audit_skips`` keeps the templates' skip blocks (section 13.11), which render empty
+    under rule 1, so a rule-1 plan's prompts are the base commit's byte for byte."""
     from .tend_root import audit_commands
     cmd = audit_commands(host["gate_dir"])
+    rule = vocab.INVENTORY_AUDIT_RULE
+    skips = rule >= 2
     return {
         "audited": True,
         "review_rounds": review_rounds,
-        "audit_rule": vocab.INVENTORY_AUDIT_RULE,
-        "audit_schema": vocab.INVENTORY_AUDIT_SCHEMA,
+        "audit_rule": rule,
+        "audit_schema": vocab.INVENTORY_AUDIT_SCHEMAS[rule],
+        "audit_skips": skips,
+        "skip_verdict": vocab.AUDIT_SKIP_VERDICT,
+        "skip_statements_max": vocab.AUDIT_SKIP_STATEMENTS_MAX,
+        "skip_at_min": vocab.AUDIT_SKIP_AT_WORDS[0],
+        "skip_at_max": vocab.AUDIT_SKIP_AT_WORDS[1],
+        "skip_until_words": vocab.AUDIT_SKIP_UNTIL_WORDS,
         "prompts_dir": host["prompts_dir"],
         "passage_command": cmd["show"],
         "edit_command": cmd["edit"],
@@ -187,7 +202,7 @@ def audit_context(host: Mapping[str, str], review_rounds: int) -> dict[str, Any]
         "audit_origins": _ticks(vocab.AUDIT_ORIGINS),
         "check_statuses": _ticks(vocab.AUDIT_CHECK_STATUSES),
         "repair_statuses": _ticks(vocab.AUDIT_REPAIR_STATUSES),
-        "edit_ops": _ticks(vocab.AUDIT_EDIT_OPS),
+        "edit_ops": _ticks(vocab.AUDIT_EDIT_OPS + (vocab.AUDIT_SKIP_OPS if skips else ())),
         "edit_fields": _ticks(vocab.AUDIT_EDIT_FIELDS),
         "reason_words": vocab.AUDIT_REASON_WORDS,
         "action_words": vocab.AUDIT_ACTION_WORDS,

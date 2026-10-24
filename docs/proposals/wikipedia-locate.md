@@ -550,6 +550,12 @@ The tend reviewer in L3a/L3b checks form and gate output only, except in an
 cut itself, in rounds of an auditor (a checker from round 2) and a skeptic over
 parts of a rendering, a fixed decision table no agent runs decides, and the
 worker repairs between rounds with edit operations that each cite a verdict.
+Under audit rule 2 (references/locate-documents.md §13.11) the review judges the
+skips too: each skip is judged once, a skip that hides statements (a proof or a
+worked example skipped whole, a display skipped from its sentence) becomes a
+`skipped_statements` verdict, mechanically when it covers math no passage holds
+in a proof, an example or a mostly skipped section, and the repair's `unskip`
+turns it into passages.
 The judgment of locations stays where it is. It lives in **L5**, separate
 tasks over batches of about 20 records, which write per-record verdicts into
 their own documents, so one disputed record never re-runs forty-nine others:

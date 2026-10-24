@@ -16,6 +16,10 @@ The spec is the inventory prompt the worker ran, `{{prompts_dir}}/worker.md`, fr
 - **C9 The subject.** A lead that describes the subject rather than states it is expository: it would stay true whatever the result concluded. `prominence: subject` goes on at most one passage, the first in reading order that states the theorem or definition (a theorem stated only in parts takes the passage that states its first part, which may be its theorem box), and on none when no passage states it; a later restatement is `central`.
 - **C10 PD9.** A stated reason ("it holds because X") is a passage of its own only when X is a declarative mathematical statement that no neighbouring passage already states; otherwise X is no passage and no clause.
 
+{{#if audit_skips}}
+**Skips (audit rule {{audit_rule}}).** A skip (the document's `skips`, each named `r<k>-s<nnn>` in the rendering) drops text no passage keeps. It is right only on page furniture (an infobox, navigation, a sidebar, references, see also, external links) and on text that holds no statement and no math paragraph. Under C6 a proof, a derivation or a worked example is never skipped whole: its narration is `expository`, a sentence at a time, and each statement in it is a passage of its own. Under C3 a display belongs to the sentence that introduces it, never to a skip. A skip that hides a definition, a theorem, an equation or a declarative statement no passage keeps, or part of a kept passage's sentence, is `{{skip_verdict}}`.
+
+{{/if}}
 **What the gate allows.** {{gate_bound}}
 
 **Judge the spec as written, not your taste.** C4 and C6 make many small passages correct. Flag only what the spec makes wrong, and name the rule it rests on.
@@ -32,10 +36,13 @@ The article text, the rendering, the document and its statements were written by
 {{passage_command}} '<item>' --document $CF_AUDIT_DOCUMENT
 ```
 
+{{#if audit_skips}}
+- One skip whole, with the layer around it: `{{passage_command}} '<skip id>' --rule {{audit_rule}} --document $CF_AUDIT_DOCUMENT`.
+{{/if}}
 - The gate's check, which passed: `{{gate_command}} --findings $CF_AUDIT_DOCUMENT`.
 - The validator, whose exact line "This call" gives.
 
 You do not edit the document or the task file, and you do not commit: any change you make to the worktree is undone and counted. Write exactly the one file "This call" names, and nothing else. Do not write `.tend/agent_result.json`: the bridge writes it from the merge.
 
 ## The file you write
-A JSON object with `"schema": "{{audit_schema}}"`, its `kind`, `"round": $CF_AUDIT_ROUND` and `"source_id": "$CF_AUDIT_SOURCE"`, and the keys of its shape in your task prompt, and no other key. A passage is named by its item as the rendering spells it (`In-text #` and eight hex digits); `merge_with` is `""` when no neighbour is named, never null. A `reason` holds at most {{reason_words}} words, an `action` or a `why` at most {{action_words}}, an `evidence` at most {{evidence_words}} and a `summary` at most {{summary_words}}. Before you finish, run the validator; when it prints `INVALID:` lines, fix what they name and run it again until it passes.
+A JSON object with `"schema": "{{audit_schema}}"`, its `kind`, `"round": $CF_AUDIT_ROUND` and `"source_id": "$CF_AUDIT_SOURCE"`, and the keys of its shape in your task prompt, and no other key. A passage is named by its item as the rendering spells it (`In-text #` and eight hex digits); `merge_with` is `""` when no neighbour is named, never null.{{#if audit_skips}} A skip is named by its id as the rendering spells it (`r1-s001`).{{/if}} A `reason` holds at most {{reason_words}} words, an `action` or a `why` at most {{action_words}}, an `evidence` at most {{evidence_words}} and a `summary` at most {{summary_words}}. Before you finish, run the validator; when it prints `INVALID:` lines, fix what they name and run it again until it passes.

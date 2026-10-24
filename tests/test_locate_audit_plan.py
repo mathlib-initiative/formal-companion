@@ -133,7 +133,7 @@ class TestTheFlag(Audited):
         self.assertEqual(block["audit"], {"rule": vocab.INVENTORY_AUDIT_RULE,
                                           "review_rounds": 3})
         self.assertEqual(block["config_shas"]["agents"]["audit"],
-                         {"rule": 1, "review_rounds": 3})
+                         {"rule": vocab.INVENTORY_AUDIT_RULE, "review_rounds": 3})
         prompts = block["config_shas"]["prompts"]
         tdir = SKILL / "templates" / "prompts"
         for name in AUDIT_TEMPLATE_NAMES:
@@ -142,7 +142,8 @@ class TestTheFlag(Audited):
         self.assertNotIn("locate-reviewer.md.tmpl", prompts)
         self.assertNotIn("locate-reviewer-system.md.tmpl", prompts)
         self.assertIn("locate-inventory.md.tmpl", prompts)
-        self.assertIn("audit    : rule 1, at most 3 review rounds", self.out)
+        self.assertIn(f"audit    : rule {vocab.INVENTORY_AUDIT_RULE}, at most 3 review rounds",
+                      self.out)
         plain = read_yaml(self.paths.run_yaml("inv-1"))["locate"]
         self.assertNotIn("audit", plain)
         self.assertNotIn("audit", plain["config_shas"]["agents"])
@@ -151,7 +152,7 @@ class TestTheFlag(Audited):
         code, out, err = self.plan("inv-2", "--audit-rounds", "2")
         self.assertEqual(code, 0, out + err)
         self.assertEqual(read_yaml(self.paths.run_yaml("inv-2"))["locate"]["audit"],
-                         {"rule": 1, "review_rounds": 2})
+                         {"rule": vocab.INVENTORY_AUDIT_RULE, "review_rounds": 2})
         for text in self.wrappers("inv-2").values():
             self.assertIn('export CF_AUDIT_ROUNDS="2"\n', text)
 
@@ -480,12 +481,14 @@ class TestThePrompts(Audited):
                     k = 2 if kind == "check" else 1
                     data = json.loads(block.replace("$CF_AUDIT_ROUND", str(k))
                                       .replace("$CF_AUDIT_SOURCE", F.W1))
-                    self.assertEqual(data["schema"], vocab.INVENTORY_AUDIT_SCHEMA)
+                    rule = vocab.INVENTORY_AUDIT_RULE
+                    self.assertEqual(data["schema"], vocab.INVENTORY_AUDIT_SCHEMAS[rule])
                     self.assertEqual(data["kind"], kind)
                     problems: list[str] = []
-                    self.assertTrue(ia.check_record(data, kind, kind, problems), problems)
+                    self.assertTrue(ia.check_record(data, kind, kind, problems, rule=rule),
+                                    problems)
                     if kind == "ops":
-                        self.assertEqual(ia.validate_ops(data, None), [])
+                        self.assertEqual(ia.validate_ops(data, None, rule=rule), [])
                         self.assertEqual({op["op"] for op in data["ops"]},
                                          {"merge", "split", "set"})
                     for row in data.get("passages") or []:
@@ -493,6 +496,94 @@ class TestThePrompts(Audited):
                         ia._verdict_rules(row, "row", bad, items={
                             r["item"]: {} for r in data["passages"]})
                         self.assertEqual(bad, [], row)
+                    for row in data.get("skips") or []:
+                        bad = []
+                        ia._skip_verdict_rules(row, "row", {}, bad)
+                        self.assertEqual(bad, [], row)
+                    self.assertEqual("skips" in data, kind == "audit" and rule >= 2)
+                    self.assertEqual("examined_skips" in data, kind == "skeptic" and rule >= 2)
+
+
+class AtRule:
+    """A mixin: the planner writes audit rule ``RULE`` (``vocab.INVENTORY_AUDIT_RULE``
+    patched as a flip sets it), so the tests above run at that rule."""
+
+    RULE = 1
+
+    def setUp(self):
+        patcher = mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", self.RULE)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
+
+
+class TestTheFlagAtRule1(AtRule, TestTheFlag):
+    RULE = 1
+
+
+class TestTheFlagAtRule2(AtRule, TestTheFlag):
+    RULE = 2
+
+
+class TestTheWrappersAtRule1(AtRule, TestTheWrappers):
+    RULE = 1
+
+
+class TestTheWrappersAtRule2(AtRule, TestTheWrappers):
+    RULE = 2
+
+
+class TestThePromptsAtRule1(AtRule, TestThePrompts):
+    RULE = 1
+
+
+class TestThePromptsAtRule2(AtRule, TestThePrompts):
+    RULE = 2
+
+
+#: what a rule-2 plan's prompts say and a rule-1 plan's never do
+SKIP_WORDS = ("skipped_statements", "`unskip", "`skip_edit`", "examined_skips", "missed_skips",
+              "skip_ok", "`skip-rule`", "`mostly-skipped`", "--rule 2")
+
+
+class TestTheSkipPrompts(AtRule, Audited):
+    """Audit rule 2's prompts (references/locate-documents.md section 13.11): each says
+    what its call reads and writes of the skips, and every command they render names the
+    rule; a rule-1 plan's say none of it."""
+
+    RULE = 2
+
+    def test_each_prompt_says_its_part_of_the_skips(self):
+        prompts = self.prompts()
+        for name, needles in (
+                ("reviewer-system.md", ("**Skips (audit rule 2).**", "`skipped_statements`",
+                                        "'<skip id>' --rule 2 --document")),
+                ("reviewer.md", ('"skips": [', "`skip-rule`", "`mostly-skipped`", "`partial`",
+                                 "`furniture`", '"skip_ok": true',
+                                 f"at most {vocab.AUDIT_SKIP_STATEMENTS_MAX}",
+                                 f"`at` {vocab.AUDIT_SKIP_AT_WORDS[0]} to "
+                                 f"{vocab.AUDIT_SKIP_AT_WORDS[1]} words")),
+                ("reviewer-skeptic.md", ('"examined_skips": ["r1-s003"]', "INSIDE the skip",
+                                         "`missed_skips`", "EVERY skip of your part")),
+                ("reviewer-check.md", ("`skip_edit`", "`SKIP VERDICT`", "`SKIPS` section")),
+                ("worker-revision.md", ("`unskip {skip, keep?}`", "`unskip`", "`merge`",
+                                        "inventory_edit.py --rule 2 --document",
+                                        "never a skip", "by weight"))):
+            for needle in needles:
+                with self.subTest(prompt=name, needle=needle):
+                    self.assertIn(needle, prompts[name])
+
+    def test_a_rule_1_plan_says_none_of_it(self):
+        with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", 1):
+            code, out, err = self.plan("inv-r1", "--audit-rounds", "3")
+        self.assertEqual(code, 0, out + err)
+        for name, text in self.prompts("inv-r1").items():
+            for needle in SKIP_WORDS:
+                with self.subTest(prompt=name, needle=needle):
+                    self.assertNotIn(needle, text)
+        for needle in ("skipped_statements", "--rule 2"):
+            self.assertIn(needle, self.prompts()["worker-revision.md"] +
+                          self.prompts()["reviewer.md"])
 
 
 def ir_hint_names() -> str:
@@ -625,6 +716,128 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         for block in (then_yaml["locate"], now_yaml["locate"]):
             block.pop("gate_files")
             block["config_shas"].pop("gate_files")
+        self.assertEqual(now_yaml, then_yaml)
+
+
+# --------------------------------------------------------------------------- #
+# an audited plan is f523584's but for the rule it names
+# --------------------------------------------------------------------------- #
+
+#: the base commit the skip audit branched from
+SKIP_BASE = "f523584"
+#: the audit's prompts, as a plan renders them (and its tend root copies them)
+AUDIT_PROMPTS = ("reviewer-system.md", "reviewer.md", "reviewer-check.md", "reviewer-skeptic.md",
+                 "worker-revision.md")
+
+
+class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
+    """f523584's ``cf plan-locate --audit-rounds 3`` and this one's, as the same run.
+
+    Under audit rule 1 every file of the run directory is byte for byte the base
+    commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
+    the files staged from a source this branch changed (the three audit tools and
+    ``bin/audit_turn.py``); ``run.yaml`` differs only in its skill commit, those files'
+    pins and the five audit templates' shas.  Under rule 2 the five rendered audit
+    prompts (in ``prompts/`` and the tend root's copy), the two wrappers' ``CF_AUDIT_RULE``,
+    ``locate.audit.rule`` and ``config_shas.agents.audit.rule`` and the rendered prompts'
+    shas differ too, and nothing else.  An unaudited plan stays the base commit's
+    (:class:`TestAnUnauditedPlanIsTheBaseCommits`; no file it stages changed here but
+    ``bin/audit_turn.py``).
+    """
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.paths = F.campaign(self, self.root)
+        tar = subprocess.run(["git", "-C", str(SKILL), "archive", "--format=tar", SKIP_BASE,
+                              "scripts", "templates", "vendor", "registry"],
+                             capture_output=True)
+        if tar.returncode != 0:
+            self.skipTest(f"this checkout does not hold commit {SKIP_BASE}")
+        self.base = self.root.parent / "base-skips"
+        with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
+            archive.extractall(self.base, filter="data") if sys.version_info >= (3, 12) \
+                else archive.extractall(self.base)
+        changed = subprocess.run(["git", "-C", str(SKILL), "diff", "--name-only", SKIP_BASE,
+                                  "--", "scripts", "vendor"], capture_output=True, text=True)
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        self.changed = set(changed.stdout.split())
+
+    def snapshot(self, run_id: str) -> dict[str, bytes]:
+        rd = self.paths.run_dir(run_id)
+        return {p.relative_to(rd).as_posix(): p.read_bytes() for p in sorted(rd.rglob("*"))
+                if p.is_file() and "__pycache__" not in p.parts}
+
+    def both(self, rule: int) -> tuple[dict, dict, dict, dict]:
+        argv = ["--workspace", str(self.root), "plan-locate", "--preset", "locate-inventory",
+                "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-q",
+                "--audit-rounds", "3"]
+        old = subprocess.run([sys.executable, str(self.base / "scripts" / "cf.py"), *argv],
+                             capture_output=True, text=True, cwd=str(self.root.parent))
+        self.assertEqual(old.returncode, 0, old.stdout + old.stderr)
+        then, then_yaml = self.snapshot("inv-q"), read_yaml(self.paths.run_yaml("inv-q"))
+        shutil.move(self.paths.run_dir("inv-q"), self.root.parent / f"inv-q-base-{rule}")
+        with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", rule):
+            code, out, err = ws(self.root, *argv[2:])
+        self.assertEqual(code, 0, out + err)
+        return then, self.snapshot("inv-q"), then_yaml, read_yaml(self.paths.run_yaml("inv-q"))
+
+    def staged_changed(self) -> set[str]:
+        from plan.make_tend_root import BRIDGE_SCRIPTS
+        out = {f"tend-root/gate/{name}" for rel, name in ltr.gate_file_rows(True)
+               if rel in self.changed}
+        out |= {f"tend-root/bin/{name}" for name in ltr.LOCATE_BIN_HELPERS
+                + (BRIDGE_SCRIPTS["agentbox-claude"][0],) if f"scripts/run/{name}" in self.changed}
+        return out
+
+    def yaml_left(self, then_yaml: dict, now_yaml: dict) -> tuple[dict, dict]:
+        """Both run.yaml files with what may differ popped: the commit, the staged files'
+        pins and the audit templates' shas."""
+        for block in (then_yaml["locate"], now_yaml["locate"]):
+            block.pop("skill_commit")
+            block.pop("gate_files")
+            block["config_shas"].pop("gate_files")
+            for name in AUDIT_TEMPLATE_NAMES:
+                block["config_shas"]["prompts"].pop(name)
+        return then_yaml, now_yaml
+
+    def test_rule_1_is_the_base_commits_plan(self):
+        then, now, then_yaml, now_yaml = self.both(1)
+        differ = {k for k in then.keys() | now.keys()
+                  if k != "run.yaml" and then.get(k) != now.get(k)}
+        self.assertEqual(differ, self.staged_changed())
+        self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
+                          "tend-root/gate/inventory_render.py",
+                          "tend-root/gate/inventory_edit.py"}, differ)
+        for name in AUDIT_PROMPTS:
+            self.assertEqual(now[f"prompts/{name}"], then[f"prompts/{name}"], name)
+        self.assertEqual(now_yaml["locate"]["audit"], {"rule": 1, "review_rounds": 3})
+        moved = {f"tend-root/{k}" for k, v in now_yaml["locate"]["gate_files"].items()
+                 if then_yaml["locate"]["gate_files"].get(k) != v}
+        self.assertEqual(moved, differ)
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml)
+        self.assertEqual(now_yaml, then_yaml)
+
+    def test_rule_2_differs_in_the_rule_and_its_prompts_only(self):
+        then, now, then_yaml, now_yaml = self.both(2)
+        differ = {k for k in then.keys() | now.keys()
+                  if k != "run.yaml" and then.get(k) != now.get(k)}
+        prompts = {f"{d}{name}" for d in ("prompts/", "tend-root/prompts/")
+                   for name in AUDIT_PROMPTS}
+        wrappers = {"tend-root/bin/worker-agent.sh", "tend-root/bin/reviewer-agent.sh"}
+        self.assertEqual(differ, self.staged_changed() | prompts | wrappers)
+        for name in wrappers:
+            self.assertEqual(now[name], then[name].replace(b'export CF_AUDIT_RULE="1"',
+                                                           b'export CF_AUDIT_RULE="2"'))
+        self.assertEqual(now_yaml["locate"]["audit"], {"rule": 2, "review_rounds": 3})
+        self.assertEqual(now_yaml["locate"]["config_shas"]["agents"]["audit"]["rule"], 2)
+        for block in (then_yaml["locate"], now_yaml["locate"]):
+            block["audit"].pop("rule")
+            block["config_shas"]["agents"]["audit"].pop("rule")
+        for name in AUDIT_PROMPTS:
+            self.assertEqual(now_yaml["prompts"].pop(name),
+                             hashlib.sha256(now[f"prompts/{name}"]).hexdigest())
+            then_yaml["prompts"].pop(name)
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml)
         self.assertEqual(now_yaml, then_yaml)
 
 
