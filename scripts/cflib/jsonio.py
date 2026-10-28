@@ -28,13 +28,40 @@ def read_json(path: str | Path, default: Any = None) -> Any:
         raise CfError(f"{p}: invalid JSON at line {exc.lineno}: {exc.msg}") from exc
 
 
+def _current_umask() -> int:
+    """The process umask (reading it means setting it, safe in a single-threaded process)."""
+    mask = os.umask(0o022)
+    os.umask(mask)
+    return mask
+
+
+def _mode_for(p: Path) -> int:
+    """The permission bits ``atomic_write`` gives ``p``: what a plain ``open`` would.
+
+    Rewriting an existing file keeps its permission bits, as writing it in place
+    does; a new file gets ``0666`` less the umask (``0644`` under the usual
+    ``022``).  ``mkstemp`` alone creates ``0600`` whatever the umask, which left
+    every file written here owner-only -- a ``universe.yaml`` beside world-readable
+    indexes in a directory others read.
+    """
+    try:
+        return p.stat().st_mode & 0o777
+    except OSError:
+        return 0o666 & ~_current_umask()
+
+
 def atomic_write(path: str | Path, text: str) -> Path:
-    """Write text to ``path`` atomically (temp file in the same dir + replace)."""
+    """Write text to ``path`` atomically (temp file in the same dir + replace).
+
+    The file ends with the mode a plain write would give it (:func:`_mode_for`).
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
+    mode = _mode_for(p)
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=f".{p.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchmod(fh.fileno(), mode)
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())

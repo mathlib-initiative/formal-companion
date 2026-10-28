@@ -176,6 +176,27 @@ class TestYamlRoundTrip(unittest.TestCase):
                 if yamlio.load_yaml(text) != obj or yamlio.load_yaml_minimal(text) != obj:
                     self.fail(f"{raw!r} dumped to {text!r} does not round-trip")
 
+    def test_a_float_survives_both_readers_with_or_without_an_exponent(self):
+        """Python spells 1e-05 and 1e+16 with no point, which YAML 1.1 and the fallback
+        reader both read as a string: a campaign's ``--unpriced-usd-per-hour 1e-5`` came
+        back as ``'1e-05'``.  Seeded, over every magnitude a float has."""
+        import random
+
+        rng = random.Random(20261019)
+        floats = [1e-05, 1e16, -2e-07, 5e-324, 1.7976931348623157e308, 1.5e-05,
+                  20.000002, 0.1, 0.0, -0.0, 1.0]
+        floats += [rng.choice((-1, 1)) * rng.random() * 10.0 ** rng.randint(-320, 300)
+                   for _ in range(500)]
+        for value in floats:
+            text = yamlio.dump_yaml({"t": value, "s": [value]})
+            for read in (yamlio.load_yaml, yamlio.load_yaml_minimal):
+                got = read(text)
+                with self.subTest(value=value, reader=read.__name__):
+                    self.assertIsInstance(got["t"], float, text)
+                    self.assertEqual((got["t"], got["s"]), (value, [value]), text)
+        self.assertEqual(yamlio.dump_yaml({"t": 1e-05}), "t: 1.0e-05\n")
+        self.assertEqual(yamlio.dump_yaml({"t": 0.25}), "t: 0.25\n")
+
     def test_the_two_readers_never_disagree_with_each_other(self):
         for raw in NASTY_SCALARS:
             text = yamlio.dump_yaml({"t": raw})

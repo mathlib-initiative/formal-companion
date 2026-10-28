@@ -272,3 +272,40 @@ Two items in the item table are worth keeping in mind when reading a converted c
   attack worker is still told it is looking at N independent formalizations. The per-task
   description is what restricts it to the audited companion ("as rendered by `ours`"; "Peers …
   reference only, do NOT report defects in them").
+
+## 10. The three locate presets
+
+Not runs of a companion: `cf plan-locate` plans them from a sourceset and a universe, and
+`cf plan-run` refuses their names (`scripts/locate/presets.py`; `docs/proposals/wikipedia-locate.md`
+§3). They render tend roots on the same bridge, gate directory and harvest, with the locate gate
+(`scripts/gate/verify_locate.py`) in the validation commands and the locate prompts
+(`templates/prompts/locate-*.md.tmpl`).
+
+| preset | stage | task | kinds | workers / reviewers |
+|---|---|---|---|---|
+| `locate-inventory` | L3a | one source; its deterministic finders' passages pre-filled | `PASSAGE`, `UNRESOLVED` | 8 / 4 |
+| `locate` | L3b | at most 8 `formal_math` passages of a frozen inventory, one source (`--subject-only`: one subject passage per article, bundled) | `LOCATION`, `ABSENCE`, `UNRESOLVED` | 8 / 4 |
+| `locate-challenge` | L5 | about 20 records of harvested locate runs, by the §5 rules and a seeded stratified sample | `LOCATION`, `ABSENCE`, `UNRESOLVED` | 6 / 3 |
+
+```
+tasks/<id>.yaml              inv-<source-id> | loc-<source-id>-<k> | loc-subject-<kkkk> | chl-<kkkk>
+findings/<id>/<source>.json  one per source of the task manifest; nothing else may change
+gate/tasks/<id>.json         the task manifest, outside every worktree
+validation_commands          python3 <remote_root>/<run-id>-gate/verify_locate.py \
+                               --gate-config <remote_root>/<run-id>-gate/gate.json \
+                               --changed-files --base main
+pre_merge_validation_commands
+                             python3 <remote_root>/<run-id>-gate/verify_locate.py \
+                               --gate-config <remote_root>/<run-id>-gate/gate.json \
+                               --changed-files --pre-merge --base main
+```
+
+The two argvs differ by `--pre-merge`, the only call that admits several tasks in one change set
+(a batched merge's new documents); without it a change set of several tasks is refused. The
+wrappers add `CF_EXTRA_TOOLS` (worker only: the corpus tools, and the passage-id tool in an
+inventory run), `CF_REVIEWER_TOOLS` (reviewer only: the read-only tools and the gate's
+`--findings` check; like the worker's entry, the whole gate command with `--findings`, so no
+agent runs tend's `--changed-files` call),
+`CF_TASK_MANIFESTS`, `CF_ATTEMPT_CAP=3`, `CF_MERGE_TARGET` (the merge target branch, both roles)
+and `CF_FINDINGS_GLOB`. The tend reviewer
+of a locate run checks form and the gate's output only; judgment lives in the challenge.

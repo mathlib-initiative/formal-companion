@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""Apply an audit round's edit operations to an inventory document -- every one citing a verdict.
+
+New code, for references/locate-documents.md section 13 (``cf-inventory-audit/1``,
+the ops file).  A worker repairing an audited inventory does not rewrite the
+document by hand: it writes operations -- ``merge``, ``split``, ``set``, ``add``
+and ``drop`` -- each naming the verdict it applies (``verdict``) or the verdict
+whose neighbour's end or start it moves (``neighbour_of``), and this tool applies
+them, in order, deterministically.  An operation that cites no verdict is
+refused, so ``inventory_audit.py collateral`` can list every change that no
+cited operation produced.  The tool computes no offsets: it edits quotes, ``until``
+and the passage fields, and ``passage_ids.py --write`` places and re-keys the
+passages afterwards, then the gate judges the result.
+
+    inventory_edit.py --document findings/<task>/<source>.json --ops .tend/audit/r<k>.ops.json
+                      [--base .tend/audit/r<k>.document.json] [--verdicts .tend/audit/r<k>.verdicts.json]
+                      [--write]
+
+Items name the passages of the base document (``--base``, the snapshot the round
+reviewed; without it the document itself), so the whole ops file can be applied
+again from the snapshot after every gate refusal.  ``--verdicts`` holds every
+citation to a verdict the round asked for.  Without ``--write`` it prints what
+it would do and writes nothing; with it, it writes the named document and
+nothing else -- a file ``findings/<task>/<source>.json`` inside the working
+directory, reached through no symlink.
+
+The operations (each field one of ``inventory_audit.EDIT_FIELDS``):
+
+* ``merge {keep, drop, fields?}`` -- ``drop`` (one item or a list) joins ``keep``:
+  the merged passage starts at the earlier start (taking that passage's quote and
+  finder) and ends where the one that ends later ended (its ``until``, none when
+  it had none), carries ``keep``'s other fields, then ``fields``;
+* ``split {item, at, new, earlier?}`` -- a new passage starts at the quote ``at``
+  inside ``item``; it ends where ``item`` ended (``item``'s ``until``, unless
+  ``new`` gives one), takes ``item``'s section, fragment and the finder
+  ``model``, and ``new``'s fields (``statement``, ``passage_kind``, ``scope`` and
+  ``prominence`` required); ``item`` loses its ``until`` (its default end now
+  stops at the new start) unless ``earlier`` gives one, then takes ``earlier``;
+* ``set {item, fields}`` -- the fields; ``null`` removes ``until``, ``shape`` and
+  ``conjuncts`` and empties ``concept``; ``quote`` replaces the quote (moves the
+  start); ``quote_end`` cuts the quote's ``exact`` after its first occurrence of
+  those words (the end of the quote, the start kept), dropping its ``suffix``;
+* ``add {after, quote, fields}`` -- a new passage from text no passage holds,
+  placed after ``after`` (null: first), with ``after``'s section and fragment
+  unless ``fields`` gives them;
+* ``drop {item}`` -- the passage goes;
+* ``unskip {skip, keep?}`` (``--rule 2`` only, references/locate-documents.md section 13.11)
+  -- the skip named by its id in the base's numbering (``r<k>-s<nnn>``, k the ops file's
+  round) gives up its text but the pieces ``keep`` names (``[{span, reason?}]``, inside it,
+  disjoint, in order): none drops it, one shrinks it, two split it.  No operation adds or
+  widens a skip.  Rule 3 (section 13.12) adds no operation: a gap's statements are ``add``
+  operations and its ``merge_with`` a ``set`` of ``until``, as rule 2's are.
+
+A passage scoped other than ``formal_math`` by an operation that does not say
+otherwise becomes ``supporting`` and loses ``shape`` and ``conjuncts``, as the
+gate requires (rule 10).  Exit 0 when every operation applied, 1 when one was
+refused (each named, and nothing written), 2 when an input cannot be read or the
+document path is refused, 3 when the gate beside it does not import.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import inventory_audit as ia  # noqa: E402
+
+FINDINGS_DIR = "findings"
+MODEL_FINDER = "model"
+SUPPORTING = "supporting"
+#: the keys an edit removes with ``null`` rather than storing a null
+REMOVABLE = ("until", "shape", "conjuncts")
+
+
+def named_items(ops: list) -> set[str]:
+    """Every base item an operation names (its own passage, a merge's two, an add's anchor)."""
+    out: set[str] = set()
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        for key in ("item", "keep", "after"):
+            if isinstance(op.get(key), str):
+                out.add(op[key])
+        drop = op.get("drop")
+        out.update(d for d in (drop if isinstance(drop, list) else [drop]) if isinstance(d, str))
+    return out
+
+
+def _set_fields(passage: dict, fields: dict, where: str, problems: list[str]) -> None:
+    """Apply ``fields`` to one passage (validated by ``inventory_audit.field_problems``)."""
+    for key, value in fields.items():
+        if key == "quote_end":
+            quote = dict(passage.get("quote") or {})
+            exact = str(quote.get("exact") or "")
+            at = exact.find(value)
+            if at < 0:
+                problems.append(f"{where}: quote_end {value!r} is not in the quote "
+                                f"{exact[:60]!r}")
+                continue
+            quote["exact"] = exact[:at + len(value)]
+            quote["suffix"] = ""
+            passage["quote"] = quote
+        elif key == "quote":
+            passage["quote"] = {"exact": value["exact"], "prefix": value.get("prefix", ""),
+                                "suffix": value.get("suffix", "")}
+        elif key in REMOVABLE and value is None:
+            passage.pop(key, None)
+        else:
+            passage[key] = copy.deepcopy(value)
+    if passage.get("scope") != ia.FORMAL and "scope" in fields:
+        if "prominence" not in fields:
+            passage["prominence"] = SUPPORTING
+        for key in ("shape", "conjuncts"):
+            if key not in fields:
+                passage.pop(key, None)
+
+
+def _new_passage(base: dict | None, fields: dict) -> dict:
+    """A passage passage_ids.py has not placed yet: a quote, the fields, no span or item."""
+    out = {"item": "", "head_words": 0, "span": None, "quote": {},
+           "section": list(base.get("section") or []) if base else [],
+           "passage_kind": None, "prominence": None, "scope": None, "statement": "",
+           "concept": None, "finder": MODEL_FINDER}
+    if base is not None and "fragment" in base:
+        out["fragment"] = base.get("fragment")
+    for key in ia.NEW_PASSAGE_PLACE:
+        if key in fields:
+            out[key] = copy.deepcopy(fields[key])
+    return out
+
+
+def _start(passage: dict, order: dict[int, int]) -> tuple:
+    """Where a passage starts, for a merge: its span's start, else its place in the list."""
+    span = ia.span_of(passage)
+    return (0, span[0]) if span else (1, order.get(id(passage), 0))
+
+
+def _end(passage: dict, order: dict[int, int]) -> tuple:
+    """Where a passage ends, for a merge: its span's end, else its place in the list."""
+    span = ia.span_of(passage)
+    return (0, span[1]) if span else (1, order.get(id(passage), 0))
+
+
+def apply(doc: dict, ops: list, *, verdict_ids: set[str] | None = None,
+          rule: int = ia.DEFAULT_RULE, round_: int | None = None
+          ) -> tuple[dict, list[str], list[str]]:
+    """``(document, log, problems)``: ``ops`` applied to a copy of ``doc``, in order.
+
+    Items name ``doc``'s passages; a passage an earlier operation dropped or merged away
+    cannot be named again.  Under rule 2 an ``unskip`` names a skip of ``doc`` by its id
+    in round ``round_``'s numbering (:func:`unskip`).  Any problem leaves the result
+    unusable: the caller writes nothing.
+    """
+    out = copy.deepcopy(doc)
+    passages: list[dict] = out.setdefault("passages", [])
+    order = {id(p): n for n, p in enumerate(passages)}
+    items = {str(p.get("item")): p for p in passages if p.get("item")}
+    gone: set[str] = set()
+    log: list[str] = []
+    problems: list[str] = []
+    skips = _numbered_skips(out) if rule >= 2 else {}
+    unskipped: set[str] = set()
+
+    def find(item: Any, where: str) -> dict | None:
+        if item in gone:
+            problems.append(f"{where}: {item} was dropped or merged away by an earlier operation")
+            return None
+        passage = items.get(item)
+        if passage is None:
+            problems.append(f"{where}: {item} is no passage of the base document")
+        return passage
+
+    for i, op in enumerate(ops):
+        where = f"ops[{i}]"
+        shape = ia.op_problems(op, where, verdict_ids=verdict_ids, rule=rule)
+        if shape:
+            problems.extend(shape)
+            continue
+        name = op["op"]
+        cite = op.get("verdict") or f"neighbour of {op.get('neighbour_of')}"
+        before = len(problems)
+        if name == "merge":
+            keep = find(op["keep"], where)
+            drops = op["drop"] if isinstance(op["drop"], list) else [op["drop"]]
+            absorbed = [find(d, where) for d in drops]
+            if keep is None or any(a is None for a in absorbed) or len(problems) > before:
+                continue
+            if any(a is keep for a in absorbed) or \
+                    len({id(a) for a in absorbed}) != len(absorbed):
+                # op_problems refuses a repeated item; this guards one passage named twice
+                problems.append(f"{where}: merge names one passage twice")
+                continue
+            for item, d in zip(drops, absorbed):
+                # the merged passage's provisional span orders the next drop against it
+                # (passage_ids.py writes the real one)
+                if _start(d, order) < _start(keep, order):
+                    keep["quote"] = copy.deepcopy(d.get("quote"))
+                    keep["finder"] = d.get("finder")
+                if _end(d, order) > _end(keep, order):
+                    if "until" in d:
+                        keep["until"] = d["until"]
+                    else:
+                        keep.pop("until", None)
+                if ia.span_of(d) and ia.span_of(keep):
+                    keep["span"] = [min(keep["span"][0], d["span"][0]),
+                                    max(keep["span"][1], d["span"][1])]
+                passages.remove(d)
+                gone.add(item)
+            _set_fields(keep, op.get("fields") or {}, where, problems)
+            log.append(f"op {i + 1} merge ({cite}): {op['keep']} absorbs {', '.join(drops)}")
+        elif name == "split":
+            p = find(op["item"], where)
+            if p is None:
+                continue
+            new = _new_passage(p, op["new"])
+            new["quote"] = {"exact": op["at"]["exact"], "prefix": op["at"].get("prefix", ""),
+                            "suffix": op["at"].get("suffix", "")}
+            if "until" in p:
+                new["until"] = p["until"]
+            _set_fields(new, {k: v for k, v in op["new"].items()
+                              if k not in ia.NEW_PASSAGE_PLACE}, where, problems)
+            p.pop("until", None)
+            _set_fields(p, op.get("earlier") or {}, where, problems)
+            passages.insert(passages.index(p) + 1, new)
+            order[id(new)] = order.get(id(p), 0)
+            log.append(f"op {i + 1} split ({cite}): {op['item']} at {op['at']['exact'][:40]!r}")
+        elif name == "set":
+            p = find(op["item"], where)
+            if p is None:
+                continue
+            _set_fields(p, op["fields"], where, problems)
+            log.append(f"op {i + 1} set ({cite}): {op['item']} "
+                       f"{', '.join(sorted(op['fields']))}")
+        elif name == "add":
+            anchor = None if op["after"] is None else find(op["after"], where)
+            if op["after"] is not None and anchor is None:
+                continue
+            new = _new_passage(anchor, op["fields"])
+            new["quote"] = {"exact": op["quote"]["exact"],
+                            "prefix": op["quote"].get("prefix", ""),
+                            "suffix": op["quote"].get("suffix", "")}
+            _set_fields(new, {k: v for k, v in op["fields"].items()
+                              if k not in ia.NEW_PASSAGE_PLACE}, where, problems)
+            passages.insert(passages.index(anchor) + 1 if anchor is not None else 0, new)
+            order[id(new)] = order.get(id(anchor), -1) if anchor is not None else -1
+            log.append(f"op {i + 1} add ({cite}): after {op['after']} "
+                       f"{op['quote']['exact'][:40]!r}")
+        elif name == "unskip":
+            line = unskip(out, op, where, skips=skips, done=unskipped, round_=round_,
+                          problems=problems)
+            if line:
+                log.append(f"op {i + 1} unskip ({cite}): {line}")
+        else:
+            p = find(op["item"], where)
+            if p is None:
+                continue
+            passages.remove(p)
+            gone.add(op["item"])
+            log.append(f"op {i + 1} drop ({cite}): {op['item']}")
+    return out, log, problems
+
+
+def _numbered_skips(doc: dict) -> dict[int, dict]:
+    """``{n: skip}``: the document's skips by their number in span order (``r<k>-s<nnn>``
+    names the nnn-th), each the very object in ``doc["skips"]``."""
+    return {n: skip for n, (_i, skip) in enumerate(ia.skip_order(doc), 1)}
+
+
+def unskip(doc: dict, op: dict, where: str, *, skips: dict[int, dict], done: set[str],
+           round_: int | None, problems: list[str]) -> str | None:
+    """``unskip {skip, keep?}``: the skip gives up its text but the pieces ``keep`` names,
+    each ``{span, reason?}`` inside its span, non-empty, in order and disjoint (a piece
+    without a reason keeps the skip's); none drops it, one shrinks it, two split it.  It
+    never widens a skip or adds one.  Refused: an id that is no skip of the base (or of
+    another round's numbering), a skip named twice, a piece outside the skip or overlapping
+    another.  Returns the log line, or None with the problem appended."""
+    sid = op["skip"]
+    number = ia.skip_number(sid)
+    if number is None or number[1] not in skips:
+        problems.append(f"{where}: {sid} is no skip of the base document")
+        return None
+    if round_ is not None and number[0] != round_:
+        problems.append(f"{where}: {sid} is round {number[0]}'s numbering; the base is round "
+                        f"{round_}'s snapshot, whose skips are r{round_}-s<nnn>")
+        return None
+    if sid in done:
+        problems.append(f"{where}: {sid} is unskipped twice (give every piece it keeps in one "
+                        f"operation)")
+        return None
+    skip = skips[number[1]]
+    a, b = ia.span_of(skip)
+    pieces = []
+    last = a
+    for j, piece in enumerate(op.get("keep") or []):
+        x, y = piece["span"]
+        if not (a <= x < y <= b):
+            problems.append(f"{where}.keep[{j}]: [{x}, {y}] is not inside the skip [{a}, {b}]")
+            return None
+        if x < last:
+            problems.append(f"{where}.keep[{j}]: [{x}, {y}] overlaps or comes before the piece "
+                            f"before it (pieces are disjoint and in order)")
+            return None
+        last = y
+        pieces.append({"span": [x, y], "reason": piece.get("reason") or skip.get("reason")})
+    done.add(sid)
+    rows = doc["skips"]
+    at = next(i for i, s in enumerate(rows) if s is skip)
+    rows[at:at + 1] = pieces
+    kept = ", ".join(f"[{p['span'][0]}, {p['span'][1]}]" for p in pieces)
+    return f"{sid} [{a}, {b}] " + (f"keeps {kept}" if pieces else "dropped")
+
+
+def document_path(value: str) -> Path:
+    """The document an edit may write: ``findings/<task>/<source>.json`` in the working
+    directory, an existing regular file reached through no symlink."""
+    cwd = Path.cwd().resolve()
+    raw = Path(value)
+    path = Path(os.path.normpath(raw if raw.is_absolute() else cwd / raw))
+    try:
+        rel = path.relative_to(cwd)
+    except ValueError:
+        raise ia.InputError(f"the document {value} is outside the working directory") from None
+    if len(rel.parts) != 3 or rel.parts[0] != FINDINGS_DIR or rel.suffix != ".json":
+        raise ia.InputError(f"the document {value} is not findings/<task>/<source>.json")
+    node = cwd
+    for part in rel.parts:
+        node = node / part
+        if node.is_symlink():
+            raise ia.InputError(f"{node} is a symlink; this tool writes through none")
+    if not path.is_file():
+        raise ia.InputError(f"the document {value} is not a file")
+    return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--document", required=True, help="findings/<task>/<source>.json")
+    ap.add_argument("--ops", required=True, help="the round's ops file")
+    ap.add_argument("--base", help="the snapshot the items name (default: the document)")
+    ap.add_argument("--verdicts", help="the round's verdicts file: every citation must be one")
+    ap.add_argument("--write", action="store_true", help="write the document (default: dry run)")
+    ap.add_argument("--rule", type=int, default=ia.DEFAULT_RULE,
+                    help="the audit rule the run names (2 and 3 add unskip; default 1)")
+    args = ap.parse_args(argv)
+    try:
+        rule = ia.known_rule(args.rule)
+        path = document_path(args.document)
+        doc = ia.read_document(path)
+        base = ia.read_document(args.base) if args.base else doc
+        for key in ("source_id", "task_id"):
+            if base.get(key) != doc.get(key):
+                raise ia.InputError(f"--base names {key} {base.get(key)!r}, the document "
+                                    f"{doc.get(key)!r}")
+        ops = ia.read_json(args.ops, "ops file")
+        ids = None
+        if args.verdicts:
+            verdicts = ia.read_json(args.verdicts, "verdicts file")
+            ids = {v.get("id") for v in verdicts.get("verdicts") or [] if isinstance(v, dict)}
+    except ia.InputError as exc:
+        print(f"inventory_edit: {exc}", file=sys.stderr)
+        return ia.EXIT_INPUT
+    try:
+        problems = ia.validate_ops(ops, doc, verdict_ids=ids, rule=rule)
+        if problems:
+            result, log, more = None, [], []
+        elif rule >= 2:
+            result, log, more = apply(base, ops["ops"], verdict_ids=ids, rule=rule,
+                                      round_=ops.get("round"))
+        else:
+            result, log, more = apply(base, ops["ops"], verdict_ids=ids)
+    except ImportError as exc:
+        print(f"FAIL: the gate beside this tool does not import ({exc})", file=sys.stderr)
+        return ia.EXIT_BROKEN
+    problems.extend(more)
+    if problems:
+        for line in problems[:ia.MAX_PROBLEMS]:
+            print(f"REFUSED: {line}")
+        print("nothing written")
+        return ia.EXIT_INVALID
+    for line in log:
+        print(line)
+    print(f"{len(base['passages'])} passage(s) before, {len(result['passages'])} after")
+    if args.write:
+        path.write_text(json.dumps(result, ensure_ascii=False, indent=1) + "\n",
+                        encoding="utf-8")
+        print(f"wrote {args.document}; run passage_ids.py --write on it next, then the gate")
+    else:
+        print("dry run: nothing written (add --write)")
+    return ia.EXIT_OK
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

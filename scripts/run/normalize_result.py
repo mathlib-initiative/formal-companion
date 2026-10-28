@@ -24,7 +24,8 @@ usage: normalize_result.py worker|reviewer RESULT_JSON RAW_AGENT_OUTPUT
 environment:
   CF_GATE_CMD        gate command for the observable-state fallback
                      (default: "python3 scripts/verify_findings.py")
-  CF_FINDINGS_GLOB   findings glob for that fallback (default: "findings/*.json")
+  CF_FINDINGS_GLOB   findings glob for that fallback (default: "findings/*.json");
+                     $TEND_TASK_ID in it is the task's id, ** is recursive
 """
 from __future__ import annotations
 
@@ -82,15 +83,23 @@ def observed() -> dict | None:
     Returns ``{"files": [...], "gate_ok": bool, "gate_msg": str}`` or None when
     the agent produced no findings at all.
     """
-    files = [f for f in sorted(glob.glob(FINDINGS_GLOB))
+    # A locate run's documents nest one level deeper, findings/<task-id>/<source>.json,
+    # and its glob may name the task: CF_FINDINGS_GLOB=findings/$TEND_TASK_ID/*.json.
+    pattern = FINDINGS_GLOB.replace("$TEND_TASK_ID", os.environ.get("TEND_TASK_ID", ""))
+    files = [f for f in sorted(glob.glob(pattern, recursive=True))
              if not os.path.basename(f).startswith(".")]
     if not files:
         return None
     try:
-        proc = subprocess.run(shlex.split(GATE_CMD), capture_output=True,
-                              text=True, timeout=300)
+        # Exactly the task's own documents, by path: the bare command validates
+        # every document in findings/, and once any other task has merged its
+        # documents are there too, each a rule-7 refusal of THIS contribution.
+        argv = shlex.split(GATE_CMD) + [arg for f in files for arg in ("--findings", f)]
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=300)
         gate_ok = proc.returncode == 0
-        gate_msg = (proc.stdout or proc.stderr).strip()[:400]
+        # A refusal is on stderr; stdout ends with the ownership line either way.
+        gate_msg = ((proc.stderr + "\n" + proc.stdout) if not gate_ok
+                    else (proc.stdout or proc.stderr)).strip()[:400]
     except Exception as exc:  # gate missing, timeout, unreadable
         gate_ok, gate_msg = False, f"gate could not run: {exc}"
     return {"files": files, "gate_ok": gate_ok, "gate_msg": gate_msg}
@@ -138,20 +147,35 @@ def worker_result(d, raw_text: str) -> dict:
     return out
 
 
-_VERDICT_MARK = re.compile(r"verdict:\s*(approve|request[_ ]changes)")
+#: ``verdict: approve`` in prose, or ``"verdict": "approve"`` -- the result object
+#: printed instead of written to the result file
+_VERDICT_MARK = re.compile(r"""\bverdict["']?\s*:\s*["']?(approve|request[_ ]changes)\b""")
 _APPROVE_PROSE = re.compile(r"\b(approved|looks good|no changes needed)\b")
+
+
+def explicit_verdict(raw_text: str) -> str | None:
+    """The LAST explicit verdict marker in a reviewer's prose (``approve`` /
+    ``request_changes``), or None when it states none.
+
+    A reviewer that merely DISCUSSES "request_changes" states no verdict.  The
+    attempt cap counts a rejection without a result file only when this says
+    ``request_changes`` (``attempt_cap.stated_rejection``): a verdict guessed
+    from prose -- or from no output at all -- is not a reviewer's rejection.
+    """
+    marks = _VERDICT_MARK.findall((raw_text or "").lower())
+    return marks[-1].replace(" ", "_") if marks else None
 
 
 def scrape_verdict(raw_text: str) -> bool:
     """Read a reviewer verdict out of prose (codex writes no result file).
 
-    Prefers an explicit ``verdict: ...`` marker and takes the LAST one, so a
-    reviewer that merely DISCUSSES "request_changes" is not read as voting for it.
+    Prefers an explicit marker (:func:`explicit_verdict`); without one, approval
+    prose counts only when no "request changes" appears beside it.
     """
+    marked = explicit_verdict(raw_text)
+    if marked is not None:
+        return marked == "approve"
     low = (raw_text or "").lower()
-    marks = _VERDICT_MARK.findall(low)
-    if marks:
-        return marks[-1].replace(" ", "_") == "approve"
     return bool(_APPROVE_PROSE.search(low)) and not re.search(r"\brequest[_ ]changes\b", low)
 
 

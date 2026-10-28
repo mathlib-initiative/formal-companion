@@ -1,0 +1,19 @@
+{
+ "json": {
+  "parse": {
+   "pageid": 1003,
+   "revid": 2004,
+   "text": "<div class=\"mw-parser-output\"><p>A <b>sprocket</b> is a stub article about a toothed wheel that is not mathematics at all.</p></div>",
+   "title": "Sprocket"
+  }
+ },
+ "query": {
+  "action": "parse",
+  "disableeditsection": "1",
+  "disablelimitreport": "1",
+  "format": "json",
+  "formatversion": "2",
+  "oldid": "2004",
+  "prop": "text"
+ }
+}

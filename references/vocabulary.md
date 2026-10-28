@@ -10,9 +10,9 @@ The enums here are the single source of truth in code: `scripts/cflib/vocab.py`.
 listed is invalid and the schema gate rejects it.
 
 **Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
-verdicts, resolutions, source roles, re-check statuses, statement-row provenance, annotation
-documents) · §2 mapping tables from the five legacy vocabularies · §3 `finding_id`, the frozen
-rule · §4 item ids.
+verdicts, resolutions, source roles and licence classes, re-check statuses, statement-row
+provenance, annotation documents, locate) · §2 mapping tables from the five legacy vocabularies ·
+§3 `finding_id`, the frozen rule · §4 item ids.
 
 ---
 
@@ -99,6 +99,7 @@ These came with the multi-source model (`docs/design/archive/multi-source-model.
 |---|---|---|
 | `SOURCE_ROLES` | `audited` \| `reference` | `audited`: at least one companion is checked against it. `reference`: prepared only so the page map to a sibling edition can be checked, and audited by nobody — the disposition for an edition a repo bundles but does not anchor to |
 | `LICENCE_FETCH` | `none` \| `author_site` \| `open` | what a registry licence note permits. `none` refuses a download even with `--download`. **Nothing is ever redistributed, whatever this says** |
+| `LICENCE_CLASSES` | `closed` \| `open_attribution` \| `open_share_alike` \| `public_domain` | what an **exported** record may quote of the source (`POLICY.md` §4.1). `closed` is the default (`DEFAULT_LICENCE_CLASS`) for every entry that says nothing, so every entry written before the field existed is `closed`: all rights reserved, quotes redacted on export. `open_attribution` (CC BY and the like) and `open_share_alike` (CC BY-SA; Wikipedia's text) may be quoted in capped form with a citation and the licence named (`ATTRIBUTION_LICENCE_CLASSES`); `public_domain` needs no attribution and is capped all the same. `OPEN_LICENCE_CLASSES` is the three open ones. Orthogonal to `LICENCE_FETCH`: a class says what may be *quoted*, a fetch value what may be *downloaded*, and neither permits redistribution or source text in the skill repo. A registry entry carries it as `licence_class`, a web-source family as its own `licence_class` (`registry/README.md`), and `Registry.licence_class(source_id)` answers for any id — an unknown one is `closed` |
 | `DISCOVERY_SIGNALS` | `formalization_yaml` `ledger_source` `official_source_json` `graph_json` `prose` `filesystem` `citation` | S1–S7: which repo signal produced a claim. All seven run for every adapter kind |
 | `PDF_FOUND_IN` | `repo_declared` `repo_cache` `workspace_store` `library_path` `download` `none` | which step of the search order located the bytes — in search order, so it doubles as a provenance ranking |
 | `OFFSET_METHODS` | `running_head_mode` `declared` `manual` `registry` `unknown` | how a page offset was arrived at. `manual` means a human typed it through `cf sources set`, and the confidence beside it is not an inference |
@@ -189,6 +190,1088 @@ are the viewer layer's (section 1.7), a source's `role` section 1.5's, a declara
 every value the skill writes is one the format admits. The ledger verdicts and finding kinds
 (sections 1.2 and 1.4) are not in the format at all: a document carries them only under `x_`
 keys (`x_ledger_verdict`).
+
+### 1.11 Locate — where a source is formalized, in any library
+
+The vocabulary of `docs/proposals/wikipedia-locate.md`, in `cflib.vocab`'s locate block, with
+`vocab.derive_status`, `vocab.decide_proof_status`, the `In-text #<hex>` item of §4 and the head
+hash in `scripts/cflib/passages.py`. The stages that use it are `scripts/sources/` (the renderer
+and sourcesets), `scripts/corpus/` (universes and `corpus.sqlite`), `scripts/locate/` (candidates,
+the planner, outcomes and the export), `scripts/gate/verify_locate.py` and `scripts/bench/`; the
+host-side copies of these values (the gate, the bridge helpers) are pinned to this block by
+tests. The extension
+namespace of every locate record is `org.mathlib-initiative.formal-companion.locate`
+(`LOCATE_EXTENSION`).
+
+**Run modes and kinds.** Three modes join `RUN_MODES`, one per locate preset, each with the
+kinds its gate admits (`KINDS_BY_MODE`, `kinds_for_mode`):
+
+| mode | stage | kinds |
+|---|---|---|
+| `locate-inventory` | L3a: one task per source, the passage table | `PASSAGE`, `UNRESOLVED` |
+| `locate` | L3b: each `formal_math` passage ends located, absent or unresolved | `LOCATION`, `ABSENCE`, `UNRESOLVED` |
+| `locate-challenge` | L5: per-record verdicts over those records | `LOCATION`, `ABSENCE`, `UNRESOLVED` |
+
+| kind | meaning |
+|---|---|
+| `PASSAGE` | one passage of an inventory, keyed by its `In-text #<hex>` item |
+| `LOCATION` | a declaration at a commit states the passage, wholly or in part (a relation below) |
+| `ABSENCE` | a checked statement that the passage was searched for in a universe and nothing was found |
+| `UNRESOLVED` | the worker, or the attempt cap, could not decide. Counted on its own, **never** as not formalized |
+
+These are `LOCATE_FINDING_KINDS`; `ALL_FINDING_KINDS` is them plus §1.2's. `FINDING_KINDS` itself
+stays the six faithfulness kinds, because the ledger validator, the answer key and the harvest's
+substantive kinds read it and a locate outcome is not a defect. The tally hashes a document row's
+`kind` into `finding_id` (§3), so **in a locate document `kind` is the finding kind**, and a
+passage's own kind travels as `passage_kind`; only an exported Literature Links record carries the
+passage kind as its `kind`.
+
+**Passages** (the proposal's §2.2):
+
+| enum | values |
+|---|---|
+| `PASSAGE_KINDS` | `definition` `theorem` `conjecture` `example` `construction` `notation` `other` |
+| `PROMINENCE` | `subject` — what the article is about · `central` — a named result or definition it states · `supporting` — anything else formal. Not "role", which Literature Links uses for an end. `REFUTE_BY_DEFAULT_PROMINENCE` is `subject` and `central`: their locations are refuted by default and their absences and unresolved outcomes are hunted (the proposal's §5) |
+| `SCOPES` | `formal_math` (mathematics a library could state) `expository` (history, motivation, applications told about mathematics, and proof narration and commentary, PD5) `non_math` (anything else), as the inventory prompt and the bench's labeler both give them. Only `formal_math` passages are located (`LOCATED_SCOPES`); a passage may not be scoped out while the deterministic candidates hold a tag or curated hit for it |
+
+**Proof status** of a declaration (`PROOF_STATUSES`, the proposal's §2.4), decided in this order, the first rule
+that applies winning, whatever the declaration's kind — mechanically from the axiom closure and
+the type (`vocab.decide_proof_status`), never by a model and never by a worker:
+
+| order | value | when |
+|---|---|---|
+| 1 | `wanted` | the type is a `ProofWanted`/`DefWanted`-style wrapper |
+| 2 | `statement_only` | the axiom closure contains `sorryAx` (`SORRY_AXIOM`) |
+| 3 | `axiom_dependent` | the closure contains an axiom outside `propext`, `Classical.choice`, `Quot.sound` (`STANDARD_AXIOMS`) |
+| 4 | `proved` | the type is a `Prop` |
+| 5 | `definition` | data: types, functions, structures, classes, instances |
+
+A `Prop`-valued definition (`def RiemannHypothesis : Prop`) is a `definition` whose `statement`
+flag the index sets beside it; it never formalizes a theorem passage.
+
+**Relations** of a location (`LOCATE_RELATIONS`, the proposal's §2.6): Literature Links relation words with SKOS
+direction, subject the passage, object the declaration.
+
+| value | meaning |
+|---|---|
+| `exactMatch` | the declaration states the passage |
+| `closeMatch` | the same up to a convention (R1 below): named in the location's `convention`, from a closed list, and described in its `note` |
+| `broadMatch` | the passage follows from the declaration by instantiation or weakening (R2) |
+| `narrowMatch` | the declaration is the passage at special objects (R3) |
+| `hasPart` | the declaration states one clause of a passage that says several things (R4) |
+| `relatedMatch` | relevant, but it states something else (R5). Never counts towards a status |
+
+Rules R1–R7 below decide between them; the table only names them.
+
+`noMatch` (`NO_MATCH`) is the relation of an **absence** record only — one `lean` end per universe
+library, no `location` — never of a location. At most `MAX_LOCATIONS_PER_PASSAGE` (5) locations per
+passage, ranked. `STRONG_RELATIONS` (`exactMatch`, `closeMatch`, `broadMatch`) are the three that
+formalize a theorem passage against a proved declaration; `WEAK_RELATIONS` (`relatedMatch`,
+`narrowMatch`, `hasPart`) the rest. On a `supporting` passage the challenge plan re-judges both:
+every location that sets the passage's derived status on its own (its **bases**: each location
+whose status alone is the passage's — the passage keeps the status while any one of them
+stands) is required whenever its relation is strong, the passage's other strong locations are
+sampled per relation at the plan's `strong_sample_rate`, and its weak ones at its `sample_rate`
+(the smoke-2 audit of 2026-10-19 found the strong relations of supporting passages, then never
+challenged, right about 45% of the time, and every formalized supporting passage resting on
+one). `RELATION_STRENGTH` orders the relations for a challenge's
+`downgrade`, which must name a strictly weaker one: `exactMatch` > `closeMatch` > `broadMatch` >
+`narrowMatch` = `hasPart` > `relatedMatch`.
+
+**How a relation is judged: rules R1–R7** (the smoke-2 audit of 2026-10-19, its resolver's
+rules, adopted for every run planned since; R3 and R5 are worded so the special case, the
+weakening and the mixed case each have one answer; R1's junk values gave way to PD7's three-way
+test on 2026-10-20). A worker, a challenger and the bench's labeler judge each record by them,
+pairwise, the passage against the one declaration:
+
+- **R1** — `closeMatch` only for a convention: notation, encoding, normalisation, renaming,
+  unfolding, bundling (the location's `convention`). A strengthening, a generalisation or a
+  weakening is never one, and neither is a junk value (PD7). Where the declaration's map
+  f′ : X′ → Y extends the passage's f : X → Y (X ⊂ X′): if f′ agrees with f on X and every case
+  outside X is mathematically trivial — a junk or default value, given where the passage leaves f
+  undefined, that the passage's mathematics does not depend on (x/0 = 0, `riemannZeta` at its
+  pole s = 1), or an extra case that reduces to a tautology (p = q, where the statement becomes
+  IsSquare 0 ↔ IsSquare 0) — it is `exactMatch`; if it agrees on X and some case outside X has
+  real mathematical content, it is `broadMatch` (R2), a generalisation; if f′(x) ≠ f(x) at some
+  x where both are defined, it is `closeMatch` (a convention) or weaker.
+- **R2** — `broadMatch` when the passage follows from the declaration by instantiation or
+  weakening (a general codomain, a strict derivative for a plain one, an iff for an if, all
+  primes for a finite table), with no hypothesis stronger than the passage's; a stronger
+  hypothesis makes it at most `narrowMatch` (R3).
+- **R3** — `narrowMatch` when the declaration is the passage at special objects: the passage,
+  instantiated at the declaration's objects, says what the declaration says (a natural-number
+  statement for an integer one, a field for a commutative ring, the n = 1 case). It is also
+  `narrowMatch` when the declaration proves the passage's conclusion, or a stronger one, under
+  stronger hypotheses that some of the passage's own cases meet (global continuity where the
+  passage has local): a special case (PD4).
+- **R4** — `hasPart` when the declaration states one clause of a passage that says several
+  things; `exactMatch`, `closeMatch` and `broadMatch` only when it states every clause.
+- **R5** — `relatedMatch` when the connection needs another theorem, or the two statements are
+  incomparable: a setting that neither contains nor is contained in the passage's (a
+  finite-dimensional lemma where the passage's spaces are infinite-dimensional), or a
+  declaration with stronger hypotheses whose conclusion does not give the passage's (one whose
+  conclusion does is R3's special case). A declaration that follows from the passage by
+  weakening states part of it at most: `hasPart` when what it states is one of the passage's
+  clauses, else `relatedMatch`. So `hasPart` needs the declaration alone, instantiated at the
+  passage's objects, to entail a clause the passage asserts, and `narrowMatch` needs the
+  passage, instantiated at the declaration's objects, to say what the declaration says.
+- **R6** — relations are pairwise: what else the universe holds never changes a record's
+  relation.
+- **R7** — a definition passage is judged on the data it defines; bundled proof fields are
+  packaging (R1's bundling).
+
+The **policy defaults**, the maintainer's (PD1–PD4 of 2026-10-19, PD5–PD10 of 2026-10-20,
+PD11 of 2026-10-27), numbered PD1–PD11 apart from the review patterns' P1–P13
+(`references/review-patterns.md`). Each is a default, not a law of the format: it can be overridden, and an override is a change to this
+paragraph, to both prompts (`templates/prompts/locate.md.tmpl` and `locate-challenge.md.tmpl`)
+and to the bench's labeler (`workflows/locate-label.workflow.js`, whose `LABELER_VERSION` it
+bumps), in one commit — all three carry these lines word for word, and
+`tests/test_locate_judgment.py` holds them together; PD5 is also the inventory prompt's
+(`templates/prompts/locate-inventory.md.tmpl`) — followed by a relabel of the bench's gold,
+which lives on the operator's machine (`references/locate-bench.md` §1) and so is never in that
+commit. From PD5–PD9 on, the bench's score refuses gold labelled under other judgment rules than
+the runs it scores (`references/locate-bench.md` §8), so a run planned after an override waits
+for that relabel:
+
+- **PD1** — a definition stated over a general type parameter where the passage has a specific
+  one (any ring where the passage has ℂ) is `broadMatch` (R2).
+- **PD2** — a statement over ℕ where the passage has ℤ is `narrowMatch` (R3); natural-number
+  moduli for integer ones are an encoding instead (R-NAT).
+- **PD3** — a trivial or degenerate special case (the n = 1 case of a matrix identity) is
+  `narrowMatch`, never vacuous: it is not refuted for being trivial.
+- **PD4** — a declaration that proves the passage's conclusion, or a stronger one, under
+  stronger hypotheses that some of the passage's own cases meet (global instead of local
+  continuity) is `narrowMatch` (R3), not `relatedMatch` and not `broadMatch`.
+- **PD5** — only definitions, theorems, equations and declarative statements about mathematical
+  objects are `formal_math` passages. Proof narration and commentary (what a proof uses, how it
+  goes) is none: the inventory scopes it `expository` or leaves it out, so it is never located and
+  has no status. Inside a proof, each definition, theorem, equation or declarative statement is a
+  passage of its own. Linking a single word to the Lean definition it names is a separate feature,
+  not a passage.
+- **PD6** — a part of a coverage claim that alone states every clause is no part: it is one
+  location with its own relation (a centralizer defined in any ring, where the passage has a
+  matrix's centralizer, is `broadMatch`, PD1), and a coverage claim stands only on parts that
+  each state some of the clauses.
+- **PD7** — a value the declaration gives where the passage leaves one undefined (a junk or
+  default value, R1) is trivial when the passage's mathematics does not depend on it — in the
+  maintainer's words, "it shouldn't matter what the value of riemannZeta 1 is" — so
+  `riemannZeta` at s = 1 is a junk value against a passage that defines the zeta function away
+  from s = 1, though Mathlib proves a closed form for it (`riemannZeta_one`). That test is for
+  such values: an extra case of the statement itself (a ring that is not a field, where the
+  passage has a field) is trivial when it reduces to a tautology, and one with real mathematical
+  content makes a generalisation, never a junk value. Whether a case is trivial is still a
+  judgment: an `exactMatch` or `broadMatch` that rests on it says why in its `note`. (PD3's
+  trivial case is the other way round: a declaration that states only a degenerate case of the
+  passage.)
+- **PD8** — a passage follows from a declaration by instantiation (R2) only when, after
+  instantiating, what is left closes by decidable arithmetic (`omega`, `norm_num`, `decide`); a
+  bridge that needs a named lemma (`Nat.mul_mod`, a parity lemma for (−1)^n) makes it
+  `relatedMatch` (R5). R2's weakenings (a strict derivative for a plain one, an iff for an if)
+  are no instantiation: PD8 leaves them to R2.
+- **PD9** — a stated reason ("it holds because X") is a passage of its own only when X is a
+  declarative mathematical statement that no neighbouring passage already states; otherwise X is
+  no passage and no clause.
+- **PD10** — one notion in two encodings is no bridge: a declaration that uses Mathlib's
+  standard notion where the passage has its own definition of the same thing (`IsCoprime m n`
+  where the passage says m and n have no common factor other than 1, linked by
+  `Int.isCoprime_iff_gcd_eq_one`) differs from the passage by an `encoding` (R1: a `closeMatch`
+  when nothing else differs), and the library lemma that links the two definitions is no PD8
+  bridge. It sharpens R1's encoding and limits PD8, which governs bridges between statements,
+  not between two definitions of one notion. Its exception is a link that is itself what the
+  passage asserts: when the lemma that links the two notions is the passage's own theorem, a
+  declaration stated with the notion whose definition already contains that theorem's claim
+  presupposes the passage, and it is `relatedMatch` (R5).
+- **PD11** — a hypothesis or instance argument that excludes only a trivial case of the passage,
+  one where its statement holds trivially (`[Nontrivial R]` excludes the zero ring, where every
+  ring identity holds), does not narrow: the declaration has the relation the rest of it gives (an
+  `exactMatch` or `closeMatch`), its `r3` test passes, and its `note` names the case. One that
+  excludes a case with real content is a stronger hypothesis (R3, PD4).
+
+PD1 makes a definition passage stated over a specific object `partial` against a definition over
+a general one under status rules 1 and 2 (`derive_status` counts a definition passage's
+`broadMatch` as `partial` there), and `formalized` under status rule 3 (R-BROAD, below); PD2 and
+PD3 make a theorem passage `partial` against such a declaration, never `formalized` or unresolved.
+
+What PD5–PD10 replace or sharpen (the smoke-3 audit's open policy calls, its FM8; PD10 and
+PD7's test for "trivial" are the maintainer's later answers that day):
+
+- PD5 sharpens the inventory's `expository` scope (FM9: a set-up passage scoped formal) and
+  settles the audit's question about proof passages: a proof is not one passage whose displayed
+  steps are its clauses, nor one the theorem it proves formalizes — each statement in it is
+  located on its own, with the kind of what it states (an equation or a declarative statement
+  that asserts a fact is a `theorem`, one that defines an object a `definition`). The `step` "on
+  a proof" (FM3) stays for inventories planned before it. PD5 is the inventory's rule: a locate
+  worker cannot re-scope a passage, so one the inventory scoped `formal_math` that is only
+  narration ends `unresolved`, its `reason` naming PD5 — exported as one `UNRESOLVED` record
+  with no status, counted in the unresolved rate, and hunted by the challenge when `subject` or
+  `central` — until the source is inventoried again. No challenge re-scopes it: a challenge
+  re-reads only a scope that was demoted. The unresolved rate is where such an inventory defect
+  shows.
+- PD6 sharpens R4 and the coverage claim of decision D1: the maintainer's example is
+  `Subring.centralizer` for a matrix's centralizer, one `broadMatch` card ("more general"), not
+  a part. Gate rule 9 refuses such a part under judgment rules 2. A challenge reaches less than
+  the rule: it refutes a claim whose part states every clause of its own claim list, and since
+  it never raises a relation that part stays a `hasPart`, so the passage is `partial` where the
+  one location PD6 makes of it could derive `formalized` (a `broadMatch` to a proved theorem, on
+  a theorem passage). A challenge planned under rules 2 of a locate run planned under rules 1
+  can so lower a passage's status that the run's coverage claim had raised; locating the
+  passage again under rules 2 gives it PD6's one location.
+- PD7 replaces R1's "junk values", which made a junk value a `closeMatch` convention:
+  `junk_value` leaves `CLOSE_MATCH_CONVENTIONS` (gate rule 9 refuses it under judgment rules 2),
+  and the prompts' example closeMatch note, Lean returning 0 at n = 0, is now an exactMatch's.
+  Its test for a value outside the passage's domain, the maintainer's, given later the same day,
+  is whether the passage's mathematics depends on that value, not whether the value has a theory
+  of its own: `riemannZeta` at s = 1 is R1's junk-value example again (an earlier text of the
+  rule left it to the record's note, since Mathlib proves a closed form there). The test is of
+  values, not of the extra cases of a statement, which are trivial when they reduce to a
+  tautology (the paragraph after the maintainer's words says why).
+- PD8 sharpens R2's "instantiation" and R5's "the connection needs another theorem". It is
+  read as the maintainer recorded it, of what is left "after instantiating": R2's other route, a
+  weakening (a strict derivative for a plain one, which needs `HasStrictDerivAt.hasDerivAt`), is
+  no instantiation and stays `broadMatch` by R2.
+- PD9 sharpens the claim list (R4, FM1), beside "history, motivation and attribution are not
+  claims". The maintainer's answer of 2026-10-21 to the statement cut's question 5 rewords it
+  with the same test: a stated reason X becomes a passage of its own, cut by the inventory,
+  rather than a clause of the passage it supports (the words above, which the inventory, locate
+  and challenge prompts and the bench's labeler carry). A run of judgment rules 2 was planned
+  under the earlier words, which made X a claim of that passage's list; the gate checks neither
+  wording.
+- PD10 sharpens R1's `encoding` and limits PD8: a library lemma that links Mathlib's standard
+  notion to the passage's notion of the same thing (`IsCoprime` and "no common factor other than
+  1", through `Int.isCoprime_iff_gcd_eq_one`) is an encoding difference, not a PD8 bridge, since
+  PD8 governs bridges between statements, not between two definitions of one notion. PD8 is
+  otherwise as recorded, and a weakening stays R2's. The maintainer named the difference, an
+  encoding (R1); that it is a `closeMatch` when nothing else differs is the relation table's
+  definition of `closeMatch`, the same up to a convention, not a further ruling of his.
+  Neither is PD10's exception, a link that is itself what the passage asserts. His example
+  links two definitions the passage takes as given (the passage is about something else that
+  holds of coprime numbers); when the link is the passage's own theorem, a declaration whose
+  notion contains that theorem's claim by definition states nothing of the passage that the
+  linking lemma does not, so reading PD10 there would make it a formalization of the theorem
+  it presupposes. That is R5's "the connection needs another theorem", which before PD10
+  PD8's named-lemma bridge gave as well; it is recorded as the exception so that PD10 does
+  not reverse it, and it awaits the maintainer's confirmation.
+
+**PD10 and PD7's test kept the labeler at `locate-label/5`**, and so did PD10's exception, which
+joined them later the same day. An override bumps the labeler's version (the paragraph above);
+these did not, because what a version decides in the bench is the judgment rules
+`bench.gold.LABELER_RULES` maps it to, which the score holds gold and runs to, and they add no
+gate check: `JUDGMENT_RULES` stayed 2, so a `/6` would have mapped to 2 too and the score would
+have refused nothing it did not refuse then. `/5` had labelled no gold when they joined it, and the labeler's
+file sha moved with them, so the transcriber refuses a result of args emitted from the earlier
+text and gold of `/5` is labelled by this one. Once gold has been labelled under a version, a
+change to the rules it carries bumps it. What neither version nor rules can hold is a run of
+judgment rules 2 planned from the earlier text, whose prompts lack PD10 and PD7's test (or PD10's
+exception): the score holds a run to its `judgment_rules`, and pins its prompts' shas
+(`config_shas.prompts`) in the measurement without comparing them with the gold's labeler, so it
+would score such a run against gold of this text, and a `/6` would not refuse it either. None had
+been planned when these rules joined; one planned from a checkout of the earlier text is planned
+again from this one before it is scored. The statement cut's flip, which adds gate checks
+(judgment rules 3), was the bump: the labeler was `locate-label/6`, which
+`bench.gold.LABELER_RULES` maps to 3, so gold of `/5` scores no run planned from the flip on.
+The smoke-4 audit's calls, which add gate checks too (judgment rules 4), bump it again: the
+labeler is `locate-label/7`, which `bench.gold.LABELER_RULES` maps to 4 and whose gold is derived
+under status rule 3, so gold of `/6` scores only runs of rules 3 and a run planned from that flip
+on waits for a relabel under `/7`, which lives on the operator's machine.
+
+**PD7 in the maintainer's words** (2026-10-20), verbatim:
+
+> A junk value means that X is exactly the same as Y, but the Lean case is just defined over
+> certain trivial values that do not effect the proof because they are usually left undefined.
+> Eg x/0. The Lean `f' : X' -> Y` extends the informal map `f : X -> Y` with X ⊂ X'. A non junk
+> value (e.g. closematch) would be when f(x) ≠ f'(x) for some x where both are well-defined.
+
+and, the same day:
+
+> this is slightly subjective regarding what "trivial" exactly means. If there are cases outside
+> of the passage's domain which are non-trivial mathematically then this should be marked as a
+> generalization not a junk value.
+
+and, later the same day, of `riemannZeta` at s = 1:
+
+> RiemannZeta is hard but I'd still classify it as a junk value personally since the mathematics
+> here doesn't actually depend on the value of riemannZeta 1. The point is that it shouldn't
+> matter what the value of riemannZeta 1 is, and that is still the case.
+
+So agreement on the passage's domain with only junk outside it is `exactMatch`: a division with
+x/0 = 0 states a passage that leaves x/0 undefined, and Mathlib's `riemannZeta`, which takes a
+value at its pole s = 1, states a passage that defines the zeta function away from it. An extra
+case that is only a tautology (quadratic reciprocity's p = q, where both sides become
+IsSquare 0 ↔ IsSquare 0) is junk too. A case outside the domain that says something — a
+statement proved for every ring where the passage has a field, whose other rings carry content
+of their own — is a generalisation, `broadMatch`. Either way the record's note says which. The
+test for a value is the maintainer's last word: whether the passage's mathematics depends on the
+value the declaration gives where the passage gives none. A value with a theory of its own can
+still be junk to the passage: Mathlib's documentation calls ζ(s) undefined at s = 1 and proves a
+closed form for the value it assigns there (`riemannZeta_one`), and a passage that defines the
+zeta function away from s = 1 depends on neither. The test is of values, which his first and
+last words speak of ("trivial values … usually left undefined", "the value of riemannZeta 1"),
+and not of an extra case of the statement, which his second words settle: the passage's
+mathematics does not depend on the rings that are not fields either, yet a statement proved for
+them says something of its own and so makes a generalisation, where p = q says nothing. A record
+of rules 1 whose `junk_value` sits on a declaration that differs from the passage where both are
+defined (a count that is 0 for an infinite group, where the passage counts with cardinals) was
+never a junk value: it is a `closeMatch` by a real convention, or weaker.
+
+**The challenger's rule** (the audit's FM7: 8 of 25 challenge results were wrong, each a reasoning
+slip, not a search miss), in the challenge prompt word for word:
+
+- **FM7** — before you downgrade or refute, check the record against the passage's clauses, its
+  conjuncts or the one clause of a simple statement. Apply D1 and R-BROAD: a strong match to an
+  equivalence or other data that states the theorem formalizes it, so judge its structure by R-EQ,
+  never its kind: a bijection is the data form of a cardinality equation and stays `closeMatch`.
+  Keep definitionally linked declarations consistent: two declarations on one passage defined one
+  from the other, or one object in two encodings, get the same relation unless their statements
+  differ — your task holds every required location of a passage, and each location record shows
+  the passage's other locations (`passage_locations`), read-only. A trivial special case is
+  `narrowMatch` (PD3), never a refute.
+
+Until the statement cut (judgment rules 3) the challenger wrote a claim list of its own and the
+rule read "check the record against your claim list of the passage"; under rules 3 the
+inventory owns the one list, the passage's conjuncts (`docs/proposals/statement-cut.md` §1.4), so
+a challenge prompt planned under rules 3 says the words above. Every plan made since the
+proposal's flip named rules 3 (`JUDGMENT_RULES`, which the planner writes into the run's
+gate.json) and rendered the statement cut's text, and every plan made since the flip of the
+smoke-4 audit's calls names rules 4 and renders theirs too (PD11, the calls, FM7's R-EQ words;
+a plan of rules 3 keeps the prompts it rendered); a plan of rules 2, made before the flip,
+rendered the text of its rules — the claim lists, this rule's earlier words and PD9's ("a
+stated reason … makes X a claim only when …") — and its run keeps those prompts
+(`runs/<run>/prompts/`), so they never contradict its gate. The templates keep the statement
+cut's text only: the earlier text sat behind the slot `judgment_rules_statement_cut`, which no
+plan made since the flip could render, and went with it.
+
+**The statement cut's prompt rules** (the smoke-3 audit's §5 fixes 2a, 2e, 3a, 4b and 5a, as
+`docs/proposals/statement-cut.md` §5 names them), in both locate prompts and the bench's
+labeler word for word. They are judgment, which the challenge re-checks; the gate holds only
+their mechanical halves (a strong location's `tests` and `instantiation`, a `hasPart`'s by its
+`conjunct_relation`, an absence's `special_case`):
+
+- **Fix 2a** — every `exactMatch`, `closeMatch` or `broadMatch` writes both instantiation tests,
+  one line each, as its `tests`: `r2`, how the passage follows from the declaration (by
+  instantiation, or by one of R2's weakenings), and `r3`, why the declaration, at the passage's
+  own objects, needs nothing the passage does not give (no stronger hypothesis, and no extra
+  instance argument that excludes a case with real content: PD11). A bundle takes its weakest
+  part's relation, so a `hasPart` whose `conjunct_relation` is one of the three writes both too,
+  of the conjuncts it states in place of the passage. A `closeMatch` stands only when both hold
+  with a named convention and nothing else differs; when either fails, the relation is weaker.
+- **Fix 2e** — when the declaration is defined beyond the passage's domain, its `instantiation`
+  line states PD7's three-way test: whether it agrees with the passage on the passage's domain,
+  and whether each case outside that domain is trivial (a junk or default value the passage's
+  mathematics does not depend on, or an extra case that reduces to a tautology) or has real
+  mathematical content.
+- **Fix 3a** — a lemma that only unfolds a definition the passage glosses (a membership,
+  application or definitional lemma, `mem_*_iff`, `*_apply`, `*_def`, restating what the passage's
+  term means) is `relatedMatch`, never a part (a theorem that states the formula of the object a
+  definition passage defines is R-DEFFORM's `closeMatch`); a name is no statement, so read what
+  the lemma states before you credit it.
+- **Fix 4b** — on a definition, construction or notation passage, a declaration that is the
+  defined object is an `exactMatch` or `closeMatch` (R7), or a `broadMatch` when it
+  generalises the passage's object (defined over a general type, PD1, or on a larger input
+  domain with real content, R-PD7), never a part; and before you call a declaration's
+  hypothesis stronger than the passage's, read it with its roles swapped (a symmetric
+  hypothesis, the two objects exchanged), and call it stronger only when no such reading is
+  the passage's.
+- **Fix 5a** — search each clause's special case too: for every clause, one query for its
+  conclusion under a stronger hypothesis (PD4's `narrowMatch`), and search the universe's
+  statement-only conjecture libraries, where a `narrowMatch` to a declaration stated without a
+  proof still makes a theorem passage `partial`.
+
+**The smoke-4 audit's rules** (the maintainer's calls of 2026-10-27 and 2026-10-28, judgment rules
+4, `RULES_SMOKE4`; R-TABLE is the default taken where he left the call open), in both locate
+prompts and the bench's labeler word for word, and Fix 6e in the challenge prompt only, as FM7
+is. They are judgment, which the challenge re-checks; the gate holds their mechanical halves
+under judgment rules 4 (above: a part's `hasPart` conjunct relation, PD6's shape tripwire, a
+confirm's readings and limits, a downgrade's bridge). The same day's call on the status,
+R-BROAD, is status rule 3 (below): no prompt carries it, since it changes no relation.
+
+- **R-EQ** — an equivalence or isomorphism is judged by the structure the passage asserts. With
+  the same structure it is `exactMatch`, or `closeMatch` when only the encoding differs (`ZMod n`
+  for ℤ/nℤ: R1, PD10): a ring isomorphism (`RingEquiv`) against a passage that says "ring
+  isomorphism". With more structure than the passage asserts it is `broadMatch`, a generalisation:
+  a `RingEquiv` against a passage that says only "bijection", or only that each element has
+  exactly one preimage. With less it is `narrowMatch` or `hasPart`: a bare `Equiv` against a
+  passage that says "ring isomorphism". An equivalence's inverse and proof fields are the
+  bijection itself, never more structure (R7's bundling).
+- **R-NAT** — natural-number moduli where the passage has integer ones differ by an `encoding`
+  (`closeMatch` when nothing else differs), never PD2's special case: n and −n give the same
+  congruence, and the moduli 0 and 1 are trivial cases. The `note` names ℕ, which the ℕ-for-ℤ
+  tripwire asks of it.
+- **R-ASSOC** — `Associated` against equality in ℕ, whose only unit is 1, is one notion in two
+  encodings (PD10): the lemma that links them (`associated_iff_eq`) is no bridge, so a declaration
+  stated up to `Associated` states the passage's equation at ℕ.
+- **R-CHAIN** — a statement or conjunct that is an equation chain a = b = c asserts a = c, its
+  end-to-end equation, as the inventory cuts it: the middle term b is a step, not a clause, so a
+  declaration that states a = c states the chain.
+- **R-PD7** — a declaration defined on a larger input domain than the passage's, where the
+  extension has real mathematical content, is `broadMatch`, a generalisation (R2, PD1): an
+  operator on functions extended to tempered distributions with a general codomain F. PD7's
+  junk-value test is for a value at a point the passage leaves undefined, never for a larger space
+  of inputs.
+- **R-DEFFORM** — on a definition, construction or notation passage, a theorem stating that the
+  library's object is given by the passage's defining formula is `closeMatch` (its `convention`
+  `unfolding`), which derives `partial` there: a definition passage is formalized by the data it
+  defines (R7), never by a theorem about it.
+- **R-TABLE** — a passage that reads a law off a displayed table has the domain its inventory
+  `statement` gives it: a statement of the table's cases makes a declaration of the general law a
+  `broadMatch` (R2's all primes for a finite table), and a statement of the general law makes it
+  an `exactMatch` or `closeMatch`.
+- **Fix 6d** — judge PD6 with the readings you credit the parts with: a fact you read as an
+  encoding so that one part states its conjunct is an encoding too when you ask whether another
+  part states every conjunct. A characterisation f = w ↔ P f of the passage's witness states
+  existence (at f := w) and uniqueness, so it is one location, not a part; on an
+  `existence_uniqueness` or `iff` statement a part whose declaration concludes with an iff, an
+  equivalence, a unique existence or a bijection says in `pd6` which conjunct it does not state on
+  its own. A part that names two conjuncts states their conjunction about the same objects, with
+  the quantifiers in the passage's order: a fixed point for each start is not one fixed point for
+  every start. A part that states only some of what its conjuncts say is a `hasPart` of them (its
+  `conjunct_relation`), and no bundle stands on it.
+- **Fix 6e** — a downgrade of a strong record to `relatedMatch` says why: the lemma the connection
+  needs, as `bridge` (PD8), or why the two settings neither contain one another, as `incomparable`
+  (R5). A lemma that only links two definitions of one notion is PD10's encoding and no bridge
+  (`associated_iff_eq`, an `_iff` between a symbol's value and the property it names), and what is
+  left after instantiating that closes by decidable arithmetic is PD8's instantiation: then the
+  record keeps its relation. A confirm of a bundle names in `part_conventions` the convention it
+  reads each part by that its `part_relations` credit with `closeMatch`, and, on an
+  `existence_uniqueness` or `iff` statement, says in `part_limits` what each part that concludes
+  with an iff, an equivalence, a unique existence or a bijection does not state on its own (Fix
+  6d).
+
+What they sharpen or replace: R-EQ settles the audit's split on an equivalence's extra content by
+the structure the passage asserts, and the inverse is no extra content; R-NAT takes
+natural-number moduli out of PD2; R-ASSOC is a case of PD10 that the audit had read both as PD10
+and as a PD8 bridge; R-CHAIN carries the inventory's chain rule ("How the inventory cuts",
+Displays) into locate and the challenge; R-PD7 limits PD7's value test to values, so a larger
+input space with content is a generalisation; R-DEFFORM limits Fix 3a to a term the passage
+glosses, and keeps a definition passage partial against a theorem about its object; PD11 settles
+Fix 2a's r3 test on an instance argument that excludes only a trivial case, which the test's
+earlier words, "no extra instance argument", made a narrowing. Two words the flip left behind
+contradicted these rules and were corrected the same day: Fix 4b's defined object, which its
+earlier words held to `exactMatch` or `closeMatch` (R7) even when it generalises, is a `broadMatch`
+when it does (PD1, R-PD7); and a bundle part's instance argument (the locate prompt's step 7, the
+challenger's coverage claim), which "an extra instance argument" made a stronger hypothesis
+whatever case it excludes, adds one only when the case has real content (PD11). They kept the
+labeler at `locate-label/7`: they add no gate check and leave `JUDGMENT_RULES` at 4, the reason
+PD10 and PD7's test kept it at `/5`, and the labeler's file sha moved with them, so the transcriber
+refuses a result of args emitted from the earlier text.
+
+**PD11 in the record of the call** (2026-10-27): "[Nontrivial R] excludes only the zero ring, a
+trivial case, so it does not narrow" — so `Matrix.charpoly_fin_two` is an `exactMatch` and
+`Matrix.charpoly_of_card_eq_two` a `closeMatch` of a passage that states a 2×2 matrix's
+characteristic polynomial over a commutative ring.
+
+**The failure modes** the rules answer, as the audit numbered them (the labels code, tests and
+the changelog cite):
+
+| label | failure mode | what answers it |
+|---|---|---|
+| FM1 | a whole-passage relation for a declaration that states only some clauses | the claim list, `clauses`, R4, the gap phrases |
+| FM2 | the challenge plan never re-checked strong relations or absences on supporting passages | the plan's `basis` rule and its strong and absence samples |
+| FM3 | a proof ingredient, a bridge lemma or a neighbouring fact credited as a part | R5, a `hasPart`'s or `narrowMatch`'s `step` |
+| FM4 | generality in the wrong direction, or `closeMatch` for what is no convention | R1–R3, `convention`, the generality phrases |
+| FM5 | an incomplete hunt: a stating declaration missed, or a false absence | a query of its own per claim (`query_clauses`), the rejected-candidate check, the absence sample |
+| FM6 | a setting mismatch: the declaration's hypotheses exclude the passage's objects | `instantiation`, R3 and R5 |
+| FM7 | a challenger's reasoning slip (D1 ignored, a special case refuted, two encodings split) | the challenger's rule above, its own claim list on every verdict |
+| FM8 | policy the rules did not settle | R1–R7 and PD1–PD10 |
+| FM9 | data and inventory defects (a statement flag, a cut span, a set-up passage scoped formal) | not the judgment rules: ingest and inventory work |
+
+What the gate holds mechanically, under the judgment rules (gate rule 9,
+`references/locate-documents.md` §3–§4): R1's closed list, a `convention` on a `closeMatch` only,
+and the words an `exactMatch` or `closeMatch` note may not say; R4 through the claim list and each
+record's `clauses`, and a strong record whose note or instantiation admits a gap; R5 through a
+declaration's `instantiation` and a `hasPart`'s or `narrowMatch`'s `step`; an absence's queries,
+a query of its own per claim, and its rejected candidates; and, in a challenge, the
+challenger's own claim list under every verdict on a passage's records. Under judgment rules 2
+(`JUDGMENT_RULES`) two more: PD6 — a coverage claim one of whose parts names every claim alone
+is refused, and so is a challenger's confirm whose `part_clauses` give one part every claim of
+its own list — and PD7 — `junk_value` is no convention, save on a challenger's confirm that keeps
+a record's own `junk_value` by naming no convention or naming it again (written under rules 1: a
+challenge never raises a relation, so it cannot make that record the `exactMatch` PD7 would); a
+confirm that names another convention relabels the record and is held to the rules-2 list. It
+rests on the claim list a worker writes:
+a list that leaves a clause out, with an `exactMatch` naming every claim on it, passes, and only
+the challenge re-checks it — the phrase lists are tripwires that catch an honest note, not a
+parser. The rest is judgment, which the challenge re-checks: PD5 (what the inventory makes a
+passage), PD7's "trivial", PD8's bridge, PD9's stated reasons and PD10's encodings are not
+checked mechanically.
+A bridge lemma named in a `broadMatch`'s `instantiation` cannot be told from the instances and
+hypotheses the line names by right (`Fact p.Prime`, a ring instance, the declaration's own
+name), and a `hasPart` naming every claim outside a coverage claim may be a weakening credited
+with its clause or a claim list too coarse to show the part, so neither is refused.
+Under judgment rules 3 (`RULES_STATEMENT_CUT`, the statement cut below; bound by a gate.json
+that names it, which every run planned from the proposal's flip on does) the claim list is the
+inventory's: R4 is checked against the frozen passage's conjunct ids (or `c1`), and no locate
+or challenge document writes `claims`. Mechanically, then: a `hasPart` of a compound statement
+gives its `conjunct_relation` (a `closeMatch` part its convention) and nothing else does; a
+coverage claim is a bundle — on a compound statement only, its parts' clauses partitioning the
+conjuncts, none naming them all, each part's `conjunct_relation` strong — and a compound
+statement whose strong parts partition its conjuncts without one is refused (the audit's fix
+4a); every strong location writes its two `tests` and an `instantiation`, and is refused when
+the passage speaks of integers (`NAT_FOR_INT_INTEGER_WORDS`: "integer", "integers", `ℤ`) and
+every number-typed binder of the declaration is ℕ, unless its note names ℕ or the naturals
+(`NAT_FOR_INT_NATURAL_WORDS`: `ℕ`, "natural*"; a word whole, as the phrase lists read it, a
+symbol anywhere); the generality words are `CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`; a
+`hasPart` part is held to all of these by its `conjunct_relation`, so a part whose
+`conjunct_relation` is strong is a strong location (the bundle takes its weakest part's
+relation); an absence, an uphold and an absent fill name their nearest `special_case`, and an
+absent fill accepts no candidate; a `cut_flag` sits on an unresolved passage only; a
+challenger's bundle confirm gives `part_relations` no stronger than each part's own, and stands
+beside no verdict of its document whose `clauses` give one part every conjunct (PD6); a bundle
+refute gives `unstated` and a reason for every part, a verdict that keeps or leaves a strong
+relation — a part's by the `conjunct_relation` it leaves — its own `tests`, a document that
+leaves a located passage with no counting location its `fills`, and a prominence sample's
+conditional records are judged exactly beside an overturn of their passage to subject or
+central (`REFUTE_BY_DEFAULT_PROMINENCE`). Gate rule 10 (`statement_cut_rule`, with
+the `span_end_rule` it reads: 2 for version 1, 3 for versions 2 and 3) holds the
+inventory's cut: disjoint spans, one text one passage; no run from one block into the next but
+inside a theorem box, into the displays a sentence introduces (and, under versions 2 and 3, the
+paragraph that finishes that sentence after them; under version 3 also across a footnote mark,
+and into an indented line or a paragraph that opens with a formula when it finishes the
+sentence), or over the items of one list of
+a compound statement; under versions 2 and 3, at most one `formal_math` passage of a source marked
+`prominence: subject`; no end inside a formula; conjuncts none or 2–5 of a closed shape, on a
+`formal_math` passage; a passage scoped out `supporting`. What one statement is, where a
+sentence is cut, chains, proofs and PD9's stated reasons stay judgment: rule 10 counts each
+formal passage's sentences and displays (under version 2 also the subjects, the continuations,
+the tails only the loose bound reaches and the connectives) into the harvest receipt and
+refuses nothing on them.
+Under judgment rules 4 (`RULES_SMOKE4`, the smoke-4 audit's calls; bound by a gate.json
+that names it) four checks more, each the mechanical half of a judgment rule: a part's
+`conjunct_relation` may be `hasPart` (`CONJUNCT_RELATIONS_PART`, `conjunct_relations`):
+it states only some of what its conjuncts say, owes a `step` and no `tests`, and no
+bundle stands on it; **PD6's shape tripwire** — on a compound statement of shape
+`existence_uniqueness` or `iff` (`PD6_SHAPES`), a bundle part whose declaration
+concludes with `↔`, any `≃`, `∃!` or `Bijective` (`PD6_CONCLUSION_MARKS`, read off the
+signature's conclusion) writes `pd6`, one line saying which conjunct it does not state on
+its own and why, and a challenger's confirm of that bundle the same in `part_limits`;
+**the readings a confirm credits** (fix 6d's mechanical half) — a coverage confirm names
+in `part_conventions` the R1 convention by which it reads each part its `part_relations`
+credit with `closeMatch`; and **a downgrade's bridge** — a challenge downgrade of a record
+held to a strong relation to `relatedMatch` gives exactly one of `bridge: {library,
+declaration, why}`, the named lemma the connection needs, in `corpus.sqlite` and not the
+record's own declaration, or `incomparable`, one line on why the two settings neither
+contain the other. Whether a fact is a bridge or an encoding (PD8 against PD10, R-ASSOC)
+stays judgment: the field makes the choice visible to the audit, and a lemma that only
+links two definitions of one notion is no bridge.
+
+**The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
+passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
+absent, coverage=None)`, each location giving its `relation`, `proof_status`, optional `statement`
+flag and, when a coverage claim names it, its `location_key` (distinct: one key on two locations is
+refused); `coverage` is the passage's coverage claim exactly as a record carries it (below:
+`COVERAGE_RECORD_KEYS`, `complete` · `parts` · `challenge`, the challenge a `CHALLENGE_VERDICTS`
+value) or `None`, and the three-argument call is the one it always was:
+
+| status | when |
+|---|---|
+| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration; `exactMatch` or `closeMatch` to **data** — a `definition` without the `statement` flag (an equivalence, isomorphism, bijection, structure-valued construction: a theorem that two quotient rings are isomorphic, as a `RingEquiv`). Definition passage: `exactMatch` or `closeMatch` to a `definition`. Any passage: a **survived coverage claim** whose every part is finished — `proved`, or data |
+| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or any passage's survived coverage claim with an unfinished part — `statement_only`, `wanted`, `axiom_dependent`, or a `Prop`-valued definition |
+| `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition, with no coverage claim that upgrades them (under status rule 3 a `broadMatch` to data or to a definition formalizes instead: R-BROAD, below) |
+| `not_formalized` | a checked absence, possibly beside `relatedMatch` locations |
+| none (`None`) | unresolved: no location that counts and no absence — including a passage whose only locations are `relatedMatch` |
+
+A survived coverage claim acts, for the status, exactly like **one more `exactMatch` location**
+(the reading of D1 that parity round 3 settled, below): a `proved` declaration to the theorem row
+and a `definition` to the definition row when every part is finished, so it formalizes the passage
+on either row, and a `statement_only` declaration, `statement_only` on both rows, when any part is
+unfinished. An `example` or `other` passage judges it on both rows, the better winning, as it
+judges every location. The best status over all the evidence wins (`formalized` >
+`statement_only` > `partial` > `not_formalized`). A coverage claim whose challenge is anything but
+`survived` — `challenge_pending`, `not_required`, `sampled_out`, `downgraded` — adds nothing; a
+refuted claim is removed by the outcomes before the status is derived, and an owed claim (no
+challenge has judged it yet, so it has no challenge value) is passed as no claim, which gives the
+same status.
+
+**The maintainer's decision D1** (2026-10-18), verbatim:
+
+> D1: yes. Formalized when the hasPart locations together cover every clause (challenger confirms
+> coverage), and when an exact/closeMatch is to an equivalence or data declaration that states the
+> theorem (e.g. CRT's RingEquiv). Update vocab and WikiLean's parity table.
+
+It replaces two of the decisions this section used to make the conservative way: a theorem passage
+matched exactly or closely to data was `partial` (as its `broadMatch` still is), and a passage that
+says several things — a conjunction of clauses — stated clause by clause by `hasPart` locations was
+`partial` however completely they covered it. The table above is the decision; the shared parity
+table `tests/data/locate/status-parity.json` (`cf-locate-status-parity/1`) holds its cases with
+their expected status, written by hand — and, on the cases that carry `expected_challenges`, the
+challenge each location's exported record carries once the claim's verdict is applied — and a
+consumer's own implementation runs the same cases.
+
+**The coverage claim.** A located passage may carry `coverage: {"complete": true, "parts": [<rank>,
+…], "note": "<one sentence>"}` in its locate document (references/locate-documents.md §3): its
+`hasPart` locations, named by rank, together state every clause of the passage, and none adds a
+hypothesis stronger than the passage's. At least `MIN_COVERAGE_PARTS` (2) distinct parts, each a
+`hasPart` location of the passage; the `note` says how, in the worker's own words, within the
+record note cap (no more than `EXPORT_QUOTE_WORDS` words of the source verbatim, at most 2,000
+characters). The gate refuses a claim on an absent or unresolved passage. Every claim is challenged
+whatever the passage's prominence — refuted by default, target `coverage` (`COVERAGE_TARGET`),
+actions `confirm` or `refute` (`COVERAGE_ACTIONS`) — because it upgrades a status: `confirm` makes
+it `survived` and **confirms its parts** — each part whose own record no verdict judged
+(`not_required`, `sampled_out`) is `survived` too, a part a verdict judged keeps that verdict
+(`outcomes.confirm_parts`) — and `refute` removes the claim and leaves its parts `hasPart` with
+the values they had. The confirmation stands in only for parts no rule required: a prominence
+overturn to `subject` or `central` in the same run reopens the passage first, and a part it made
+`challenge_pending` stays pending, owed its own verdict under the stricter rule, while the claim
+stays `survived` and the status is unchanged (parity case P05). The challenge planner puts a
+claim and its parts in one task, so one challenger judges them together. A part refuted, or downgraded out of `hasPart`, by another
+verdict lapses the claim: it upgrades nothing, confirms no part, and the export refuses the
+passage until the claim is challenged again. An exported record
+carries it as `extensions[‹locate›].coverage = {"complete": true, "parts": [<location_key>, …],
+"challenge": <value>}` — those three keys (`COVERAGE_RECORD_KEYS`) and no others, on every record
+of the passage, the note left out — and `outcomes` derives the status from that same projection
+(`records.coverage_ext`), so a record's status is the one its claim gives.
+
+**The bundle** (judgment rules 3 and status rule 2, `docs/proposals/statement-cut.md` §1.3,
+§1.4 and §2): under the statement cut a coverage claim is a bundle or nothing. It stands only
+on a compound statement — a passage the inventory gave `conjuncts` and a `shape` — and its
+parts are `hasPart` locations whose `clauses` name the inventory's conjunct ids, pairwise
+disjoint, together every conjunct, none all of them, each with a `conjunct_relation`
+(`CONJUNCT_RELATIONS`) to the conjuncts it states that is one of `BUNDLE_RELATIONS`. A
+challenger's **confirm** gives `part_relations`, one per part, none stronger than the part's
+own (a challenge never raises a relation), and its **refute** names the conjuncts no part
+states (`unstated`) and, for every part, why no R1 convention reaches its conjunct
+(`part_reasons`); "the parts state it after unfolding or encoding" is a confirm. The bundle's
+relation is its weakest part's (status rule 2 above), and a record of `cf-locate-recordset/2`
+carries it as `{"complete": true, "parts": [<location_key>, …], "challenge", "relation",
+"conjuncts": [{"id", "text", "part": <location_key>}], "bundle_key"}`
+(`COVERAGE_RECORD_KEYS_BUNDLE`): the conjuncts in id order, each beside the part that states it,
+held to the export's free-text cap, and `bundle_key` the `cflib.hashing.bundle_key` of the
+passage key and the parts' pair keys, so a consumer shows a bundle's declarations each beside
+its conjunct, and keys a vote on it, from the record set alone.
+
+**Parity, round 2** (2026-10-18). Run against the consumer's own implementation, the shared table
+agreed on every status an exported record set can carry, and `derive_status` differed on three
+inputs no export produces; each is now refused here as the consumer refuses it, by the record
+shape of part A of the agreed specification:
+
+- a claim whose challenge is `null` (owed; case C14, which round 1 expected `partial`): part A's
+  record carries "<challenge value>", and part B.1's list of claims that upgrade nothing ("pending,
+  not_required, sampled_out, refuted, absent") is read with A — a refuted claim is removed and an
+  absent one is no claim, so neither reaches the function as a claim, and `refuted` is no
+  challenge value (X11);
+- a claim with a key beside `complete`, `parts` and `challenge` (a `note`: X12; a claim missing
+  `challenge`: X13): the outcomes' row keeps the note, and they pass the record's projection;
+- one `location_key` on two locations, whichever relation comes last (X14, X15) and with no claim
+  at all (X16): a key is the sha-256 of source, item, library, commit and declaration, and gate
+  rule 6 admits one location per declaration, so no run produces one.
+
+**Parity, round 3** (2026-10-18): the reading of D1. Rounds 1 and 2 read three points of part B
+of the agreed specification literally and left them open as Q1–Q3; round 3 resolved all three,
+from D1, with one rule, and the parity cases that turn on them are marked with their question
+(and say what round 2 expected). The rule: a survived coverage claim acts, for the derived
+status, exactly like one more `exactMatch` location, and that location is a **fixed stand-in**,
+not any one of the parts. Each part is **finished** (`proved`; a `definition` without the flag,
+data) or **unfinished** (`statement_only`, `wanted`, `axiom_dependent`; a `definition` with the
+flag, a `Prop`-valued definition). Every part finished: the stand-in is a `proved` declaration on
+the theorem row and a `definition` (no flag) on the definition row, so the claim formalizes the
+passage on either. Any part unfinished: it is a `statement_only` declaration on both rows. It is
+not an `exactMatch` to any one part's own proof status and flag, the least finished one's
+included: a definition passage's claim of `proved` parts formalizes it, where an `exactMatch` to
+a `proved` theorem is `partial`, and one with a `Prop`-valued definition part is
+`statement_only`, where an `exactMatch` to that definition formalizes it (O07). Everything else about the status is unchanged, a claim that is
+not survived adds nothing, and confirming a claim confirms its parts (above) — except a part a
+prominence overturn in the same run reopened, which stays `challenge_pending` (the reopen wins).
+
+- **Q1** (resolved) — an `example` or `other` passage judges a survived claim on **both** rows,
+  the better winning, exactly as it judges an ordinary location: `definition` parts formalize it
+  (E03, E04, R08–R11). Rounds 1 and 2 applied part B.2 to definition, construction and notation
+  passages only, and left these `partial`.
+- **Q2** (resolved) — a data part is finished, as data that states a theorem is (part B.3): a
+  theorem passage's claim with `proved` and data parts is `formalized` (C08, R01, R02), and a
+  `Prop`-valued definition part is unfinished, so its claim is `statement_only` (C09, R03).
+  Rounds 1 and 2 counted only the proof statuses `proved`, `statement_only`, `wanted` and
+  `axiom_dependent`, and left both `partial`.
+- **Q3** (resolved) — a definition passage's claim with an unfinished part gets the
+  `statement_only` an `exactMatch` to an unfinished declaration gets (D07, D08, R05, R06).
+  Rounds 1 and 2 gave part B.2 no such fallback, and left them `partial`.
+
+One case outside the three moved with them: a definition passage's claim whose part is a
+`Prop`-valued definition (D04, R07) is `statement_only` — the rule's order makes such a part
+unfinished on every row — where round 2 said `formalized`. An `exactMatch` to a `Prop`-valued
+definition alone still formalizes a definition passage (O07): the claim's rule, not the
+definition row, decides that its parts are finished.
+
+The proposal's table names theorem/conjecture and definition passages only. Decided here, each
+the conservative way, until the maintainer says otherwise:
+
+- a `construction` or `notation` passage introduces an object or a symbol, so it is judged as a
+  definition passage (`DEFINITION_PASSAGE_KINDS`); an `example` or `other` passage is judged by
+  **both** rows and takes the better (`EITHER_PASSAGE_KINDS`);
+- a definition passage matched exactly or closely to a `proved` theorem is `partial`;
+- the relation decides before the proof status or the `statement` flag: `hasPart` and
+  `narrowMatch` (and, for a definition passage, `broadMatch`) are `partial` whatever the
+  declaration is, so a sorry'd lemma stating one part of a theorem is never `statement_only` —
+  unless a survived coverage claim names it, when decision D1 above judges the parts together;
+- a passage whose only locations are `relatedMatch`, with no checked absence, has **no status**
+  (`None`). It is what a challenge leaves when it downgrades a passage's one location to
+  `relatedMatch`: nothing says the passage is formalized and nobody checked that it is absent,
+  so it counts as unresolved — a miss for the safety metric, never `not_formalized`. A worker
+  that searched and found only related declarations records the absence beside them, and the
+  passage is then `not_formalized`.
+
+Refused (`CfError`), because no consistent record says them: a checked absence beside a location
+that counts; the `statement` flag on a `proved` declaration (`decide_proof_status` gives a
+`Prop`-valued definition every status but `proved`, which is a theorem's); a `statement` that is
+not a bool (absent or `null` is `false`); one `location_key` on two locations; a coverage claim
+that is not `complete: true`, names fewer than two distinct parts, or names a part that is not one
+of the passage's `hasPart` locations (a part a challenge refuted or downgraded: the claim is then
+challenged again), whatever its challenge; a coverage claim with no challenge value (owed) or with
+a key outside `COVERAGE_RECORD_KEYS`; and any value outside these sets — a `refuted` challenge
+among them.
+
+**Status rule 2: a bundle takes its weakest part's relation** (`STATUS_RULE_BUNDLE`; the
+maintainer's answer of 2026-10-21 to the statement cut's question 9, accepting its
+recommendation: a bundle of broader parts is `broadMatch`, so a definition passage with only
+broader parts is `partial`, as with a single broader card; `docs/proposals/statement-cut.md` §2). Each
+version of the derivation binds only the locate runs whose `run.yaml` names it as
+`locate.status_rule`: one without the key is status rule 1, everything above, and its tallies
+and record sets are what they always were. `derive_status(…, status_rule=2)` reads a coverage
+claim as a **bundle**, the claim a record of `cf-locate-recordset/2` carries: keys within
+`COVERAGE_RECORD_KEYS_BUNDLE` — `complete` · `parts` · `challenge` · `relation` · `conjuncts` ·
+`bundle_key` — its `relation` required and one of `BUNDLE_RELATIONS`, its `conjuncts` (when
+given) `c1` … `cN` in order, each `{id, text, part}` beside the one part that states it and
+every part stating at least one, and its `bundle_key` (when given) 64 lowercase hex. A survived
+bundle acts as one more location of **its own relation**, where status rule 1 makes it one more
+`exactMatch`, with the same fixed stand-in for its proof status (finished when every part is
+`proved` or data). Only the definition row's `broadMatch` changes:
+
+| passage | bundle relation | parts | status rule 1 | status rule 2 |
+|---|---|---|---|---|
+| theorem, conjecture | `exactMatch` / `closeMatch` / `broadMatch` | finished | `formalized` | `formalized` |
+| theorem, conjecture | any of the three | unfinished | `statement_only` | `statement_only` |
+| definition, construction, notation | `exactMatch` / `closeMatch` | finished | `formalized` | `formalized` |
+| definition, construction, notation | `broadMatch` | finished | `formalized` | **`partial`** |
+| definition, construction, notation | `broadMatch` | unfinished | `statement_only` | **`partial`** |
+| example, other | `broadMatch` | finished | `formalized` | `formalized` (the theorem row) |
+
+The bundle's relation is computed, never written (`outcomes.bundle_relation`): each part's
+`conjunct_relation` as its locate document wrote it (or a verdict on the part weakened it),
+and, once a challenger confirms the claim, that confirm's `part_relations` entry for the part
+where it is weaker: a challenge never raises a relation, so an entry stronger than the part's
+own (which the gate refuses) changes nothing; then the weakest over the parts (the greatest
+`RELATION_STRENGTH`). A bundle of an `exactMatch` and a `broadMatch` part is a `broadMatch`
+bundle. A bundle whose relation is no bundle's — a part with no conjunct relation, or a part
+that states only a special case of its conjuncts (`narrowMatch`) — or one on a passage the
+inventory gave no conjuncts no longer holds: it upgrades nothing and the export refuses the
+passage until it is challenged again. Status rule 2 adds one derivation outside
+`derive_status`: a `located` passage the challenge leaves with no location that counts and no
+absence is **owed a hunt** — its challenge is `challenge_pending`, its outcome row carries
+`owed: "hunt"` (`CHALLENGE_RULE_HUNT`) and a `problem`, so the export refuses it, and the tally
+counts it as `owed_hunt` (the smoke-3 audit's anomalies 1 and 2); under status rule 1 such a
+passage has no status and is exported. The hand-written cases are
+`tests/data/locate/status-parity-2.json` (`cf-locate-status-parity/2`, every case with
+`status_rule: 2` and, where status rule 1 reads the claim's three D1 keys, what it derives
+there), run beside `tests/data/locate/status-parity.json`, which stays the test of status rule
+1 and of every `cf-locate-recordset/1` set.
+
+**Status rule 3: a broadMatch formalizes whatever its declaration is** (`STATUS_RULE_BROAD`;
+the maintainer's call R-BROAD of 2026-10-28, which drops the asymmetry left over from before
+decision D1 — in his words it "makes no sense" — and asks the page to show the status beside
+the best card's relation, which the record set already carries). `derive_status(…,
+status_rule=3)` is status rule 2 with one change to the rows: a `broadMatch` formalizes a
+theorem or conjecture passage whether its declaration is a `proved` theorem or **data** (a
+`definition` without the `statement` flag: an equivalence, an isomorphism, a structure-valued
+construction), and a definition, construction or notation passage whenever its declaration is
+a `definition`, as an `exactMatch` or `closeMatch` does on each row. A `broadMatch` to an
+unfinished declaration, or to a `proved` theorem on a definition passage, is what status rule
+2 makes it, and so is everything else — the bundle read as status rule 2 reads it, its fixed
+stand-in, the owed hunt, the outcome rows and their counts. So PD1 still names a definition
+over a general type parameter a `broadMatch`, and a finished bundle of broader parts is still
+`broadMatch`, but each now formalizes its definition passage:
+
+| passage | location | status rule 2 | status rule 3 |
+|---|---|---|---|
+| theorem, conjecture | `broadMatch` to data | `partial` | **`formalized`** |
+| theorem, conjecture | `broadMatch` to a `proved` theorem | `formalized` | `formalized` |
+| theorem, conjecture | `broadMatch` to an unfinished declaration, or a `Prop`-valued definition | `statement_only` | `statement_only` |
+| definition, construction, notation | `broadMatch` to a `definition` (a `Prop`-valued one too), or a finished `broadMatch` bundle | `partial` | **`formalized`** |
+| definition, construction, notation | `broadMatch` to a `proved` theorem or an unfinished declaration, or an unfinished `broadMatch` bundle | `partial` | `partial` |
+| example, other | `broadMatch` to data | `partial` | **`formalized`** (both rows) |
+
+A locate run's `run.yaml` names it as `locate.status_rule: 3` — exactly the runs of judgment
+rules 4 (`vocab.status_rule_of_judgment`), as status rule 2's are the runs of judgment rules 3
+— and its record set is a `cf-locate-recordset/2` whose seal's `status_rule` is 3: the shapes
+are status rule 2's, and only the statuses its records carry were derived by the later rule,
+so a consumer that reads the seal's `status_rule` derives by the rule it names. The
+hand-written cases are `tests/data/locate/status-parity-3.json` (`cf-locate-status-parity/3`):
+status rule 2's cases again under their ids, each with what status rule 2 derives beside it
+(`expected_status_rule_2`), and R-BROAD's own; the `/2` and `/1` tables stay the tests of their
+rules.
+
+**The statement cut** (`docs/proposals/statement-cut.md`, the maintainer's answers of
+2026-10-21): the inventory cuts an article into statements, one passage per statement; a
+compound statement's conjuncts are the inventory's, cited by locate and the challenge; a
+coverage claim is a **bundle**, allowed only on a compound statement, whose relation is its
+weakest part's; and a re-cut is a routine, versioned operation with a carry-over map. Its names
+are defined in `cflib.vocab`'s statement-cut block and `cflib.hashing`, and **from the
+proposal's flip** (its §7) `cf plan-locate` writes its versions into every run it plans —
+`judgment_rules` 3, `span_end_rule` 3 and `statement_cut_rule` 3 in gate.json (from the flip
+of the wide bound; `statement_cut_rule` 2 from the flip of inv-pilot-1's fixes until then, and
+`span_end_rule` 2 and `statement_cut_rule` 1 before those fixes; the proposal's §7; and
+`judgment_rules` 4 from the flip of the smoke-4 audit's calls), and a locate run's
+`locate.status_rule` 2 in `run.yaml` (3 from the flip of the smoke-4 audit's calls, beside
+`judgment_rules` 4: `status_rule_of_judgment`) — and refuses a run of the earlier flow (a locate run
+over an inventory without the cut, a challenge of a locate run of earlier rules). Each rule
+binds only a run whose gate.json or `run.yaml` names its version, so every run planned before
+the flip is gated, tallied and exported as before. The proposal's §1–§5 are normative for the
+packages that build it; each package extends this paragraph in its own section (§6 of the
+proposal says which).
+
+| name | values |
+|---|---|
+| versions | `RULES_STATEMENT_CUT` (3: `judgment_rules` of the cut), `RULES_SMOKE4` (4: `judgment_rules` of the smoke-4 audit's calls, which the gate knows before the planner writes it), `SPAN_END_STATEMENT_CUT` (2: `span_end_rule` of the cut), `SPAN_END_CONTINUED` (3: the continued cut's `span_end_rule`), `STATEMENT_CUT_FIRST` (1: the cut's first `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_RULE` (3, `STATEMENT_CUT_WIDE`, from the flip of the wide bound; 2, `STATEMENT_CUT_CONTINUED`, from the flip of inv-pilot-1's fixes; 1 before it: `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_CONTINUED` (2: the continued cut's `statement_cut_rule`: rule 10 (b) holds an end to the loose continued bound, (h) refuses two or more `formal_math` passages of a source marked `prominence: subject`, and the receipt counts more), `STATEMENT_CUT_WIDE` (3: the wide cut's `statement_cut_rule`, inv-pilot-2's repairs: version 2 with rule 10 (b) holding an end to the **wide** bound and the receipt's `widened`, `wide_starts` and `wide_unheld`; the planner writes it from the flip of the wide bound, which the gate knew before), `STATEMENT_CUT_SPAN_END` (`{1: 2, 2: 3, 3: 3}`: the one `span_end_rule` each `statement_cut_rule` reads; any other pair, and `span_end_rule` 3 without a `statement_cut_rule`, is a broken gate.json, exit 3; the planner writes 3 and 3 from the flip of the wide bound, 3 and 2 from the flip of inv-pilot-1's fixes, 2 and 1 before it), `STATUS_RULE` (`status_rule` in a locate run's `run.yaml` and in its record set's seal: 1 is `STATUS_RULE_D1`, the derivation of a run.yaml without the key and `derive_status`'s default; 2 is `STATUS_RULE_BUNDLE`; 3 is `STATUS_RULE_BROAD`, R-BROAD; `STATUS_RULES` lists the three, `status_rule_of_judgment` gives a run's from its `judgment_rules`, and `reads_bundles` is true of 2 and 3) |
+| `COMPOUND_SHAPES` | `existence_uniqueness` · `iff` · `cases` · `conclusions` · `equations` (the closed list; `COMPOUND_SHAPE_ORDER` is the maintainer's order). A compound statement has `MIN_CONJUNCTS`–`MAX_CONJUNCTS` (2–5) conjuncts `c1` … `cN`, `existence_uniqueness` exactly 2 (`SHAPE_CONJUNCT_COUNTS`); a simple statement has none, and its one clause id is `SIMPLE_STATEMENT_CLAUSE` (`c1`) |
+| an inventory passage's `conjuncts` and `shape` | written by the inventory on a compound `formal_math` passage only, both or neither: `conjuncts` a list of `{id, text}` (ids `c1` … `cN` in order, each text one line of at most `MAX_CLAIM_CHARS` characters in the worker's own words, never more than `EXPORT_QUOTE_WORDS` consecutive words of the source, alone or read one after the other, as `verify_locate.check_claims` holds a claim list), `shape` one of `COMPOUND_SHAPES`; a simple statement has neither key, and its `statement` (required, as before) carries the hypotheses and objects the tight span leaves to its neighbours (`references/locate-documents.md` §2). `passage_ids.py` writes both back as it found them |
+| `CUT_CONNECTIVES` | `;` · `since` · `because` · `so` · `hence` · `then` · `moreover` · `, and` (with a new subject after it): where the inventory cuts inside a sentence, never between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject. A prompt rule (the cut rules below); no gate parses a sentence. The end rule's version 2 restates the list (`locate_text.CUT_CONNECTIVES`) to leave the one before the next passage out of both passages |
+| the end, `span_end_rule` 2 | an inventory passage with no `until` ends at the earlier of its **extent** and the next passage's start, never before its quote's end (`locate_text.passage_end(…, rule=2, next_start=…, formulas=…)`; version 1 ends it at its paragraph's end; version 3, `SPAN_END_CONTINUED`, ends it the same way at its **continued extent**, the extent with the paragraph that finishes a sentence after its display: `locate_text.Blocks.continuation`, the proposal's §3.1). When the next start is the earlier, the **separator** before it — whitespace, one connective of `CUT_CONNECTIVES` and a comma or semicolon, outside every formula (`locate_text.Blocks.separator_start`) — is in neither passage, so a statement's span, and its `passage_key`, is the one an `until` at its last word gives, whether or not its neighbour is a passage. The extent (`locate_text.Blocks.extent`, the proposal's §3.1, over `paragraphs.json` and `formulas.json`) is the end of the start's outermost block when that is a theorem box (or shares its span with one), else of that block followed by the **display blocks** its last sentence introduces (a block whose last character — a trailing formula read as its alttext's last character after TeX spacing, a `\right.` null delimiter, a `\\` line break, an `\end{…}` closer and closing braces, and closing brackets and quotes after a full stop read through to it — is no `.`, `!` or `?`, a formula's `!` being a factorial and no stop (`locate_text.FORMULA_STOPS`); a display block holds a formula and no letter outside its formulas, and a list item `li` is never one a sentence introduces) — with, for a compound statement, the rest of its run of `li` or `dd` items first. So two passages of one paragraph never nest, and a passage leaves its block only inside a theorem box, into the displays its sentence introduces, or over the items of one list (gate rule 10's bound). The outermost block is the bound: inside a `blockquote`, a `dd` or an `li` that holds other blocks, a passage no later start ends runs to the container's end unless its `until` ends it sooner (the inventory prompt says to give one there), a compound statement that starts in a nested item runs over its parent's run of items, and two lists with nothing between them are one run (`paragraphs.json` does not say where a list ends). Under `statement_cut_rule` 2 gate rule 10's bound is the **loose** continued bound (`locate_text.Blocks.runs_on`, the maintainer's reading K1): a block's last sentence that runs on (no full stop; never a list item's or a theorem box's) runs on over any `dd` or display blocks that leave it open into a plain paragraph that continues it, so a display the gate cannot see (a `texhtml` formula, a `dd` of text, a footnote mark after it) keeps its sentence's words too. It admits only a longer `until`; no default end reads it. Under `statement_cut_rule` 3 the bound is the **wide** one (`locate_text.Blocks.runs_on(…, wide=True)`, the proposal's §3.1): the loose bound read across footnote marks between two blocks (`locate_text.FOOTNOTE_MARK`: `[12]`, `[a]`, `[nb 3]`, `[note 3]`), and ended by a `dd` or a paragraph that finishes the sentence, by its first word or, after a block that ends with a word, by a formula that opens it and a lower-case word after (`Blocks.finishes`, `Blocks.opens_with_formula`); never shorter than the loose bound, and read by no end rule either |
+| a passage's units | `locate_text.units`: its sentences (a `.`, `!` or `?` — or a formula whose alttext ends with a `.` or `?`, a formula's `!` being a factorial — before whitespace or a block's start and an upper-case letter or a formula, not after one of `ABBREVIATIONS`, `locate_records._ABBREVIATIONS`' list) and its displays (the `math` blocks inside it); the harvest receipt counts both, and refuses nothing on them |
+| a part's `conjunct_relation` | `CONJUNCT_RELATIONS`: `exactMatch` · `closeMatch` · `broadMatch` · `narrowMatch`, judged against the conjunct, and under judgment rules 4 `hasPart` too (`CONJUNCT_RELATIONS_PART`: the part states only some of what its conjuncts say); a bundle's relation is one of `BUNDLE_RELATIONS` (the strong ones), its weakest part's |
+| a strong location's `tests` | `TWO_WAY_TEST_KEYS`: `r2` (how the passage follows from the declaration) · `r3` (why the declaration needs nothing more at the passage's objects) |
+| `CUT_FLAGS` | `not_a_statement` · `several_statements`: why a locate worker ends a passage unresolved because of its cut; `not_a_statement` is also the consumer's ballot flag, which no stage here writes |
+| `CARRY_FATES` | what a re-cut does to a passage of the old cut, by the carry-over map (`cf locate carry`, `references/locate-documents.md` §12), from spans and span text only: `unchanged` (a new passage has its passage key: the same text on the same page) · `changed` (not unchanged, and the new layer does not hold its text exactly once, so it is never placed) · placed on the new layer and overlapped by no new passage, `removed` · by two or more, `split` · by one starting where it starts, `end_moved` · by one starting before it and holding the whole of it, `merged` · by one otherwise, `reshaped`; and `new` (`CARRY_NEW`) for a new passage no old one went into. Only `unchanged` carries: a pair verdict, a label or a known answer on a passage whose new passage is `formal_math`, with the same conjuncts when it read them (`locate.carry.carries`), and a gold row whose passages, every one over its span, are unchanged and still the passages there, while the labeler version is the same (`GOLD_CARRY_STATES`); everything else is asked again, and a status is derived again, never carried |
+| `GOLD_CARRY_STATES` | what a re-cut does to a frozen gold row (`cf bench carry`, `references/locate-bench.md` §7), the old cut on the layer the gold is labelled on: `carried` (the new cut is on that layer too, and the passages over the row's span are its old ones, unchanged, at the same spans: its labels stand) · `reanchor` (the same on another layer, a new revision or rendering whose text over the span is unchanged: its labels stand and its span moves to the report's `anchor`) · `relabel` (anything else, and every row across a labeler bump); a row without a span is counted apart |
+
+The keys (`cflib.hashing`, each one definition): `span_sha256` is the sha256 of the passage's
+layer text; `passage_key` is sha256 of `<pageid>\n<span_sha256>`; `pair_key` of
+`<passage_key>\n<repository>\n<declaration>`, the repository the lean end's `uri`; `bundle_key`
+of the passage key and its parts' pair keys, sorted, one per line; `cut_id` of the canonical JSON
+of a page's pageid, layer sha and sorted spans. None holds a revision, a commit, a run or an
+item, so a key changes only when what it names does. The carry-over map keys every passage of
+both cuts by `passage_key` and names each cut by its `cut_id`; two passages of one cut with one
+key refuse their page there. A `pair_key` is unchanged exactly when its passage key and its
+declaration are, and a `bundle_key` exactly when its passage key and every part's pair key are;
+neither says anything of the conjuncts, so an unchanged key carries a verdict on its own only when
+the verdict read no conjunct, and one that read them (a bundle's, a bundle part's) also needs the
+map's `conjuncts_changed` false.
+
+**How the inventory cuts** (the proposal's §3.4; `templates/prompts/locate-inventory.md.tmpl`
+and the inventory mode of the bench's labeler, `workflows/locate-label.workflow.js`, carry these
+lines word for word, and `tests/test_locate_statement_cut.py` holds the three together). They are
+prompt rules: what the gate can check of them is gate rule 10 (the proposal's §3.3), and the rest
+— what one statement is, where a sentence is cut, lists, chains, proofs, the context — only the
+receipt counts.
+
+- **The test.** A passage is one statement when one Lean declaration could state it whole, with nothing left that a reader would call a second result, even when a library states it in two lemmas. Otherwise cut it: a definition and a theorem about it, a fact and the reason the text gives for it, or two cases in two sentences are two passages, not one.
+- **Units.** A passage is one or more whole units: a sentence, or one of its independent clauses, with the displays that sentence introduces; or a list item. It never runs from one paragraph into the next, except inside a theorem box, into the displays its last sentence introduces and the paragraph that finishes that sentence after them, or, for a compound statement, over the items of one list.
+- **Displays.** A displayed formula is never cut and belongs to the sentence that introduces it. An equation chain (a = b = c) is one statement, its end-to-end equation; its middle terms are steps, not conjuncts. A display of several separate equations is one compound statement, shape `equations`.
+- **Inside a sentence.** Cut where an independent clause asserts a fact of its own, at one of ";", "since", "because", "so", "hence", "then", "moreover", ", and" (", and" only when a new subject follows). Never cut between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject. Each piece starts at a word, and the connective starts no piece.
+- **Lists.** A list whose items each state a fact is one passage per item. A list of the cases of one definition or law, or of the conditions of one equivalence, is one compound statement (shape `cases` or `iff`) that starts at its first item. Its lead-in sentence ("the following are equivalent:") is expository, unless it states a reason no neighbour states, which is a statement of its own; a display inside a list item belongs to that item, never to the lead-in sentence.
+- **Proofs.** Proof narration and commentary is expository (PD5); each definition, theorem, equation or declarative statement inside a proof is a passage of its own, and the proof as a whole is none: a proof or a derivation is judged a sentence at a time, never kept, skipped or scoped `expository` whole for being a proof. The steps of a worked example are judged the same way: a sentence that asserts its own equation is a passage of its own, never a conjunct of the example.
+- **Context.** A sentence that only sets up objects or hypotheses ("Let W be a finite widget.") is no statement and no `formal_math` passage of its own: it opens the first statement that uses it, since a statement is never cut from its hypothesis. When that statement is in another paragraph (outside a theorem box, the displays the sentence introduces and the paragraph that finishes that sentence after them), or anything comes between, the sentence opens nothing: it is `expository` where its paragraph must be covered, and otherwise in no passage. A sentence that defines a symbol for later use is a `notation` passage, not context; one that only fixes an example's objects is context. Context from further away stays out of the span: `statement` carries the hypotheses and objects ("for a finite widget W, …"), so it reads on its own and the span stays tight.
+- **Conjuncts.** A compound statement is one of a closed list of shapes: `existence_uniqueness` (existence and uniqueness), `iff` (an equivalence, or the conditions of one), `cases` (the cases of one law or one definition, in one sentence, one display or one list), `conclusions` (several conclusions about one subject under one hypothesis) and `equations` (one display holding several equations). Write its `conjuncts`, 2 to 5 of them, and its `shape`; `existence_uniqueness` has exactly two. A simple statement has neither. Anything else that holds two results is two statements: cut it.
+- **The subject.** A lead that describes the subject rather than states it is expository: a sentence describes when it would stay true whatever the result concluded ("the gadget theorem links widgets to sprockets", or a hedged gloss: "roughly, …"), and states when it gives the hypotheses and the conclusion ("every finite widget has a spanning gadget") or what a definition defines. The subject marker, `prominence: subject`, goes on at most one passage, the first in reading order that states the theorem or definition (or the first part of one stated only in parts), which may be its theorem box, and on none when no passage states it; a later restatement is `central`. A passage not scoped `formal_math` is always `supporting`.
+
+A stated reason is cut by PD9 in the words the proposal's §3.4 gives it, which the inventory
+prompt and the labeler's inventory mode carry, and the judgment rules' own PD9 line took at the
+proposal's flip (a plan of rules 3 renders it): "a stated reason ("it holds because X") is a passage of
+its own only when X is a declarative mathematical statement that no neighbouring passage already
+states; otherwise X is no passage and no clause."
+
+**Challenge verdicts** (`CHALLENGE_VERDICTS`, the proposal's §5): every record leaves a workspace with one.
+
+| value | meaning |
+|---|---|
+| `survived` | challenged and confirmed, with a quoted witness |
+| `downgraded` | challenged, and the relation or the outcome was weakened |
+| `not_required` | outside every challenge rule |
+| `sampled_out` | inside the stratified sample's frame, and not drawn |
+| `challenge_pending` | a rule now requires it and no challenge judged it: the passage's prominence was overturned to `subject` or `central` after its records were planned under `supporting`, so its unjudged locations (a part of a coverage claim confirmed in the same run among them), absence or unresolved outcome are refuted-by-default or hunted records nobody refuted or hunted. Exported as it is, with no QID on its subject end; a consumer reads it as unchallenged. Under status rule 2 also the challenge of a passage **owed a hunt** (`owed: "hunt"`): a located passage the challenge left with no location that counts and no absence, which the export refuses |
+
+`CHALLENGE_UNJUDGED` is `not_required` · `sampled_out` · `challenge_pending`: the values of a
+record no verdict judged.
+
+Two challenge rules of the statement cut (the smoke-3 audit's three status anomalies,
+`docs/proposals/statement-cut.md` §5, fix 6), each binding only what names it. **Conditional
+records** (anomaly 3): a challenge plan made under judgment rules 3 puts every location,
+absence and unresolved record of a `supporting` passage whose prominence record it requires,
+and which it does not require itself, in that passage's task, marked `conditional:
+"prominence"` with its planned value unchanged (`challenge_plan.mark_conditional`); the
+challenger judges them only when it overturns the prominence to `subject` or `central`, and
+then judges every one, each as a refuted-by-default or hunted record, and the outcomes apply such
+a verdict only beside that overturn in the same challenge run (a plan made before has no such
+record, so nothing changes for it). **Fills** (anomalies 1 and 2): a challenge document of
+judgment rules 3 whose verdicts leave a `located` passage with no location that counts — its
+judged results and the unjudged `passage_locations` together — gives `fills[<item>]`,
+`{"outcome": "absent", "receipt"}` held to an absence's checks or `{"outcome": "located",
+"locations"}` held to an overturn's, and the outcomes of a run of status rule 2 apply it: the
+passage becomes absent beside its `relatedMatch` locations, the absence the challenger's own
+(`survived`), or takes the challenger's locations first (`survived`), as an overturn's.
+
+**The values the locate documents carry** (`references/locate-documents.md`, every one in
+`cflib.vocab`'s locate block):
+
+| enum | values |
+|---|---|
+| `LOCATE_DOCUMENT_SCHEMA` | `cf-locate/1`: the `schema` of every inventory, locate and challenge document |
+| `RENDERER_WEB_HTML` | `web-html/3`: the renderer of the first corpus's web sources, pinned by every run, gate and score document (`web-html/1` kept style and script text in the layer and collapsed ASCII whitespace only; `web-html/2` took a named concept's bold for a paragraph label and recorded no view shas in `render.json`; no layer of either is read any more) |
+| `PAGE_FLAGS` | `redirect` · `disambiguation` · `list` · `biography` — what a sourceset entry's `flags` say of its page, each `true`, `false` or `null` (not determined): the first three set at enumeration from the page info and the assessment, `biography` (Wikidata P31 = Q5) by `cf sourceset flag-biographies`; a page with one of them true is no concept article |
+| `LOCATE_SKIP_REASONS` | `not rendered` (no layer yet: a render settles it) · `parity refused` (its render stands refused because its layer is not the producer's: no render of the sourceset settles it, only the producer's corrected delivery adopted into a new sourceset) · `no concept article` (followed by the page's true `PAGE_FLAGS` in parentheses, "no concept article (redirect)") — why an inventory plan left a source out (`run.yaml` `locate.skipped`); a bench draw's excluded article gives the first two as its reason, with the sourceset version |
+| `SOURCE_ORIGINS` | `enumerated` (the PageAssessments listing, at a page's latest revision) · `adopted` (a consumer's pinned revision and bytes, recorded in `adopted_from`; a run plans it instead of an enumerated revision of the same page) — a sourceset entry's `origin` |
+| `LOCATE_OUTCOMES` | `located` · `absent` · `unresolved` — what one `formal_math` passage of a locate document ends with; `OUTCOME_KIND` tallies them as `LOCATION`, `ABSENCE` and `UNRESOLVED` |
+| `FINDERS` | `theorem_box` · `bold_definition` · `lead` (the `DETERMINISTIC_FINDERS`, whose passages are pre-filled in an inventory task and may be dropped only with a skip naming their span) · `model` (the enumerator's own) |
+| `BOLD_LABELS` | `proof` · `proofs` · `proof sketch` · `sketch of proof` · `proof idea` · `example` · `examples` · `counterexample` · `counterexamples` · `non-example` · `definition` · `definitions` · `theorem` · `theorems` · `lemma` · `lemmas` · `corollary` · `corollaries` · `proposition` · `propositions` · `remark` · `remarks` · `notation` · `exercise` · `exercises` · `claim` · `conjecture` · `case` · `cases` · `step` · `base case` · `inductive step` · `induction step` · `hint` · `note` · `notes` · `warning` · `caution` — a bold run made only of one of these (case-folded, punctuation, an enumerator or a parenthesised name stripped: "Proof.", "Case 2:", "Theorem (Widget lemma).") only labels its paragraph: `is_bold_label` is true, so it makes no `bold_definition` passage and is no L2 lexical term |
+| `BOLD_LABELS_PUNCTUATED` | `solution` · `answer` · `problem` · `question` · `input` · `output` · `statement` · `observation` · `axiom` · `axioms` · `fact` · `result` · `construction` · `algorithm` · `property` · `properties` · `assumption` · `assumptions` · `special case` · `idea` — labels only when written as one ("Solution:", "Problem 3."), since bare they may be the term a sentence defines |
+| `CONFIDENCES` | `high` · `medium` · `low` — a location's confidence, recorded and never an input to a status |
+| `CANDIDATE_VERDICTS` | `accepted` · `rejected` — what a receipt says of each candidate it examined; a rejection carries a reason |
+| `CANDIDATE_VIA` | `wikidata_tag` · `mathlib_1000` · `mathlib_100` · `docstring_url` · `library_metadata` — how an L2 **curated** candidate was found; lexical retrieval is not curated, and only curated hits bind gate rule 4 |
+| `TAG_KINDS` | `wikidata` · `stacks` · `kerodon` · `wikipedia` — the tags the library index parses from a declaration's source span and docstring |
+| `CHALLENGE_TARGETS` | `location` · `absence` · `unresolved` · `scope` · `prominence` · `coverage` (`COVERAGE_TARGET`: a passage's coverage claim, decision D1; its actions are `COVERAGE_ACTIONS`, `confirm` · `refute`) |
+| `CHALLENGE_ACTIONS` | `confirm` and `uphold` (`CHALLENGE_KEEP`: the record survives) · `downgrade`, `refute` and `overturn` (`CHALLENGE_CHANGE`: the affected records are `downgraded`) |
+| `UNRESOLVED_ATTEMPT_CAP` | `attempt_cap`: the reason on an `UNRESOLVED` document the bridge writes after a task's third genuine reviewer rejection; never a worker's |
+| `UNRESOLVED_BY` | `worker` (`UNRESOLVED_BY_WORKER`: the worker could not decide) · `attempt_cap` (the bridge, at the cap) — an `UNRESOLVED` document's `unresolved.by` |
+| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, every coverage claim, a strong location whose own note admits a clause it does not state, `admits_missing_clause`, and every `subject` passage's prominence, stratum `prominence:subject`, since its records carry the article's QID) · `hunt` (an absence or unresolved outcome on one) · `basis` (`CHALLENGE_RULE_BASIS`: a location that sets a `supporting` passage's derived status on its own — every such one, not only the best-ranked — when its relation is one of `STRONG_RELATIONS`; required) · `sample` (the stratified sample's frame: scope demotions and `supporting` demotions and weak relations, at `sample_rate`; a `supporting` passage's other strong locations, one stratum per relation, at `strong_sample_rate`; a `supporting` passage's absence, stratum `outcome:absent`, at `absence_sample_rate`, hunted when drawn) · `none` (a `supporting` passage's unresolved outcome) — why the challenge plan put a record where it did |
+| `CHALLENGE_PLANNED` | `required` (`CHALLENGE_REQUIRED`: the record is in a challenge task and its verdict is owed) · `sampled_out` · `not_required` — what the challenge plan says a record is owed, before any verdict |
+| `JUDGMENT_RULES` | `4` (`RULES_SMOKE4`, from the flip of the smoke-4 audit's calls; `3`, `RULES_STATEMENT_CUT`, from the statement cut's flip; `2` before it): the version of the judgment rules (gate rule 9, R1–R7 and the policy defaults above) a run's `gate.json` names as `judgment_rules`; `cf plan-locate` writes it into every run it plans, and the gate holds a run to the version it names: `1` R1–R7, `2` (`RULES_PD5_PD9`) PD5–PD9 too (PD6's whole part and PD7's junk value refused), `3` the statement cut's (the inventory's conjunct ids for clause ids, a coverage claim only as a bundle, the smoke-3 audit's failure-mode rules; the statement-cut paragraph below), `4` the smoke-4 audit's calls (PD11 and the rules of 2026-10-28 in the prompts; a part's `hasPart` conjunct relation, PD6's shape tripwire, a confirm's readings and limits and a downgrade's bridge at the gate; and status rule 3 in the locate run's `run.yaml`). A `gate.json` without it (a run planned before the rules) is gated without rule 9 |
+| `SPAN_END_RULE` | `3` (`SPAN_END_CONTINUED`, from the flip of inv-pilot-1's fixes; `2`, `SPAN_END_STATEMENT_CUT`, from the statement cut's flip; `1` before it): the version of the span-end rule (gate rule 2's end check: an inventory passage ends where `passage_ids.py` ends it, `locate_text.passage_end`; `1` its `until`, else its paragraph, `2` its `until`, else the earlier of its extent and the next passage's start, `3` the same with the continued extent, read only beside `statement_cut_rule` 2 or 3) a run's `gate.json` names as `span_end_rule`; `cf plan-locate` writes it into every run it plans, and a `gate.json` without it (a run planned before the rule, whose `passage_ids.py` dropped `until`) is gated with the end held inside the layer and after the quote only. A locate or challenge document carries no span of its own, so there the key binds nothing (references/locate-documents.md §2 and §9) |
+| `PROSE_FLOOR_RULE` | `1` (`PROSE_FLOOR_FIRST`, from the prose floor's flip): the version of gate rule 8's prose floor an inventory's `gate.json` names as `prose_floor_rule`. Under it every `paragraphs.json` entry that is no math paragraph, lies outside the back matter (`AUDIT_BACK_MATTER`, a top heading) and holds at least `PROSE_FLOOR_MIN_WORDS` (`8`) words of the layer is covered by a passage or a skip, as a math paragraph is (History sections included); the receipt's `skipped` block counts those a skip covers and no passage keeps (`prose_paragraphs`). `cf plan-locate` writes it into every inventory it plans (a locate or challenge run's `gate.json` names none), and a `gate.json` without it is gated without the prose floor (references/locate-documents.md §2 and §9) |
+| `CLAIM_ID` | `c1`, `c2`, … (`c[1-9][0-9]?`): the id of a passage's claim, one formal clause of its claim list (`claims` of a locate or challenge document, references/locate-documents.md §3–§4), which a location's `clauses` name |
+| `CLAUSE_GAP_PHRASES` | `does not state` · `do not state` · `not stated` · `not part of` · `not a part of` · `rather than asserting` · `rather than stating` · `rather than proving` · `only the existence` · `only existence` · `only proves` · `only states` · `proves only` · `states only` · `only one direction` · `one direction only` · `not the converse` · `converse is not` · `without the converse` · `without uniqueness` · `uniqueness is not` · `does not cover` · `do not cover` · `not covered` · `not asserted` · `not included` · `omits` · `omitted` · `leaves out` · `left out` · `does not prove` · `does not assert` · `does not establish` — the closed list by which a strong record's note or instantiation admits a clause its declaration does not state (`admits_missing_clause`: whole words, case-folded, the apostrophe folded and a contraction spelled out, so "doesn't state" is "does not state"; a hit is set aside when negated — "not only the existence" —, when the passage is its subject — "the passage does not cover n = 0", "not part of the passage" — or in a relative clause on what an "unlike …" clause names); the gate refuses such a record under the judgment rules, and the challenge plan refutes it by default. A tripwire, not a parser: a note it misreads is reworded to say what the declaration does |
+| `GENERAL_QUERY_TAG` | `general`: the tag, in a receipt's `query_clauses`, of a query for the general theorem a worked example is an instance of; an `example` passage's absence carries one of its own under the judgment rules (each claim, and `general`, matched to a distinct query) |
+| `CLOSE_MATCH_CONVENTIONS` | `notation` · `encoding` · `normalisation` · `renaming` · `unfolding` · `bundling` (`CONVENTION_*`) — the conventions a `closeMatch` differs from its passage by (R1), named as its `convention` under the judgment rules. `LEGACY_CLOSE_MATCH_CONVENTIONS` is the list under judgment rules 1, with `junk_value` (`CONVENTION_JUNK_VALUE`), which PD7 took off it: a run planned under rules 1 is gated by it, and its records keep the value. `encoding` covers one notion under two definitions that a library lemma links (PD10) |
+| `CLOSE_MATCH_GENERALITY_PHRASES` | `stronger` · `strengthen*` · `weaker` · `weaken*` · `more general*` · `generali*` · `special case` · `particular case` · `broader` · `narrower` · `strict derivative*` · `strict differentiab*` · `strictly differentiab*` — words an `exactMatch` or `closeMatch` note may not say (`says_generality`: whole words, case-folded, a trailing `*` any ending of the word, so "more generally" and "generalisation" are hits); each describes a `broadMatch`, a `narrowMatch` or a weakening. "strict" and "strictly" alone are not on it: a strict inequality or a strictly increasing list is no strengthening. The prompts render the list from this tuple |
+| `JUDGMENT_LOCATION_FIELDS` | `clauses` · `instantiation` · `step` · `convention` · `conjunct_relation` · `tests` · `pd6` — the fields the judgment rules add to a location, which the outcomes keep and a challenge manifest shows; none is exported. A `convention` belongs to a `closeMatch` and a `step` to a `STEP_RELATIONS` location only; `conjunct_relation` and `tests` are judgment rules 3's and `pd6` judgment rules 4's (a bundle part's answer to PD6's shape tripwire, `PD6_SHAPES`), which the outcomes keep only on a run of status rule 2 or 3: a `conjunct_relation` a `hasPart`'s of a compound statement and `tests` a strong location's (and a `hasPart`'s whose `conjunct_relation` is strong), and a verdict that gives them replaces the location's (a `conjunct_relation` never with a stronger one), the outcomes dropping each from a location whose relation no longer takes it |
+| `STEP_RELATIONS` | `hasPart` · `narrowMatch` — the relations whose location says, in its `step`, what the declaration alone entails of the passage (on a proof the displayed step, on any other passage the clause) |
+| `CANDIDATE_PART_PHRASES` | `only part` · `part of the passage` · `one clause` · `one of the clauses` · `not the whole` · `not the full` · `special case` · `not the worked example` · `not the example` · `partially` · `more general*` · `generali*` — what an absence's rejected candidate may not be rejected as (`rejects_a_part`, matched as `CLOSE_MATCH_GENERALITY_PHRASES` are): a declaration that states a clause, a case or a generalisation of the passage is a location, and the absence is refused under the judgment rules |
+| `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
+
+Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
+`MAX_PASSAGE_CLAIMS` (12 claims in a passage's claim list), `MAX_CLAIM_CHARS` (300 characters,
+one line, of a claim's text) and `MAX_JUDGMENT_LINE_CHARS` (300 characters, one line, of a
+location's `instantiation` or `step`, with at least `MIN_JUDGMENT_LINE_WORDS`, 3, words that
+carry a letter),
+`MIN_COVERAGE_PARTS` (2 distinct `hasPart` parts in a coverage claim), `COVERAGE_RECORD_KEYS`
+(`complete` · `parts` · `challenge`, the keys of a record's claim and of `derive_status`'s),
+`MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
+task), the challenge plan's default sampling rates `CHALLENGE_SAMPLE_RATE` (0.2: scope and
+`supporting` demotions, weak relations), `CHALLENGE_STRONG_SAMPLE_RATE` (0.5: a `supporting`
+passage's strong locations beside its basis) and `CHALLENGE_ABSENCE_SAMPLE_RATE` (0.5 from the
+statement cut's flip, the smoke-3 audit's fix 5c, 0.25 before: a `supporting` passage's
+absence; `cf plan-locate --sample-rate`, `--strong-sample-rate`, `--absence-sample-rate`, each
+recorded in `run.yaml`, so a plan made before the flip recorded the 0.25 it drew at), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
+`EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), the record set's
+token grammars (`references/locate-documents.md` §6, the consumer's own): `RECORDSET_TOKEN`
+(letters, digits and `._:-`, at most 128, a letter or digit first: a seal's `set_id`, its
+`sourceset.id` and a campaign id, which never starts `RUN_TOKEN_PREFIX`, `run:`) and
+`RUN_TOKEN_ID` (letters, digits and `._-`, at most 64: a run id a run token
+`run:<locate run>[+<challenge run>]` can spell, which `cf plan-locate` checks), and the run
+machinery's: `MAX_TASKS_PER_ROOT` (500 tasks in one tend root; a larger plan is campaign
+shards), `LOCATE_ATTEMPT_CAP` (3: the genuine reviewer rejection that reaches it writes the
+`UNRESOLVED` document), `SESSION_SLOTS` (15 `flock` slots, one below the account's 16 sessions)
+and `AGENT_TIMEOUT` (`45m` per agent call, the bridge's default), with the bounds of a timeout a
+plan sets, `AGENT_TIMEOUT_MIN` (`5m`: below it a call cannot finish a task) and
+`AGENT_TIMEOUT_MAX` (`3h`: past it a hung session runs on, and the spend watchdog prices a call
+that left no envelope only when it ends) — `cf plan-locate --agent-timeout` stages its value as
+`CF_AGENT_TIMEOUT` in the run's two wrappers and records it in `run.yaml` (`locate.agent_timeout`,
+`locate.config_shas.agents.agent_timeout`); a plan without it stages and records none, and its
+calls run under the launching environment's `CF_AGENT_TIMEOUT`, else `AGENT_TIMEOUT` —, and
+`GATE_CALLERS`, what a locate gate log line's
+`caller` says the call was (`references/locate-documents.md` §9): `validation` (tend's
+`--changed-files` call, the only one the log's readers count as an attempt) · `pre_merge`
+(`--changed-files --pre-merge`) · `findings_check` (an agent's or the bridge's own
+`--findings` check) · `directory` (a directory of documents: a harvest, a hand check). The
+host-side scripts that cannot import `cflib` keep copies of these, which tests pin.
+
+**The inventory audit's values** (`references/locate-documents.md` §13, the files an audited
+inventory run's reviewer turn reads and writes; every one in `cflib.vocab`'s audit block, which
+`scripts/gate/inventory_audit.py` copies for the run host and a test pins). An inventory plan
+names one with `cf plan-locate --audit-rounds`, R one of `AUDIT_REVIEW_ROUNDS`, recorded as
+`run.yaml` `locate.audit: {rule: INVENTORY_AUDIT_RULE, review_rounds: R}`.
+
+| enum | values |
+|---|---|
+| `INVENTORY_AUDIT_RULES` | `1` · `2` · `3` — the audit rules the host tools (`--rule`, default 1), the turn machine (`CF_AUDIT_RULE`) and the harvest know: rule 1 audits the passages (inv-pilot-3's run), rule 2 the skips too (`references/locate-documents.md` §13.11; inv-pilot-3b's and smoke 4's), rule 3 the gaps too, with the smoke-4 readings (§13.12); `INVENTORY_AUDIT_RULE` is the one a new audited plan writes, the decision table's version `audit/<rule>` in a verdicts file |
+| `INVENTORY_AUDIT_SCHEMAS` | `cf-inventory-audit/1` (rule 1) · `cf-inventory-audit/2` (rule 2) · `cf-inventory-audit/3` (rule 3) — the `schema` of every audit file of a run of that rule; `INVENTORY_AUDIT_SCHEMA` is rule 1's |
+| `AUDIT_VERDICTS` | `clean` · `over_cut` (on the passage that merges into its `merge_with`) · `under_cut` · `should_be_expository` · `should_be_non_math` · `should_be_formal` (an expository flag, once flagged) · `redundant` · `wrong_kind` · `wrong_prominence` · `statement_misstates` — what an auditor, a checker's new entry or a skeptic says of a passage; a merged verdict for a change the checker judged harmful is `revert` (`AUDIT_VERDICT_REVERT`) |
+| `AUDIT_ORIGINS` | `lead` · `theorem_box` · `statement_section` · `proof` · `example` · `list_item` · `application_or_extension` · `history` · `other` — where an audited passage sits |
+| `AUDIT_CHECK_STATUSES` | `applied` · `partial` · `missing` · `wrong` · `gate_refused_ok` · `gate_refused_doubtful` · `disputed` — what a checker says of a verdict the round before asked for; `AUDIT_CHECK_ACTIONABLE` (`partial`, `missing`, `wrong`, `gate_refused_doubtful`) go back to the worker |
+| `AUDIT_REPAIR_STATUSES` | `applied` · `not_applied` · `gate_refused` (with the gate's line) · `disputed` — what the worker says it did with a verdict |
+| `AUDIT_VERDICT_ORIGINS` | `auditor` · `skeptic_missed` · `kind_rule` (the mechanical `wrong_kind` on a formal `other` passage in a proof or example section) · `carried` · `check_new` · `dispute_refuted` · `collateral` · `regression` — where a merged verdict came from |
+| `AUDIT_DECISIONS` | `approve` · `request_changes` · `revert` (to the best reviewed snapshot) — the decision table's outcomes |
+| `AUDIT_EDIT_OPS` | `merge` · `split` · `set` · `add` · `drop` — the edit tool's operations, each citing a verdict |
+| `AUDIT_EDIT_FIELDS` | `scope` · `passage_kind` · `prominence` · `statement` · `shape` · `conjuncts` · `until` · `concept` · `quote` · `quote_end` (the words the quote is cut to end with) — what an operation sets |
+| `AUDIT_COLLATERAL_CHANGES` | `hand_edit` · `moved` · `uncited_op` · `ops_refused` — what a collateral entry says changed |
+| `AUDIT_SKIP_VERDICTS` | `clean` · `skipped_statements` (`AUDIT_SKIP_VERDICT`: the skip hides a definition, a theorem, an equation or a declarative statement no passage keeps, or part of a kept passage's sentence) — rule 2: what an auditor, a skeptic or the skip rule says of a skip, the only verdicts a skip row takes; no passage takes `skipped_statements` |
+| `AUDIT_SKIP_ORIGINS` | `skip_rule` — rule 2's origin beside `AUDIT_VERDICT_ORIGINS`: the mechanical `skipped_statements` on a skip over a math paragraph no passage holds, outside the furniture, in a section that names a proof or an example or is mostly skipped, unless the auditor said `skip_ok` with a reason |
+| `AUDIT_SKIP_OPS` | `unskip` — rule 2's operation beside `AUDIT_EDIT_OPS`: a skip shrunk, split or dropped (`keep`), never widened |
+| `AUDIT_SKIP_COLLATERAL` | `skip_edit` — rule 2's change beside `AUDIT_COLLATERAL_CHANGES`: the document's skips differ from what the cited operations make of the snapshot's |
+| `AUDIT_SKIP_HINTS` | `skip-rule` · `in-proof` · `in-example` · `mostly-skipped` · `partial` · `furniture` — the hints of a SKIP block of a rule-2 rendering |
+| `AUDIT_GAP_VERDICTS` | `clean` · `gap_statements` (`AUDIT_GAP_VERDICT`: the gap holds a definition, a theorem, an equation, a notation or a declarative statement no passage keeps, or the end of a kept passage's sentence) — rule 3: what an auditor or a skeptic says of a gap (a run of a block's own text of the body, outside the back matter, of at least `AUDIT_GAP_MIN_WORDS` words, that no passage and no skip holds, named `r<k>-g<nnn>`), the only verdicts a gap row takes; no passage and no skip takes `gap_statements`. The skeptic's file gains `examined_gaps` (in round 1 every gap of its part no flag names) and `missed_gaps`; every rule-3 verdicts file carries the round's `gap_report` (`{gaps, words, whole, by_section}`) |
+| the rendering's hints, rule 3 | `commentary` — advisory, never a verdict: a formal passage with an efficiency word (`AUDIT_COMMENTARY_EFFICIENCY`) and no digit and no complexity term (`AUDIT_COMMENTARY_COMPLEXITY`), one that starts as an instruction (`AUDIT_COMMENTARY_STARTS`: `compute` · `proceed` · `repeat` · `for each of them` · `to illustrate`) or one with a meta phrase (`AUDIT_COMMENTARY_PHRASES`: `follows from this proof` · `one additional fact` · `may be used for` · `need not be`), each matched case-folded as whole words; and `kind-rule` on every formal passage of kind `other`, the kind rule's reach under rule 3 |
+
+Bounds, also in `cflib.vocab`: `AUDIT_REVIEW_ROUNDS` (2 or 3, the rounds an audited plan may
+name), `AUDIT_THRESHOLD_MIN` and `AUDIT_THRESHOLD_SHARE` (T = max(5, ⌈0.03 · formal⌉): a middle
+round with fewer actionable verdicts approves), `AUDIT_SKEPTIC_FLOOR` and `AUDIT_SKEPTIC_SHARE`
+(the round-1 skeptic examines at least max(10, a tenth) of the unflagged formal passages, never
+more than there are), the word caps `AUDIT_REASON_WORDS` (30), `AUDIT_ACTION_WORDS` (40),
+`AUDIT_EVIDENCE_WORDS` (25) and `AUDIT_SUMMARY_WORDS` (80), `AUDIT_MAX_PATTERNS` (5),
+`AUDIT_PART_BYTES` (50,000 bytes of rendering a call reads), `AUDIT_REPAIR_VERDICTS_PER_SESSION`
+(40; under rule 2 a weight, a skip verdict weighing max(1, its statements, the math paragraphs
+under it no passage holds)), `AUDIT_KIND_RULE_RULE` (6, the rule the kind verdict names) and
+`AUDIT_CONNECTIVE_HINTS` (`and` · `so` · `hence` · `thus` · `therefore` · `then` · `but`, the
+rendering's `connective-start` hint).
+
+Rule 2's bounds (`references/locate-documents.md` §13.11): `AUDIT_BACK_MATTER` (`references` ·
+`notes` · `footnotes` · `citations` · `sources` · `bibliography` · `further reading` · `external
+links` · `see also` · `works cited` · `notes and references`: a top heading of the back matter,
+case-folded; with the lead, the page furniture), `AUDIT_MOSTLY_SKIPPED_MIN` (2) and
+`AUDIT_MOSTLY_SKIPPED_SHARE` (0.5: a section, not furniture, is mostly skipped when at least 2 of
+its math paragraphs lie under a skip and no passage and at least half of them do; the soft
+threshold, reported and never refusing), `AUDIT_SKIP_STATEMENTS_MAX` (40 statements a skip
+verdict lists), `AUDIT_SKIP_AT_WORDS` (3 to 12 words: where a statement starts, verbatim inside
+the skip) and `AUDIT_SKIP_UNTIL_WORDS` (12: its last words), `AUDIT_SKIP_RULE_RULE` (6, the rule
+the skip rule's verdict names) with `AUDIT_SKIP_RULE_ACTION` (its fixed action), and
+`AUDIT_SKIP_BLOCK_BYTES` (20,000 bytes of a SKIP block shown in full; past them each block is
+one clipped line, and `--show <skip id>` prints it whole).
+
+Rule 3's bounds (`references/locate-documents.md` §13.12): `AUDIT_GAP_MIN_WORDS` (8, the prose
+floor's `PROSE_FLOOR_MIN_WORDS`: the fewest words of a gap), `AUDIT_GAP_BLOCK_MAX` (1,200
+characters of a gap's block drawn in full) and `AUDIT_GAP_BLOCK_SIDE` (500: its first and last
+past that), and `AUDIT_KIND_RULE_ACTION_3` (the kind rule's fixed action under rule 3, which
+reads every formal `other` passage: rule 2's, and "scope it expository instead when it asserts
+nothing about mathematical objects", PD5). A gap verdict is judged and repaired with the
+statement rows of a skip verdict (`AUDIT_SKIP_STATEMENTS_MAX`, `AUDIT_SKIP_AT_WORDS`,
+`AUDIT_SKIP_UNTIL_WORDS`); the repair adds no operation, and a revision session weighs it max(1,
+its statements).
+
+**The turn machine's values** (`references/locate-documents.md` §13.9, the turns an audited
+run's bridge hands to `scripts/run/audit_turn.py`, which copies them; `agent_call.py` and
+`watchdog.py` copy `AUDIT_STEPS`; a test pins every copy): `AUDIT_TURN_SCHEMA`
+(`cf-audit-turn/1`, the `schema` of `<tend-root>/audit/<task-id>/state.json`), `AUDIT_STEPS`
+(`audit` · `skeptic` · `check` · `revision`: `agent_call.py --step`, which an audited call's
+envelope names after its role), `AUDIT_OUTPUT_RETRIES` (1: the re-calls of a step whose output
+stays invalid before the round is `audit_failed`), `AUDIT_GATE_RESETS` (3: the refused revisions
+of a round before the bridge resets the worktree to the round's reviewed commit),
+`AUDIT_DISCUSSION_TAIL` (6,000: the bytes of `.tend/discussion.md` a revision prompt carries,
+the bridge's own tail) and `AUDIT_REVERT_ATTEMPTS` (3: the revert requests whose restore the
+reviewer may find unmatched before the turn stops).
+
+**An unaudited locate turn's record** (`references/locate-documents.md` §9, the records the
+bridge keeps through `scripts/run/review_record.py`, which copies it; a test pins the copy):
+`TURN_CONTRACT_SCHEMA` (`cf-turn-contract/1`, the `schema` of
+`<tend-root>/contracts/<task>.<role>.<stamp>.json`, one agent call's normalised contract with
+the HEAD it left and the git blob of each of the task's documents there).
+
+**The harvest's values** (`references/locate-documents.md` §13.10, the `audit` block
+`scripts/harvest/audit_summary.py` adds to an audited run's `RECEIPT.json`):
+
+| enum | values |
+|---|---|
+| `AUDIT_OUTCOMES` | `approved` · `reverted` (to the best reviewed snapshot) · `audit_failed` · `not_audited` (an unresolved document, or one with no passage, approved after the precheck) — the audit approved exactly the bytes harvested; `capped` (the audited attempt cap's best snapshot) · `stale` (the audit saw the task, and approved other bytes or none) · `unaudited` (the audit directory holds nothing of the task) — what became of each harvested document of an audited run |
+| `AUDIT_COST_STEPS` | `worker_initial` (a worker envelope named with no step) · `worker_revision` (`revision`) · `audit` · `skeptic` · `check` — the block's `cost_usd`, the envelopes' dollars by what each call was |
+
+**The benchmark's values** (the proposal's §8 and §9):
+
+| enum | values |
+|---|---|
+| `BENCH_TIERS` | `G1` · `G3` · `GX` · `G4` · `P` — never pooled; `BENCH_TIER_ORDER` is the same tiers in the order a score and a comparison report them, `BENCH_LABELLED_TIERS` the four whose gold is labelled (`G1` · `G3` · `GX` · `G4`; P's gold is the planted ablation) and `BENCH_CLAIM_TIERS` the ones a pre-registered claim may come from (`G1` blind-arm only · `G3` · `P`) |
+| `TOOLS_DB_KINDS` | `full` (`corpus.sqlite`) · `blind` (the G1-blind `corpus.blind.sqlite`) · `planted` (a module-ablated database, the P tier) — the database a locate run's workers search: a candidates file's `corpus_db.kind`, `gate.json`'s and `run.yaml`'s `tools_corpus_db.kind`, a score's pin (`references/locate-documents.md` §9) |
+| `BENCH_ARMS` | `assisted` (production) · `blind` (L2's curated joins, gate rule 4 and the tag table off for the scored items); never pooled |
+| `BENCH_SPLITS` | `dev` · `eval` · `test` |
+| `BENCH_AA_VERDICTS` | `differs` (the whole paired interval of replicate − baseline lies past the tolerance: the runs disagree) · `within` (the whole interval lies inside it: agreement shown) · `unresolved` (it reaches past the tolerance without lying wholly beyond it: no difference shown, and no agreement either) — what the A/A's agreement says of one metric, or of the cost per article (`references/locate-bench.md` §9, rule 5); only `differs` fails it |
+| `FNF_CAUSES` | `inventory_miss` · `scope_demotion` · `absence` · `weak_relation` · `unresolved` · `gate_failed` — why a gold-formalized passage did not end `formalized`; unresolved and gate-failed tasks are misses, never exclusions |
+| `ERROR_CODES` | `E-INVENTORY-MISS` · `E-RETRIEVAL-MISS` · `E-REJECTED-CORRECT` · `E-WRONG-RELATION` · `E-FALSE-ABSENCE` · `E-WRONG-SCOPE` · `E-UNRESOLVED` · `E-MEMORY` — the mechanical code of every miss in the improvement loop |
+| `BENCH_LABEL_MODES` | `anchor` (a G1 entry to a passage, its relation adjudicated once) · `label` (a G3 span, blind) · `calibrate` (the hunters' recall *h*, tag-blind, on anchored G1 passages) · `inventory` (an article exhaustively, GX) — what one call of the frozen labeler does (`references/locate-bench.md`) |
+
+Licence classes are §1.6's `LICENCE_CLASSES`.
 
 ---
 
@@ -396,6 +1479,50 @@ headings and stored in `workspace.yaml` `sources.<id>.kinds` (typically `Definit
 as `Claim`, `Strategy`). Kind inference folds case, so an AMS-style `THEOREM 1.2` head counts as
 `Theorem`. Structural words (`Chapter`, `Section`, `Figure`, `Table`, …) are counted and reported
 but are never item kinds. Non-numbered items use `In-text p.<printed page>`.
+
+A source with no numbering **and** no printed page — a web page — keys its passages as
+`In-text #<hex>`, 8 to 16 lowercase hex digits of the hash of the passage's head
+(`scripts/cflib/passages.py`: the vendored `passage_quote_id` over its first twelve words, extended
+up to forty until no other passage of the source starts the same way). It is one production of
+the in-text grammar:
+
+- tried **last**: a printed page wins, then a named numbered item, and only a body both refuse
+  can be a passage — so `In-text #3, book p. 71` is still the p.71 item and `In-text #1,
+  Definition 1.4.35` still the anchored Definition 1.4.35, as they were before the production
+  existed (a well-formed hash holds no `p` and no space, so it never reaches the first two);
+- parsed whitespace-tolerantly like the others — `In-text#3fa91c07`, `in text  # 3fa91c07` and
+  `In-text #3fa91c07` are one item, and `join_key` gives all three as `In-text #3fa91c07`;
+- a hash that is uppercase, too short, too long, not hex, or followed by anything is a reject
+  with reason `bad_passage_id` and the problem named in its context, never a guess;
+- `clean()` and `finding_id` did not change to admit it, so as for every label the spellings join
+  as one item and hash as two: a stage that writes a passage label writes
+  `items.passage_item(hex)`'s spelling;
+- one conversion pair, `items.passage_item(hex)` → `In-text #<hex>` and `items.passage_hex(item)`
+  → the hex, and one to and from the vendored format's quote-hash id:
+  `items.to_vendored_passage_id(item)` → `passage-<8 hex>` (refused for a longer hash, which the
+  format's `PASSAGE_QUOTE_ID_PATTERN` does not admit) and `items.from_vendored_passage_id(id)`
+  (refused for a `passage-p<page>-<hex>` id, which hashes a title, not a head).
+
+**The head rule is frozen**, like `clean()`: the id is content-addressed, a consumer and the
+out-of-tree gate must reproduce it, and changing any step re-keys every passage. Over a source's
+*head text* (`scripts/cflib/passages.py`):
+
+1. the head text is the Literature Links text layer with each formula replaced by
+   `passages.formula_token(alttext)` = `⟦` + `normalize_alttext(alttext)` + `⟧` (U+27E6, U+27E7).
+   `normalize_alttext` is the vendored `ids.normalize_text` (NFKC, each run of Unicode
+   `White_Space` to one space, ends stripped), every `\displaystyle` control word dropped, and the
+   outer braces stripped while the whole string is one balanced group, to a fixed point. The
+   brackets are hashed: `⟦G⟧` and the word `G` are different heads;
+2. a passage starts at the first character of a word — offset 0, or just after whitespace;
+   a start inside a word, on whitespace or outside the text is refused (`PassageIdError`);
+3. the words from a start are the vendored `normalize_text` of the text from there, split on
+   single spaces (a formula with spaces inside it is several words; no bracket is parsed);
+4. the head is the first `n` words joined by one space, for the smallest `n` in 12..40 at which
+   no other passage of the source shares those `n` words (`n` is each passage's own, and it is
+   stored as `head_words`; fewer than 12 only when the text runs out);
+5. the hex is the vendored `passage_quote_id(head)` without its `passage-` prefix: 8 digits;
+6. two passages that share forty words, an offset given twice, or two different heads with one
+   hash are refused, naming both offsets — never dropped and never re-keyed.
 
 - **How many numbers is the source's numbering, not a constant.** `Theorem 7`, `Theorem 3.4`,
   `Definition 1.2.3` and `Lemma 2.3.4.1` are four real book conventions; `cflib.inference.

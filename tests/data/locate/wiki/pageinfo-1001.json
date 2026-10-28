@@ -1,0 +1,31 @@
+{
+ "json": {
+  "query": {
+   "pages": [
+    {
+     "ns": 0,
+     "pageid": 1001,
+     "pageprops": {
+      "wikibase_item": "Q99999001"
+     },
+     "revisions": [
+      {
+       "parentid": 1999,
+       "revid": 2002
+      }
+     ],
+     "title": "Widget lemma"
+    }
+   ]
+  }
+ },
+ "query": {
+  "action": "query",
+  "format": "json",
+  "formatversion": "2",
+  "pageids": "1001",
+  "ppprop": "disambiguation|wikibase_item",
+  "prop": "info|revisions|pageprops",
+  "rvprop": "ids"
+ }
+}

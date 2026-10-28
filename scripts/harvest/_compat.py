@@ -35,6 +35,7 @@ __all__ = [
     "Workspace", "CfError", "from_args", "hashing", "cf_items", "cf_state", "log", "vocab",
     "read_json", "read_jsonl", "write_json", "write_jsonl", "read_yaml", "write_yaml",
     "SEVERITIES", "SUBSTANTIVE_KINDS", "iso_now", "iter_finding_files", "source_kinds",
+    "is_finding_name", "finding_name",
 ]
 
 iso_now = cf_state.now
@@ -45,23 +46,10 @@ SUBSTANTIVE_KINDS = frozenset(getattr(
     frozenset(vocab.FINDING_KINDS) - {vocab.COVERAGE, vocab.PAGE_ANCHOR},
 ))
 
-#: files that live beside findings in a corpus directory and are not findings.
-#: ``scripts/gate/verify_findings.py`` carries an identical literal (it runs on
-#: a server with nothing on the path) -- keep the two in sync, or a re-gate of a
-#: harvested corpus fails on the receipt this module wrote.
-NON_FINDING_FILES = {"RECEIPT.json", "run.yaml", "run.json", "manifest.json",
-                     "tally.json", "journal-harvest.json", "gate.json",
-                     "gate.local.json", "queue_remaining.json"}
-
-
-def iter_finding_files(directory: str | Path) -> list[Path]:
-    """Sorted *.json findings in *directory*, excluding receipts and manifests."""
-    d = Path(directory)
-    if not d.is_dir():
-        return []
-    return [p for p in sorted(d.iterdir())
-            if p.suffix == ".json" and p.name not in NON_FINDING_FILES
-            and not p.name.startswith(".")]
+#: what counts as a findings file of a corpus, and its listing: harvest/files.py
+#: (stdlib only, so the receipt, the tally and the gate's copy agree on one list)
+from harvest.files import (NON_FINDING_FILES, finding_name, is_finding_name,  # noqa: E402
+                           iter_finding_files)
 
 
 def source_kinds(workspace, source_id: str | None = None) -> Sequence[str]:

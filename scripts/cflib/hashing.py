@@ -123,6 +123,147 @@ def defect_key(source_id: str, item: str, kind: str,
     return finding_id("", source_id, item, kind, unfaithful_decls)
 
 
+def location_key(source_id: str, item: str, library: str, commit: str,
+                 declaration: str) -> str:
+    """The RUN-FREE identity of one location -- the ONE definition.
+
+    ``sha256("\\n".join([source_id, clean(item), library, commit, declaration]))``
+    (docs/proposals/wikipedia-locate.md section 2.7; references/locate-documents.md).
+    It is what a consumer upserts a record on, so it holds no run id: the same
+    passage located at the same declaration of the same commit by two runs is one
+    key, while ``finding_id`` -- which stays in the ledger -- is one per run.
+    The item goes through :func:`cflib.items.clean` first, the shape
+    :func:`finding_id` has, so whitespace variants of one ``In-text #<hex>`` key
+    one location.  Every part is required: a key with an empty library, commit
+    or declaration would collide across everything that lost the same field.
+    """
+    from .errors import CfError
+    from .items import clean  # local import: items imports nothing from here
+
+    parts = [str(source_id or "").strip(), clean(str(item or "")),
+             str(library or "").strip(), str(commit or "").strip(),
+             str(declaration or "").strip()]
+    names = ("source_id", "item", "library", "commit", "declaration")
+    missing = [name for name, part in zip(names, parts) if not part]
+    if missing:
+        raise CfError(f"a location_key needs every part; {', '.join(missing)} is empty",
+                      hint="source_id, item, library, commit and declaration are all "
+                           "required; the commit is the universe's, never a worker's")
+    return sha256_text("\n".join(parts))
+
+
+# --------------------------------------------------------------------------
+# the revision-free keys of the statement cut (docs/proposals/statement-cut.md
+# section 4): a passage by its page and its text, a pair by its passage, its
+# repository and its declaration, a bundle by its passage and its parts' pairs, and
+# a cut by its page, its layer and its spans.  None holds a revision, a commit, a run
+# or an item: a key changes only when what it names changes.  Frozen once a kept run
+# exports them, like finding_id; scripts/locate/records.py, which imports no cflib,
+# restates them in lockstep when the record set of status rule 2 is built (the
+# proposal's section 6, the fixes package).
+# --------------------------------------------------------------------------
+
+def _key_part(value, name: str) -> str:
+    """One part of a key, exactly as given: a non-empty string with no edge whitespace."""
+    from .errors import CfError
+
+    if not isinstance(value, str) or not value or value != value.strip() or "\n" in value:
+        raise CfError(f"a key's {name} is a non-empty one-line string with no edge "
+                      f"whitespace, not {value!r}",
+                      hint="keys hash their parts exactly as given and never normalise them")
+    return value
+
+
+def _sha_part(value, name: str) -> str:
+    from .errors import CfError
+
+    if not (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value)):
+        raise CfError(f"a key's {name} is a 64-hex sha256, not {value!r}")
+    return value
+
+
+def _pageid(value) -> int:
+    from .errors import CfError
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise CfError(f"a pageid is a positive integer, not {value!r}")
+    return value
+
+
+def span_sha256(layer: str, span: Sequence[int]) -> str:
+    """The sha256 of a passage's text: the layer's code points ``[start, end)``, UTF-8.
+
+    The value every record's subject end already carries as ``span_sha256``
+    (references/locate-documents.md section 6), so a consumer holding the records
+    alone can compute :func:`passage_key`.
+    """
+    from .errors import CfError
+
+    if (not isinstance(span, (list, tuple)) or len(span) != 2
+            or not all(type(x) is int for x in span) or not 0 <= span[0] < span[1] <= len(layer)):
+        raise CfError(f"a span is [start, end] with 0 <= start < end <= {len(layer)}, "
+                      f"not {span!r}")
+    return sha256_text(layer[span[0]:span[1]])
+
+
+def passage_key(pageid: int, span_sha: str) -> str:
+    """``sha256("<pageid>\\n<span_sha256>")``: a passage by its page and its text.
+
+    The same text on the same page is the same key in any revision and under any
+    cut, so a verdict keyed by it survives every re-cut that leaves its passage
+    alone (docs/proposals/statement-cut.md section 4).
+    """
+    return sha256_text(f"{_pageid(pageid)}\n{_sha_part(span_sha, 'span_sha256')}")
+
+
+def pair_key(passage: str, repository: str, declaration: str) -> str:
+    """``sha256("<passage_key>\\n<repository>\\n<declaration>")``: one card's identity.
+
+    ``repository`` is the lean end's ``uri``, the universe's one spelling of the
+    library's repository; ``declaration`` its fully qualified name.  No commit:
+    the same declaration of the same repository is the same pair at the next pin.
+    """
+    return sha256_text("\n".join([_sha_part(passage, "passage_key"),
+                                  _key_part(repository, "repository"),
+                                  _key_part(declaration, "declaration")]))
+
+
+def bundle_key(passage: str, pair_keys: Iterable[str]) -> str:
+    """``sha256("<passage_key>\\n" + the parts' pair keys, sorted, one per line)``.
+
+    A bundle (a coverage claim on a compound statement) has at least two parts,
+    each a distinct pair of the same passage; the order they are listed in is no
+    part of the key.
+    """
+    from .errors import CfError
+
+    keys = [_sha_part(k, "pair_key") for k in pair_keys]
+    if len(keys) < 2 or len(set(keys)) != len(keys):
+        raise CfError(f"a bundle has at least two distinct parts, not {len(set(keys))}")
+    return sha256_text("\n".join([_sha_part(passage, "passage_key"), *sorted(keys)]))
+
+
+def cut_id(pageid: int, layer_sha256: str, spans: Iterable[Sequence[int]]) -> str:
+    """The identity of one cut of one page: its pageid, layer and spans, canonical JSON.
+
+    ``sha256_json({"layer_sha256", "pageid", "spans": [[start, end], ...] sorted})``.
+    Two inventories that divide the same layer the same way have one cut id,
+    whatever their runs, scopes or ids.
+    """
+    from .errors import CfError
+
+    out = []
+    for span in spans:
+        if (not isinstance(span, (list, tuple)) or len(span) != 2
+                or not all(type(x) is int for x in span) or not 0 <= span[0] < span[1]):
+            raise CfError(f"a span is [start, end] with 0 <= start < end, not {span!r}")
+        out.append([span[0], span[1]])
+    return sha256_json({"pageid": _pageid(pageid),
+                        "layer_sha256": _sha_part(layer_sha256, "layer_sha256"),
+                        "spans": sorted(out)})
+
+
 def manifest(paths: Iterable[str | Path], root: str | Path | None = None) -> dict[str, str]:
     """{relative path: sha256} for a set of files (harvest RECEIPT manifests)."""
     root_p = Path(root).resolve() if root else None

@@ -1,0 +1,69 @@
+You are the **auditor** of round $CF_AUDIT_ROUND (of at most $CF_AUDIT_ROUNDS) for task `tasks/$TEND_TASK_ID.yaml`, in worktree $TEND_WORKTREE_PATH. Judge the cut of `$CF_AUDIT_DOCUMENT` against the spec in your system prompt, one formal passage at a time.
+
+## The data
+`.tend/audit/r$CF_AUDIT_ROUND.render.part<i>.md` renders the document against its layer, in parts; "This call" below names your part and the passages it holds. Every passage appears in span order:
+
+- `[n] item · span · scope · kind · prominence · section`;
+- `TEXT`, the span exactly (a line break shown as `⏎`), then `STATEMENT`, and on a compound statement `SHAPE` with its conjuncts;
+- `HINT`: `kind-other` (a formal passage of kind `other`), `kind-rule` (one in a proof or example section, which the merge gives a `wrong_kind` verdict unless you say `other` is right), `in-proof`, `in-example`, `connective-start` (it starts at a connective), `widened` (it runs past its block only by the gate's widest bound);
+- before it, a `GAP` line: layer text no passage holds.
+{{#if audit_skips}}
+{{#if audit_gaps}}
+- the `GAP` text, drawn block by block: `GAP r1-g<nnn> · span · block · words · section: text` is a **gap**, a run of eight or more words of one paragraph of the body that no passage and no skip holds, shown whole; `GAP [a, b] block: text` a shorter run; a `GAP` line with no span text no paragraph of the body holds (a heading, the back matter). `HINT` gains `commentary` (advisory, never a verdict: a formal passage that reads as commentary on a method, an instruction or a meta remark; judge whether it asserts anything, C6 and PD5), and `kind-rule` marks every formal passage of kind `other`;
+{{/if}}
+- in place of the text they drop, `SKIP` blocks: the document's skips, `SKIP r1-s<nnn> · span · chars · its blocks, their math paragraphs and how many of those no passage holds · its sections`, then `REASON` (the worker's), one `¶` line per block with its span inside the skip, and `HINT`: `skip-rule` (it covers math no passage holds in a proof, an example or a mostly skipped section: the merge gives it a `{{skip_verdict}}` verdict unless you exempt it), `in-proof`, `in-example`, `mostly-skipped`, `partial` (it starts or ends inside a block), `furniture` (every block is in the lead or the back matter, or it holds no block and lies in the lead). The header's `ATTENTION` line names the mostly skipped sections: read their skips first. A skip inside a kept passage is listed on the closing `SKIPS inside kept passages` line.
+{{/if}}
+
+Read your whole part, in pieces with offset and limit when it is long.
+
+## What you write
+The file "This call" names, `.tend/audit/r$CF_AUDIT_ROUND.audit.part<i>.json`:
+
+```json
+{"schema": "{{audit_schema}}", "kind": "audit", "round": $CF_AUDIT_ROUND, "source_id": "$CF_AUDIT_SOURCE",
+ "passages": [
+   {"n": 12, "item": "In-text #0000c0de", "origin": "statement_section", "verdict": "over_cut",
+    "rule": 1, "merge_with": "In-text #3fa91c07",
+    "reason": "one statement with the definition after it",
+    "action": "merge into #3fa91c07; keep this start; end after 'spanning gadget.'"},
+   {"n": 13, "item": "In-text #3fa91c07", "origin": "statement_section", "verdict": "clean",
+    "rule": 0, "merge_with": "", "reason": "", "action": ""}],
+ "expository_flags": [],
+ "per_spec_formal_estimate": 41, "patterns": [],
+ "subject_check": "one subject passage, the first that states the theorem"{{#if audit_skips}},
+ "skips": [
+   {"skip": "r1-s002", "verdict": "{{skip_verdict}}", "rule": 6, "merge_with": "",
+    "reason": "a proof skipped whole; a step asserts a fact",
+    "action": "unskip r1-s002; add the statement; the narration becomes expository",
+    "statements": [{"at": "Then every gadget of W has", "until": "at most n edges.",
+                    "passage_kind": "theorem"}]},
+   {"skip": "r1-s001", "verdict": "clean", "rule": 0, "merge_with": "", "reason": "",
+    "action": "", "statements": []}]{{/if}}{{#if audit_gaps}},
+ "gaps": [
+   {"gap": "r1-g001", "verdict": "{{gap_verdict}}", "rule": 7, "merge_with": "",
+    "reason": "a notation sentence the next statement uses",
+    "action": "add it as a notation passage",
+    "statements": [{"at": "We write N for the", "until": "", "passage_kind": "notation"}]}]{{/if}}}
+```
+
+1. **`passages`: one row for EVERY `formal_math` passage of your part**, and for no other passage, with:
+   - `origin`, where it sits: one of {{audit_origins}};
+   - `verdict`: `clean` when the spec permits this passage as cut, scoped, kinded and stated; `over_cut` when it and a neighbour are one statement (C1), or its cut breaks a C4 NEVER, a C3 chain or a C5 compound list (on the passage that merges INTO the neighbour `merge_with` names, once per merge); `under_cut` when it holds two results; `should_be_expository` when it is narration, set-up, a lead-in, history or a description rather than a statement (C6, C7, C9); `should_be_non_math`; `redundant` when it only restates what a neighbouring passage states (C10, or a duplicate); `wrong_kind`; `wrong_prominence`; `statement_misstates` when its `statement` says something the text does not, or leaves out a hypothesis or object it needs to read on its own (C7);
+   - `rule`, the number of the rule the verdict rests on (0 for `clean`);
+   - `reason`, at most {{reason_words}} words, and `action`, at most {{action_words}} words a worker can apply without judging again ("merge into #3fa91c07; keep this start; end after '…'", "split at 'Moreover' into a theorem and a notation", "set passage_kind theorem", "scope expository"); both empty on a clean row.
+2. **The kind rule.** Judge every passage marked `HINT kind-other` under C6 explicitly. When `other` is right for it, write `"kind_other_ok": true` on its row (`clean`, unless another verdict applies) and say why in `reason`; otherwise it is `wrong_kind`, rule {{kind_rule_rule}}{{#if audit_gaps}}, when it asserts a fact or an equation, and `should_be_expository` (C6, PD5) when it asserts nothing about mathematical objects (narration, commentary on a method, an instruction, set-up){{/if}}. A `kind-rule` passage you leave with neither gets a `wrong_kind` verdict from the merge.
+3. **`widened`.** A passage marked `HINT widened` crosses its block only because the gate's widest bound lets it: judge whether its sentence really runs on into the block it crosses (C2), and flag it when not.
+4. **`expository_flags`**: every passage of your part scoped `expository` or `non_math` that the spec makes `formal_math`, as `{"item", "rule", "reason", "action"}`{{#if audit_gaps}}: name in its `action` the statements you mean, never a span whole, and leave expository a step that only instructs (C6){{/if}}.
+5. **`per_spec_formal_estimate`**: how many `formal_math` passages a cut that follows the spec exactly would have in your part; **`patterns`**: at most {{max_patterns}} systematic tendencies you saw, each with an example item; **`subject_check`**: whether the subject marker is on at most one passage, the first that states the theorem or definition (C9), as far as your part shows.
+{{#if audit_skips}}
+6. **`skips`: one row for EVERY skip your part shows** ("This call" names them), each judged once, as `{"skip", "verdict", "rule", "merge_with", "reason", "action", "statements"}`:
+   - `verdict` is `clean` (the skip hides no statement: furniture, or text with no statement, formulas or none) or `{{skip_verdict}}`, and no other; a passage row never takes `{{skip_verdict}}`;
+   - a `{{skip_verdict}}` row names its `rule` (6 for a proof or a worked example, 3 for a display skipped from its sentence, 1 or 2 elsewhere), its `reason`, an `action`, and what the skip hides: `statements`, at most {{skip_statements_max}}, each `{"at", "until", "passage_kind"}` with `at` {{skip_at_min}} to {{skip_at_max}} words verbatim from the layer inside the skip where the statement starts (never the GAP before it, where the sentence that introduces a skipped display sits: anchor at the display, or name that sentence's passage in `merge_with`; the validator checks it), `until` at most {{skip_until_words}} words (its last words, or `""`) and its kind; or `merge_with`, the kept passage whose sentence the skipped text finishes. Narration need not be listed: the repair covers it;
+   - a `clean` row gives rule 0, `""` for `merge_with`, `reason` and `action`, and no statements;
+   - a skip marked `HINT skip-rule` that you judge right (furniture, or text outside a proof, a derivation or a worked example that states nothing) gets `"skip_ok": true` on its clean row, with the reason in `reason`; one you leave without it gets a `{{skip_verdict}}` verdict from the merge, as a skip of a proof's or an example's narration must.
+{{/if}}
+{{#if audit_gaps}}
+7. **`gaps`: one row for EVERY gap your part shows** ("This call" names them), each judged once, as `{"gap", "verdict", "rule", "merge_with", "reason", "action", "statements"}`: `clean` when the gap holds no statement (narration, commentary on a method, an instruction, or set-up whose statement is out of its reach), else `{{gap_verdict}}` with its `rule` (7 for a notation sentence or context, 4 for a clause cut from its condition, 1, 2 or 6 elsewhere), `reason`, `action` and what it holds: `statements`, each `{"at", "until", "passage_kind"}` with `at` {{skip_at_min}} to {{skip_at_max}} words verbatim inside the gap, or `merge_with`, the kept passage whose sentence the gap's text finishes. A `clean` row gives rule 0, `""` for `merge_with`, `reason` and `action`, and no statements; no passage row and no skip row takes `{{gap_verdict}}`.
+{{/if}}
+
+Then run the validator line below until it passes, and stop: no result file, no commit.

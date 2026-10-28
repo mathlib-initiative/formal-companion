@@ -15,6 +15,8 @@ writes the document in canonical form beside a report of what did not fit.
         --source-revision <edition stamp> --out <doc.json>        # no PDF, no site
     cf export site-pages <rendered site> --out <pages.json> [--source-id ID] [--title T] \\
         [--path P] [--rendered-at TIME] [--exclude GLOB]...
+    cf export literature-links --run <locate run> [--challenge-run <run>]... --set-id <id> \\
+        [--byte-budget N] [--out DIR]                       # a workspace's sealed record set
 
 The document is validated before the command returns (schema, invariants,
 canonical bytes, and the format's ``external-urls`` lint, which the exporters
@@ -95,6 +97,20 @@ def register(subparsers) -> None:
     sp.add_argument("--exclude", action="append", default=[], metavar="GLOB",
                     help="leave out the pages whose path under the site matches GLOB (fnmatch, `*` crosses `/`; "
                          "repeatable), e.g. '*/_lazy/*' for generated fragments")
+    ll = sub.add_parser("literature-links",
+                        help="a locate run's outcomes as a sealed Literature Links record set "
+                             "(needs a workspace)")
+    ll.add_argument("--run", required=True, help="the harvested, gated locate run")
+    ll.add_argument("--challenge-run", action="append", default=[],
+                    help="a harvested challenge run whose verdicts apply (repeatable)")
+    ll.add_argument("--set-id", required=True, help="the record set's id: exports/<set-id>/")
+    ll.add_argument("--byte-budget", type=int, default=None,
+                    help="per-source bytes of records/<source-id>.jsonl and its receipts, for "
+                         "a consumer with a cap (default 0: no budget); a source over it is "
+                         "refused, never truncated, and the seal records the budget")
+    ll.add_argument("--out", type=Path, default=None, metavar="DIR",
+                    help="write the set here instead of exports/<set-id>/: a new or empty "
+                         "directory, or an earlier set (never the checkout or a companion)")
 
 
 def _common_arguments(p) -> None:
@@ -131,6 +147,8 @@ def run(args) -> int:
                                                              "cf export docstring-tags …")
     if args.export_command == "site-pages":
         return _site_pages(args)
+    if args.export_command == "literature-links":
+        return _literature_links(args)
     checkout = args.checkout.expanduser()
     if not checkout.is_dir():
         raise CfError(f"{checkout} is not a directory")
@@ -218,4 +236,46 @@ def _site_pages(args) -> int:
         raise CfError(exc.message, hint=exc.hint) from exc
     atomic_write(args.out, json.dumps(pin, indent=1, ensure_ascii=False) + "\n")
     log.info(f"wrote {args.out} ({len(pin['pages'])} pages, site_sha256 {pin['site_sha256'][:12]}...)")
+    return 0
+
+
+def _literature_links(args) -> int:
+    """``cf export literature-links``: the sealed record set (scripts/locate/export.py)."""
+    from cflib.workspace import from_args
+    from locate import export as locate_export, state as ss_state
+
+    ws = from_args(args)
+    budget = args.byte_budget if args.byte_budget is not None else locate_export.DEFAULT_BYTE_BUDGET
+    if budget < 0:
+        raise CfError("--byte-budget must not be negative (0 turns the budget off)")
+    report = locate_export.build_set(ws.paths, args.run, challenge_runs=args.challenge_run,
+                                     set_id=args.set_id, byte_budget=budget, out_dir=args.out,
+                                     workspace=ws)
+    from locate import outcomes as outcomes_mod
+    run = outcomes_mod.run_yaml(ws.paths, args.run)
+    sourceset = (run["locate"].get("sourceset") or {}).get("id")
+    if sourceset:
+        ss_state.record(ws.paths, sourceset, "exports", args.set_id, {
+            "run": args.run, "challenge_runs": list(args.challenge_run),
+            "exported": report["exported"], "refused": len(report["refused"]),
+            "seal_sha256": report["seal_sha256"], "path": report["path"]})
+    exported = report["exported"]
+    log.info(f"record set {args.set_id}: {exported.get('records', 0)} record(s) of "
+             f"{exported.get('passages', 0)} passage(s) in {exported.get('sources', 0)} "
+             f"source(s) -> {report['path']} (SEAL {report['seal_sha256'][:12]})")
+    flagged = report.get("brain_lib_not_token") or []
+    if flagged:
+        log.warn(f"{len(flagged)} library(ies) carry a brain_lib that is no library token "
+                 f"(a letter, then letters, digits and _): "
+                 + ", ".join(f"{row['library']} ({row['brain_lib']}"
+                             + (", the id" if row["from_id"] else "") + ")"
+                             for row in flagged[:5])
+                 + (", ..." if len(flagged) > 5 else "")
+                 + f"; exported, and named in {ws.paths.export_report_json(args.set_id)}")
+    if report["refused"]:
+        log.warn(f"{len(report['refused'])} passage(s) or source(s) refused; each is named in "
+                 f"{ws.paths.export_report_json(args.set_id)}")
+        for row in report["refused"][:10]:
+            log.warn(f"  {row['source_id']} {row.get('item') or ''}: {row['reason']}")
+        return 1
     return 0

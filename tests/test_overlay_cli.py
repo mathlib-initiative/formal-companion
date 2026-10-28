@@ -637,7 +637,10 @@ class TestExport(OverlayCase):
         for action in export._actions:                       # noqa: SLF001 - no public API
             if isinstance(action, argparse._SubParsersAction):   # noqa: SLF001
                 children |= set(action.choices)
-        self.assertEqual(children - {"site-pages"}, set(overlay_export.CONVENTIONS))
+        # site-pages writes a manifest, not a document; literature-links exports a
+        # workspace's locate run, not a companion convention
+        self.assertEqual(children - {"site-pages", "literature-links"},
+                         set(overlay_export.CONVENTIONS))
 
     def test_the_real_child_reports_its_own_failure(self):
         """No stub: `cf export` really runs, against a companion with no data."""

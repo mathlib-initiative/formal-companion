@@ -33,6 +33,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,8 @@ READONLY_CHMOD = ["--chmod=D0555,F0444"]
 BYPASS_ENV = "CF_ALLOW_SANDBOX_BYPASS"
 #: the only files of scripts/run/ that belong on the server
 BRIDGE_FILES = ("bridge-agentbox.sh", "bridge-claude-p.sh", "bridge-tend-agent.sh",
-                "normalize_result.py", "extract_final_json.py")
+                "normalize_result.py", "extract_final_json.py", "agent_call.py",
+                "attempt_cap.py", "watchdog.py", "audit_turn.py", "review_record.py")
 #: never ship build trees, git objects or editor droppings to the server.
 SOURCE_EXCLUDES = [".git", ".lake", "build", ".DS_Store", "__pycache__", "*.olean"]
 #: a tend worktree per ready task: 382 worktrees were 1.1 GB in 11 minutes.
@@ -71,13 +73,37 @@ def default_remote_root() -> str:
     return f"/home/{user}" if user else "/home/<user>"
 
 
+#: where tend's checkout lives on a host whose workspace entry names no
+#: ``tend_dir``: the operator's home, as references/runbook-server.md has it
+#: (``cd ~/tend && uv run tend --version``) -- never under the run root
+DEFAULT_TEND_DIR = "$HOME/tend"
+
+
+def _remote_dir(path: str) -> str:
+    """*path* for a ``cd`` in the host's shell: ``~/x`` and ``$HOME/x`` expand there, the rest is quoted."""
+    for prefix in ("~/", "$HOME/"):
+        if path.startswith(prefix):
+            rest = path[len(prefix):].strip("/")
+            return '"$HOME"/' + shlex.quote(rest) if rest else '"$HOME"'
+    if path in ("~", "$HOME"):
+        return '"$HOME"'
+    return shlex.quote(path)
+
+
 def resolve_host(workspace, host: str) -> dict:
     """Resolve *host* against ``workspace.yaml: hosts`` or raise.
 
     ``Workspace.check_host`` is the enforcement point (it refuses anything not in
     ``hosts.allowlist``); this adds the connection facts the commands need:
-    ``{name, ssh, remote_root, tend_cmd, agentbox_profile, disk_budget_bytes,
-    tend_version_required}``.
+    ``{name, ssh, remote_root, tend_dir, tend_cmd, agentbox_profile,
+    disk_budget_bytes, tend_version_required}``.
+
+    ``tend_cmd`` is ``hosts.<host>.tend_cmd`` (then ``hosts.tend_cmd``) verbatim
+    when the workspace gives one.  Otherwise it is built from ``tend_dir``
+    (``hosts.<host>.tend_dir``, ``hosts.tend_dir``, else ``$HOME/tend``), which
+    is its own key: the default used to be ``<remote_root>/tend``, so a run root
+    other than the home directory (``~/locate-smoke``) sent every tend command
+    into a directory that does not exist (field defect P4).
 
     ``tend_version_required`` is a comma-separated version spec (``">=0.4,<0.6"``)
     from ``hosts.<host>.tend_version``, ``hosts.tend_version`` or
@@ -93,18 +119,23 @@ def resolve_host(workspace, host: str) -> dict:
     remote_root = str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
                       or default_remote_root()).rstrip("/")
     budget_gb = workspace.default("worktree_budget_gb", None)
+    tend_dir = str(entry.get("tend_dir") or hosts.get("tend_dir") or DEFAULT_TEND_DIR).rstrip("/") \
+        or DEFAULT_TEND_DIR
     return {
         "name": host,
         "ssh": str(ssh),
         "remote_root": remote_root,
+        "tend_dir": tend_dir,
         # `uv` installs into ~/.local/bin, which a non-login ssh shell does not have
         # on PATH: `ssh <host> 'cd ~/tend && uv run tend --version'` exits 127 with
         # "uv: command not found".  references/runbook-server.md has always said to
         # export it; the generated command did not, so the first real preflight
         # against a server failed on exactly that.  Override per host with
-        # `hosts.<name>.tend_cmd` when uv is installed somewhere else.
+        # `hosts.<name>.tend_cmd` when uv is installed somewhere else, or only
+        # `hosts.<name>.tend_dir` when tend's checkout is not ~/tend.
         "tend_cmd": str(entry.get("tend_cmd") or hosts.get("tend_cmd")
-                        or f'export PATH="$HOME/.local/bin:$PATH"; cd {remote_root}/tend && uv run'),
+                        or f'export PATH="$HOME/.local/bin:$PATH"; cd {_remote_dir(tend_dir)} '
+                           f'&& uv run'),
         "agentbox_profile": str(entry.get("agentbox_profile") or entry.get("profile")
                                 or hosts.get("agentbox_profile") or ""),
         "disk_budget_bytes": int(entry.get("disk_budget_bytes")
@@ -113,7 +144,16 @@ def resolve_host(workspace, host: str) -> dict:
         "tend_version_required": str(entry.get("tend_version")
                                      or hosts.get("tend_version")
                                      or workspace.default("tend_version", "") or ""),
+        # where the agents' transcripts land on that host, for the campaign
+        # sequencer's per-shard export (a list, or one colon-separated string)
+        "transcript_dirs": _colon_list(entry.get("transcript_dirs")),
     }
+
+
+def _colon_list(value: Any) -> str:
+    if isinstance(value, (list, tuple)):
+        return ":".join(str(v) for v in value if str(v))
+    return str(value or "")
 
 
 def remote_names(run: dict, run_id: str) -> dict:
@@ -384,9 +424,13 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
     if (rd / "data").exists():
         entries.append(_entry("data", rd / "data", f"{root}/{names['entrypoint']}/data/",
                               note="statement tables the workers read"))
-    else:
+    elif not is_locate(run):
         warnings.append(f"runs/{run_id}/data/ is absent: the workers will have no "
                         "statements.jsonl/pairs.jsonl to read")
+    if is_locate(run):
+        located, notes = locate_entries(rd, include_texts=include_texts)
+        entries.extend(located)
+        warnings.extend(notes)
 
     # The tend root, minus its gate/ copy (which belongs out of tree, below).
     entries.append(_entry("tend-root", tend_root, f"{root}/{names['tend_root']}/",
@@ -417,6 +461,22 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
         entries.append(_entry("bridges", [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES],
                               f"{root}/{names['tend_root']}/bin/",
                               note="agent bridges + the StrictModel coercion"))
+    else:
+        # A plan that staged a bridge may predate a helper the bridge now calls
+        # (agent_call.py takes the session slot and the timeout): ship what bin/
+        # lacks, so a staged bridge never runs without its own hardening.  Only
+        # helpers: the bridges this run's wrappers do not exec are not missing.
+        # (`cf plan-run` / `cf plan-locate` now stage every helper themselves, so
+        # a freshly planned root needs no entry here.)
+        missing_helpers = [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES
+                           if not n.startswith("bridge-")
+                           and not (tend_root / "bin" / n).exists()
+                           and (skill_dir / "scripts" / "run" / n).exists()]
+        if missing_helpers:
+            entries.append(_entry("bridge-helpers", missing_helpers,
+                                  f"{root}/{names['tend_root']}/bin/",
+                                  note="bridge helpers the staged bin/ lacks (slots, timeout, "
+                                       "attempt cap, watchdog)"))
 
     if include_sources:
         pinned = recorded_tree_digests(run)
@@ -450,8 +510,11 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                                            "digest names what differs"))
         if not companions:
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
-    wants_images = "image" in source_access(run).lower()
-    if include_texts:
+    # A locate run's source text is its rendered layers, which locate_entries
+    # above already sent (or warned about); run.yaml's faithfulness `sources`
+    # list is empty for it, so this branch would only warn that it names none.
+    wants_images = "image" in source_access(run).lower() and not is_locate(run)
+    if include_texts and not is_locate(run):
         source_ids = run_source_ids(run)
         if not source_ids:
             warnings.append("--include-source-text was given but run.yaml names no sources")
@@ -489,6 +552,131 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
         if entry["required"] and not entry["exists"]:
             warnings.append("missing %s: %s" % (entry["name"], entry["src"]))
     return entries, warnings
+
+
+def is_locate(run: dict) -> bool:
+    """Is this run.yaml a locate run's (references/locate-documents.md section 9)?"""
+    return isinstance((run or {}).get("locate"), dict)
+
+
+def locate_gate(run_dir: Path) -> tuple[dict, dict]:
+    """``(gate.json, gate.local.json)`` of a planned locate run; ``{}`` for one that is absent."""
+    out = []
+    for name in ("gate.json", "gate.local.json"):
+        path = run_dir / name
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (OSError, ValueError):
+            data = {}
+        out.append(data if isinstance(data, dict) else {})
+    return out[0], out[1]
+
+
+#: how many of the sources a locate run expects on the host its warning names
+SOURCES_NAMED = 20
+
+
+def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], list[str]]:
+    """What a locate run sends beyond the root: its sources, databases and L2.
+
+    The host paths are the ones the planner wrote into ``gate.json`` (the gate
+    reads them there) and the local ones its ``gate.local.json``; only THIS run's
+    sources travel, never the whole sourceset.  The rendered sources quote the
+    source text, so they leave this machine only with ``--include-source-text``
+    -- and without them the gate on the host fails closed, which the warning
+    says.  ``corpus.sqlite``, the tools database when it is another file
+    (``tools_corpus_db``: the blind or planted copy the worker's search tools
+    read) and the candidates -- the blind arm's too, which its prompts name --
+    are metadata about public libraries and always travel.  The frozen
+    inventory does NOT: nothing on the host reads it, and its passages already
+    reach the workers and the gate in the task manifests.
+    """
+    remote, local = locate_gate(run_dir)
+    entries: list[dict] = []
+    warnings: list[str] = []
+    if not remote or not local:
+        return entries, [f"{run_dir.name}: a locate run needs gate.json and gate.local.json "
+                         "(the locate planner writes both)"]
+    r_set = remote.get("sourceset") or {}
+    l_set = local.get("sourceset") or {}
+    if include_texts:
+        for sid in sorted(remote.get("sources") or {}):
+            entry = _entry(f"source-layer:{sid}", Path(l_set.get("sources_dir", "")) / sid,
+                           f"{str(r_set.get('sources_dir', '')).rstrip('/')}/{sid}/",
+                           flags=READONLY_CHMOD + ["--delete"],
+                           note="a rendered web source: layer, formulas, paragraphs (quotes "
+                                "are cut from it); leaves only with --include-source-text")
+            # its rsync creates <sources_dir>/<id>/ itself: the transfer's mkdir
+            # makes only <sources_dir>, one argument for any number of sources
+            entry["rsync_creates_dest"] = True
+            entries.append(entry)
+    else:
+        expected = sorted(remote.get("sources") or {})
+        named = ", ".join(expected[:SOURCES_NAMED]) + (
+            f" and {len(expected) - SOURCES_NAMED} more" if len(expected) > SOURCES_NAMED else "")
+        warnings.append("this locate run's sources were not included (--include-source-text): the "
+                        "gate on the host reads each document's layer and fails closed without "
+                        f"it, so the host must already hold all {len(expected)} under "
+                        f"{r_set.get('sources_dir') or '(no sources_dir)'}, which the verify "
+                        f"stage checks: {named or '(none)'}")
+    corpus_r = (remote.get("corpus_db") or {}).get("path")
+    corpus_l = (local.get("corpus_db") or {}).get("path")
+    if corpus_r and corpus_l:
+        entry = _entry("corpus.sqlite", Path(corpus_l), str(corpus_r), flags=READONLY_CHMOD,
+                       note="the universe's declarations; the gate checks every lean end in it")
+        entry["sha256"] = (remote.get("corpus_db") or {}).get("sha256")
+        entries.append(entry)
+    tools_r = remote.get("tools_corpus_db") if isinstance(remote.get("tools_corpus_db"), dict) else {}
+    tools_l = local.get("tools_corpus_db") if isinstance(local.get("tools_corpus_db"), dict) else {}
+    if tools_r.get("path") and tools_l.get("path") and str(tools_r["path"]) != str(corpus_r):
+        entry = _entry("tools-corpus.sqlite", Path(tools_l["path"]), str(tools_r["path"]),
+                       flags=READONLY_CHMOD,
+                       note=f"the {tools_r.get('kind') or 'tools'} database the worker's search "
+                            "tools read; the gate still checks against corpus.sqlite")
+        entry["sha256"] = tools_r.get("sha256")
+        entries.append(entry)
+    if remote.get("candidates_dir") and local.get("candidates_dir"):
+        # THIS run's sources' candidates files only, never the directory: it is
+        # the sourceset's, shared by every run of it.  The blind arm's files are
+        # sent too, or its workers would be told to read files that are not there: its
+        # prompts name them, and they hold the
+        # lexical hints the proposal's G1-blind arm keeps (no curated hit, no QID).
+        files = [Path(local["candidates_dir"]) / f"{sid}.json"
+                 for sid in sorted(remote.get("sources") or {})]
+        dest = str(remote["candidates_dir"]).rstrip("/")
+        blind = bool(remote.get("blind"))
+        entry = _entry("candidates", files, dest + "/", flags=READONLY_CHMOD,
+                       note=("L2 of the G1-blind arm: the lexical hints the workers read, no "
+                             "curated hit" if blind else
+                             "L2: the curated hits gate rule 4 reads itself, for this run's "
+                             "sources"))
+        entry["lock_dirs"] = candidates_lock_dirs(dest, tools_r)
+        entries.append(entry)
+    return entries, warnings
+
+
+def candidates_lock_dirs(dest: str, tools_db: dict) -> list[str]:
+    """The host directories a candidates transfer opens and closes, outermost first.
+
+    ``candidates/<u>/`` holds the full database's files, and the G1-blind and
+    each planted database have their own directory inside it
+    (references/locate-documents.md section 5).  An earlier transfer leaves each
+    one read-only, so a kind directory's transfer opens -- and creates -- the
+    per-universe directory around it as well (a ``mkdir`` inside the closed one
+    fails), then closes both.
+    Which kind has its own directory is ``locate.inputs.candidates_subdir``'s
+    answer, the one the planner placed ``dest`` by, never a list of kinds here.
+    """
+    from locate import inputs as locate_inputs
+
+    dest = dest.rstrip("/")
+    tools_db = tools_db if isinstance(tools_db, dict) else {}
+    sub = (locate_inputs.candidates_subdir({"kind": tools_db.get("kind"),
+                                            "sha256": str(tools_db.get("sha256") or "")})
+           if tools_db.get("kind") else None)
+    if sub:
+        return [str(Path(dest).parent), dest]
+    return [dest]
 
 
 #: the keys of a manifest entry that belong in run.yaml's ``run.transfer`` record.
@@ -698,7 +886,7 @@ def disk_budget(entries: list[dict], tasks: int, host: dict) -> dict:
 
 
 def check_budget_cap(workspace, run: dict, max_cost: float | None,
-                     no_budget_cap: bool) -> dict:
+                     no_budget_cap: bool, *, locate: bool = False) -> dict:
     """Resolve the spend ceiling, or refuse to plan a run without one.
 
     the design critique: "No budget gate ... run.yaml carries a billing-path
@@ -710,6 +898,30 @@ def check_budget_cap(workspace, run: dict, max_cost: float | None,
     budget = _as_dict(getattr(workspace, "budget", {}))
     currency = str(run_budget.get("currency") or budget.get("currency") or "USD")
     value = max_cost
+    if locate:
+        # A locate run's cap is a precondition, not a default (proposal section 6):
+        # the watchdog drains at the cap recorded in run.yaml, so a workspace-wide
+        # ceiling the run never recorded would leave it with nothing to drain at,
+        # and no flag acknowledges running without one.
+        recorded = run_budget.get("max_cost")
+        if value is not None and recorded is not None and float(value) != float(recorded):
+            # The campaign, the sequencer and the shard's watchdog all read the
+            # cap run.yaml records; sending at another one would raise tend's
+            # ceiling past the cap the watchdog drains at, or below it.
+            raise CfError(
+                f"--max-cost {float(value):g} differs from the spend cap this locate run "
+                f"records (budget.max_cost {float(recorded):g} in its run.yaml)",
+                hint="drop --max-cost to send it at the recorded cap, or re-plan it with "
+                     "`cf plan-locate ... --max-cost <usd>`")
+        if value is None and recorded is not None:
+            value = float(recorded)
+        if value is None or value <= 0:
+            raise CfError(
+                "a locate run needs a spend cap recorded in its run.yaml (budget.max_cost) or "
+                "given as --max-cost, which cf run records",
+                hint="--no-budget-cap does not apply to locate: the per-shard watchdog drains "
+                     "the root at that cap")
+        no_budget_cap = False
     if value is None:
         for source in (run_budget, budget):
             for key in ("max_cost", "max_cost_usd", "ceiling"):
@@ -815,7 +1027,9 @@ def gate_config_warnings(workspace_dir: Path, run_id: str, host: dict, run: dict
     must pass a changed-files check.
     """
     names = remote_names(run, run_id)
-    gate_path = f"{host['remote_root']}/{names['gate']}/verify_findings.py"
+    # a locate run's tend config calls the locate gate (references/locate-documents.md S9)
+    script = "verify_locate.py" if is_locate(run) else "verify_findings.py"
+    gate_path = f"{host['remote_root']}/{names['gate']}/{script}"
     config = workspace_dir / "runs" / run_id / "tend-root" / "config.yaml"
     if not config.exists():
         return [f"runs/{run_id}/tend-root/config.yaml is missing; `cf plan-run` writes it"]

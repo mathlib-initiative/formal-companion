@@ -88,12 +88,24 @@ class TestTheVendoredBytesAreTheRelease(unittest.TestCase):
         self.assertEqual(Path(fmt_package.__file__).resolve().parent, PACKAGE.resolve())
 
 
+#: Modules copied to a run host, where ``cflib`` is not importable: each puts
+#: ``vendor/`` on ``sys.path`` itself (the copy beside it in a gate directory, else
+#: the checkout's) before it imports the format, which is the bootstrap's job done
+#: without the bootstrap.
+HOST_BOOTSTRAPPED = {
+    "scripts/gate/locate_text.py":
+        "the gate's head-text helper; references/locate-documents.md section 9",
+}
+
+
 class TestEveryImportGoesThroughTheBootstrap(unittest.TestCase):
 
     def test_the_bootstrap_comes_before_the_format(self):
         """A module that imports the format first would find it only by luck of import order."""
         offenders = []
         for path in sorted([*SCRIPTS.rglob("*.py"), *(SKILL / "tests").glob("*.py")]):
+            if path.relative_to(SKILL).as_posix() in HOST_BOOTSTRAPPED:
+                continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             imports = sorted((n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))),
                              key=lambda n: (n.lineno, n.col_offset))
@@ -106,6 +118,15 @@ class TestEveryImportGoesThroughTheBootstrap(unittest.TestCase):
                 if any(n.split(".")[0] == "formal_companion_annotations" for n in names) and not booted:
                     offenders.append(f"{path.relative_to(SKILL)}:{node.lineno}")
         self.assertEqual(offenders, [], "import `from cflib import vendored` first")
+
+
+    def test_a_host_module_puts_vendor_on_the_path_before_the_format(self):
+        for rel in sorted(HOST_BOOTSTRAPPED):
+            with self.subTest(module=rel):
+                text = (SKILL / rel).read_text(encoding="utf-8")
+                self.assertNotIn("from cflib", text, "a host module cannot import cflib")
+                self.assertLess(text.index("sys.path.insert"),
+                                text.index("from formal_companion_annotations"))
 
 
 class TestEveryValueTheSkillWritesIsTheFormats(unittest.TestCase):

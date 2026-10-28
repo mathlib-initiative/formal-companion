@@ -1,0 +1,526 @@
+@@IMPORTS@@
+import Lean
+
+/-
+formal-companion library probe (template).
+
+New code. It implements the library index of docs/proposals/wikipedia-locate.md §2.3 and is
+adapted from Autoform's MIT-licensed library probe (`library_probe.lean`, record shape
+`autoform-library-index/v0`): the same skip rules for generated constants, the same `*Wanted`
+conclusion-head test, generalised, and the same fixed pretty-printer options. What it adds is
+what §2.3 says the locate stage needs: `path`, `end_line`, a mechanical `proof_status` and
+`nonstandard_axioms`, from ONE memoised axiom closure per process, and sharding.
+
+Portability is the point: one template must elaborate on every toolchain of a universe
+(v4.34.0-rc2 through v4.36.0-rc1 at the time of writing), so it uses only long-stable API:
+`env.header.moduleNames` / `moduleData`, `getModuleIdxFor?`, `ConstantInfo`, `getUsedConstants`,
+`findDeclarationRangesCore?`, `findDocString?`, `getModuleDoc?`, `ppExpr`, `isProp`. It never
+touches `versoDocStringExt`, `Doc.runMarkdown`, `getModuleEntries (level := _)` or `OLeanLevel`,
+and it does its own string handling with `List Char` so the String/Slice API churn cannot
+break it.
+
+It is not a module file on purpose: a plain importer sees every level of every imported module
+(private declarations, theorem bodies, docstrings, declaration ranges).
+
+Rendered by scripts/corpus/probe_merge.py (called by scripts/corpus/probe_host.sh), which fills
+the five placeholder fields (imports, library id, roots, module prefixes, source dirs), and run as
+`lake env lean <rendered file>` from the root of a BUILT checkout. It writes JSONL to the file
+named by PROBE_OUTPUT and reads, all optional except PROBE_OUTPUT:
+
+  SHARD_INDEX, SHARD_COUNT   this process emits the declarations whose user-facing name
+                             hashes (FNV-1a 64 over the UTF-8 of `toString name`) to
+                             SHARD_INDEX modulo SHARD_COUNT; shard 0 also emits the modules
+  PROBE_FIELD_CAP            characters kept of a signature, docstring or module doc (20000)
+  PROBE_MENTIONS_CAP         names kept in `mentions` (4096)
+  PROBE_MAX_BYTES            total bytes this shard may write; past it the probe fails (2 GiB)
+  PROBE_INCLUDE_PRIVATE=1    also emit private declarations that are not wanted placeholders
+  PROBE_PROGRESS             print a progress line to stderr every N declarations (0 = never)
+  PROBE_LOG_SKIPS=1          print every skipped constant and the reason to stderr (audits)
+
+Every shard writes a `header` record first and a `shard_end` record last; a shard file without
+its `shard_end` is incomplete and must be refused. Between them:
+
+  module       name, path (relative to the package root, or null), module_doc, truncated
+  declaration  name (user-facing), module, path, kind (theorem def abbrev opaque axiom inductive
+               structure class instance), line (the name's line), start_line (docstring and
+               attributes included), end_line, signature (pp.fullNames, one line), docstring,
+               mentions (constants of the type), private, wrapper, proof_status (axiom | wanted |
+               statement_only | definition | proved, decided in that order), nonstandard_axioms
+               (closure axioms other than propext, Classical.choice, Quot.sound; sorryAx
+               included), deprecated ({new_name, since} or null), truncated, truncated_fields,
+               errors (what could not be computed; never a silent drop)
+
+Constructors, recursors, matchers, projections, `noConfusion`, internal names and constants
+without declaration ranges of their own (injectivity, `sizeOf`, equation lemmas) are skipped
+and counted in `shard_end.skipped`, as Autoform does.
+-/
+
+open Lean Meta
+
+namespace CfLibraryProbe
+
+def schema : String := "formal-companion-library-index/v0"
+def baseSchema : String := "autoform-library-index/v0"
+/-- Raised by any change here that can alter the bytes of an index. 2: a module whose name
+needs «» escaping gets its source path (its components unescaped), and a «»-escaped module
+prefix is parsed as one component. -/
+def probeRevision : Nat := 2
+
+def libraryId : String := @@LIBRARY_ID@@
+/-- The root modules imported above, one per line. -/
+def rootsText : String := @@ROOTS@@
+/-- A module belongs to the library when one of these is a prefix of its name (one per line). -/
+def prefixesText : String := @@PREFIXES@@
+/-- Source directories, relative to the package root, that module paths are resolved in. -/
+def srcDirsText : String := @@SRC_DIRS@@
+
+/-! Small, version-proof helpers. -/
+
+def nonEmptyLines (s : String) : List String :=
+  (s.splitOn "\n").filter (fun line => !line.isEmpty)
+
+/-- Characters back into a string, with `String.push` (`List.asString` is deprecated in favour
+of `String.ofList`, which older toolchains lack). -/
+def ofChars (cs : List Char) : String := cs.foldl (fun acc ch => acc.push ch) ""
+
+/-- A dotted module name, a component plain or `«escaped»`: `Foo.«0805.3777».Bar` is the three
+components `Foo`, `0805.3777` and `Bar` (a dot inside «» is part of its component), the
+spelling scripts/corpus/probe_merge.py writes. -/
+def parseName (s : String) : Name := Id.run do
+  let mut acc : Name := Name.anonymous
+  let mut cur : List Char := []
+  let mut quoted := false
+  for ch in s.toList do
+    if quoted then
+      if ch == '»' then quoted := false else cur := ch :: cur
+    else if ch == '«' then
+      quoted := true
+    else if ch == '.' then
+      acc := Name.str acc (ofChars cur.reverse)
+      cur := []
+    else
+      cur := ch :: cur
+  return Name.str acc (ofChars cur.reverse)
+
+/-- A module's source file relative to a source directory: its components UNescaped and joined
+by `/` (`Foo.«1»` is `Foo/1.lean`), which is how Lake names the file of a module. -/
+def moduleFile (m : Name) : String :=
+  "/".intercalate (m.components.map (fun c => c.toString (escape := false))) ++ ".lean"
+
+def trimWs (s : String) : String :=
+  let cs := s.toList.dropWhile Char.isWhitespace
+  ofChars (cs.reverse.dropWhile Char.isWhitespace).reverse
+
+/-- `s` cut to `cap` characters, and whether it was cut. -/
+def capText (cap : Nat) (s : String) : String × Bool :=
+  if s.length ≤ cap then (s, false) else (ofChars (s.toList.take cap), true)
+
+/-- FNV-1a, 64 bit, over the UTF-8 bytes: stable across toolchains and easy to recompute. -/
+def fnv1a64 (s : String) : UInt64 :=
+  s.toUTF8.foldl (fun h b => (h ^^^ b.toUInt64) * 1099511628211) 14695981039346656037
+
+def envNat (key : String) (default : Nat) : IO Nat := do
+  match (← IO.getEnv key) with
+  | some v => match v.toNat? with
+    | some n => pure n
+    | none => throw <| IO.userError s!"{key}={v} is not a natural number"
+  | none => pure default
+
+def sortedStrings (xs : Array String) : Array String := xs.qsort (· < ·)
+
+def strArr (xs : Array String) : Json := Json.arr (xs.map Json.str)
+
+/-! The axiom closure, memoised for the whole process.
+
+The summary of a constant is the set of axioms its closure reaches other than `propext`,
+`Classical.choice` and `Quot.sound` (so `sorryAx` is in it exactly when the constant rests on
+`sorry`). Successors follow `Lean.collectAxioms`: type and value of definitions, theorems and
+opaques; the type of constructors and recursors; type and constructors of inductives.
+Dependency graphs have cycles (an inductive and its constructors, `unsafe` definitions), so the
+closure is an iterative Tarjan SCC pass: every member of a strongly connected component gets the
+union of the component, and nothing is memoised before its component is complete. No recursion:
+Mathlib proofs are far deeper than the native stack. -/
+
+abbrev Memo := Std.HashMap Name (Array Name)
+
+def isStandardAxiom (n : Name) : Bool :=
+  n == ``propext || n == ``Classical.choice || n == ``Quot.sound
+
+/-- The successors of `n` and the axiom `n` itself contributes. -/
+def nodeInfo (env : Environment) (n : Name) : Array Name × Array Name :=
+  match env.find? n with
+  | some (.axiomInfo _) => (#[], if isStandardAxiom n then #[] else #[n])
+  | some (.defnInfo v) => (v.type.getUsedConstants ++ v.value.getUsedConstants, #[])
+  | some (.thmInfo v) => (v.type.getUsedConstants ++ v.value.getUsedConstants, #[])
+  | some (.opaqueInfo v) => (v.type.getUsedConstants ++ v.value.getUsedConstants, #[])
+  | some (.ctorInfo v) => (v.type.getUsedConstants, #[])
+  | some (.recInfo v) => (v.type.getUsedConstants, #[])
+  | some (.inductInfo v) => (v.type.getUsedConstants ++ v.ctors.toArray, #[])
+  | _ => (#[], #[])
+
+def unionInto (acc add : Array Name) : Array Name :=
+  add.foldl (fun out n => if out.contains n then out else out.push n) acc
+
+structure Frame where
+  node : Name
+  succs : Array Name
+  next : Nat
+  deriving Inhabited
+
+/-- The summary of `root`, and the memo with every component completed on the way. -/
+def closureOf (env : Environment) (memo₀ : Memo) (root : Name) : Array Name × Memo := Id.run do
+  let mut memo := memo₀
+  if let some s := memo[root]? then return (s, memo)
+  let mut index : Std.HashMap Name Nat := {}
+  let mut low : Std.HashMap Name Nat := {}
+  let mut acc : Std.HashMap Name (Array Name) := {}
+  let mut onStack : Std.HashSet Name := {}
+  let mut stack : Array Name := #[]
+  let mut frames : Array Frame := #[]
+  let mut counter := 0
+  -- open `root`
+  let (succs, own) := nodeInfo env root
+  index := index.insert root counter
+  low := low.insert root counter
+  acc := acc.insert root own
+  counter := counter + 1
+  stack := stack.push root
+  onStack := onStack.insert root
+  frames := frames.push { node := root, succs, next := 0 }
+  while !frames.isEmpty do
+    let f := frames.back!
+    if f.next < f.succs.size then
+      let w := f.succs[f.next]!
+      frames := frames.pop.push { f with next := f.next + 1 }
+      if let some s := memo[w]? then
+        acc := acc.insert f.node (unionInto (acc.getD f.node #[]) s)
+      else if onStack.contains w then
+        low := low.insert f.node (min (low.getD f.node 0) (index.getD w 0))
+      else if !index.contains w then
+        let (ws, wown) := nodeInfo env w
+        index := index.insert w counter
+        low := low.insert w counter
+        acc := acc.insert w wown
+        counter := counter + 1
+        stack := stack.push w
+        onStack := onStack.insert w
+        frames := frames.push { node := w, succs := ws, next := 0 }
+    else
+      frames := frames.pop
+      let v := f.node
+      if low.getD v 0 == index.getD v 0 then
+        -- `v` roots a component: pop it, union it, memoise every member.
+        let mut members : Array Name := #[]
+        let mut total : Array Name := #[]
+        let mut done := false
+        while !done do
+          let x := stack.back!
+          stack := stack.pop
+          onStack := onStack.erase x
+          members := members.push x
+          total := unionInto total (acc.getD x #[])
+          acc := acc.erase x
+          if x == v then done := true
+        for x in members do
+          memo := memo.insert x total
+          index := index.erase x
+          low := low.erase x
+      if !frames.isEmpty then
+        let parent := frames.back!.node
+        if let some s := memo[v]? then
+          acc := acc.insert parent (unionInto (acc.getD parent #[]) s)
+        else
+          low := low.insert parent (min (low.getD parent 0) (low.getD v 0))
+  return (memo.getD root #[], memo)
+
+/-! What a declaration is. -/
+
+/-- The head constant of a type's conclusion, under its binders. -/
+partial def conclusionHead : Expr → Option Name
+  | .forallE _ _ b _ => conclusionHead b
+  | .mdata _ e => conclusionHead e
+  | e => e.getAppFn.constName?
+
+/-- The conclusion's first argument with the binders put back: the type a `ProofWanted T`
+placeholder stands for. -/
+partial def unwrap : Expr → Expr
+  | .forallE n t b bi => .forallE n t (unwrap b) bi
+  | .mdata _ e => unwrap e
+  | e => e.getAppArgs.getD 0 e
+
+/-- A wanted-result wrapper: Autoform's `ProofWanted`, `DefWanted`, `DerivedWanted`, and any
+other head whose last component ends in `Wanted` (e.g. a library's own `TheoremWanted`). -/
+def wrapperHead (type : Expr) : Option Name :=
+  match conclusionHead type with
+  | some head@(.str _ last) =>
+    if head == `ProofWanted || head == `DefWanted || head == `DerivedWanted
+        || (last.length > 6 && last.endsWith "Wanted") then some head else none
+  | _ => none
+
+def kindOf (env : Environment) (info : ConstantInfo) : String :=
+  let n := info.name
+  match info with
+  | .inductInfo _ =>
+    if isClass env n then "class" else if isStructure env n then "structure" else "inductive"
+  | .axiomInfo _ => "axiom"
+  | _ =>
+    if isInstanceCore env n then "instance" else
+    match info with
+    | .thmInfo _ => "theorem"
+    | .opaqueInfo _ => "opaque"
+    | .defnInfo _ =>
+      if isClass env n then "class" else
+      match getReducibilityStatusCore env n with
+      | .reducible => "abbrev"
+      | _ => "def"
+    | _ => "other"
+
+/-- Print a type in a context this probe builds itself, so the library's own options, open
+namespaces and current namespace do not change the bytes. -/
+def printed (e : Expr) : MetaM String := do
+  let options := ({} : Options)
+    |>.setBool `pp.fullNames true
+    |>.setBool `pp.universes false
+    |>.setBool `pp.unicode.fun true
+    |>.setBool `pp.proofs false
+    |>.setBool `pp.mvars false
+  let format ← withOptions (fun _ => options) (ppExpr e)
+  return format.pretty 1000000000
+
+/-! Output. -/
+
+structure Counters where
+  constants : Nat := 0
+  otherShard : Nat := 0
+  generated : Nat := 0
+  internal : Nat := 0
+  privateSkipped : Nat := 0
+  duplicate : Nat := 0
+  noRange : Nat := 0
+  emitted : Nat := 0
+  truncated : Nat := 0
+  errors : Nat := 0
+  msClosure : Nat := 0
+  msPrint : Nat := 0
+  msOther : Nat := 0
+
+def emit (out : IO.FS.Handle) (written : IO.Ref Nat) (maxBytes : Nat) (record : Json) : IO Unit := do
+  let line := record.compress ++ "\n"
+  let total := (← written.get) + line.utf8ByteSize
+  if total > maxBytes then
+    throw <| IO.userError s!"probe output passed PROBE_MAX_BYTES={maxBytes}; refusing a partial shard"
+  written.set total
+  out.putStr line
+
+/-- `action`, or its error message: one bad declaration is reported, never silently dropped,
+and never stops the other 200,000. -/
+def attempt {α : Type} (what : String) (errs : IO.Ref (Array String)) (action : MetaM α) :
+    MetaM (Option α) := do
+  try
+    return some (← action)
+  catch e =>
+    errs.modify (·.push s!"{what}: {← e.toMessageData.toString}")
+    return none
+
+def run : MetaM Unit := do
+  let t0 ← IO.monoMsNow
+  let some outPath ← IO.getEnv "PROBE_OUTPUT" | throwError "PROBE_OUTPUT is not set"
+  let shardCount ← envNat "SHARD_COUNT" 1
+  let shardIndex ← envNat "SHARD_INDEX" 0
+  if shardCount == 0 || shardIndex ≥ shardCount then
+    throwError "need 0 ≤ SHARD_INDEX < SHARD_COUNT, got {shardIndex} and {shardCount}"
+  let fieldCap ← envNat "PROBE_FIELD_CAP" 20000
+  let mentionsCap ← envNat "PROBE_MENTIONS_CAP" 4096
+  let maxBytes ← envNat "PROBE_MAX_BYTES" (2 * 1024 * 1024 * 1024)
+  let progress ← envNat "PROBE_PROGRESS" 0
+  let includePrivate := (← IO.getEnv "PROBE_INCLUDE_PRIVATE") == some "1"
+  let logSkips := (← IO.getEnv "PROBE_LOG_SKIPS") == some "1"
+  let skip := fun (reason : String) (n : Name) => do
+    if logSkips then IO.eprintln s!"skip {reason} {n}"
+  let out ← IO.FS.Handle.mk outPath .write
+  let written ← IO.mkRef 0
+  let env ← getEnv
+  let prefixes := (nonEmptyLines prefixesText).map parseName
+  let srcDirs := nonEmptyLines srcDirsText
+  let modules := env.header.moduleNames
+  let mut libModules : Array (Nat × Name) := #[]
+  for i in [0:modules.size] do
+    let m := modules[i]!
+    if prefixes.any (fun p => p.isPrefixOf m) then
+      libModules := libModules.push (i, m)
+  emit out written maxBytes <| Json.mkObj [
+    ("record", Json.str "header"),
+    ("schema", Json.str schema),
+    ("base_schema", Json.str baseSchema),
+    ("probe_revision", toJson probeRevision),
+    ("library", Json.str libraryId),
+    ("toolchain", Json.str Lean.versionString),
+    ("lean_githash", Json.str Lean.githash),
+    ("roots", strArr (nonEmptyLines rootsText).toArray),
+    ("module_prefixes", strArr (nonEmptyLines prefixesText).toArray),
+    ("module_count", toJson libModules.size),
+    ("imported_module_count", toJson modules.size),
+    ("shard_index", toJson shardIndex),
+    ("shard_count", toJson shardCount),
+    ("field_cap", toJson fieldCap),
+    ("mentions_cap", toJson mentionsCap),
+    ("shard_hash", Json.str "fnv1a64(utf8(name)) mod shard_count")]
+  -- Module records: shard 0 only, so a merge holds each once.
+  let mut paths : Std.HashMap Name String := {}
+  for (_, m) in libModules do
+    let rel := moduleFile m
+    let mut found : Option String := none
+    for d in srcDirs do
+      if found.isNone then
+        let candidate := if d == "." then rel else d ++ "/" ++ rel
+        if ← System.FilePath.pathExists candidate then found := some candidate
+    if let some p := found then paths := paths.insert m p
+    if shardIndex == 0 then
+      let docs := (getModuleDoc? env m).getD #[]
+      let doc := "\n\n".intercalate (docs.toList.map (fun d => trimWs d.doc))
+      let (docCut, docTrunc) := capText fieldCap doc
+      emit out written maxBytes <| Json.mkObj [
+        ("record", Json.str "module"),
+        ("name", Json.str (toString m)),
+        ("path", match found with | some p => Json.str p | none => Json.null),
+        ("module_doc", if docs.isEmpty then Json.null else Json.str docCut),
+        ("truncated", toJson docTrunc)]
+  let mut memo : Memo := {}
+  let mut c : Counters := {}
+  for (i, m) in libModules do
+    let data := env.header.moduleData[i]!
+    for info in data.constants do
+      c := { c with constants := c.constants + 1 }
+      let name := info.name
+      let user := privateToUserName name
+      let userText := toString user
+      if (fnv1a64 userText % shardCount.toUInt64).toNat != shardIndex then
+        c := { c with otherShard := c.otherShard + 1 }
+        continue
+      let generated := (match info with
+          | .ctorInfo _ | .recInfo _ | .quotInfo _ => true
+          | _ => false)
+        || env.isProjectionFn name || isAuxRecursor env name || isNoConfusion env name
+        || Meta.isMatcherCore env name
+      if generated then
+        c := { c with generated := c.generated + 1 }
+        skip "generated" name
+        continue
+      if user.isInternalDetail then
+        c := { c with internal := c.internal + 1 }
+        skip "internal" name
+        continue
+      -- Lean keeps one copy of a name two modules declare alike; index it where Lean kept it.
+      if env.getModuleIdxFor? name != some i then
+        c := { c with duplicate := c.duplicate + 1 }
+        skip "duplicate" name
+        continue
+      let wrapper := wrapperHead info.type
+      let priv := isPrivateName name
+      if priv && wrapper.isNone && !includePrivate then
+        c := { c with privateSkipped := c.privateSkipped + 1 }
+        skip "private" name
+        continue
+      -- Generated declarations (injectivity, `sizeOf`, equation lemmas, ...) record no ranges
+      -- of their own; a user-facing one always does.
+      let some ranges ← findDeclarationRangesCore? name
+        | c := { c with noRange := c.noRange + 1 }; skip "no_range" name; continue
+      let errs ← IO.mkRef (#[] : Array String)
+      let ta ← IO.monoMsNow
+      let (axioms, memo') := closureOf env memo name
+      memo := memo'
+      let tb ← IO.monoMsNow
+      let type := if wrapper.isSome then unwrap info.type else info.type
+      let kind := kindOf env info
+      let usesSorry := axioms.contains ``sorryAx
+      let dataValued ← match info with
+        | .inductInfo _ => pure (some true)
+        | .thmInfo _ | .axiomInfo _ => pure (some false)
+        | _ => attempt "isProp" errs (withoutModifyingState do return !(← isProp info.type))
+      let proofStatus :=
+        if kind == "axiom" then "axiom"
+        else if wrapper.isSome then "wanted"
+        else if usesSorry then "statement_only"
+        else if dataValued == some true then "definition"
+        else "proved"
+      let tc ← IO.monoMsNow
+      let sig ← attempt "signature" errs (withoutModifyingState (printed type))
+      let td ← IO.monoMsNow
+      let doc ← attempt "docstring" errs (findDocString? env name)
+      let (sigCut, sigTrunc) := capText fieldCap (sig.getD "")
+      let (docCut, docTrunc) := capText fieldCap (trimWs ((doc.getD none).getD ""))
+      let used := sortedStrings ((type.getUsedConstants.map (toString ∘ privateToUserName)))
+      let mentions := used.toList.eraseDups.toArray
+      let mentionsTrunc := mentions.size > mentionsCap
+      let mentions := if mentionsTrunc then mentions.extract 0 mentionsCap else mentions
+      let truncatedFields := (if sigTrunc then #["signature"] else #[])
+        ++ (if docTrunc then #["docstring"] else #[])
+        ++ (if mentionsTrunc then #["mentions"] else #[])
+      let deprecation := match Linter.deprecatedAttr.getParam? env name with
+        | some entry => Json.mkObj [
+            ("new_name", match entry.newName? with
+              | some n => Json.str (toString n) | none => Json.null),
+            ("since", match entry.since? with | some s => Json.str s | none => Json.null)]
+        | none => Json.null
+      let errors ← errs.get
+      emit out written maxBytes <| Json.mkObj [
+        ("record", Json.str "declaration"),
+        ("name", Json.str userText),
+        ("module", Json.str (toString m)),
+        ("path", match paths[m]? with | some p => Json.str p | none => Json.null),
+        ("kind", Json.str kind),
+        -- `line` is where the name is (the keyword line); `start_line` includes the docstring
+        -- and attributes; `end_line` is the last line of the declaration.
+        ("line", toJson ranges.selectionRange.pos.line),
+        ("start_line", toJson ranges.range.pos.line),
+        ("end_line", toJson ranges.range.endPos.line),
+        ("signature", if sig.isSome then Json.str sigCut else Json.null),
+        ("docstring", if (doc.getD none).isSome then Json.str docCut else Json.null),
+        ("mentions", strArr mentions),
+        ("private", toJson priv),
+        ("wrapper", match wrapper with | some h => Json.str (toString h) | none => Json.null),
+        ("proof_status", Json.str proofStatus),
+        ("nonstandard_axioms", strArr (sortedStrings (axioms.map toString))),
+        ("deprecated", deprecation),
+        ("truncated", toJson (!truncatedFields.isEmpty)),
+        ("truncated_fields", strArr truncatedFields),
+        ("errors", strArr errors)]
+      let te ← IO.monoMsNow
+      c := { c with
+        emitted := c.emitted + 1
+        truncated := c.truncated + (if truncatedFields.isEmpty then 0 else 1)
+        errors := c.errors + (if errors.isEmpty then 0 else 1)
+        msClosure := c.msClosure + (tb - ta)
+        msPrint := c.msPrint + (td - tc)
+        msOther := c.msOther + (tc - tb) + (te - td) }
+      if progress > 0 && c.emitted % progress == 0 then
+        IO.eprintln s!"[probe {libraryId} {shardIndex}/{shardCount}] {c.emitted} declarations, {memo.size} closure nodes, {(← IO.monoMsNow) - t0} ms"
+  let t1 ← IO.monoMsNow
+  emit out written maxBytes <| Json.mkObj [
+    ("record", Json.str "shard_end"),
+    ("library", Json.str libraryId),
+    ("shard_index", toJson shardIndex),
+    ("shard_count", toJson shardCount),
+    ("constants_seen", toJson c.constants),
+    ("declarations", toJson c.emitted),
+    ("skipped", Json.mkObj [
+      ("other_shard", toJson c.otherShard),
+      ("generated", toJson c.generated),
+      ("internal", toJson c.internal),
+      ("private", toJson c.privateSkipped),
+      ("duplicate", toJson c.duplicate),
+      ("no_range", toJson c.noRange)]),
+    ("truncated", toJson c.truncated),
+    ("with_errors", toJson c.errors),
+    ("closure_nodes", toJson memo.size),
+    ("ms_total", toJson (t1 - t0)),
+    ("ms_closure", toJson c.msClosure),
+    ("ms_print", toJson c.msPrint),
+    ("ms_other", toJson c.msOther)]
+  out.flush
+
+end CfLibraryProbe
+
+set_option maxHeartbeats 0 in
+set_option maxRecDepth 8192 in
+#eval CfLibraryProbe.run

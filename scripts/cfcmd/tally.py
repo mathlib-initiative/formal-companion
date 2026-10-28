@@ -9,6 +9,7 @@ tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md:296-311.
     cf tally --source tao-measure-gsm126-published   # one source's numbers
     cf tally --union --agreed         # also write union.<repo>.json and agreed_high.json
     cf tally --union --baseline diff-claude-text --new-only   # what a new run adds
+    cf tally --locate --run loc-1 --challenge-run chl-1      # a locate run's outcomes
 
 "Do not decide 'nothing is open' by re-reading the prose": the figure in that
 file was wrong three times, and the third time the corpus itself was a file
@@ -48,11 +49,21 @@ def register(subparsers) -> None:
     p.add_argument("--min-runs", type=int, default=2, help="agreement threshold (default 2)")
     p.add_argument("--json", action="store_true", dest="as_json")
     p.add_argument("--no-write", action="store_true", help="print only; write no reports")
+    p.add_argument("--locate", action="store_true",
+                   help="tally ONE locate run (--run): finding rows, passage outcomes and "
+                        "derived statuses into reports/locate-tally.<run>.json and "
+                        "reports/locate-outcomes.<run>.jsonl")
+    p.add_argument("--challenge-run", action="append", default=[],
+                   help="with --locate: a challenge run whose verdicts apply (repeatable)")
 
 
 def run(args) -> int:
     workspace = from_args(args)
     paths = workspace.paths
+    if getattr(args, "locate", False):
+        return _locate(workspace, args)
+    if getattr(args, "challenge_run", None):
+        raise CfError("--challenge-run belongs to --locate")
     runs = _runs(workspace, args.run)
     if not runs:
         raise CfError("no harvested runs found in corpus/",
@@ -172,7 +183,12 @@ def _write_agreed(workspace, args, runs: dict[str, Path]) -> None:
 
 
 def _record_state(workspace, result: dict, runs: dict[str, Path]) -> None:
-    """Write each repo's counts into its companion state.json."""
+    """Write each repo's counts into its companion state.json.
+
+    The runs named are the ones the tally COUNTED: a locate run under corpus/ is
+    left out of the faithfulness tally (``result["locate_runs"]``), so it is left
+    out of the companion's state too."""
+    counted = sorted(set(runs) - set(result.get("locate_runs") or ()))
     for name in workspace.companion_names():
         data = result["repos"].get(name)
         if not data:
@@ -181,8 +197,105 @@ def _record_state(workspace, result: dict, runs: dict[str, Path]) -> None:
             with state_mod.update(workspace, name) as state:
                 state_mod.set_section(state, "tally", {
                     **tally_mod.state_counts(data),
-                    "runs": sorted(runs),
+                    "runs": counted,
                 })
-                state_mod.note(state, "tally", rows=data["rows"], runs=len(runs))
+                state_mod.note(state, "tally", rows=data["rows"], runs=len(counted))
         except Exception as exc:
             log.detail(f"state.json for {name}: {exc}")
+
+
+#: how many sources a skipped-count line names before it counts the rest
+SKIPPED_SOURCES_NAMED = 8
+
+
+def skipped_lines(gates: dict) -> list[str]:
+    """What each read inventory's skips removed, as its receipt's gate block counted it.
+
+    Gate rule 8 lets a skip stand in for a math paragraph or a finder's passage,
+    and no later stage reads ``skips``; harvest counts what they left unkept
+    (``gate.skipped``: ``skips``, ``chars``, ``math_paragraphs``,
+    ``finder_passages``, ``by_source``) and the tally says it, per run read.
+    """
+    lines = []
+    for rid, gate in sorted(gates.items()):
+        got = gate.get("skipped") if isinstance(gate, dict) else None
+        if not isinstance(got, dict) or not got.get("skips"):
+            continue
+        lines.append(f"{gate.get('role')} run {rid}: {got.get('skips')} skip(s) cover "
+                     f"{got.get('chars', 0)} character(s), {got.get('math_paragraphs', 0)} math "
+                     f"paragraph(s) and {got.get('finder_passages', 0)} finder passage(s) that "
+                     "no passage keeps")
+        by_source = got.get("by_source") if isinstance(got.get("by_source"), dict) else {}
+        for sid, counts in sorted(by_source.items())[:SKIPPED_SOURCES_NAMED]:
+            counts = counts if isinstance(counts, dict) else {}
+            lines.append(f"  {sid}: {counts.get('skips', 0)} skip(s), {counts.get('chars', 0)} "
+                         f"character(s), {counts.get('math_paragraphs', 0)} math paragraph(s), "
+                         f"{counts.get('finder_passages', 0)} finder passage(s)")
+        if len(by_source) > SKIPPED_SOURCES_NAMED:
+            lines.append(f"  ... and {len(by_source) - SKIPPED_SOURCES_NAMED} more source(s) "
+                         f"(the tally's gates.{rid}.skipped.by_source)")
+    return lines
+
+
+def _locate(workspace, args) -> int:
+    """``--locate``: one locate run's rows, outcomes and counts (references/locate-documents.md
+    section 10), written to the reports and the sourceset's state file."""
+    from cflib.jsonio import write_jsonl
+    from locate import outcomes as outcomes_mod, state as ss_state
+
+    if len(args.run) != 1:
+        raise CfError("--locate tallies one run", hint="pass exactly one --run <run-id>")
+    if args.union or args.agreed or args.repo or args.source_id or args.baseline:
+        raise CfError("--locate takes --run, --challenge-run, --json and --no-write only")
+    run_id = args.run[0]
+    paths = workspace.paths
+    built = outcomes_mod.build(paths, run_id, challenge_runs=args.challenge_run)
+    gate = built["gate"]
+    result = {"run_id": run_id, "mode": built["mode"], "sourceset": built["sourceset"],
+              "universe": built["universe"], "challenge_runs": built["challenge_runs"],
+              "gate": gate, "gates": built["gates"], "counts": built["counts"],
+              "problems": built["problems"], "rows": built["rows"]}
+    # what each run read cost, from its receipt's cost block (transcripts, a usage
+    # export, or the agent envelopes a remote harvest brought home)
+    from cost import fleet as cost_fleet
+
+    result["cost"] = cost_fleet.runs_cost({rid: paths.corpus_run_dir(rid)
+                                           for rid, g in sorted(built["gates"].items())
+                                           if g.get("receipt")})
+    if args.as_json:
+        print(json.dumps({k: v for k, v in result.items() if k != "rows"}, indent=1,
+                         sort_keys=True))
+    else:
+        counts = built["counts"]
+        log.info(f"locate tally {run_id} [{built['mode']}]: {len(built['rows'])} finding row(s)")
+        for key in sorted(counts):
+            log.info(f"  {key}: {counts[key]}")
+        for line in skipped_lines(built["gates"]):
+            log.info(line)
+    # every run read -- the locate run, its frozen inventory, each challenge run -- is named
+    # when it is not a complete, gated harvest (a challenge whose plan required nothing
+    # was never harvested and needs no receipt)
+    for rid, g in sorted(built["gates"].items()):
+        if g.get("required") == 0:
+            continue
+        if not g.get("receipt") or not g.get("complete") or not g.get("gate_ok"):
+            log.warn(f"{g.get('role')} run {rid} is not a complete, gated harvest "
+                     f"(receipt={g.get('receipt')}, complete={g.get('complete')}, gate "
+                     f"ok={g.get('gate_ok')}): the counts above are not ones the export will "
+                     "accept")
+    if not args.as_json:
+        for line in cost_fleet.render_run_costs(result["cost"]):
+            log.info(line)
+    for problem in built["problems"][:20]:
+        log.warn(problem)
+    if not args.no_write:
+        write_json(paths.locate_tally_json(run_id), result, indent=1, sort_keys=True)
+        if built["outcomes"]:
+            write_jsonl(paths.locate_outcomes_jsonl(run_id),
+                        [outcomes_mod.outcome_row(r) for r in built["outcomes"]])
+        sourceset = (built["sourceset"] or {}).get("id")
+        if sourceset:
+            ss_state.record(paths, sourceset, "tallies", run_id,
+                            {"mode": built["mode"], "challenge_runs": built["challenge_runs"],
+                             **built["counts"]})
+    return 0

@@ -1620,6 +1620,10 @@ block: |
         # the rendered value for a preset whose gate accepts PAGE_ANCHOR; empty
         # on one that does not
         "anchor_question": " Is the page anchor correct?",
+        # templates/tasks/locate.yaml.tmpl (scripts/locate/plan.py fills these)
+        "title": "locate: enwiki-1001-2002 part 1", "summary": "3 passage(s) of enwiki-1001-2002",
+        "description": "  Write the locations of the manifest's passages of each source below:\n\n"
+                       "  - `findings/loc-1/enwiki-1001-2002.json` — source `enwiki-1001-2002`",
     }
 
     @staticmethod

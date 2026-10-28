@@ -42,7 +42,7 @@ from cost import fleet as cost_fleet
 from harvest import harvest as harvest_mod
 from harvest._compat import (SEVERITIES, SUBSTANTIVE_KINDS, CfError, cf_items,
                              hashing, iso_now, iter_finding_files, read_json,
-                             read_yaml)
+                             read_yaml, vocab)
 
 #: keys under which a findings file may carry its defect list (v1 and v2)
 FINDING_LISTS = ("disagreements", "findings")
@@ -86,6 +86,40 @@ def run_mode(run_id: str, corpus_dir: Path | None = None) -> str:
     if any(tag in low for tag in ("attack", "vac", "hunt")):
         return "attack"
     return "differential"
+
+
+def is_locate_corpus(directory: str | Path) -> bool:
+    """Is *directory* a harvested LOCATE corpus (references/locate-documents.md section 10)?
+
+    Its ``run.yaml`` copy carries a ``locate`` block or a locate mode, or its
+    receipt counted locate documents.  Such a corpus has no faithfulness row to
+    count: `cf tally --locate --run <run-id>` is its tally.
+    """
+    directory = Path(directory)
+    for name in ("run.yaml", "run.yml"):
+        path = directory / name
+        if path.exists():
+            try:
+                data = read_yaml(path)
+            except Exception:  # noqa: BLE001 - an unreadable copy decides nothing
+                data = None
+            if isinstance(data, dict) and (
+                    isinstance(data.get("locate"), dict)
+                    or str(data.get("mode") or "") in vocab.LOCATE_MODES):
+                return True
+    receipt = harvest_mod.read_receipt(directory)
+    return isinstance(receipt, dict) and isinstance(receipt.get("locate"), dict)
+
+
+def split_locate_runs(runs: Mapping[str, str | Path]) -> tuple[dict, list[str]]:
+    """``({run: dir} the faithfulness tally counts, [locate run ids] it leaves out)``."""
+    kept, locate = {}, []
+    for run_id, directory in runs.items():
+        if is_locate_corpus(directory):
+            locate.append(run_id)
+        else:
+            kept[run_id] = directory
+    return kept, sorted(locate)
 
 
 def _kind_alternation(kinds: Sequence[str]) -> re.Pattern:
@@ -474,6 +508,9 @@ def tally(runs: dict[str, str | Path], kinds=None,
     rollup is never mistaken for a single-source number.
     """
     group_by = tuple(group_by) or DEFAULT_GROUP_BY
+    # A locate corpus counted here was a "differential" run of 0 rows with a
+    # cost warning of its own: it is named instead, and left to `--locate`.
+    runs, locate_runs = split_locate_runs(runs)
     rows = collect(runs, kinds, modes, sources=sources)
     by_group: dict[str, list[dict]] = collections.defaultdict(list)
     by_repo: dict[str, list[dict]] = collections.defaultdict(list)
@@ -506,6 +543,7 @@ def tally(runs: dict[str, str | Path], kinds=None,
                           "files": len(iter_finding_files(directory))}
                  for run_id, directory in runs.items()},
         "rows": len(rows),
+        "locate_runs": locate_runs,
         "groups": groups,
         "repos": out_repos,
         # in-text labels that could not be canonicalised: they tally under
@@ -564,6 +602,9 @@ def render(result: dict, repos: Sequence[str] | None = None) -> str:
     lines = [f"runs: " + ", ".join(f"{r} ({v['mode']}, {v['files']} files)"
                                    for r, v in result["runs"].items()),
              f"rows: {result['rows']}"]
+    if result.get("locate_runs"):
+        lines.append(f"locate run(s) not counted here: {', '.join(result['locate_runs'])} -- "
+                     "each is tallied by `cf tally --locate --run <run-id>`")
     if result.get("cost"):
         lines.extend(cost_fleet.render_run_costs(result["cost"]))
     if result.get("unjoinable"):
