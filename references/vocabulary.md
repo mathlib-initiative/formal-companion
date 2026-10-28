@@ -382,7 +382,8 @@ for that relabel:
   presupposes the passage, and it is `relatedMatch` (R5).
 
 PD1 makes a definition passage stated over a specific object `partial` against a definition over
-a general one (`derive_status` counts a definition passage's `broadMatch` as `partial`); PD2 and
+a general one under status rules 1 and 2 (`derive_status` counts a definition passage's
+`broadMatch` as `partial` there), and `formalized` under status rule 3 (R-BROAD, below); PD2 and
 PD3 make a theorem passage `partial` against such a declaration, never `formalized` or unresolved.
 
 What PD5–PD10 replace or sharpen (the smoke-3 audit's open policy calls, its FM8; PD10 and
@@ -648,7 +649,7 @@ value) or `None`, and the three-argument call is the one it always was:
 |---|---|
 | `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration; `exactMatch` or `closeMatch` to **data** — a `definition` without the `statement` flag (an equivalence, isomorphism, bijection, structure-valued construction: a theorem that two quotient rings are isomorphic, as a `RingEquiv`). Definition passage: `exactMatch` or `closeMatch` to a `definition`. Any passage: a **survived coverage claim** whose every part is finished — `proved`, or data |
 | `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or any passage's survived coverage claim with an unfinished part — `statement_only`, `wanted`, `axiom_dependent`, or a `Prop`-valued definition |
-| `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition, with no coverage claim that upgrades them |
+| `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition, with no coverage claim that upgrades them (under status rule 3 a `broadMatch` to data or to a definition formalizes instead: R-BROAD, below) |
 | `not_formalized` | a checked absence, possibly beside `relatedMatch` locations |
 | none (`None`) | unresolved: no location that counts and no absence — including a passage whose only locations are `relatedMatch` |
 
@@ -846,6 +847,40 @@ passage has no status and is exported. The hand-written cases are
 there), run beside `tests/data/locate/status-parity.json`, which stays the test of status rule
 1 and of every `cf-locate-recordset/1` set.
 
+**Status rule 3: a broadMatch formalizes whatever its declaration is** (`STATUS_RULE_BROAD`;
+the maintainer's call R-BROAD of 2026-10-28, which drops the asymmetry left over from before
+decision D1 — in his words it "makes no sense" — and asks the page to show the status beside
+the best card's relation, which the record set already carries). `derive_status(…,
+status_rule=3)` is status rule 2 with one change to the rows: a `broadMatch` formalizes a
+theorem or conjecture passage whether its declaration is a `proved` theorem or **data** (a
+`definition` without the `statement` flag: an equivalence, an isomorphism, a structure-valued
+construction), and a definition, construction or notation passage whenever its declaration is
+a `definition`, as an `exactMatch` or `closeMatch` does on each row. A `broadMatch` to an
+unfinished declaration, or to a `proved` theorem on a definition passage, is what status rule
+2 makes it, and so is everything else — the bundle read as status rule 2 reads it, its fixed
+stand-in, the owed hunt, the outcome rows and their counts. So PD1 still names a definition
+over a general type parameter a `broadMatch`, and a finished bundle of broader parts is still
+`broadMatch`, but each now formalizes its definition passage:
+
+| passage | location | status rule 2 | status rule 3 |
+|---|---|---|---|
+| theorem, conjecture | `broadMatch` to data | `partial` | **`formalized`** |
+| theorem, conjecture | `broadMatch` to a `proved` theorem | `formalized` | `formalized` |
+| theorem, conjecture | `broadMatch` to an unfinished declaration, or a `Prop`-valued definition | `statement_only` | `statement_only` |
+| definition, construction, notation | `broadMatch` to a `definition` (a `Prop`-valued one too), or a finished `broadMatch` bundle | `partial` | **`formalized`** |
+| definition, construction, notation | `broadMatch` to a `proved` theorem or an unfinished declaration, or an unfinished `broadMatch` bundle | `partial` | `partial` |
+| example, other | `broadMatch` to data | `partial` | **`formalized`** (both rows) |
+
+A locate run's `run.yaml` names it as `locate.status_rule: 3` — exactly the runs of judgment
+rules 4 (`vocab.status_rule_of_judgment`), as status rule 2's are the runs of judgment rules 3
+— and its record set is a `cf-locate-recordset/2` whose seal's `status_rule` is 3: the shapes
+are status rule 2's, and only the statuses its records carry were derived by the later rule,
+so a consumer that reads the seal's `status_rule` derives by the rule it names. The
+hand-written cases are `tests/data/locate/status-parity-3.json` (`cf-locate-status-parity/3`):
+status rule 2's cases again under their ids, each with what status rule 2 derives beside it
+(`expected_status_rule_2`), and R-BROAD's own; the `/2` and `/1` tables stay the tests of their
+rules.
+
 **The statement cut** (`docs/proposals/statement-cut.md`, the maintainer's answers of
 2026-10-21): the inventory cuts an article into statements, one passage per statement; a
 compound statement's conjuncts are the inventory's, cited by locate and the challenge; a
@@ -865,7 +900,7 @@ proposal says which).
 
 | name | values |
 |---|---|
-| versions | `RULES_STATEMENT_CUT` (3: `judgment_rules` of the cut), `SPAN_END_STATEMENT_CUT` (2: `span_end_rule` of the cut), `SPAN_END_CONTINUED` (3: the continued cut's `span_end_rule`), `STATEMENT_CUT_FIRST` (1: the cut's first `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_RULE` (3, `STATEMENT_CUT_WIDE`, from the flip of the wide bound; 2, `STATEMENT_CUT_CONTINUED`, from the flip of inv-pilot-1's fixes; 1 before it: `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_CONTINUED` (2: the continued cut's `statement_cut_rule`: rule 10 (b) holds an end to the loose continued bound, (h) refuses two or more `formal_math` passages of a source marked `prominence: subject`, and the receipt counts more), `STATEMENT_CUT_WIDE` (3: the wide cut's `statement_cut_rule`, inv-pilot-2's repairs: version 2 with rule 10 (b) holding an end to the **wide** bound and the receipt's `widened`, `wide_starts` and `wide_unheld`; the planner writes it from the flip of the wide bound, which the gate knew before), `STATEMENT_CUT_SPAN_END` (`{1: 2, 2: 3, 3: 3}`: the one `span_end_rule` each `statement_cut_rule` reads; any other pair, and `span_end_rule` 3 without a `statement_cut_rule`, is a broken gate.json, exit 3; the planner writes 3 and 3 from the flip of the wide bound, 3 and 2 from the flip of inv-pilot-1's fixes, 2 and 1 before it), `STATUS_RULE` (`status_rule` in a locate run's `run.yaml` and in its record set's seal: 1 is `STATUS_RULE_D1`, today's derivation and the default; 2 is `STATUS_RULE_BUNDLE`) |
+| versions | `RULES_STATEMENT_CUT` (3: `judgment_rules` of the cut), `SPAN_END_STATEMENT_CUT` (2: `span_end_rule` of the cut), `SPAN_END_CONTINUED` (3: the continued cut's `span_end_rule`), `STATEMENT_CUT_FIRST` (1: the cut's first `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_RULE` (3, `STATEMENT_CUT_WIDE`, from the flip of the wide bound; 2, `STATEMENT_CUT_CONTINUED`, from the flip of inv-pilot-1's fixes; 1 before it: `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_CONTINUED` (2: the continued cut's `statement_cut_rule`: rule 10 (b) holds an end to the loose continued bound, (h) refuses two or more `formal_math` passages of a source marked `prominence: subject`, and the receipt counts more), `STATEMENT_CUT_WIDE` (3: the wide cut's `statement_cut_rule`, inv-pilot-2's repairs: version 2 with rule 10 (b) holding an end to the **wide** bound and the receipt's `widened`, `wide_starts` and `wide_unheld`; the planner writes it from the flip of the wide bound, which the gate knew before), `STATEMENT_CUT_SPAN_END` (`{1: 2, 2: 3, 3: 3}`: the one `span_end_rule` each `statement_cut_rule` reads; any other pair, and `span_end_rule` 3 without a `statement_cut_rule`, is a broken gate.json, exit 3; the planner writes 3 and 3 from the flip of the wide bound, 3 and 2 from the flip of inv-pilot-1's fixes, 2 and 1 before it), `STATUS_RULE` (`status_rule` in a locate run's `run.yaml` and in its record set's seal: 1 is `STATUS_RULE_D1`, the derivation of a run.yaml without the key and `derive_status`'s default; 2 is `STATUS_RULE_BUNDLE`; 3 is `STATUS_RULE_BROAD`, R-BROAD; `STATUS_RULES` lists the three, `status_rule_of_judgment` gives a run's from its `judgment_rules`, and `reads_bundles` is true of 2 and 3) |
 | `COMPOUND_SHAPES` | `existence_uniqueness` · `iff` · `cases` · `conclusions` · `equations` (the closed list; `COMPOUND_SHAPE_ORDER` is the maintainer's order). A compound statement has `MIN_CONJUNCTS`–`MAX_CONJUNCTS` (2–5) conjuncts `c1` … `cN`, `existence_uniqueness` exactly 2 (`SHAPE_CONJUNCT_COUNTS`); a simple statement has none, and its one clause id is `SIMPLE_STATEMENT_CLAUSE` (`c1`) |
 | an inventory passage's `conjuncts` and `shape` | written by the inventory on a compound `formal_math` passage only, both or neither: `conjuncts` a list of `{id, text}` (ids `c1` … `cN` in order, each text one line of at most `MAX_CLAIM_CHARS` characters in the worker's own words, never more than `EXPORT_QUOTE_WORDS` consecutive words of the source, alone or read one after the other, as `verify_locate.check_claims` holds a claim list), `shape` one of `COMPOUND_SHAPES`; a simple statement has neither key, and its `statement` (required, as before) carries the hypotheses and objects the tight span leaves to its neighbours (`references/locate-documents.md` §2). `passage_ids.py` writes both back as it found them |
 | `CUT_CONNECTIVES` | `;` · `since` · `because` · `so` · `hence` · `then` · `moreover` · `, and` (with a new subject after it): where the inventory cuts inside a sentence, never between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject. A prompt rule (the cut rules below); no gate parses a sentence. The end rule's version 2 restates the list (`locate_text.CUT_CONNECTIVES`) to leave the one before the next passage out of both passages |

@@ -82,6 +82,9 @@ a locate run whose ``run.yaml`` names ``locate.status_rule: 2`` exports
 that rule (the revision-free ``passage_key`` on every record, ``pair_key`` on a
 location record, a coverage claim as its bundle).  A run of status rule 1 (every
 run.yaml without the key) exports ``cf-locate-recordset/1`` byte for byte as before.
+A run of status rule 3 (R-BROAD; references/vocabulary.md section 1.11) exports the
+same ``cf-locate-recordset/2`` shapes with its seal's ``status_rule`` 3: only the
+statuses its records carry were derived by the later rule, and the seal says which.
 """
 from __future__ import annotations
 
@@ -104,9 +107,12 @@ SEAL_SCHEMA = "cf-locate-recordset/1"
 #: the record set of status rule 2 (``records.STATUS_RULE_BUNDLE``): /1's shapes, a bundle's
 #: relation, conjuncts and key, and the revision-free keys on every record
 SEAL_SCHEMA_BUNDLE = "cf-locate-recordset/2"
-#: the seal schema of each status rule, and the schemas a target directory may hold
+#: the seal schema of each status rule, and the schemas a target directory may hold: status
+#: rule 3 (R-BROAD) derives other statuses into the same shapes, so its set is a /2 whose
+#: seal's ``status_rule`` is 3
 SEAL_SCHEMAS = {records.STATUS_RULE_D1: SEAL_SCHEMA,
-               records.STATUS_RULE_BUNDLE: SEAL_SCHEMA_BUNDLE}
+               records.STATUS_RULE_BUNDLE: SEAL_SCHEMA_BUNDLE,
+               records.STATUS_RULE_BROAD: SEAL_SCHEMA_BUNDLE}
 #: the default per-source byte budget of records/<source-id>.jsonl and its receipts:
 #: 0, off.  A consumer with a cap (an import into a store with a per-row limit) passes
 #: its own with --byte-budget, and the seal records the budget that applied.
@@ -118,7 +124,7 @@ RUN_CAMPAIGN_PREFIX = vocab.RUN_TOKEN_PREFIX
 SEAL_KEYS = ("schema", "set_id", "campaign", "universe", "sourceset", "skill_commit", "created",
              "byte_budget", "files")
 #: the seal of ``cf-locate-recordset/2``: /1's keys and the status rule its statuses were
-#: derived under
+#: derived under (2, or 3 for a run of status rule 3)
 SEAL_KEYS_BUNDLE = SEAL_KEYS + ("status_rule",)
 #: a campaign id the seal may carry: letters, digits and ``._:-``, at most 128, never
 #: starting ``run:`` (that prefix is a run token's); the grammar of ``set_id`` and
@@ -439,7 +445,7 @@ def build_set(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[st
         "byte_budget": int(byte_budget or 0),
         "files": files,
     }
-    if status_rule == records.STATUS_RULE_BUNDLE:
+    if status_rule >= records.STATUS_RULE_BUNDLE:
         seal["status_rule"] = status_rule
     atomic_write(out / "SEAL.json", records.canonical(seal) + "\n")
     # the runs and the manifest version are the workspace's provenance, in the report:

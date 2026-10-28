@@ -42,6 +42,21 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **Status rule 3, R-BROAD** (`cflib.vocab.STATUS_RULE_BROAD`; `references/vocabulary.md`
+  §1.11, the maintainer's call of 2026-10-28). `derive_status(…, status_rule=3)` gives
+  `formalized` for a `broadMatch` to a proved theorem or to data (a definition without the
+  statement flag, an equivalence) on a theorem, conjecture, example or other passage, and to a
+  definition on a definition, construction or notation passage (a finished `broadMatch` bundle's
+  stand-in among them); everything else is status rule 2. The status rule a run of judgment rules
+  `r` is derived under is `vocab.status_rule_of_judgment(r)` (3 from judgment rules 4, 2 for 3,
+  1 before), which `cf plan-locate` writes as `locate.status_rule` and the bench derives a
+  labeler's gold by; this change writes no new value yet (judgment rules are still 3). The
+  outcomes, the challenge plan, the records and the export read status rule 3 as status rule 2
+  (`vocab.reads_bundles`), and a run of it exports `cf-locate-recordset/2` with the seal's
+  `status_rule` 3, so a consumer that reads that key derives by the rule it names. New
+  hand-written table `tests/data/locate/status-parity-3.json` (`cf-locate-status-parity/3`, 81
+  cases: status rule 2's again with their rule-2 expectation beside each, and 23 of R-BROAD's
+  own); the `/1` and `/2` tables are unchanged.
 - **The receipt of a rule-2 audited run counts the skips** (`scripts/harvest/audit_summary.py`,
   `references/locate-documents.md` §13.10 and §13.11). When a verdicts file is `audit/2`, the
   receipt's `audit` block gains `skips`: round 1's skip reports summed (`before`), the reviewed

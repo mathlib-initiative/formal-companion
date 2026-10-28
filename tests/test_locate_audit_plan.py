@@ -819,9 +819,12 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         differ = {k for k in then.keys() | now.keys()
                   if k != "run.yaml" and then.get(k) != now.get(k)}
         self.assertEqual(differ, self.staged_changed())
+        # the audit's four, and the gate's records module, which status rule 3 (R-BROAD)
+        # changed after the base: staged into every plan, read by no inventory document
         self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
                           "tend-root/gate/inventory_render.py",
-                          "tend-root/gate/inventory_edit.py"}, differ)
+                          "tend-root/gate/inventory_edit.py",
+                          "tend-root/gate/locate_records.py"}, differ)
         for name in AUDIT_PROMPTS:
             self.assertEqual(now[f"prompts/{name}"], then[f"prompts/{name}"], name)
         self.assertEqual(now_yaml["locate"]["audit"], {"rule": 1, "review_rounds": 3})

@@ -406,11 +406,15 @@ def audit_block(review_rounds: int | None) -> dict[str, int] | None:
 def status_rule() -> int | None:
     """The status rule a locate run planned now records (``run.yaml`` ``locate.status_rule``).
 
-    ``vocab.STATUS_RULE`` exactly when the run is judged under the statement cut's
-    rules -- only such a run writes conjunct relations, so only its bundles have a
-    relation to take -- and None (the key left out, status rule 1) before.
+    The one the run's judgment rules are derived under
+    (``vocab.status_rule_of_judgment(vocab.JUDGMENT_RULES)``, which is
+    ``vocab.STATUS_RULE``) exactly when the run is judged under the statement cut's
+    rules or later ones -- only such a run writes conjunct relations, so only its
+    bundles have a relation to take: 2 for judgment rules 3, 3 (R-BROAD) for judgment
+    rules 4 -- and None (the key left out, status rule 1) before.
     """
-    return vocab.STATUS_RULE if statement_cut_planned() else None
+    return vocab.status_rule_of_judgment(vocab.JUDGMENT_RULES) if statement_cut_planned() \
+        else None
 
 
 def _gate_version(paths: WorkspacePaths, run_id: str, key: str) -> int:

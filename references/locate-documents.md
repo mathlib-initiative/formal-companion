@@ -930,6 +930,14 @@ byte for byte as below. `/2` is `/1` with these differences, and no other:
   more `exactMatch`, so a definition, construction or notation passage whose bundle
   is `broadMatch` is `partial` (`references/vocabulary.md` §1.11).
 
+**Status rule 3** (`locate.status_rule: 3`, R-BROAD; `references/vocabulary.md` §1.11)
+exports `/2` too, with one difference: the seal's `status_rule` is `3`, and the status every
+record carries is `derive_status(…, status_rule=3)`, under which a `broadMatch` formalizes a
+theorem passage whether its declaration is proved or data, and a definition passage when it is
+a definition. The record shapes are `/2`'s, so a consumer reads the seal's `status_rule` to know
+which derivation its statuses came from (`tests/data/locate/status-parity-3.json` holds rule
+3's cases, `status-parity-2.json` rule 2's).
+
 A target directory may hold a `/1` or a `/2` set: a re-export replaces either. The
 self-evidencing format the decision log once planned as `/2` takes the next number,
 `/3`, when it is built.
@@ -2545,7 +2553,9 @@ problems and ignored, as a verdict on any record the plan did not require is.
 
 **Status rule 2** (`run.yaml` `locate.status_rule: 2`, which `cf plan-locate`
 writes from the statement cut's flip on; a run.yaml without it is status rule 1,
-and one naming any other value is refused): every row also carries the passage's
+status rule 3 is the same rows with R-BROAD's statuses — `derive_status(…,
+status_rule=3)`, references/vocabulary.md §1.11 — and one naming any other value is
+refused): every row also carries the passage's
 `statement`, `conjuncts` and `shape` from the frozen inventory (where it has them);
 its `coverage` carries `relation`, the bundle's (its weakest part's: the weaker of
 each part's `conjunct_relation` and a confirm's `part_relations` entry for it, a
