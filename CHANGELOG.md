@@ -321,26 +321,36 @@ release has something to say.
 - **Two calls on the cut: independent facts are separate passages, and a sentence naming
   several structures is cut per structure** (`templates/prompts/locate-inventory.md.tmpl`,
   `locate-inventory-audit-system.md.tmpl`, `locate-inventory-audit.md.tmpl`,
-  `locate-inventory-skeptic.md.tmpl`; `references/vocabulary.md` §1.11, "Two calls on the
-  cut"; the maintainer's notes of 2026-10-28). **R-SPLIT**: a compound statement's conjuncts
-  are the clauses of one statement (the existence and uniqueness of one object, the directions
-  or conditions of one equivalence, the cases of one law or definition, conclusions that make
-  one result together), and facts that each stand as a result of their own are cut, one passage
-  per fact, even about one subject, under one hypothesis or in one sentence, each `statement`
-  carrying the hypotheses they share. One formula that holds several stays one `equations`
-  passage, a conjunct and a part per fact: a passage is one span of the layer, which spells a
-  formula as its whole rendered text and then its whole TeX, so no span holds one row of it.
-  **R-INSTANCE**: a sentence that names several structures having one property is cut per
-  structure, at the words that name each, and the general notion with its definition is a
-  `definition` passage of its own. The inventory prompt says both in a paragraph after its two
-  readings, outside the shared cut rules, so the bench labeler and its gold are unchanged
-  (R-INSTANCE's passages are often under the bench join's four-word floor, and a gold compound
-  passage still joins one of the run's pieces); under audit rule 3 the rule card states both
-  beside C1, C2, C4 and C8, the auditor's `under_cut` names them, and the skeptic's example of
-  a refuted flag is existence and uniqueness (C8) in place of two conjuncts about one subject
-  (C4), while rule-1 and rule-2 plans render byte for byte as before. No gate check: whether two
-  facts are independent is judgment. The rendered worker prompt is 20,266 bytes with a real
-  plan's paths, so `WORKER_MD_MAX_BYTES` is 20,300. Every example is synthetic.
+  `locate-inventory-skeptic.md.tmpl`, `scripts/locate/prompts.py`; `references/vocabulary.md`
+  §1.11, "Two calls on the cut"; the maintainer's notes of 2026-10-28). One cut rule.
+  **R-SPLIT**: facts that each stand as a result of their own are independent, even about one
+  subject or under one hypothesis, and the clauses of one statement are not (the existence and
+  uniqueness of one object, the directions or conditions of one equivalence, the cases of one law
+  or definition in one sentence, display or list); independent facts in separate sentences,
+  independent clauses, list items or formulas of a display are separate passages, each
+  `statement` carrying the hypotheses they share ("the series converges, and its sum is s" is
+  two), and independent facts one clause or one formula states stay one passage of shape
+  `conclusions` or `equations`, a conjunct and a part per fact, since no cut falls inside a clause
+  or a formula. A display of separate formulas that each state an independent fact is cut before
+  each formula after the first, the words that introduce it opening the first. **R-INSTANCE**: a
+  sentence that names several structures having one property is cut per structure, the one cut
+  inside a clause, each piece a passage however short (no single word of PD5's term-link line,
+  and never `statement_misstates` for saying the sentence's property of its structure), and the
+  general notion with its definition is a `definition` passage of its own. Both are audit rule
+  3's: only a plan audited under it renders them, in the worker prompt too (`cut_calls`, in
+  `{{#if cut_calls}}` blocks: the single-word line, Units, Displays, Inside a sentence — which
+  keeps the clauses of one statement together where it kept "conjuncts about one subject", and
+  cuts at `, and` before a clause with a subject of its own — Conjuncts, the worker's check and a
+  paragraph after the two readings), and in the rule card beside C1, C2, C3, C4 and C8, the
+  auditor's `under_cut` and `statement_misstates` glosses and the skeptic's example of a refuted
+  flag (existence and uniqueness, C8, for two conjuncts about one subject, C4). An unaudited
+  plan's prompts and a rule-1 or rule-2 plan's are byte for byte what they were, so a re-planned
+  rule-1 or rule-2 run's worker cuts by the rules its reviewers judge, and the bench labeler and
+  its gold are unchanged (R-INSTANCE's passages are often under the bench join's four-word floor,
+  and a gold compound passage still joins one of the run's pieces). No gate check: whether two
+  facts are independent is judgment. The rendered rule-3 worker prompt is 21,444 bytes with a
+  real plan's paths (`WORKER_MD_RULE3_MAX_BYTES` 21,500), the unaudited one 18,886 as before.
+  Every example is synthetic.
 - **The challenge reviewer and worker, after smoke 4's four rejections**
   (`templates/prompts/locate-reviewer-system.md.tmpl`, `locate-challenge.md.tmpl`,
   `scripts/gate/verify_locate.py`, both bridges, `scripts/locate/tend_root.py`). Every

@@ -109,14 +109,14 @@ PD9_END = b"otherwise X is no passage and no clause.\n"
 def with_prose_floor(worker: bytes) -> bytes:
     """A worker prompt rendered before the smoke-4 fixes, with what they add and nothing
     else: the prose floor's sentence after the floor's, the commentary bullet after the
-    narration bullet, and the two readings after PD9, then the maintainer's two calls on
-    the cut of 2026-10-28 after the readings (test_locate_statement_cut)."""
+    narration bullet, and the two readings after PD9 (test_locate_statement_cut).  The
+    maintainer's two calls on the cut of 2026-10-28 are audit rule 3's, so no plan this
+    compares renders them (:meth:`TestThePrompts.test_the_worker_keeps_its_prompts`)."""
     for mark in (FLOOR, NARRATION_END, PD9_END):
         assert worker.count(mark) == 1, mark
     return (worker.replace(FLOOR, FLOOR + b" " + TS.PROSE_FLOOR_SENTENCE.encode("utf-8"))
             .replace(NARRATION_END, NARRATION_END + TS.COMMENTARY_BULLET.encode("utf-8") + b"\n")
-            .replace(PD9_END, PD9_END + b"\n" + TS.READINGS.encode("utf-8") + b"\n\n"
-                     + TS.CUT_CALLS.encode("utf-8") + b"\n"))
+            .replace(PD9_END, PD9_END + b"\n" + TS.READINGS.encode("utf-8") + b"\n"))
 
 
 def without_prose_floor(gate: bytes) -> bytes:
@@ -365,10 +365,17 @@ class TestThePrompts(Audited):
                 self.assertNotIn("/Users/", text)
 
     def test_the_worker_keeps_its_prompts(self):
+        """The worker's two prompts are an unaudited plan's, but that under audit rule 3 the
+        inventory prompt says the maintainer's two calls on the cut (R-SPLIT, R-INSTANCE:
+        ``test_locate_statement_cut.with_cut_calls``), which a rule-1 or rule-2 plan's does
+        not, so its worker cuts by the rules its reviewers judge."""
         audited, plain = self.prompts(), self.prompts("inv-1")
         for name in ("worker-system.md", "worker.md"):
             with self.subTest(prompt=name):
-                self.assertEqual(audited[name], plain[name].replace("inv-1", "inv-a"))
+                want = plain[name].replace("inv-1", "inv-a")
+                if name == "worker.md" and vocab.INVENTORY_AUDIT_RULE >= 3:
+                    want = TS.with_cut_calls(want)
+                self.assertEqual(audited[name], want)
         for name in ("reviewer-system.md", "reviewer.md"):
             self.assertIn("Your job here is form, not judgment", plain["reviewer-system.md"])
             self.assertNotIn("form, not judgment", audited[name])
@@ -650,8 +657,8 @@ class TestTheSkipPrompts(AtRule, Audited):
 #: what a rule-3 plan's prompts say and a rule-1 or rule-2 plan's never do
 GAP_WORDS = ("gap_statements", "examined_gaps", "missed_gaps", "'<gap id>'", "`commentary`",
              "--rule 3", "Three readings of the cut", "**Gaps (audit rule",
-             "Two calls of the maintainer on the cut", "C8 keeps them one",
-             "independent facts and no one formula")
+             "Two calls of the maintainer on the cut", "C8 keeps them one", "R-SPLIT",
+             "R-INSTANCE", "not one clause or one formula")
 
 
 class TestTheGapPrompts(AtRule, Audited):
@@ -671,22 +678,38 @@ class TestTheGapPrompts(AtRule, Audited):
                                         "need not be finite", "to name a step",
                                         "symbols and all", "(`r1-g001`)",
                                         "**Two calls of the maintainer on the cut (audit rule "
-                                        "3)**", "C4's conjuncts about one subject are those "
-                                        "only", "is `under_cut` (rule 8), unless they are one "
-                                        "formula, which no passage can cut",
+                                        "3)**", "C4's NEVER keeps together the clauses of one "
+                                        "statement", "not every pair of conjuncts about one "
+                                        "subject", "and its \", and\" cuts before a clause "
+                                        "with a subject of its own, a pronoun for the same "
+                                        "object too", "so a compound passage that holds them is "
+                                        "`under_cut` (rule 8)", "Independent facts that one "
+                                        "clause or one formula states are one passage, a "
+                                        "conjunct per fact: never `under_cut`, and a cut inside "
+                                        "a clause is `over_cut` (rule 4), but R-INSTANCE's",
+                                        "Under C3, a display whose separate formulas each state "
+                                        "an independent fact is cut before each formula after "
+                                        "the first",
                                         "such a sentence kept as one passage is `under_cut` "
                                         "(rule 2), and its per-structure passages are never "
-                                        "`over_cut`")),
+                                        "`over_cut`, never wrong for being one word (the "
+                                        "prompt's single-word line, PD5's), and never "
+                                        "`statement_misstates` for saying the sentence's "
+                                        "property of their structure")),
                 ("reviewer.md", ('"gaps": [', "`commentary`", "7. **`gaps`: one row for EVERY "
                                  "gap your part shows**",
                                  "and `should_be_expository` (C6, PD5) when it asserts "
                                  "nothing about mathematical objects",
                                  "leave expository a step that only instructs (C6)",
                                  "`kind-rule` marks every formal passage of kind `other`",
-                                 "`under_cut` when it holds two results (a compound passage "
-                                 "whose conjuncts are independent facts and no one formula "
-                                 "among them, rule 8, and a sentence naming several structures "
-                                 "with one property kept as one passage, rule 2")),
+                                 "`under_cut` when it holds two results the spec cuts apart "
+                                 "(the rule card's two calls: a compound passage whose "
+                                 "conjuncts are independent facts and not one clause or one "
+                                 "formula, rule 8, and a sentence naming several structures "
+                                 "with one property kept as one passage, rule 2)",
+                                 "(C7), never for an R-INSTANCE piece's saying the sentence's "
+                                 "property of its structure;")),
+                ("worker.md", (TS.CUT_CALLS, TS.CUT_CHECK)),
                 ("reviewer-skeptic.md", ('"examined_gaps": ["r1-g001"]', "INSIDE the gap",
                                          '"rule": 8, "evidence": ""',
                                          "existence and uniqueness of one object: C8 keeps "
@@ -703,6 +726,9 @@ class TestTheGapPrompts(AtRule, Audited):
         # R-SPLIT: two facts about one subject are no longer the skeptic's example of a cut
         # C4 forbids (rule 1 and 2 plans keep it, byte for byte)
         self.assertNotIn("C4 forbids the cut", prompts["reviewer-skeptic.md"])
+        # the auditor's wording nit: "no one formula among them" read as "none is a formula"
+        for text in prompts.values():
+            self.assertNotIn("no one formula", text)
         # the prompts' examples are the fixtures' widget ones, never an article's sentence
         for text in prompts.values():
             self.assertEqual(re.findall(r"#([0-9a-f]{8})\b", text.replace("0000c0de", "")

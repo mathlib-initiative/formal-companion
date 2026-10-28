@@ -3233,7 +3233,8 @@ The reviewer reads `reviewer-system.md` with `reviewer.md` (the auditor), `revie
 (the checker) or `reviewer-skeptic.md`; the worker `worker-system.md` with `worker.md` and, in a
 revision, `worker-revision.md`. The planner renders the four reviewer prompts and the revision
 from `templates/prompts/locate-inventory-{audit-system,audit,check,skeptic,revision}.md.tmpl`
-(`locate.prompts.AUDIT_TEMPLATES`) and the worker's two as an unaudited inventory's:
+(`locate.prompts.AUDIT_TEMPLATES`) and the worker's two as an unaudited inventory's (but that
+under rule 3 the inventory prompt says the maintainer's two calls on the cut, §13.12):
 `reviewer-system.md` is the rule card, the statement cut's rules 1-10 of
 `docs/proposals/statement-cut.md` §3.4 as C1 to C10 (the kind rule under C6), what the gate's
 bound allows under the statement-cut rule the plan writes (`locate.prompts.gate_bound`), the
@@ -3683,15 +3684,28 @@ names a step, under C7 a sentence naming a symbol is a `notation` passage scoped
 before it is context —
 which the inventory prompt states in its own sentences beside the shared rules, and, from the
 maintainer's notes of 2026-10-28, its **two calls on the cut** (`references/vocabulary.md` §1.11,
-"Two calls on the cut"): under C1 and C8 (R-SPLIT) a compound passage whose conjuncts are
-independent facts and not one formula is `under_cut`, rule 8, and under C2 and C4 (R-INSTANCE) a
+"Two calls on the cut"), which make one cut rule: under C1, C4 and C8 (R-SPLIT) facts that each
+stand as a result of their own are independent, C4's NEVER keeps together the clauses of one
+statement and not every pair of conjuncts about one subject, a compound passage of independent
+facts that are not one clause or one formula is `under_cut`, rule 8, independent facts one clause
+or one formula states are one passage with a conjunct per fact, and a cut inside a clause but
+R-INSTANCE's is `over_cut`, rule 4; under C3 a display whose separate formulas each state an
+independent fact is cut before each formula after the first; and under C2 and C4 (R-INSTANCE) a
 sentence naming several structures with one property kept as one passage is `under_cut`, rule 2,
-its per-structure passages never `over_cut`, which the auditor's `under_cut` gloss repeats and the
-skeptic's example of a refuted flag follows (existence and uniqueness of one object, C8, where
-rules 1 and 2 keep their example of two conjuncts about one subject); the auditor's GAP
+its per-structure passages never `over_cut`, never wrong for being one word and never
+`statement_misstates` for saying the sentence's property of their structure, which the auditor's
+`under_cut` and `statement_misstates` glosses repeat and the skeptic's example of a refuted flag
+follows (existence and uniqueness of one object, C8, where rules 1 and 2 keep their example of
+two conjuncts about one subject); the auditor's GAP
 lines, its `gaps` rows and the kind rule's expository answer, and its expository flags naming the
 statements they mean; the skeptic's gap flags and gap hunt; the checker's GAPS and GAP VERDICT
-lines; the revision's gap verdict and its weight.
+lines; the revision's gap verdict and its weight. The two calls are rule 3's in the worker
+prompt too: a plan of rule 3 renders the inventory prompt's `{{#if cut_calls}}` blocks
+(`locate.prompts.audit_context`'s `cut_calls`), R-SPLIT's and R-INSTANCE's words in the places
+of the shared cut rules they replace, a paragraph after the two readings and a bullet of the
+worker's check, which an unaudited plan and a plan of rule 1 or 2 render empty, so their worker
+prompt is the one it was and a re-planned rule-1 or rule-2 run's worker cuts by the rules its
+reviewers judge.
 
 **The turn machine** (`CF_AUDIT_RULE=3`) is rule 2's, with `--gate-config` on every strip, each
 part's gaps named in the call's block, a gap flag placed in the part that shows its gap, the gap
