@@ -215,6 +215,13 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **The flip of the gap audit: a new audited plan writes audit rule 3** (`cflib.vocab.INVENTORY_AUDIT_RULE`
+  is 3; `references/locate-documents.md` §13.12). `cf plan-locate --audit-rounds 2|3` now writes
+  `locate.audit.rule: 3` and `CF_AUDIT_RULE="3"` in both wrappers and renders the five audit
+  prompts with rule 3's blocks; an inventory planned under rule 1 or 2 (inv-pilot-3, inv-pilot-3b,
+  smoke 4) keeps its rule on the host, at re-harvest and at re-gate, and a re-plan of one is
+  refused as before. Under rule 3 the kind rule reads every formal `other` passage: the synthetic
+  e2e's widget page gains that verdict in round 1 (three actionable, three applied).
 - **The inventory prompt says three readings of the cut** (`templates/prompts/locate-inventory.md.tmpl`;
   the smoke-4 audit). Five of the seven narration pieces smoke 4 kept formal were a method's
   commentary or an instruction of a computation, one was a "need not" clause cut from the

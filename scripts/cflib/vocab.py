@@ -968,8 +968,9 @@ GATE_CALLERS = (GATE_CALLER_VALIDATION, GATE_CALLER_PRE_MERGE, GATE_CALLER_FINDI
 #: runs at the rule its run names (``--rule``)
 INVENTORY_AUDIT_RULES = (1, 2, 3)
 #: the decision table's version a new audited plan writes (``audit/<n>`` in every verdicts
-#: file): 2 from the flip of the skip audit, 1 before (inv-pilot-3's)
-INVENTORY_AUDIT_RULE = 2
+#: file): 3 from the flip of the gap audit (the smoke-4 fixes), 2 from the flip of the skip
+#: audit until then (inv-pilot-3b's and smoke 4's), 1 before (inv-pilot-3's)
+INVENTORY_AUDIT_RULE = 3
 #: the ``schema`` of every audit file of a rule's run
 INVENTORY_AUDIT_SCHEMAS = {1: "cf-inventory-audit/1", 2: "cf-inventory-audit/2",
                            3: "cf-inventory-audit/3"}
