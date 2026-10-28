@@ -431,7 +431,8 @@ A location:
   and no other passage's does, nor a `challenge_pending` record's (§2.2).
 - A `closeMatch` always names its convention difference in `note`, one a
   challenge downgraded to `closeMatch` too (the challenger's note, else the
-  first sentence of its witness that quotes the source within the quote cap).
+  first sentence of its witness that quotes the source within the quote cap and is no
+  R-SPECIFIC recall miss).
 - `proof_status` is joined from the index at export, never written by a worker.
 - `location_key` = sha256(source_id, clean(item), library, commit,
   declaration) — run-free, for idempotent upserts by consumers. The run-scoped

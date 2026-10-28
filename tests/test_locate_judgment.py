@@ -2417,7 +2417,8 @@ class TestTheSmoke4Rules(unittest.TestCase):
         specific declaration first and ranks it first; the challenger hunts for it and,
         since a challenge cannot add a location to a located passage, reports a general card
         where a specific one exists as a recall miss, in a marked last sentence of the
-        verdict's witness (never the first, which may stand in for a note)."""
+        verdict's witness, which the note a downgrade's witness lends never takes
+        (``locate_records.downgrade_note``)."""
         worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)
         for needle in ("the objects it is about and the declaration stated for those very "
                        "objects, before any general theorem that holds of them (R-SPECIFIC "
@@ -2431,8 +2432,8 @@ class TestTheSmoke4Rules(unittest.TestCase):
                        "declaration never changes (R6)",
                        "it is a recall miss you cannot repair (a challenge only lowers",
                        "in the last sentence of your verdict's witness on the general record, "
-                       "`R-SPECIFIC miss: <library> <declaration>.` (never its first, which "
-                       "may stand in for a note), and name each such miss in your summary.",
+                       "`R-SPECIFIC miss: <library> <declaration>.`, which a downgrade's note "
+                       "never takes, and name each such miss in your summary.",
                        "the objects the statement is about and the declaration stated for "
                        "them (R-SPECIFIC below)"):
             with self.subTest(prompt="challenge", needle=needle[:30]):
@@ -2453,6 +2454,15 @@ class TestTheSmoke4Rules(unittest.TestCase):
                       "did", vocabulary)
         self.assertIn("the last sentence of the witness of its verdict on that card is "
                       "`R-SPECIFIC miss:`", vocabulary)
+        # the docs say what the note picker does with it, and that the record stays free text
+        # (finding 8: "never its first, which may stand in for a note" misdescribed it)
+        from locate import records
+        self.assertEqual(records.SPECIFIC_MISS_MARK, "R-SPECIFIC miss:")
+        self.assertIn("that picker never takes a sentence that carries the mark", vocabulary)
+        self.assertIn("The miss is free text and stays so", vocabulary)
+        for text, name in ((vocabulary, "vocabulary"), (challenger, "challenge")):
+            with self.subTest(text=name):
+                self.assertNotIn("may stand in for a note", text)
 
     def test_the_prompts_ask_for_the_fields_of_rules_4(self):
         worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)

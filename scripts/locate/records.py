@@ -708,6 +708,16 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
 
 #: abbreviations whose full stop ends no sentence of a witness ("i.e. F(x) = ...")
 _ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
+#: the mark of a challenger's recall miss under R-SPECIFIC (references/vocabulary.md section
+#: 1.11): the last sentence of its witness on a general card, ``R-SPECIFIC miss: <library>
+#: <declaration>.``, which reports a declaration the passage's locations lack and is never a
+#: note (:func:`downgrade_note`)
+SPECIFIC_MISS_MARK = "R-SPECIFIC miss:"
+
+
+def is_specific_miss(sentence: str) -> bool:
+    """Does a witness sentence carry the R-SPECIFIC recall-miss mark (in any case)?"""
+    return SPECIFIC_MISS_MARK.casefold() in str(sentence).casefold()
 
 
 def witness_sentences(witness: str) -> list[str]:
@@ -750,17 +760,21 @@ def downgrade_note(verdict: dict, layer: str | None = None) -> str:
     (:func:`verbatim_run` against the passage's ``layer``).  A witness opens
     by quoting the passage as often as not (field case FTC #19a718e1: "The
     passage says only that '<19 words of the article>'"), and a note is exported,
-    so that sentence is passed over for the next.  Without a layer, or when every
-    sentence quotes past the cap, the first sentence, which the export refuses by
-    name.  Empty only when the verdict says nothing, which the gate refuses and
-    the export would refuse by name.  It lives here, beside :func:`check_note`,
-    so the gate's rule 1 computes the same note from the staged copy and refuses
-    the one the export would.
+    so that sentence is passed over for the next.  A sentence that carries the
+    R-SPECIFIC recall-miss mark (:func:`is_specific_miss`) is never taken: it names
+    a declaration the passage lacks, not the convention the record differs by.
+    Without a layer, or when every sentence left quotes past the cap, the first of
+    them, which the export refuses by name.  Empty only when the verdict says
+    nothing, or its witness says only recall misses: the gate refuses both, and the
+    export would refuse the record by name.  It lives here, beside
+    :func:`check_note`, so the gate's rule 1 computes the same note from the staged
+    copy and refuses the one the export would.
     """
     note = " ".join(str(verdict.get("note") or "").split())
     if note:
         return note
-    sentences = witness_sentences(str(verdict.get("witness") or ""))
+    sentences = [s for s in witness_sentences(str(verdict.get("witness") or ""))
+                 if not is_specific_miss(s)]
     if not sentences:
         return ""
     if layer:

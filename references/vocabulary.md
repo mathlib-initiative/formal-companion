@@ -670,8 +670,13 @@ is the passage's best card move. The challenger, which cannot add a location to 
 (a challenge only lowers, and an overturn or a fill replaces only an absence or nothing), reports a
 general card where the library states a specific declaration as a recall miss: the last sentence
 of the witness of its verdict on that card is `R-SPECIFIC miss:` with the library and the
-declaration (never the first, which may stand in for a note), and its summary names each one,
-until the owed record of the hunt is designed. Its record of the call: the
+declaration, and its summary names each one. A downgrade to `closeMatch` with no note of its own
+exports a sentence of its witness as the location's note (`locate_records.downgrade_note`), and
+that picker never takes a sentence that carries the mark (`locate_records.is_specific_miss`), so
+the miss is never exported as a note; a witness that says nothing else lends no note, which the
+gate refuses (rule 1). The miss is free text and stays so: nothing in the outcomes, the tally or
+the export reads it, and its structured record belongs to the owed redesign of the `owed`
+markers, which also covers the raise a challenge cannot make. Its record of the call: the
 smoke-4 run linked passages stated for the integers to `UniqueFactorizationMonoid` lemmas, in
 bundles too, where `Nat` lemmas state them, and he read the `Nat` lemmas as the links. It kept the
 labeler at `locate-label/7` for the reason the calls above did (no gate check, `JUDGMENT_RULES`

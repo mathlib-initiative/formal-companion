@@ -314,8 +314,12 @@ release has something to say.
   links). The locate worker's search step and its ranking line say it; the challenger hunts for
   the specific declaration and, since a challenge cannot add a location to a located passage,
   reports a general card where one exists as a recall miss in the last sentence of its verdict's
-  witness (`R-SPECIFIC miss: <library> <declaration>.`, never the first sentence, which may stand
-  in for a note) and in its summary, until the owed redesign of the hunt records it. No gate
+  witness (`R-SPECIFIC miss: <library> <declaration>.`) and in its summary; the miss stays free
+  text until the owed redesign of the `owed` markers records it. A downgrade's note never takes
+  that sentence: `locate_records.downgrade_note`, which picks the witness sentence a `closeMatch`
+  downgrade with no note exports as its note, passes over any sentence that carries the mark
+  (`is_specific_miss`), and the gate's rule 1 refuses such a downgrade whose witness says nothing
+  else, since the export would refuse a `closeMatch` with no note. No gate
   check (general against specific is no fact a name gives), so `JUDGMENT_RULES` stays 4 and the
   labeler `locate-label/7`; its file sha moved, so args emitted before this transcribe no more.
 - **Two calls on the cut: independent facts are separate passages, and a sentence naming
