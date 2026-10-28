@@ -2114,7 +2114,8 @@ like a faithfulness run:
   with `--audit-rounds 2|3` (§13; absent, the run is unaudited and its plan is the
   one an unaudited plan always was).
   `audit` is the audit rule, the decision table's version (`cflib.vocab.INVENTORY_AUDIT_RULE`:
-  2 from the skip audit's flip, §13.11, 1 for a plan made before it) and R, the
+  3 from the gap audit's flip, §13.12, 2 from the skip audit's flip until then, §13.11, 1 for
+  a plan made before it) and R, the
   review rounds a document takes at most (`AUDIT_REVIEW_ROUNDS`); the flag belongs to
   the locate-inventory preset and the `agentbox-claude` bridge, and a re-plan keeps a
   run's audit, as it keeps its preset. An audited plan renders seven prompts (§13.9),
@@ -2859,9 +2860,10 @@ it applies. `cf plan-locate --preset locate-inventory --audit-rounds 2|3` plans 
 (`run.yaml` `locate.audit`, §9); a run planned without it stages, renders and gates
 exactly as before. This section is the format the stage
 is built on and the three host tools that read and write it, under **audit rule 1**, which
-audits the passages; **audit rule 2** (§13.11, what a plan writes from its flip on) audits the
-skips too, and §13.1-13.10 hold under it but where §13.11 says otherwise; **audit rule 3**
-(§13.12) audits the gaps too, and §13.1-13.11 hold under it but where §13.12 says otherwise.
+audits the passages; **audit rule 2** (§13.11, what a plan wrote from its flip to the gap
+audit's) audits the skips too, and §13.1-13.10 hold under it but where §13.11 says otherwise;
+**audit rule 3** (§13.12, what a plan writes from the gap audit's flip on) audits the gaps too,
+and §13.1-13.11 hold under it but where §13.12 says otherwise.
 
 **The tools.** `scripts/gate/inventory_render.py`, `scripts/gate/inventory_edit.py` and
 `scripts/gate/inventory_audit.py` are standard library only and import no `cflib`; the planner

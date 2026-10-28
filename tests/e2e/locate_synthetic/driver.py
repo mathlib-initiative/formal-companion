@@ -1897,15 +1897,17 @@ class Pipeline:
         in a git worktree of its own, and each turn runs the planned wrapper
         (``tend-root/bin/<role>-agent.sh``: ``CF_AUDIT_RULE`` makes the bridge hand it to
         ``bin/audit_turn.py``, which calls ``agent_call.py --step``) with a fake
-        ``agentbox`` first on PATH (:data:`FAKE_AGENTBOX`).  The plan is audit rule 2's
-        (references/locate-documents.md section 13.11), and the widget page's worker
+        ``agentbox`` first on PATH (:data:`FAKE_AGENTBOX`).  The plan is audit rule 3's
+        (references/locate-documents.md sections 13.11 and 13.12: the skips and the gaps
+        judged; this page's gaps, if any, are judged clean), and the widget page's worker
         skipped its first corollary (:meth:`_skip_corollaries`).  Its auditor flags its
         first formal passage and the skip, with the statement the skip hides; the skeptic
-        upholds both, the skip's with evidence from inside it; the merge rejects; the
-        worker's revision applies a ``set`` and, for the skip, an ``unskip`` and an ``add``
-        through the staged ``inventory_edit.py --rule 2``, ``passage_ids.py`` and the
-        gate, and commits; round 2's checker finds both applied and, the final round, the
-        merge approves.  The other pages are clean in round 1.  The tend root's ``audit/``
+        upholds both, the skip's with evidence from inside it; the merge adds rule 3's kind
+        rule verdict on the page's model passage of kind other and rejects; the worker's
+        revision applies a ``set`` per passage verdict and, for the skip, an ``unskip`` and
+        an ``add`` through the staged ``inventory_edit.py --rule 3``, ``passage_ids.py`` and
+        the gate, and commits; round 2's checker finds all three applied and, the final
+        round, the merge approves.  The other pages are clean in round 1.  The tend root's ``audit/``
         and ``usage/`` are landed under ``runs/<run>/host/`` as the remote harvest's
         fetch lands them (``*.json`` only), and ``cf harvest`` writes the receipt's
         ``audit`` block (section 13.10), its ``skips`` one skip of one math paragraph
@@ -1921,7 +1923,7 @@ class Pipeline:
         paths = cf_main_paths(self.ws)
         root = paths.tend_root(run_id)
         rule = vocab.INVENTORY_AUDIT_RULE
-        check(rule == 2, f"the planner writes audit rule {rule}, not the skip audit's 2")
+        check(rule == 3, f"the planner writes audit rule {rule}, not the gap audit's 3")
         for role in ("worker", "reviewer"):
             wrapper = (root / "bin" / f"{role}-agent.sh").read_text(encoding="utf-8")
             check(f'export CF_AUDIT_RULE="{rule}"' in wrapper and 'export CF_AUDIT_ROUNDS="2"'
@@ -1980,11 +1982,15 @@ class Pipeline:
                                                        "revert": 0}
               and rounds.get("2", {}).get("decisions") == {"approve": 1, "request_changes": 0,
                                                            "revert": 0}
-              and rounds["2"]["counts"].get("status_applied") == 2
+              and rounds["2"]["counts"].get("status_applied") == 3
               and rounds["1"]["counts"].get("skips_upheld") == 1
-              and rounds["1"]["counts"].get("hidden_statements") == 1,
+              and rounds["1"]["counts"].get("hidden_statements") == 1
+              # rule 3's kind rule reads every formal passage of kind other: the widget
+              # page's model passage of kind other, outside a proof, gets its verdict too
+              and rounds["1"]["counts"].get("kind_rule") == 1
+              and rounds["1"]["counts"].get("gaps") == 0,
               f"the rounds are not round 1's rejection and round 2's approval: {rounds}")
-        check(per.get(WIDGET, {}).get("actionable_by_round") == [2, 0]
+        check(per.get(WIDGET, {}).get("actionable_by_round") == [3, 0]
               and per[WIDGET].get("reviewed_round") == 2
               and block.get("residual", {}).get("actionable") == 0,
               f"the widget page's verdicts were not applied: {per.get(WIDGET)}")
@@ -2092,8 +2098,9 @@ class Pipeline:
 #: ``audit_turn.py`` makes through ``agent_call.py`` from what the call's prompt names, at the
 #: audit rule its rendering index names.  The auditor flags the first formal passage of the
 #: page when FAKE_FLAG is set, and every skip whose reason is FAKE_SKIP with the statements its
-#: list items start; the skeptic upholds every flag with the first words of its span, a
-#: skip's from inside the skip, and hunts every unflagged skip of its part; the checker finds
+#: list items start, and (rule 3) every gap clean; the skeptic upholds every flag with the
+#: first words of its span, a skip's from inside the skip, and hunts every unflagged skip and
+#: (rule 3) every gap of its part; the checker finds
 #: every verdict applied and no collateral harmful; the worker's revision writes one ``set``
 #: operation per passage verdict and, per skip verdict, an ``unskip`` and an ``add`` per
 #: statement, runs the edit tool, the id tool and the gate the prompt names, reports each
@@ -2173,6 +2180,11 @@ if call:
                                              for st in statements(row["span"])]
                               if flagged else []})
             data["skips"] = skips
+        if rule >= 3:
+            # every gap of the part judged: clean (this page's worker leaves none that states)
+            data["gaps"] = [{"gap": gid, "verdict": "clean", "rule": 0, "merge_with": "",
+                             "reason": "", "action": "", "statements": []}
+                            for gid in index["parts"][part - 1].get("gaps") or []]
     elif step == "skeptic":
         flags = load("r%d.flags.part%d.json" % (k, part))
         flagged = {f["item"] for f in flags["flags"]}
@@ -2193,6 +2205,9 @@ if call:
             skipped = {f.get("skip") for f in flags["flags"]}
             data.update(examined_skips=[x for x in shown if x not in skipped] if k == 1 else [],
                         missed_skips=[])
+        if rule >= 3:
+            gaps = index["parts"][part - 1].get("gaps") or []
+            data.update(examined_gaps=list(gaps) if k == 1 else [], missed_gaps=[])
     else:
         expect = load("r%d.check.part%d.expect.json" % (k, part))
         data = dict(head("check", k, schema),
