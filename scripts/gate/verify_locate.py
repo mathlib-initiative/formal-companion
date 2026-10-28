@@ -2586,9 +2586,14 @@ def nat_for_int(cfg: GateConfig, ctx: Context, location: dict, row: dict | None,
         return ""
     if any(_NATURAL_WORDS.search(fold_words(note)) for note in notes if isinstance(note, str)):
         return ""
+    # judgment rules 4 (R-NAT): natural-number moduli for integer ones are an encoding, and
+    # the same note answers the tripwire; the words of rules 3 and before are unchanged
+    nat = ("; natural-number moduli for integer ones are an encoding, closeMatch (R-NAT): "
+           "say so in the note, naming ℕ" if cfg.judgment_rules >= RULES_SMOKE4 else "")
     return (f"the passage speaks of integers and every number-typed binder of {library}:{name} "
             f"is ℕ: a statement over ℕ for one over ℤ is a special case, narrowMatch (R3, PD2); "
-            f"if the passage's integers are naturals, say so in the note (name ℕ or the naturals)")
+            f"if the passage's integers are naturals, say so in the note (name ℕ or the naturals)"
+            + nat)
 
 
 def check_tests(problems: Problems, where: str, tests: Any, source: Any, *,

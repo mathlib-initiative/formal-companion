@@ -142,6 +142,37 @@ class TestOtherShapesAreNotHeld(Shaped):
         self.assertOk(self.gate(S.bundle_body(), R4))
 
 
+class TestTheNaturalsTripwireNamesRNat(S.LocateCase):
+    """Judgment rules 4: the ℕ-for-ℤ tripwire's refusal names R-NAT's encoding beside PD2.
+
+    Under R-NAT natural-number moduli for integer ones are an encoding, so a worker the
+    tripwire stops is told the same note answers it; under rules 3 the refusal is the
+    words it always was.
+    """
+
+    NEEDLE = "every number-typed binder"
+
+    def setUp(self):
+        super().setUp()
+        S.sign(self.fx, "Widget.exists_spanning_gadget", S.NAT_ONLY)
+        self.fx.manifest(self.TASK, S.cut_manifest_doc(
+            self.fx, thm={"statement": "for every integer order a spanning gadget exists"}))
+
+    def refusals(self, rules: int) -> list[str]:
+        return [p for p in self.gate(S.cut_locate_body(), rules)["problems"] if self.NEEDLE in p]
+
+    def test_rules_4_name_r_nat_and_rules_3_do_not(self):
+        r4, r3 = self.refusals(R4), self.refusals(R3)
+        self.assertTrue(r4 and r3)
+        self.assertTrue(all("an encoding, closeMatch (R-NAT)" in p for p in r4), r4)
+        self.assertFalse([p for p in r3 if "R-NAT" in p])
+
+    def test_a_note_naming_the_naturals_answers_it(self):
+        body = S.cut_locate_body()
+        body["passages"][0]["locations"][0]["note"] = "the moduli are natural numbers here"
+        self.assertOk(self.gate(body, R4))
+
+
 class TestAPartThatStatesPartOfItsConjunct(S.LocateCase):
     """Judgment rules 4: ``conjunct_relation: hasPart``, an honest label for half a conjunct."""
 
