@@ -56,14 +56,17 @@ class TestTheVersions(unittest.TestCase):
         self.assertEqual(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_WIDE)
         self.assertEqual(vocab.STATEMENT_CUT_RULE, 3)
         self.assertEqual((vocab.STATUS_RULE_D1, vocab.STATUS_RULE_BUNDLE), (1, 2))
-        self.assertEqual(vocab.STATUS_RULE, vocab.STATUS_RULE_BUNDLE)
+        # status rule 3 (R-BROAD), written from the flip of the smoke-4 audit's calls on
+        self.assertEqual(vocab.STATUS_RULE_BROAD, 3)
+        self.assertEqual(vocab.STATUS_RULE, vocab.STATUS_RULE_BROAD)
 
     def test_the_planner_writes_no_version_ahead_of_the_gate(self):
         """From the flip (the proposal's section 7) the written versions are the cut's, from
         the flip of inv-pilot-1's fixes the continued cut's, and from the flip of the wide
         bound the wide cut's: span-end rule 3 beside the statement-cut rule that reads it,
-        never a pair the gate refuses."""
-        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
+        never a pair the gate refuses; and from the flip of the smoke-4 audit's calls
+        judgment rules 4, beside status rule 3."""
+        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4)
         self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED)
         self.assertEqual(vocab.STATEMENT_CUT_SPAN_END[vocab.STATEMENT_CUT_RULE],
                          vocab.SPAN_END_RULE)
@@ -73,12 +76,13 @@ class TestTheVersions(unittest.TestCase):
         self.assertLess(vocab.RULES_PD5_PD9, vocab.RULES_STATEMENT_CUT)
         self.assertEqual(vocab.CHALLENGE_ABSENCE_SAMPLE_RATE, 0.5)          # fix 5c
         from locate import plan as lplan
+        self.assertLessEqual(vocab.JUDGMENT_RULES, vl.KNOWN_JUDGMENT_RULES)
         self.assertEqual(lplan.rule_versions(), {
-            "judgment_rules": vocab.RULES_STATEMENT_CUT,
+            "judgment_rules": vocab.RULES_SMOKE4,
             "span_end_rule": vocab.SPAN_END_CONTINUED,
             "statement_cut_rule": vocab.STATEMENT_CUT_WIDE})
-        self.assertEqual(tuple(lplan.rule_versions().values()), (3, 3, 3))
-        self.assertEqual(lplan.status_rule(), vocab.STATUS_RULE_BUNDLE)
+        self.assertEqual(tuple(lplan.rule_versions().values()), (4, 3, 3))
+        self.assertEqual(lplan.status_rule(), vocab.STATUS_RULE_BROAD)
 
     def test_the_proposal_names_every_key(self):
         for key in ("judgment_rules", "span_end_rule", "statement_cut_rule", "status_rule",

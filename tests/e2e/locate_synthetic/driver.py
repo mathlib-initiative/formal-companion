@@ -17,9 +17,9 @@ the shipped producer, not a fixture of the next stage's format:
 
     Every run is planned under the statement cut (docs/proposals/statement-cut.md,
     from its flip on, the continued cut of inv-pilot-1's fixes from theirs, and the
-    wide cut of inv-pilot-2's repairs from the flip of the wide bound: judgment rules
-    3, span-end rule 3, statement-cut rule 3, and a locate run's status rule 2), and
-    its documents take its shapes:
+    wide cut of inv-pilot-2's repairs from the flip of the wide bound, and the smoke-4
+    audit's calls from theirs: judgment rules 4, span-end rule 3, statement-cut rule 3,
+    and a locate run's status rule 3), and its documents take its shapes:
 
     L3a        cf plan-locate --preset locate-inventory; a worker's documents cut
                one passage per statement (a compound statement's conjuncts and
@@ -36,9 +36,10 @@ the shipped producer, not a fixture of the next stage's format:
                under rule 10, rule 2's end rule 3 and rule 9's rules 3, by the run's
                own staged gate or a copy of it where a case needs another version,
                database or record
-    L6         cf tally --locate (status rule 2: the bundle's weakest part's
-               relation), cf export literature-links (cf-locate-recordset/2, sealed,
-               checked)
+    L6         cf tally --locate (status rule 3: the bundle's weakest part's
+               relation, a broadMatch formalizing whatever its declaration),
+               cf export literature-links (cf-locate-recordset/2, its seal naming
+               status rule 3, sealed, checked)
     bench      cf bench build / anchor / freeze / score over the same runs
     A/A        loc-2 planned exactly as loc-1, run, challenged as chl-1 was,
                tallied and scored; cf bench compare --aa answers "aa ok", with
@@ -683,10 +684,11 @@ class Pipeline:
               f"the moved end was refused, but not by the span-end rule:\n{text}")
 
     # ------------------------------------------------------------------ L3b
-    #: the version keys of a run planned after the flip of the wide bound
-    #: (docs/proposals/statement-cut.md section 7), which every run here is: the
-    #: statement cut's judgment rules, the continued cut's end and the wide cut's rule 10
-    CUT_KEYS = {"judgment_rules": 3, "span_end_rule": 3, "statement_cut_rule": 3}
+    #: the version keys of a run planned after the flip of the smoke-4 audit's calls
+    #: (references/vocabulary.md section 1.11), which every run here is: their judgment
+    #: rules 4 (the statement cut's 3 and the calls' checks), the continued cut's end and
+    #: the wide cut's rule 10
+    CUT_KEYS = {"judgment_rules": 4, "span_end_rule": 3, "statement_cut_rule": 3}
     #: the widget theorem's conjuncts, as the cut's inventory writes them (synthetic)
     BOX_CONJUNCTS = [{"id": "c1", "text": "each finite widget has a spanning gadget"},
                      {"id": "c2", "text": "that gadget's size divides the order"}]
@@ -1598,13 +1600,14 @@ class Pipeline:
             check(len((quote.get("exact") or "").split()) <= 12, "an exported quote is over 12 words")
         statuses = {r.get("status") for r in records}
         check("formalized" in statuses, f"no formalized record exported: {statuses}")
-        # a run of status rule 2 exports cf-locate-recordset/2 (the statement cut's section
-        # 2.4): the seal names the rule, every record its passage_key, a location record
-        # its pair_key, and the bundle rides on its passage's records with its relation,
-        # its conjuncts each beside its part, and its bundle_key
+        # a run of status rule 3 (R-BROAD, beside judgment rules 4) exports
+        # cf-locate-recordset/2 (the statement cut's section 2.4): the seal names the rule,
+        # every record its passage_key, a location record its pair_key, and the bundle
+        # rides on its passage's records with its relation, its conjuncts each beside its
+        # part, and its bundle_key
         seal = self.read_json(set_dir / "SEAL.json")
-        check(seal.get("schema") == "cf-locate-recordset/2" and seal.get("status_rule") == 2,
-              f"loc-1's record set is not status rule 2's: {seal.get('schema')}, "
+        check(seal.get("schema") == "cf-locate-recordset/2" and seal.get("status_rule") == 3,
+              f"loc-1's record set is not status rule 3's: {seal.get('schema')}, "
               f"status_rule {seal.get('status_rule')}")
         exts = [self._locate_ext(record) for record in records]
         check(all(isinstance(ext.get("passage_key"), str) and len(ext["passage_key"]) == 64

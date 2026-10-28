@@ -476,5 +476,59 @@ class TestTheOutcomesKeepThem(unittest.TestCase):
         self.assertEqual(got["status"], "partial")
 
 
+# --------------------------------------------------------------------------- #
+# the planner: judgment rules 4 and status rule 3 from the flip of the calls
+# --------------------------------------------------------------------------- #
+
+class TestThePlannerWritesRules4(unittest.TestCase):
+    """A run planned now names judgment rules 4 and, a locate run, status rule 3; one planned
+    before the flip of the calls (``F.before_the_smoke4_calls``, as smoke 4's runs were)
+    names 3 and 2, and a challenge planned now of it is admitted under rules 4."""
+
+    setUp = S.TestThePlanner.setUp
+    plan = S.TestThePlanner.plan
+
+    def cut_inventory(self, run_id: str) -> None:
+        code, out, err = self.plan("--preset", "locate-inventory", "--run-id", run_id)
+        self.assertEqual(code, 0, out + err)
+        docs = S.F.inventory_documents(self.paths, run_id)
+        theorem = docs[f"inv-{S.F.W1}/{S.F.W1}.json"]["passages"][1]
+        theorem.update(conjuncts=[{"id": "c1", "text": "the gadget exists"},
+                                  {"id": "c2", "text": "its size divides the order"}],
+                       shape="conclusions")
+        S.F.write_harvest(self.paths, run_id, docs)
+
+    def test_a_run_planned_now(self):
+        from cflib.jsonio import read_json
+        from cflib.yamlio import read_yaml
+        self.cut_inventory("inv-5")
+        code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-5",
+                                   "--run-id", "loc-5")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(read_json(self.paths.gate_json("loc-5"))["judgment_rules"], R4)
+        self.assertEqual(read_yaml(self.paths.run_yaml("loc-5"))["locate"]["status_rule"],
+                         vocab.STATUS_RULE_BROAD)
+
+    def test_a_run_planned_before_and_its_challenge_planned_now(self):
+        from cflib.jsonio import read_json
+        from cflib.yamlio import read_yaml
+        with S.F.before_the_smoke4_calls():
+            self.cut_inventory("inv-6")
+            code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-6",
+                                       "--run-id", "loc-6")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(read_json(self.paths.gate_json("loc-6"))["judgment_rules"], R3)
+        self.assertEqual(read_yaml(self.paths.run_yaml("loc-6"))["locate"]["status_rule"],
+                         vocab.STATUS_RULE_BUNDLE)
+        S.F.write_harvest(self.paths, "loc-6", S.F.locate_documents(self.paths, "loc-6"))
+        code, out, err = self.plan("--preset", "locate-challenge", "--challenge-of", "loc-6",
+                                   "--run-id", "chl-6", "--sample-rate", "1")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(read_json(self.paths.gate_json("chl-6"))["judgment_rules"], R4)
+        # the locate run keeps its own status rule: a challenge never re-plans it
+        self.assertEqual(read_yaml(self.paths.run_yaml("loc-6"))["locate"]["status_rule"],
+                         vocab.STATUS_RULE_BUNDLE)
+
+
 if __name__ == "__main__":
     unittest.main()

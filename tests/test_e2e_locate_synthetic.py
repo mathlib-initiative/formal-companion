@@ -134,7 +134,7 @@ class TestTheSyntheticLocateCampaign(unittest.TestCase):
                 self.assertEqual({k: gate.get(k) for k in pipeline.Pipeline.CUT_KEYS},
                                  pipeline.Pipeline.CUT_KEYS)
         locate = load_yaml(paths.run_yaml("loc-1").read_text(encoding="utf-8"))["locate"]
-        self.assertEqual(locate["status_rule"], 2)
+        self.assertEqual(locate["status_rule"], 3)            # R-BROAD, beside rules 4
         self.assertEqual(self.pipe.carry_report["counts"],
                          {"pages": len(pipeline.PAGES), "split": 1, "end_moved": 1,
                           "unchanged": 5})

@@ -366,15 +366,6 @@ STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
                           STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED,
                           STATEMENT_CUT_WIDE: SPAN_END_CONTINUED}
 STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE
-#: the versions the planner writes (cflib.vocab.JUDGMENT_RULES, SPAN_END_RULE and
-#: STATEMENT_CUT_RULE: the statement cut's from its flip on, the continued cut's from
-#: the flip of inv-pilot-1's fixes on, the wide cut's from the flip of the wide bound
-#: on): a gate.json names the version its run was planned
-#: under as ``judgment_rules`` and ``span_end_rule``, and one without ``span_end_rule``
-#: (a run planned before it, whose inventories ``passage_ids.py`` wrote without
-#: ``until``) is gated without the end check
-JUDGMENT_RULES = RULES_STATEMENT_CUT
-SPAN_END_RULE = SPAN_END_CONTINUED
 #: Judgment rules 4 (cflib.vocab.RULES_SMOKE4: the smoke-4 audit's calls, references/
 #: vocabulary.md section 1.11): the statement cut's rule 9 with four more checks -- PD6's
 #: shape tripwire on an existence-and-uniqueness or iff bundle (a part that concludes with
@@ -385,6 +376,16 @@ SPAN_END_RULE = SPAN_END_CONTINUED
 #: of a challenge downgrade of a strong record to relatedMatch (``bridge`` or
 #: ``incomparable``).  Each binds a run only when its gate.json names 4
 RULES_SMOKE4 = 4
+#: the versions the planner writes (cflib.vocab.JUDGMENT_RULES, SPAN_END_RULE and
+#: STATEMENT_CUT_RULE: the statement cut's from its flip on, the continued cut's from
+#: the flip of inv-pilot-1's fixes on, the wide cut's from the flip of the wide bound
+#: on, and judgment rules 4 from the flip of the smoke-4 audit's calls on): a gate.json
+#: names the version its run was planned
+#: under as ``judgment_rules`` and ``span_end_rule``, and one without ``span_end_rule``
+#: (a run planned before it, whose inventories ``passage_ids.py`` wrote without
+#: ``until``) is gated without the end check
+JUDGMENT_RULES = RULES_SMOKE4
+SPAN_END_RULE = SPAN_END_CONTINUED
 #: the highest version of each rule this gate can hold a run to: a gate.json naming a
 #: higher one was planned by a newer planner than this gate directory (exit 3)
 KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_SMOKE4)
