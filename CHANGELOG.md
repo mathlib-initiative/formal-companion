@@ -323,12 +323,13 @@ release has something to say.
   A bullet after the narration bullet says that commentary on a method (which may be used, which
   is faster) and an instruction ("proceed by adding 6 = 2 × 3", a number written as a product
   naming a step) are narration, unless a bound or a complexity class is stated; a paragraph after
-  PD9 says that a sentence naming a symbol later statements use is a `notation` passage, with the
-  context sentence before it in its paragraph, while an example's objects are context, and that a
+  PD9 says that a sentence naming a symbol later statements use is a `notation` passage scoped
+  `formal_math` (the smoke-4 gold's reading of such a passage), with the context sentence before
+  it in its paragraph, while an example's objects are context, and that a
   "need not" clause and the weaker condition are one statement. They are the prompt's own words,
   not edits of the shared cut rules, so `references/vocabulary.md` §1.11, the bench labeler and its
-  gold are unchanged. The rendered prompt is 18,865 bytes with a real plan's paths; the ceiling is
-  18,900. Every example is synthetic.
+  gold are unchanged. The rendered prompt is 18,886 bytes with a real plan's paths; the ceiling is
+  18,900. Every example is synthetic. The rule-3 card says the same reading.
 - **Review fixes to the skip audit (audit rule 2)**, before any run names it
   (`references/locate-documents.md` §13.11). *The diff's SKIP VERDICT line counts
   `paragraphs.json` entries* (two entries of one span, a theorem box and its paragraph, are two,

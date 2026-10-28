@@ -3676,7 +3676,8 @@ diff's GAP VERDICT line.
 3b29518's byte for byte): the rule card's **Gaps** paragraph and its **three readings of the cut**
 — under C4 a "need not" clause stays with the condition that replaces it, under C6 a method's
 commentary and an instruction of a computation are narration and a number written as a product
-names a step, under C7 a sentence naming a symbol is a `notation` passage before it is context —
+names a step, under C7 a sentence naming a symbol is a `notation` passage scoped `formal_math`
+before it is context —
 which the inventory prompt states in its own sentences beside the shared rules; the auditor's GAP
 lines, its `gaps` rows and the kind rule's expository answer, and its expository flags naming the
 statements they mean; the skeptic's gap flags and gap hunt; the checker's GAPS and GAP VERDICT
