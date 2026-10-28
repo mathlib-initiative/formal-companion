@@ -306,8 +306,10 @@ class TestTheBridge(BridgeCase):
         extra = "Bash(python3 /srv/cf/r-gate/corpus_search.py:*)"
         self.bridge("reviewer", CF_GATE_CMD=gate, CF_EXTRA_TOOLS=extra)
         argv = (self.tmp / "argv").read_text().splitlines()
+        # a locate reviewer's git is read-only by subcommand, as the audited reviewer's
         self.assertEqual(argv[argv.index("--allowedTools") + 1],
-                         f"Read,Glob,Grep,Bash(git:*),Bash({gate} --findings:*)")
+                         "Read,Glob,Grep,Bash(git diff:*),Bash(git show:*),Bash(git log:*),"
+                         f"Bash(git status:*),Bash({gate} --findings:*)")
         # an explicit list still wins, as for the worker
         self.bridge("reviewer", CF_GATE_CMD=gate, CF_REVIEWER_TOOLS="Read")
         argv = (self.tmp / "argv").read_text().splitlines()

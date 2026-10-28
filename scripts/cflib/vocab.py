@@ -1073,6 +1073,11 @@ AUDIT_DISCUSSION_TAIL = 6000
 #: bridge-written revert requests whose restore the reviewer finds unmatched before the
 #: turn stops with an error
 AUDIT_REVERT_ATTEMPTS = 3
+#: the ``schema`` of an unaudited locate turn's contract, ``<tend-root>/contracts/<task>.
+#: <role>.<stamp>.json`` (``run/review_record.py``, which copies it; a test pins the copy;
+#: references/locate-documents.md section 9): the normalised contract of one agent call, with
+#: the HEAD it left and the git blob of each of the task's documents there
+TURN_CONTRACT_SCHEMA = "cf-turn-contract/1"
 #: the harvest's ``audit`` block (``harvest/audit_summary.py``, references/locate-documents.md
 #: section 13.10): what became of each harvested document of an audited run.  ``approved``,
 #: ``reverted`` (to the best reviewed snapshot), ``audit_failed`` and ``not_audited`` (an

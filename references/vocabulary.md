@@ -1078,6 +1078,12 @@ of a round before the bridge resets the worktree to the round's reviewed commit)
 the bridge's own tail) and `AUDIT_REVERT_ATTEMPTS` (3: the revert requests whose restore the
 reviewer may find unmatched before the turn stops).
 
+**An unaudited locate turn's record** (`references/locate-documents.md` §9, the records the
+bridge keeps through `scripts/run/review_record.py`, which copies it; a test pins the copy):
+`TURN_CONTRACT_SCHEMA` (`cf-turn-contract/1`, the `schema` of
+`<tend-root>/contracts/<task>.<role>.<stamp>.json`, one agent call's normalised contract with
+the HEAD it left and the git blob of each of the task's documents there).
+
 **The harvest's values** (`references/locate-documents.md` §13.10, the `audit` block
 `scripts/harvest/audit_summary.py` adds to an audited run's `RECEIPT.json`):
 

@@ -377,7 +377,7 @@ class TestItRunsOnTheHost(unittest.TestCase):
                  for a in node.names}
         names |= {node.module.split(".")[0] for node in ast.walk(tree)
                   if isinstance(node, ast.ImportFrom) and node.module}
-        siblings = {"attempt_cap", "normalize_result"}
+        siblings = {"attempt_cap", "normalize_result", "review_record"}
         self.assertTrue(names - siblings <= set(sys.stdlib_module_names) | {"__future__"},
                         names - siblings - set(sys.stdlib_module_names))
         self.assertNotIn("cflib", names)
@@ -1206,7 +1206,7 @@ class BridgeCase(TurnCase):
         bindir = self.root / "bin"
         bindir.mkdir(exist_ok=True)
         for name in ("agent_call.py", "normalize_result.py", "attempt_cap.py",
-                     "audit_turn.py"):
+                     "audit_turn.py", "review_record.py"):
             shutil.copy2(SCRIPTS / "run" / name, bindir / name)
         shutil.copy2(source, bindir / "bridge-agentbox.sh")
         if discussion is not None:
@@ -1218,7 +1218,8 @@ class BridgeCase(TurnCase):
                    CF_AGENTBOX_PROFILE="examplebox", CF_SLOT_DIR=str(self.root / "slots"),
                    TEND_TASK_ID=TASK, FAKE_LOG=str(self.root / "agentbox.log"), FAKE_SID=SID,
                    CF_GATE_CMD=self.env["CF_GATE_CMD"], CF_TASK_MANIFESTS=self.env[
-                       "CF_TASK_MANIFESTS"], **(extra or {}))
+                       "CF_TASK_MANIFESTS"])
+        env.update(extra or {})
         return subprocess.run(["bash", str(bindir / "bridge-agentbox.sh"), role],
                               capture_output=True, text=True, cwd=str(self.wt), env=env,
                               timeout=300)
@@ -1261,34 +1262,51 @@ class TestTheAuditedBridge(BridgeCase):
         self.assertIn("audit_turn.py is missing", proc.stderr)
 
 
-#: the unaudited bridge's agent argv and contract, as 99fbad4's bridge-agentbox.sh made
-#: them (recorded by running it in this harness), for three turns: a worker's first call,
-#: a worker's revision (a discussion on disk) and a reviewer, each against a fake agent
-#: that writes no result file; <WT> is the worktree, <GATE> the gate directory.  The
-#: system prompt is passed as staged ($TEND_TASK_ID unsubstituted), as it always was
+#: the unaudited locate bridge's agent argv and contract, recorded by running it in this
+#: harness, for three turns: a worker's first call, a worker's revision (a discussion on
+#: disk) and a reviewer, each against a fake agent that writes no result file; <WT> is the
+#: worktree, <GATE> the gate directory.  The system prompt is passed as staged
+#: ($TEND_TASK_ID unsubstituted), as it always was.  The worker's first call is 99fbad4's;
+#: the revision is the locate run's (it declines feedback its rules forbid, as
+#: needs_review, where 99fbad4's said not to re-litigate), and the reviewer's git is
+#: read-only by subcommand and its prompt carries the needs_review block, since the
+#: revision before it finished needs_review (scripts/run/review_record.py).  The
+#: faithfulness pipeline's bridge still makes 99fbad4's calls
+#: (``test_the_bridge_of_the_base_commit_makes_the_same_calls``)
+LOCATE_GATE_ENTRY = ("Bash(python3 <GATE>/verify_locate.py --gate-config <GATE>/gate.json "
+                     "--findings:*)")
+LOCATE_REVISION = (
+    "Read the feedback below and fix what it names, without restarting from scratch. Your "
+    "task\nprompt and the validation gate are the rules; the reviewer checks your work "
+    "against them and\ncan misread them. If the feedback asks for something your prompt "
+    "rules out or the gate\nrefuses, do not change a verdict or a judgment to make the "
+    "request satisfiable: leave that\npart as it was, quote the rule (and the gate's "
+    "refusal, if you ran it) in your summary, and\nfinish with status `needs_review`. "
+    "Re-run the validation gate before finishing.")
 GOLDEN = {
     "worker": ["host", "claude", "--profile", "examplebox", "--", "-p",
                "inventory task t-inv-0001 in <WT>", "--append-system-prompt",
                "worker system for $TEND_TASK_ID", "--output-format", "json",
                "--permission-mode", "acceptEdits", "--allowedTools",
-               "Read,Glob,Grep,Edit,Write,Bash(git:*),Bash(python3 <GATE>/verify_locate.py "
-               "--gate-config <GATE>/gate.json --findings:*)"],
+               "Read,Glob,Grep,Edit,Write,Bash(git:*)," + LOCATE_GATE_ENTRY],
     "revision": ["host", "claude", "--profile", "examplebox", "--", "-p",
                  "inventory task t-inv-0001 in <WT>\n\n## THIS IS A REVISION — a reviewer "
-                 "rejected the previous attempt\n\nRead the feedback below and FIX EXACTLY "
-                 "WHAT IT NAMES. Do not restart from scratch and do\nnot re-litigate the "
-                 "reviewer's judgement; if you disagree, address the point explicitly in\nyour "
-                 "summary. Re-run the validation gate before finishing.\n\n--- prior discussion "
-                 "(most recent last) ---\nreviewer: the receipt is thin\n--- end ---",
+                 "rejected the previous attempt\n\n" + LOCATE_REVISION + "\n\n--- prior "
+                 "discussion (most recent last) ---\nreviewer: the receipt is thin\n--- end ---",
                  "--append-system-prompt", "worker system for $TEND_TASK_ID", "--output-format",
                  "json", "--permission-mode", "acceptEdits", "--allowedTools",
-                 "Read,Glob,Grep,Edit,Write,Bash(git:*),Bash(python3 <GATE>/verify_locate.py "
-                 "--gate-config <GATE>/gate.json --findings:*)"],
+                 "Read,Glob,Grep,Edit,Write,Bash(git:*)," + LOCATE_GATE_ENTRY],
     "reviewer": ["host", "claude", "--profile", "examplebox", "--", "-p",
-                 "reviewer task", "--append-system-prompt", "reviewer system",
+                 "reviewer task\n\n## The worker marked this contribution needs_review\n\n"
+                 "The worker's summary (its words, material like the document):\n\ndone\n\n"
+                 "A needs_review is not grounds to reject, and you cannot settle it for a "
+                 "person. Review form and the gate as usual, and say in notes whether the "
+                 "worker's point is form (yours) or judgment (a person's). The bridge records "
+                 "this task for a person whatever you decide.",
+                 "--append-system-prompt", "reviewer system",
                  "--output-format", "json", "--permission-mode", "acceptEdits",
-                 "--allowedTools", "Read,Glob,Grep,Bash(git:*),Bash(python3 "
-                 "<GATE>/verify_locate.py --gate-config <GATE>/gate.json --findings:*)"],
+                 "--allowedTools", "Read,Glob,Grep,Bash(git diff:*),Bash(git show:*),"
+                 "Bash(git log:*),Bash(git status:*)," + LOCATE_GATE_ENTRY],
 }
 GOLDEN_STDOUT = {
     "worker": {"schema_version": 1, "status": "needs_review", "summary": "done"},
@@ -1300,15 +1318,17 @@ GOLDEN_STDOUT = {
 
 
 class TestTheUnauditedBridgeIsUnchanged(BridgeCase):
-    """Without CF_AUDIT_RULE the bridge makes the call 99fbad4's made, byte for byte."""
+    """Without CF_AUDIT_RULE the bridge makes the golden calls, and the faithfulness
+    pipeline's are 99fbad4's byte for byte."""
 
     def setUp(self):
         super().setUp()
         (self.prompts / "reviewer.md").write_text("reviewer task\n")
         (self.prompts / "reviewer-system.md").write_text("reviewer system\n")
 
-    def run_three(self, bridge: Path = BRIDGE) -> tuple[list, list]:
+    def run_three(self, bridge: Path = BRIDGE, gate: str | None = None) -> tuple[list, list]:
         argvs, outs = [], []
+        shutil.rmtree(self.root / "contracts", ignore_errors=True)
         for name, role, discussion in (("worker", "worker", None),
                                        ("revision", "worker", "reviewer: the receipt is thin\n"),
                                        ("reviewer", "reviewer", None)):
@@ -1316,7 +1336,9 @@ class TestTheUnauditedBridgeIsUnchanged(BridgeCase):
             (self.root / "agentbox.log").unlink(missing_ok=True)
             # CF_AUDIT_ROUNDS alone is no audit: only CF_AUDIT_RULE turns it on
             proc = self.bridge(role, {"CF_PROMPT_DIR": str(self.prompts),
-                                      "CF_AUDIT_ROUNDS": "3"}, discussion, source=bridge)
+                                      "CF_AUDIT_ROUNDS": "3",
+                                      **({"CF_GATE_CMD": gate} if gate else {})},
+                               discussion, source=bridge)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             argv = [a.replace(str(self.wt), "<WT>").replace(str(self.gate_dir), "<GATE>")
                     for a in self.argvs()[-1]]
@@ -1345,10 +1367,21 @@ class TestTheUnauditedBridgeIsUnchanged(BridgeCase):
             self.skipTest("this checkout does not hold commit 99fbad4")
         old = self.root / "old-bridge.sh"
         old.write_text(got.stdout)
-        then, then_out = self.run_three(old)
-        now, now_out = self.run_three()
+        # the faithfulness pipeline's gate: its bridge is the base commit's
+        gate = f"python3 {self.gate_dir}/verify_findings.py --gate-config {self.gate_dir}/gate.json"
+        then, then_out = self.run_three(old, gate)
+        now, now_out = self.run_three(gate=gate)
         self.assertEqual(then, now)
         self.assertEqual(then_out, now_out)
+        self.assertIn("FIX EXACTLY WHAT IT NAMES", now[1][1][6])
+        self.assertIn("Bash(git:*)", now[2][1][-1])
+        self.assertFalse((self.root / "contracts").exists())
+        # on the locate gate the two differ in the revision and the reviewer only
+        then, _ = self.run_three(old)
+        now, _ = self.run_three()
+        self.assertEqual(then[0], now[0])
+        self.assertNotEqual(then[1], now[1])
+        self.assertNotEqual(then[2], now[2])
 
 
 class TestTheEnvelopeNames(unittest.TestCase):
