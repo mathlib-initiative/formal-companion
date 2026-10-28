@@ -549,7 +549,7 @@ class TestTheRendering(SkipCase):
         self.assertEqual(len(whole), len(lines) - 1)
 
     def test_a_rule_that_is_not_known_is_refused(self):
-        proc = self.render("--rule", "3")
+        proc = self.render("--rule", str(max(vocab.INVENTORY_AUDIT_RULES) + 1))
         self.assertEqual(proc.returncode, 2)
         self.assertIn("not an audit rule", proc.stderr)
 
