@@ -510,6 +510,10 @@ class Pipeline:
             at = end + 1
         return " ".join(words)
 
+    #: the reason this run's worker gives the skip of a paragraph the prose floor holds
+    #: (gate rule 8 under ``prose_floor_rule`` 1) and it locates nothing in
+    PROSE_SKIP_REASON = "a paragraph without a formula: nothing to locate"
+
     #: how this run's worker labels each finder passage, by finder
     LABELS = {"theorem_box": ("theorem", "central", "formal_math"),
               # the widget lemma's lead bolds the name of the theorem it states
@@ -555,7 +559,9 @@ class Pipeline:
         """An inventory worker's documents for ``run_id``, cut one passage per statement.
 
         The finders' passages, then one "model" passage per math paragraph the finders
-        left uncovered (the coverage floor, gate rule 8), and a re-cut's ``more_starts``
+        left uncovered (the coverage floor, gate rule 8) and one skip per other paragraph of
+        the body of at least ``PROSE_FLOOR_MIN_WORDS`` words they left uncovered (rule 8's
+        prose floor, which the plan's gate.json names), and a re-cut's ``more_starts``
         (``{source: [(start, scope)]}``) and ``untils`` (``{source: {start: until}}``).
         Each quote stops before the passage's end, since under the span-end rule 3 (as
         under 2) a passage ends at the next passage's start, or its ``until``, and never
@@ -579,12 +585,24 @@ class Pipeline:
                 paragraphs = self.read_json(source_dir / "paragraphs.json")
                 formulas = self.read_json(source_dir / "formulas.json")
                 proposals = [dict(f) for f in d.get("finders") or []]
+                skips = []
                 for para in paragraphs:
                     a, b = para["span"]
-                    if para.get("math") and not any(f["span"][0] <= a < f["span"][1]
-                                                    for f in proposals):
+                    if any(f["span"][0] <= a < f["span"][1] for f in proposals):
+                        continue
+                    section = para.get("section") or []
+                    if para.get("math"):
                         proposals.append({"finder": "model", "start": a, "span": [a, b],
-                                          "section": para.get("section") or []})
+                                          "section": section})
+                    elif (len(layer[a:b].split()) >= vocab.PROSE_FLOOR_MIN_WORDS
+                          and not (section and str(section[0]).strip().casefold()
+                                   in vocab.AUDIT_BACK_MATTER)):
+                        # the prose floor: a paragraph of the body this worker locates
+                        # nothing in is left out with a skip and its reason, never
+                        # silently (a skip, not an expository passage, so the passages
+                        # and their ids, which the later stages pin, are the ones every
+                        # earlier plan made)
+                        skips.append({"span": [a, b], "reason": self.PROSE_SKIP_REASON})
                 for start, scope in (more_starts or {}).get(sid, []):
                     proposals.append({"finder": "model", "start": start, "scope": scope,
                                       "span": [start, start], "section": []})
@@ -627,7 +645,7 @@ class Pipeline:
                         passage["scope"] = "expository"
                     passages.append(passage)
                 doc = self._header("locate-inventory", run_id, task_id, d)
-                doc.update(passages=passages, skips=[], notes="")
+                doc.update(passages=passages, skips=skips, notes="")
                 path = self.write_json(out / task_id / f"{sid}.json", doc)
                 proc = self.isolated(run_id, "passage_ids.py", "--source-dir", str(source_dir),
                                      "--document", str(path), "--write")
@@ -1891,7 +1909,8 @@ class Pipeline:
         and ``usage/`` are landed under ``runs/<run>/host/`` as the remote harvest's
         fetch lands them (``*.json`` only), and ``cf harvest`` writes the receipt's
         ``audit`` block (section 13.10), its ``skips`` one skip of one math paragraph
-        before and none after.
+        before and none after, beside the prose floor's skips of paragraphs with no math,
+        which stay.
         """
         from cflib import vocab
 
@@ -1971,16 +1990,19 @@ class Pipeline:
               f"the widget page's verdicts were not applied: {per.get(WIDGET)}")
         skips = block.get("skips") or {}
         before, after = skips.get("before") or {}, skips.get("after") or {}
+        # beside the corollary's skip, the prose floor's: two on the widget page and one on
+        # the gadget-lattice page, which hold no math paragraph and stay
         check((before.get("skips"), before.get("math_paragraphs"), before.get("outside"),
-               before.get("documents")) == (1, 1, 1, 3)
-              and (after.get("skips"), after.get("math_paragraphs")) == (0, 0)
+               before.get("documents")) == (4, 1, 1, 3)
+              and (after.get("skips"), after.get("math_paragraphs")) == (3, 0)
               and (skips.get("by_source") or {}).get(WIDGET, {}).get("before", {})
               .get("by_section") == {"Statement > Corollaries": {"skipped": 1, "math": 1}},
               f"the receipt's skips are not one skip of one math paragraph before and none "
               f"after: {skips}")
         widget_doc = json.loads(widget.read_text(encoding="utf-8"))
-        check(widget_doc["skips"] == [] and sum(p["section"] == ["Statement", "Corollaries"]
-                                                for p in widget_doc["passages"]) == 1,
+        check({s["reason"] for s in widget_doc["skips"]} == {self.PROSE_SKIP_REASON}
+              and sum(p["section"] == ["Statement", "Corollaries"]
+                      for p in widget_doc["passages"]) == 1,
               f"the corollary was not repaired into its passage: {widget_doc['skips']}")
         check(block.get("turns", {}).get("rejections") == 1,
               f"the turn machine recorded {block.get('turns')} rejections, not one")
@@ -2009,7 +2031,8 @@ class Pipeline:
         doc = self.read_json(draft)
         doc["passages"] = [p for p in doc["passages"]
                            if not span[0] <= p["span"][0] < span[1]]
-        doc["skips"] = [{"span": span, "reason": self.AUDIT_SKIP_REASON}]
+        doc["skips"] = sorted(doc["skips"] + [{"span": span, "reason": self.AUDIT_SKIP_REASON}],
+                              key=lambda s: s["span"])
         self.write_json(draft, doc)
         proc = self.isolated(run_id, "passage_ids.py", "--source-dir", str(source_dir),
                              "--document", str(draft), "--write")

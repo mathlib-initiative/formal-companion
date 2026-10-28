@@ -1817,8 +1817,12 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 #: 1.9 KB first estimated.  The ceiling was 17,000 over placeholder paths.  The kind
 #: sentence (:data:`KIND_SENTENCE`, the inventory audit's kind rule of
 #: references/locate-documents.md section 13.7 said to the worker) adds 121 bytes: 17,054
-#: with placeholders, 17,373 with real paths, under the same ceiling
-WORKER_MD_MAX_BYTES = 17_500
+#: with placeholders, 17,373 with real paths, under the same ceiling.  The prose floor's
+#: sentence (:data:`PROSE_FLOOR_SENTENCE`, gate rule 8 under ``prose_floor_rule`` 1) adds
+#: 270: 17,324 with placeholders and 17,643 with real paths, over 17,500, so the ceiling
+#: is the next hundred that holds it -- the sentence is what the gate refuses, and a worker
+#: not told it would meet the refusal blind
+WORKER_MD_MAX_BYTES = 17_700
 
 #: the inventory prompt's one kind sentence, in "What a passage is" after the kinds: the
 #: kind rule the audit's merge applies mechanically to a formal ``other`` passage in a
@@ -1828,6 +1832,15 @@ WORKER_MD_MAX_BYTES = 17_500
 #: by the shared words, do not carry it
 KIND_SENTENCE = ("A step of a proof, a derivation or a worked example that asserts a fact or "
                  "an equation is kind `theorem`, never `other`.")
+
+#: the inventory prompt's prose-floor sentence, right after the coverage floor's: gate rule 8
+#: under ``prose_floor_rule`` 1 (references/locate-documents.md section 2) holds every other
+#: paragraph of eight words or more outside the back matter to the floor, History included.
+#: Not a cut rule: the vocabulary's section 1.11 and the labeler do not carry it
+PROSE_FLOOR_SENTENCE = ("So must every other paragraph of eight words or more outside the back "
+                        "matter (References, Notes, See also, External links and their like), "
+                        "History included: a passage holds it, `expository` when it states "
+                        "nothing, or a skip leaves it out with its reason, never silence.")
 
 
 class TestThePilotsPromptFixes(unittest.TestCase):
@@ -1950,6 +1963,23 @@ class TestThePilotsPromptFixes(unittest.TestCase):
                 "locate-inventory-audit-system.md.tmpl").read_text(encoding="utf-8")
         self.assertIn("step that asserts a fact or an equation is kind `theorem`", card)
         self.assertIn("that asserts a fact or an equation is kind `theorem`", KIND_SENTENCE)
+
+    def test_the_prose_floor_sentence(self):
+        """Once, right after the coverage floor's sentence, with the number of words the gate
+        counts; the shared cut rules and the labeler do not carry it."""
+        floor = ("Every paragraph of `paragraphs.json` marked `\"math\": true` must be covered "
+                 "by a passage span or a `skips` span: that floor is checked mechanically. ")
+        self.assertEqual(self.prompt.count(PROSE_FLOOR_SENTENCE), 1)
+        self.assertIn(floor + PROSE_FLOOR_SENTENCE + " A skip drops text", self.prompt)
+        self.assertIn("eight words or more", PROSE_FLOOR_SENTENCE)
+        self.assertEqual(vocab.PROSE_FLOOR_MIN_WORDS, 8)
+        for heading in ("References", "Notes", "See also", "External links"):
+            self.assertIn(heading.casefold(), vocab.AUDIT_BACK_MATTER)
+        for text, name in ((" ".join(cut_rule_lines()), "vocabulary"),
+                           (labeler_cut_rules(), "labeler"), (LABELER, "labeler file")):
+            with self.subTest(text=name):
+                self.assertNotIn("History included", text)
+                self.assertNotIn("never silence", text)
 
     def test_the_prompts_size(self):
         run_id, host = realistic_host()

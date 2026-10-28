@@ -42,6 +42,21 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The prose floor: no paragraph of the body left out silently** (gate rule 8,
+  `scripts/gate/verify_locate.py`; `references/locate-documents.md` §2; the smoke-4 audit).
+  Both statements smoke 4's inventory lost were whole formula-free paragraphs that no passage and
+  no skip held, and the coverage floor reads only math paragraphs, so nothing asked for a
+  record. An inventory whose `gate.json` names `prose_floor_rule` 1 (`cflib.vocab.PROSE_FLOOR_RULE`,
+  which `cf plan-locate` now writes into every inventory, and only an inventory) holds every other
+  `paragraphs.json` block outside the back matter with at least eight words of the layer to the
+  same floor: a passage or a skip covers it, History sections included, a short block and the
+  back matter exempt. The receipt's `skipped` block gains `prose_paragraphs` (summed only when a
+  gate counted them). The worker prompt says it in one sentence after the coverage floor's; it is
+  no cut rule, so `references/vocabulary.md` §1.11 and the bench labeler are unchanged. The
+  rendered worker prompt is 17,643 bytes with a real plan's paths, over the 17,500 ceiling, which
+  is now 17,700. A `gate.json` without the key, every inventory planned before it, is gated, re-gated
+  and summed as it was. The synthetic e2e worker leaves its formula-free paragraphs out with a
+  skip and its reason.
 - **The receipt of a rule-2 audited run counts the skips** (`scripts/harvest/audit_summary.py`,
   `references/locate-documents.md` §13.10 and §13.11). When a verdicts file is `audit/2`, the
   receipt's `audit` block gains `skips`: round 1's skip reports summed (`before`), the reviewed

@@ -768,6 +768,19 @@ STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
 #: the key is gated without rule 10, as every run planned before it is, and one naming
 #: a version by that version (1, 2 or 3).
 STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE
+#: The prose floor (gate rule 8; the smoke-4 audit's gap fix, references/locate-documents.md
+#: sections 2 and 9): the version an inventory's gate.json names as ``prose_floor_rule``.
+#: Version 1 (``PROSE_FLOOR_FIRST``) holds every block of ``paragraphs.json`` that is no
+#: math paragraph, lies outside the back matter (``AUDIT_BACK_MATTER``, a top heading) and
+#: holds at least ``PROSE_FLOOR_MIN_WORDS`` words of the layer to the coverage floor a math
+#: paragraph is held to: a passage or a skip covers it, so a worker leaves no paragraph out
+#: silently and the skip audit judges every one it leaves out.  History sections are not
+#: exempt.  ``cf plan-locate`` writes it into every inventory's gate.json from the prose
+#: floor's flip on (not a locate or challenge run's: those documents carry no skip); a
+#: gate.json without the key is gated without it, as every inventory planned before it is
+PROSE_FLOOR_FIRST = 1
+PROSE_FLOOR_RULE = PROSE_FLOOR_FIRST
+PROSE_FLOOR_MIN_WORDS = 8
 #: The status rule (the proposal's section 2): the version of the derivation a locate
 #: run's outcomes are derived under, recorded in its ``run.yaml`` (``locate.status_rule``)
 #: and in the seal of its record set.  Version 1 (``STATUS_RULE_D1``) is decision D1 as

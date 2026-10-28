@@ -714,6 +714,11 @@ def gate_config(*, preset_mode: str, preset_name: str, run_id: str, layout: dict
     extra: dict[str, Any] = {}
     if candidates_sha256 is not None:
         extra["candidates_sha256"] = dict(sorted(candidates_sha256.items()))
+    if preset_mode == vocab.LOCATE_INVENTORY:
+        # rule 8's prose floor binds the inventories planned with this code: every block of
+        # the body outside the back matter with PROSE_FLOOR_MIN_WORDS words is covered by a
+        # passage or a skip; a gate.json without the key is gated as it always was
+        extra["prose_floor_rule"] = vocab.PROSE_FLOOR_RULE
     return {
         **extra,
         "schema": GATE_SCHEMA,

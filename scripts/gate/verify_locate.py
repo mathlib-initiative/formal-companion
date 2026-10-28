@@ -85,6 +85,9 @@ references/locate-documents.md sections 2-4 and 9):
 8. an inventory drops no deterministic-finder passage of its task without a
    skip covering its span, every ``math`` paragraph is covered by a passage or
    a skip, and no skip holds the whole span of a passage the inventory keeps;
+   in a run whose ``gate.json`` names ``prose_floor_rule`` 1 (the prose floor),
+   so is every other block outside the back matter of at least
+   ``PROSE_FLOOR_MIN_WORDS`` words;
 9. the judgment rules (references/vocabulary.md section 1.11, R1-R7), only for
    a run whose ``gate.json`` names ``judgment_rules`` -- a run planned before
    them is gated as it was: a located or absent passage writes its claim list
@@ -380,6 +383,21 @@ SPAN_END_RULE = SPAN_END_CONTINUED
 KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_STATEMENT_CUT)
 KNOWN_SPAN_END_RULE = max(SPAN_END_RULE, SPAN_END_CONTINUED)
 KNOWN_STATEMENT_CUT_RULE = max(STATEMENT_CUT_RULE, STATEMENT_CUT_WIDE)
+#: The prose floor (rule 8; cflib.vocab.PROSE_FLOOR_FIRST, PROSE_FLOOR_RULE,
+#: PROSE_FLOOR_MIN_WORDS, and the back matter of AUDIT_BACK_MATTER): a run whose gate.json
+#: names ``prose_floor_rule`` 1 holds every block of paragraphs.json that is no math
+#: paragraph, lies outside the back matter and holds at least PROSE_FLOOR_MIN_WORDS words
+#: to the coverage floor a math paragraph is held to -- a passage or a skip covers it --
+#: so no paragraph of the body is left out silently (the smoke-4 audit: two statements in
+#: formula-free paragraphs that no passage and no skip held).  A gate.json without the
+#: key (every inventory planned before it) is gated without it
+PROSE_FLOOR_FIRST = 1
+PROSE_FLOOR_RULE = PROSE_FLOOR_FIRST
+KNOWN_PROSE_FLOOR_RULE = max(PROSE_FLOOR_RULE, PROSE_FLOOR_FIRST)
+PROSE_FLOOR_MIN_WORDS = 8
+BACK_MATTER = ("references", "notes", "footnotes", "citations", "sources", "bibliography",
+               "further reading", "external links", "see also", "works cited",
+               "notes and references")
 #: a compound statement's conjuncts (cflib.vocab's statement-cut block, inlined)
 COMPOUND_SHAPES = frozenset({"existence_uniqueness", "iff", "cases", "conclusions",
                              "equations"})
@@ -726,6 +744,9 @@ class GateConfig:
         #: rule 10 (the statement cut) binds a run planned under it, and no other
         self.statement_cut_rule = _rule_version(data, "statement_cut_rule",
                                                 "statement-cut rule", KNOWN_STATEMENT_CUT_RULE)
+        #: rule 8's prose floor binds an inventory planned under it, and no other
+        self.prose_floor_rule = _rule_version(data, "prose_floor_rule", "prose-floor rule",
+                                              KNOWN_PROSE_FLOOR_RULE)
         self._check_the_pair()
 
     def _check_the_pair(self) -> None:
@@ -1220,6 +1241,20 @@ def _end_problem(layer: str, paragraphs: Any, span: tuple[int, int], exact: str,
     return (f"the passage ends at {span[1]}, and passage_ids.py ends it at {want} ({why}; "
             f"offsets count code points): run passage_ids.py again rather than edit an "
             f"offset, and give `until` to end it elsewhere")
+
+
+def in_back_matter(section: Any) -> bool:
+    """A block of the back matter: its top heading is one of :data:`BACK_MATTER`."""
+    return (isinstance(section, list) and bool(section)
+            and str(section[0]).strip().casefold() in BACK_MATTER)
+
+
+def prose_floor_applies(paragraph: dict, text: str) -> bool:
+    """The prose floor (rule 8 under ``prose_floor_rule`` 1) holds a ``paragraphs.json``
+    block that is no math paragraph, lies outside the back matter and holds at least
+    :data:`PROSE_FLOOR_MIN_WORDS` words of the layer: a passage or a skip covers it."""
+    return (not paragraph.get("math") and not in_back_matter(paragraph.get("section"))
+            and len(text.split()) >= PROSE_FLOOR_MIN_WORDS)
 
 
 def _union_length(spans: list[tuple[int, int]]) -> int:
@@ -2965,24 +3000,39 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                          f"finder {p.get('finder')} is claimed, but no {p.get('finder')} passage of "
                          f"the task starts at {p['span'][0]}; a passage the enumerator found is "
                          f"`model`")
-    skipped_math = 0
+    skipped_math = skipped_prose = 0
     for k, paragraph in enumerate(source.paragraphs()):
-        if not paragraph.get("math"):
+        math_block = bool(paragraph.get("math"))
+        if not math_block and not cfg.prose_floor_rule:
             continue
         pspan = _span(paragraph.get("span"), len(layer))
         if pspan is None:
             raise GateBroken(f"{source_id}: paragraphs.json entry {k} has no span in the layer")
+        if not math_block and not prose_floor_applies(paragraph, layer[pspan[0]:pspan[1]]):
+            continue
         if kept_by.overlapping(pspan) is not None:
             continue
         if skipped_by.overlapping(pspan) is not None:
-            skipped_math += 1
+            if math_block:
+                skipped_math += 1
+            else:
+                skipped_prose += 1
             continue
-        problems.add(8, name, f"the math paragraph at {list(pspan)} (section "
-                              f"{paragraph.get('section') or []}) is covered by no passage and "
-                              f"no skip (the coverage floor)")
+        if math_block:
+            problems.add(8, name, f"the math paragraph at {list(pspan)} (section "
+                                  f"{paragraph.get('section') or []}) is covered by no passage "
+                                  f"and no skip (the coverage floor)")
+        else:
+            problems.add(8, name, f"the paragraph at {list(pspan)} (section "
+                                  f"{paragraph.get('section') or []}) is covered by no passage "
+                                  f"and no skip (the prose floor): write it as a passage, "
+                                  f"`expository` when it states nothing, or leave it out with a "
+                                  f"skip and its reason")
     # what the floor's skips removed, for the harvest receipt (gate_corpus)
     stats["skipped"] = {"skips": len(skip_spans), "chars": _union_length(skip_spans),
                         "math_paragraphs": skipped_math, "finder_passages": skipped_finders}
+    if cfg.prose_floor_rule:
+        stats["skipped"]["prose_paragraphs"] = skipped_prose
     if cfg.statement_cut_rule:
         stats["cut"] = check_statement_cut(problems, name, passages, placed, source,
                                            rule=cfg.statement_cut_rule)
