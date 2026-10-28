@@ -616,14 +616,20 @@ R-BROAD, is status rule 3 (below): no prompt carries it, since it changes no rel
   `broadMatch` (R2's all primes for a finite table), and a statement of the general law makes it
   an `exactMatch` or `closeMatch`.
 - **R-SPECIFIC** — a passage stated for specific objects (the integers, ℕ, one named ring, one
-  structure of a family) is linked to the declaration stated for those objects: search for it,
-  record it and rank it first. A general theorem that holds of them by instantiation
-  (`UniqueFactorizationMonoid.exists_prime_factors` at ℕ) keeps its relation (R6), and is
-  recorded below a specific one, or alone only when the library states none; a bundle's parts
-  are the specific declarations where they exist. For one structure of a family the specific
-  declaration is its instance of the property (`PrincipalIdealRing.to_uniqueFactorizationMonoid`
-  for principal ideal domains), and a passage on the general notion is linked to its definition
-  (`UniqueFactorizationMonoid`, a `broadMatch` of unique factorization domains: PD1).
+  structure of a family) is linked to the declaration stated for those objects: search for it and
+  record it. Rank the cards by relation strength first, and among cards of equal strength put the
+  declaration stated for the passage's own objects first. A general theorem that holds of them by
+  instantiation (`Gadget.exists_basis` at ℕ) keeps its relation (R6): it ranks below a specific card
+  of equal strength, and stands alone only when the library states no specific declaration. A
+  bundle's parts are the specific declarations where they exist, and a bundle that states the whole
+  passage is a whole-passage card at its bundle relation, its weakest part's: its parts rank
+  together there, against a general whole-passage card by strength. For one structure of a family
+  the specific declaration is its instance of the property (`CyclicWidget.instSprocketed` for cyclic
+  widgets), and an instance that Lean's instance resolution reaches through a chain counts as the
+  structure's own (a widget over a field is a finite widget, which is sprocketed): the link names
+  the chain's last instance (`FiniteWidget.instSprocketed`), its `note` names the chain, and the
+  chain is no PD8 bridge. A passage on the general notion is linked to its definition (`Sprocketed`,
+  a `broadMatch` where the library defines it more generally: PD1).
 - **Fix 6d** — judge PD6 with the readings you credit the parts with: a fact you read as an
   encoding so that one part states its conjunct is an encoding too when you ask whether another
   part states every conjunct. A characterisation f = w ↔ P f of the passage's witness states
@@ -666,22 +672,39 @@ refuses a result of args emitted from the earlier text.
 **R-SPECIFIC** (the maintainer's notes of 2026-10-28, beside R-SPLIT and R-INSTANCE, "Two calls
 on the cut" below) orders the cards and chooses a bundle's parts; it never changes a relation (R6):
 the general theorem's `broadMatch` stands, and only its rank, its place in a bundle and whether it
-is the passage's best card move. The challenger, which cannot add a location to a located passage
-(a challenge only lowers, and an overturn or a fill replaces only an absence or nothing), reports a
-general card where the library states a specific declaration as a recall miss: the last sentence
-of the witness of its verdict on that card is `R-SPECIFIC miss:` with the library and the
-declaration, and its summary names each one. A downgrade to `closeMatch` with no note of its own
-exports a sentence of its witness as the location's note (`locate_records.downgrade_note`), and
-that picker never takes a sentence that carries the mark (`locate_records.is_specific_miss`), so
-the miss is never exported as a note; a witness that says nothing else lends no note, which the
-gate refuses (rule 1). The miss is free text and stays so: nothing in the outcomes, the tally or
-the export reads it, and its structured record belongs to the owed redesign of the `owed`
-markers, which also covers the raise a challenge cannot make. Its record of the call: the
-smoke-4 run linked passages stated for the integers to `UniqueFactorizationMonoid` lemmas, in
-bundles too, where `Nat` lemmas state them, and he read the `Nat` lemmas as the links. It kept the
-labeler at `locate-label/7` for the reason the calls above did (no gate check, `JUDGMENT_RULES`
-still 4), and the labeler's file sha moved with it: whether a declaration is general or stated for
-the passage's objects is no fact a gate can read off a name.
+is the passage's best card move. **The rank** is by relation strength first (`RELATION_STRENGTH`:
+`exactMatch`, `closeMatch`, `broadMatch`, then `narrowMatch` and `hasPart`), and among cards of
+equal strength the declaration stated for the passage's own objects ranks first, so a specific
+`hasPart` or `narrowMatch` never outranks a general card that states the whole passage, and the
+passage's best card is its strongest. A bundle that states the whole passage is a whole-passage card
+at its bundle relation (its weakest part's, which a run's outcomes compute and a survived bundle
+counts at): its parts rank together at that strength, so a bundle of specific `exactMatch` parts
+ranks above a general `broadMatch`, and a general `exactMatch` above a bundle of `closeMatch`
+parts. **An instance through a chain** that Lean's instance resolution follows (a widget over a
+field is a finite widget, which is sprocketed) is the structure's own instance of the property,
+not a general theorem: its link names the chain's last instance, with the chain in its `note`, and
+the chain is no PD8 bridge, since no named lemma is applied by hand; the relation is the one R1–R3
+give that instance against the passage. **The challenger**, which cannot add a location to a
+located passage or move a rank (a challenge only lowers, and an overturn or a fill replaces only an
+absence or nothing), reports a recall miss in two cases only: a general card ranked above a
+specific one of equal strength, and a general card that stands with no specific declaration among
+the passage's locations where the library states one. A general part of a bundle is the second
+case and never ground to refute the bundle, whose parts are judged by their own relations: the
+miss goes on the part's record, or on the coverage claim's when the task holds no record of the
+part. The last sentence of the witness of its verdict on that record is `R-SPECIFIC miss:` with
+the library and the declaration, and its summary names each one. A downgrade to `closeMatch` with
+no note of its own exports a sentence of its witness as the location's note
+(`locate_records.downgrade_note`), and that picker never takes a sentence that carries the mark
+(`locate_records.is_specific_miss`), so the miss is never exported as a note; a witness that says
+nothing else lends no note, which the gate refuses (rule 1). The miss is free text and stays so:
+nothing in the outcomes, the tally or the export reads it, and its structured record belongs to the
+owed redesign of the `owed` markers, which also covers the raise a challenge cannot make. Its
+record of the call: the smoke-4 run linked passages stated for the integers to lemmas of a general
+structure, in bundles too, where lemmas stated for ℕ state them, and the maintainer read the ℕ
+lemmas as the links; the rule's examples are synthetic, so a re-run of that page is blind to them.
+It kept the labeler at `locate-label/7` for the reason the calls above did (no gate check,
+`JUDGMENT_RULES` still 4), and the labeler's file sha moved with it: whether a declaration is
+general or stated for the passage's objects is no fact a gate can read off a name.
 
 **PD11 in the record of the call** (2026-10-27): "[Nontrivial R] excludes only the zero ring, a
 trivial case, so it does not narrow" — so `Matrix.charpoly_fin_two` is an `exactMatch` and

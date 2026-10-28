@@ -300,28 +300,37 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
-- **R-SPECIFIC: a passage stated for specific objects is linked first to the declaration
-  stated for them** (`references/vocabulary.md` §1.11, the smoke-4 audit's rules;
-  `templates/prompts/locate.md.tmpl`, `locate-challenge.md.tmpl`,
-  `workflows/locate-label.workflow.js`; the maintainer's notes of 2026-10-28). The smoke-4 run
-  linked passages stated for the integers to `UniqueFactorizationMonoid` lemmas, in bundles
-  too, where `Nat` lemmas state them. The rule, word for word in both locate prompts and the
-  labeler after R-TABLE: search for the declaration stated for the passage's own objects, record
-  it and rank it first; a general theorem that holds of them keeps its relation (R6) and is
-  recorded below it, or alone when the library states none; a bundle's parts are the specific
-  declarations where they exist; for one structure of a family the specific declaration is its
-  instance of the property, and the general notion is linked to its definition (R-INSTANCE's
-  links). The locate worker's search step and its ranking line say it; the challenger hunts for
-  the specific declaration and, since a challenge cannot add a location to a located passage,
-  reports a general card where one exists as a recall miss in the last sentence of its verdict's
-  witness (`R-SPECIFIC miss: <library> <declaration>.`) and in its summary; the miss stays free
-  text until the owed redesign of the `owed` markers records it. A downgrade's note never takes
-  that sentence: `locate_records.downgrade_note`, which picks the witness sentence a `closeMatch`
-  downgrade with no note exports as its note, passes over any sentence that carries the mark
+- **R-SPECIFIC: a passage stated for specific objects is linked to the declaration stated for
+  them, ranked first among cards of equal strength** (`references/vocabulary.md` §1.11, the
+  smoke-4 audit's rules; `templates/prompts/locate.md.tmpl`, `locate-challenge.md.tmpl`,
+  `workflows/locate-label.workflow.js`, `scripts/locate/records.py`, `scripts/gate/
+  verify_locate.py`; the maintainer's notes of 2026-10-28). The smoke-4 run linked passages
+  stated for the integers to lemmas of a general structure, in bundles too, where lemmas stated
+  for ℕ state them. The rule, word for word in both locate prompts and the labeler after R-TABLE:
+  search for the declaration stated for the passage's own objects and record it; rank the cards
+  by relation strength first and, among cards of equal strength, the specific declaration first;
+  a general theorem that holds of them keeps its relation (R6), below a specific card of equal
+  strength, alone only when the library states none; a bundle's parts are the specific
+  declarations where they exist, and a bundle that states the whole passage is a whole-passage
+  card at its bundle relation, its parts ranked together there against a general whole-passage
+  card by strength; for one structure of a family the specific declaration is its instance of
+  the property, an instance Lean's instance resolution reaches through a chain included (the link
+  names the chain's last instance with the chain in its `note`, no PD8 bridge); and the general
+  notion is linked to its definition (R-INSTANCE's links). The locate worker's search step and
+  its ranking line say it; the challenger hunts for the specific declaration and, since a
+  challenge cannot add a location or move a rank, reports a recall miss for a general card
+  ranked above a specific one of equal strength, or standing with no specific declaration where
+  the library states one, a general part of a bundle included, which is never ground to refute
+  the bundle: the last sentence of its verdict's witness (`R-SPECIFIC miss: <library>
+  <declaration>.`) and its summary; the miss stays free text until the owed redesign of the
+  `owed` markers records it. A downgrade's note never takes that sentence:
+  `locate_records.downgrade_note`, which picks the witness sentence a `closeMatch` downgrade with
+  no note exports as its note, passes over any sentence that carries the mark
   (`is_specific_miss`), and the gate's rule 1 refuses such a downgrade whose witness says nothing
-  else, since the export would refuse a `closeMatch` with no note. No gate
-  check (general against specific is no fact a name gives), so `JUDGMENT_RULES` stays 4 and the
-  labeler `locate-label/7`; its file sha moved, so args emitted before this transcribe no more.
+  else, since the export would refuse a `closeMatch` with no note. Every example is synthetic. No
+  gate check of the rule (general against specific is no fact a name gives), so `JUDGMENT_RULES`
+  stays 4 and the labeler `locate-label/7`; its file sha moved, so args emitted before this
+  transcribe no more.
 - **Two calls on the cut: independent facts are separate passages, and a sentence naming
   several structures is cut per structure** (`templates/prompts/locate-inventory.md.tmpl`,
   `locate-inventory-audit-system.md.tmpl`, `locate-inventory-audit.md.tmpl`,

@@ -2356,16 +2356,31 @@ class TestTheSmoke4Rules(unittest.TestCase):
         self.assertIn("tempered distributions with a general codomain F", lines["R-PD7"])
         self.assertIn("which derives `partial` there", lines["R-DEFFORM"])
         self.assertIn("its inventory `statement` gives it", lines["R-TABLE"])
-        # R-SPECIFIC orders the cards and picks a bundle's parts, never a relation (R6)
-        self.assertIn("is linked to the declaration stated for those objects: search for it, "
-                      "record it and rank it first", lines["R-SPECIFIC"])
-        self.assertIn("keeps its relation (R6), and is recorded below a specific one, or alone "
-                      "only when the library states none", lines["R-SPECIFIC"])
-        self.assertIn("a bundle's parts are the specific declarations where they exist",
+        # R-SPECIFIC orders the cards and picks a bundle's parts, never a relation (R6): by
+        # strength first, the specific declaration first among cards of equal strength, and a
+        # bundle that states the whole passage ranked as a whole-passage card at its relation
+        self.assertIn("is linked to the declaration stated for those objects: search for it and "
+                      "record it", lines["R-SPECIFIC"])
+        self.assertIn("Rank the cards by relation strength first, and among cards of equal "
+                      "strength put the declaration stated for the passage's own objects first.",
                       lines["R-SPECIFIC"])
+        self.assertIn("keeps its relation (R6): it ranks below a specific card of equal "
+                      "strength, and stands alone only when the library states no specific "
+                      "declaration", lines["R-SPECIFIC"])
+        self.assertIn("A bundle's parts are the specific declarations where they exist, and a "
+                      "bundle that states the whole passage is a whole-passage card at its bundle "
+                      "relation, its weakest part's: its parts rank together there, against a "
+                      "general whole-passage card by strength", lines["R-SPECIFIC"])
         self.assertIn("its instance of the property", lines["R-SPECIFIC"])
-        self.assertIn("a passage on the general notion is linked to its definition",
+        # an instance reached through a chain of instances is the structure's own
+        self.assertIn("an instance that Lean's instance resolution reaches through a chain "
+                      "counts as the structure's own", lines["R-SPECIFIC"])
+        self.assertIn("the link names the chain's last instance (`FiniteWidget.instSprocketed`), "
+                      "its `note` names the chain, and the chain is no PD8 bridge",
                       lines["R-SPECIFIC"])
+        self.assertIn("A passage on the general notion is linked to its definition",
+                      lines["R-SPECIFIC"])
+        self.assertIn("PD8", rules)
         self.assertIn("R6", rules)
         self.assertIn("what else the universe holds never changes a record's relation",
                       rules["R6"])
@@ -2423,23 +2438,58 @@ class TestTheSmoke4Rules(unittest.TestCase):
         for needle in ("the objects it is about and the declaration stated for those very "
                        "objects, before any general theorem that holds of them (R-SPECIFIC "
                        "below)",
-                       "best first (a declaration stated for the passage's own objects before "
-                       "a general one: R-SPECIFIC)."):
+                       "best first: by relation strength, then, among cards of equal strength, "
+                       "a declaration stated for the passage's own objects before a general "
+                       "one, and a bundle's parts together at the bundle's relation "
+                       "(R-SPECIFIC)."):
             with self.subTest(prompt="locate", needle=needle[:30]):
                 self.assertIn(needle, worker)
+        self.assertNotIn("(a declaration stated for the passage's own objects before a general "
+                         "one: R-SPECIFIC)", worker)
+        # the challenger's miss: a general card ranked above a specific one of equal strength,
+        # or standing with no specific declaration where the library states one, and never
+        # a ground to refute a bundle for its general part
         for needle in ("**A general declaration where a specific one exists** (R-SPECIFIC "
                        "below): judge the record by its own relation, which another "
                        "declaration never changes (R6)",
-                       "it is a recall miss you cannot repair (a challenge only lowers",
+                       "A general record that the passage's locations rank above a specific "
+                       "one of equal strength, or that stands with no specific declaration "
+                       "among them where the library states one, is a recall miss you cannot "
+                       "repair (a challenge only lowers",
                        "in the last sentence of your verdict's witness on the general record, "
                        "`R-SPECIFIC miss: <library> <declaration>.`, which a downgrade's note "
                        "never takes, and name each such miss in your summary.",
+                       "A general part of a bundle, where the library states a specific "
+                       "declaration of its conjuncts, is such a record too, never ground to "
+                       "refute the bundle, whose parts are judged by their own relations: report "
+                       "the miss "
+                       "on the part's record, or on the coverage claim's when your task holds no "
+                       "record of the part.",
+                       "A part that is a general theorem where the library states a specific "
+                       "declaration adds none either: it is an R-SPECIFIC miss (above), never a "
+                       "reason to refute.",
                        "the objects the statement is about and the declaration stated for "
                        "them (R-SPECIFIC below)"):
             with self.subTest(prompt="challenge", needle=needle[:30]):
                 self.assertIn(needle, challenger)
-        # the rule line sits after R-TABLE and before Fix 6d, in every file that carries it
+        # the coverage bullet's no-refute line sits in the bundle's refute rule
+        coverage = challenger[challenger.index("**A coverage claim** is a **bundle**"):
+                              challenger.index("**Never leave a located passage with nothing.**")]
+        self.assertIn("it is an R-SPECIFIC miss (above), never a reason to refute.", coverage)
+        # the examples are synthetic: none names a smoke-4 answer or its structures
         labeler = self.labeler_rules()
+        vocabulary_md = (HERE.parent / "references" / "vocabulary.md").read_text(
+            encoding="utf-8")
+        for name, text in (("locate", worker), ("challenge", challenger), ("labeler", labeler),
+                           ("vocabulary", vocabulary_md),
+                           ("changelog", (HERE.parent / "CHANGELOG.md").read_text(
+                               encoding="utf-8"))):
+            for word in ("UniqueFactorization", "uniqueFactorization", "exists_prime_factors",
+                         "PrincipalIdealRing", "Euclidean domain", "factorization_mul",
+                         "factorization_gcd", "factorization_lcm", "cyclic and simple"):
+                with self.subTest(text=name, word=word):
+                    self.assertNotIn(word, text)
+        # the rule line sits after R-TABLE and before Fix 6d, in every file that carries it
         for name, text in (("locate", worker), ("challenge", challenger), ("labeler", labeler)):
             with self.subTest(text=name):
                 self.assertLess(text.index("**R-TABLE**"), text.index("**R-SPECIFIC**"))
@@ -2452,7 +2502,20 @@ class TestTheSmoke4Rules(unittest.TestCase):
                               .read_text(encoding="utf-8").split())
         self.assertIn("It kept the labeler at `locate-label/7` for the reason the calls above "
                       "did", vocabulary)
-        self.assertIn("the last sentence of the witness of its verdict on that card is "
+        # the vocabulary says why strength comes first, the bundle's rank, the chain and the
+        # challenger's two cases
+        for needle in ("so a specific `hasPart` or `narrowMatch` never outranks a general card "
+                       "that states the whole passage, and the passage's best card is its "
+                       "strongest",
+                       "its parts rank together at that strength, so a bundle of specific "
+                       "`exactMatch` parts ranks above a general `broadMatch`",
+                       "**An instance through a chain**", "the chain is no PD8 bridge",
+                       "reports a recall miss in two cases only",
+                       "A general part of a bundle is the second case and never ground to "
+                       "refute the bundle"):
+            with self.subTest(needle=needle[:30]):
+                self.assertIn(needle, vocabulary)
+        self.assertIn("The last sentence of the witness of its verdict on that record is "
                       "`R-SPECIFIC miss:`", vocabulary)
         # the docs say what the note picker does with it, and that the record stays free text
         # (finding 8: "never its first, which may stand in for a note" misdescribed it)
