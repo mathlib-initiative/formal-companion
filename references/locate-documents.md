@@ -570,6 +570,26 @@ inventory owns the clause list, and everything above is checked against it:
   `CUT_FLAGS` (`not_a_statement`, `several_statements`): what a worker who cannot
   re-cut a passage says of its cut. It is refused on any other outcome.
 
+**Under judgment rules 4** (`RULES_SMOKE4`, the smoke-4 audit's calls,
+`references/vocabulary.md` §1.11), which bind a run whose `gate.json` names
+`judgment_rules: 4`, everything above holds, and two checks more:
+
+- **A part that states part of its conjunct.** `conjunct_relation` may be `hasPart`
+  too (`CONJUNCT_RELATIONS_PART`): the part states only some of what the conjuncts it
+  names say. It owes the `step` every `hasPart` owes and no `tests` or
+  `instantiation`, names no `convention`, and no bundle stands on it (it is no one of
+  `BUNDLE_RELATIONS`), so fix 4a does not count it either.
+- **PD6's shape tripwire.** On a compound statement of shape `existence_uniqueness`
+  or `iff` (`PD6_SHAPES`), a bundle part whose declaration's conclusion — the
+  segment of its signature after its binders and hypotheses,
+  `verify_locate.conclusion` — holds `↔`, any `≃`, `∃!` or `Bijective`
+  (`PD6_CONCLUSION_MARKS`) writes `pd6`, one line saying which conjunct it does not
+  state on its own and why: a characterisation f = w ↔ P f of the passage's witness
+  states existence at f := w and uniqueness, so it is one location, no part (PD6).
+  Without it the bundle is refused; a declaration with no recorded signature is not
+  held. `pd6` on a location that is no `hasPart` is refused, and a given one is a
+  one-line judgment field.
+
 ## 4. Challenge document (`mode: locate-challenge`)
 
 ```json
@@ -710,6 +730,20 @@ list. Then:
   with its `tests`, the tripwire and the generality words.
 - An `uphold` of an absence or an unresolved outcome gives `special_case` beside
   its queries (fix 5b), as an absence's receipt does.
+- **Under judgment rules 4** (`references/vocabulary.md` §1.11): a verdict's
+  `conjunct_relation` may be `hasPart` (§3); a **downgrade to `relatedMatch`** of a
+  record held to a strong relation (its own, or a part's `conjunct_relation`) gives
+  exactly one of `bridge: {library, declaration, why}` — the named lemma the
+  connection needs (PD8), in `corpus.sqlite` at that library (rule 3) and not the
+  record's own declaration, with a one-line `why` — or `incomparable: <one line>`
+  (R5's two settings, neither containing the other), and no other verdict carries
+  either; a coverage **confirm** gives `part_conventions: {<part's location_key>:
+  <convention>}`, the R1 convention (`CLOSE_MATCH_CONVENTIONS`) by which it reads each
+  part its `part_relations` credit with `closeMatch`, for those parts and no other
+  (fix 6d's mechanical half), and, on a statement of shape `existence_uniqueness` or
+  `iff`, `part_limits: {<part's location_key>: <one line>}` for each part whose
+  declaration concludes with one of `PD6_CONCLUSION_MARKS` and no other: which
+  conjunct it does not state on its own, and why (PD6's shape tripwire, §3).
 - **Fills (anomalies A1, A2).** A document whose verdicts leave a `located`
   passage with no location whose relation counts — its judged location records (a
   confirm keeps the relation, a downgrade leaves the one it names, a refute
@@ -2545,7 +2579,14 @@ them — `conjunct_relation` off one no longer `hasPart`; a `convention` stays o
 `hasPart` whose `conjunct_relation` is `closeMatch`); a coverage confirm's
 `part_relations` sit beside the claim as `coverage_part_relations`; a refute's
 `unstated` and `part_reasons` on `coverage_refuted`; and an uphold's `special_case`
-in `challenge_receipt`. A verdict on a record its challenge plan marked
+in `challenge_receipt`. Judgment rules 4's fields ride the same way where a document
+wrote them, on a run of status rule 2 or 3: a part's `pd6` (`CUT_LOCATION_FIELDS`)
+while it is a `hasPart`; a downgrade's `bridge` or `incomparable` on the
+`relatedMatch` location it leaves (`outcomes.BRIDGE_FIELDS`); a verdict's
+`conjunct_relation` of `hasPart` (`vocab.CONJUNCT_RELATIONS_PART`), which lapses a
+bundle standing on that part; and a coverage confirm's `part_conventions` and
+`part_limits` beside the claim as `coverage_part_conventions` and
+`coverage_part_limits`. A verdict on a record its challenge plan marked
 `conditional: "prominence"` (its `challenge-plan.json` row; `references/vocabulary.md`
 §1.11) counts only when the same challenge run overturned
 that passage's prominence to `subject` or `central`; otherwise it is named in the

@@ -696,10 +696,11 @@ CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strengthen*", "weaker", "weaken*"
 #: manifest shows them to the challenger; none is exported (the record set's format
 #: is unchanged, references/locate-documents.md section 6).  ``conjunct_relation``
 #: and ``tests`` are judgment rules 3's (``RULES_STATEMENT_CUT``, the statement cut
-#: below); a document of an earlier version carries neither, so its rows are the ones
-#: they always were
+#: below), and ``pd6`` judgment rules 4's (``RULES_SMOKE4``: a bundle part's answer to
+#: PD6's shape tripwire, ``PD6_SHAPES``); a document of an earlier version carries none
+#: of them, so its rows are the ones they always were
 JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step", "convention",
-                            "conjunct_relation", "tests")
+                            "conjunct_relation", "tests", "pd6")
 #: the longest one-line field a judgment rule asks of a location (``instantiation``,
 #: ``step``), and the fewest words with a letter in it: "n/a", "-" or "none" is
 #: no instantiation and no step
@@ -859,6 +860,26 @@ SIMPLE_STATEMENT_CLAUSE = "c1"
 #: (its ``conjunct_relation``, judged by R1-R3 and PD1-PD10 against the conjunct, not the
 #: passage): the relations that state a conjunct, or a special case of it
 CONJUNCT_RELATIONS = frozenset({EXACT_MATCH, CLOSE_MATCH, BROAD_MATCH, NARROW_MATCH})
+#: the conjunct relations under judgment rules 4 (``RULES_SMOKE4``): ``hasPart`` too, for a
+#: part that states only some of what its conjuncts say -- it owes a ``step`` and no
+#: ``tests``, and no bundle stands on it (it is no one of ``BUNDLE_RELATIONS``)
+CONJUNCT_RELATIONS_PART = CONJUNCT_RELATIONS | {HAS_PART}
+
+
+def conjunct_relations(rules: int) -> frozenset:
+    """The ``conjunct_relation`` values a document of judgment rules ``rules`` may give."""
+    return CONJUNCT_RELATIONS_PART if rules >= RULES_SMOKE4 else CONJUNCT_RELATIONS
+
+
+#: PD6's shape tripwire (gate rule 9 under judgment rules 4): on a compound statement of
+#: one of these shapes, a bundle part whose declaration concludes with one of these marks
+#: -- an iff, any ``≃`` equivalence, a unique existence, a bijection -- may state every
+#: conjunct alone (a characterisation f = w ↔ P f of the passage's witness states
+#: existence at f := w and uniqueness), so it writes ``pd6``, one line saying which
+#: conjunct it does not state on its own and why, and a challenger's confirm of its
+#: bundle gives the same in ``part_limits``
+PD6_SHAPES = frozenset({SHAPE_EXISTENCE_UNIQUENESS, SHAPE_IFF})
+PD6_CONCLUSION_MARKS = ("↔", "≃", "∃!", "Bijective")
 #: the relations a bundle may have: its weakest part's (question 9), and every part of a
 #: bundle states its conjuncts strongly, so a bundle's relation is a strong one
 BUNDLE_RELATIONS = STRONG_RELATIONS

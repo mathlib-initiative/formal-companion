@@ -111,7 +111,11 @@ STATEMENT_FIELDS = ("statement", "conjuncts", "shape")
 #: (the statement cut's J2 and fix 2a): kept from a document, and taken from a verdict,
 #: only on a run of status rule 2 (:func:`_location_fields`), so a run of status rule 1
 #: yields the rows it always did whatever keys its documents carry (the proposal's §7)
-CUT_LOCATION_FIELDS = ("conjunct_relation", "tests")
+CUT_LOCATION_FIELDS = ("conjunct_relation", "tests", "pd6")
+#: what a challenge downgrade to relatedMatch says of the record it leaves under judgment
+#: rules 4 (the gate's ``check_bridge``): kept on the location, on a run of status rule 2
+#: or 3, while it is a relatedMatch
+BRIDGE_FIELDS = ("bridge", "incomparable")
 #: the challenge target a conditional record waits on (``locate.challenge_plan``): its
 #: verdict applies once the same challenge run overturns that passage's prominence
 CONDITIONAL_PROMINENCE = "prominence"
@@ -1169,16 +1173,26 @@ def _judged_fields(loc: dict, verdict: dict, row: dict | None = None,
 
 def _judged_cut_fields(loc: dict, verdict: dict, row: dict | None,
                        problems: list[str] | None) -> None:
-    """A verdict's ``tests`` and ``conjunct_relation`` on the location it leaves (rules 3)."""
+    """A verdict's ``tests`` and ``conjunct_relation`` on the location it leaves (rules 3).
+
+    And judgment rules 4's ``bridge`` or ``incomparable`` of a downgrade to
+    ``relatedMatch`` (:data:`BRIDGE_FIELDS`), kept as the verdict gave it; a
+    ``conjunct_relation`` may be ``hasPart`` there (``vocab.CONJUNCT_RELATIONS_PART``),
+    which the gate admits under those rules only.
+    """
     if isinstance(verdict.get("tests"), dict):
         loc["tests"] = verdict["tests"]
+    for key in BRIDGE_FIELDS:
+        if verdict.get(key) is not None:
+            loc[key] = verdict[key]
     given = verdict.get("conjunct_relation")
     if given is None:
         return
     own = loc.get("conjunct_relation")
     why = None
-    if given not in vocab.CONJUNCT_RELATIONS:
-        why = (f"{given!r}, which is none of {', '.join(sorted(vocab.CONJUNCT_RELATIONS))}")
+    if given not in vocab.CONJUNCT_RELATIONS_PART:
+        why = (f"{given!r}, which is none of "
+               f"{', '.join(sorted(vocab.CONJUNCT_RELATIONS_PART))}")
     elif own in RELATION_STRENGTH and RELATION_STRENGTH[given] < RELATION_STRENGTH[own]:
         why = f"{given!r}, stronger than its own {own!r}"
     if why is None:
@@ -1199,7 +1213,8 @@ def held_relation(loc: dict) -> str | None:
     A ``hasPart`` with no conjunct relation is held to ``hasPart``.
     """
     relation = loc.get("relation")
-    if relation == vocab.HAS_PART and loc.get("conjunct_relation") in vocab.CONJUNCT_RELATIONS:
+    if relation == vocab.HAS_PART and loc.get("conjunct_relation") in \
+            vocab.CONJUNCT_RELATIONS_PART:
         return loc["conjunct_relation"]
     return relation
 
@@ -1226,6 +1241,12 @@ def _fit_fields(loc: dict) -> None:
         loc.pop("step", None)
     if held_relation(loc) not in vocab.STRONG_RELATIONS:
         loc.pop("tests", None)
+    # judgment rules 4: a part's answer to PD6's shape tripwire, and a downgrade's bridge
+    if loc.get("relation") != vocab.HAS_PART:
+        loc.pop("pd6", None)
+    if loc.get("relation") != vocab.RELATED_MATCH:
+        for key in BRIDGE_FIELDS:
+            loc.pop(key, None)
 
 
 def _apply_coverage(row: dict, planned: dict, verdicts: dict,
@@ -1282,6 +1303,12 @@ def _apply_coverage(row: dict, planned: dict, verdicts: dict,
                 # the challenger's relation of each part to its conjuncts (judgment rules 3),
                 # which counts in the bundle's relation where it is weaker than the part's own
                 row["coverage_part_relations"] = verdict["part_relations"]
+            for extra in ("part_conventions", "part_limits"):
+                # the readings a confirm credits the parts with and its answers to PD6's
+                # shape tripwire (judgment rules 4), kept beside the claim for the audit
+                if vocab.reads_bundles(status_rule) and verdict.get("action") == "confirm" \
+                        and isinstance(verdict.get(extra), dict):
+                    row[f"coverage_{extra}"] = verdict[extra]
             if verdict.get("action") == "refute":
                 row["coverage_refuted"] = {**claim, "challenge": vocab.CHALLENGE_DOWNGRADED,
                                            "witness": verdict.get("witness", "")}
@@ -1327,11 +1354,12 @@ def bundle_relation(parts: Iterable[dict], part_relations: dict | None = None) -
     weakest: str | None = None
     for loc in parts:
         own = loc.get("conjunct_relation")
-        if own not in vocab.CONJUNCT_RELATIONS:
+        if own not in vocab.CONJUNCT_RELATIONS_PART:
             return None
         given = (part_relations or {}).get(loc.get("location_key"))
         relation = own
-        if given in vocab.CONJUNCT_RELATIONS and RELATION_STRENGTH[given] > RELATION_STRENGTH[own]:
+        if given in vocab.CONJUNCT_RELATIONS_PART and \
+                RELATION_STRENGTH[given] > RELATION_STRENGTH[own]:
             relation = given
         if weakest is None or RELATION_STRENGTH[relation] > RELATION_STRENGTH[weakest]:
             weakest = relation
@@ -1351,6 +1379,9 @@ def _bundle_stands(row: dict, claim: dict, standing: dict, problems: list[str]) 
                                    if claim.get("challenge") == vocab.CHALLENGE_SURVIVED else None)
         if relation is None:
             why = "a part of the bundle names no conjunct_relation"
+        elif relation == vocab.HAS_PART:
+            why = ("its weakest part states only part of its conjuncts (a hasPart of them), "
+                   "which leaves them unstated")
         elif relation not in vocab.BUNDLE_RELATIONS:
             why = (f"its weakest part is a {relation} of its conjuncts, a special case that "
                    "leaves them unstated")
@@ -1569,7 +1600,8 @@ def outcome_row(row: dict) -> dict:
     # before them writes the rows it always did; and status rule 2's fields (the
     # statement cut's section 1.5), only on a run of that rule
     for key in ("claims", "challenge_claims", "challenge_receipt",
-                "coverage_challenge_clauses", "coverage_part_relations", *STATEMENT_FIELDS,
+                "coverage_challenge_clauses", "coverage_part_relations",
+                "coverage_part_conventions", "coverage_part_limits", *STATEMENT_FIELDS,
                 "cut_flag", "owed", "fill"):
         if row.get(key) is not None:
             out[key] = row[key]

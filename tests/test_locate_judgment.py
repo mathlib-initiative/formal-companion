@@ -260,10 +260,11 @@ class TestTheClaimList(JudgedLocate):
         self.assertOk(self.run_body(body))
 
     def test_a_gate_json_naming_newer_rules_cannot_run(self):
-        # the gate knows the statement cut's rules 3 before the planner writes them
-        # (docs/proposals/statement-cut.md section 7: the flip)
+        # the gate knew the statement cut's rules 3 before the planner wrote them
+        # (docs/proposals/statement-cut.md section 7: the flip), and knows the smoke-4
+        # audit's rules 4 so
         self.assertEqual(vl.KNOWN_JUDGMENT_RULES,
-                         max(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT))
+                         max(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4))
         for value, needle in ((vl.KNOWN_JUDGMENT_RULES + 1, "this gate knows"),
                               ("1", "not a version number"), (-1, "not a version number")):
             self.fx.gate["judgment_rules"] = value

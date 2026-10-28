@@ -42,6 +42,24 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **Judgment rules 4, the gate's checks** (`scripts/gate/verify_locate.py`,
+  `cflib.vocab.RULES_SMOKE4`; `references/locate-documents.md` §3, §4 and §10,
+  `references/vocabulary.md` §1.11). The gate knows judgment rules 4 before the planner
+  writes them (`KNOWN_JUDGMENT_RULES` 4), and each check binds only a gate.json naming 4: a
+  part's `conjunct_relation` may say `hasPart` (`CONJUNCT_RELATIONS_PART`), owing a `step`
+  and no `tests`, and no bundle stands on it; **PD6's shape tripwire** on an
+  `existence_uniqueness` or `iff` bundle, where a part whose declaration concludes with `↔`,
+  `≃`, `∃!` or `Bijective` (`verify_locate.conclusion`, read off the signature) writes
+  `pd6`, and a confirm of the bundle `part_limits`, saying which conjunct it does not state
+  alone; a coverage confirm's `part_conventions` for each part its `part_relations` credit
+  with `closeMatch` (fix 6d's mechanical half); and a challenge downgrade of a strong record
+  to `relatedMatch` giving exactly one of `bridge: {library, declaration, why}` (a lemma of
+  the corpus, rule 3) or `incomparable`. The outcomes keep `pd6`, `bridge`, `incomparable`,
+  `coverage_part_conventions` and `coverage_part_limits` where a document wrote them, on a
+  run of status rule 2 or 3, and a verdict's `hasPart` conjunct relation lapses the bundle
+  standing on that part, by name. The smoke-4 audit's measure: both of run A's PD6 misses
+  were an iff characterisation entered as a part, and 4 of its 12 broadMatch-to-relatedMatch
+  downgrades took an encoding for a bridge.
 - **Status rule 3, R-BROAD** (`cflib.vocab.STATUS_RULE_BROAD`; `references/vocabulary.md`
   §1.11, the maintainer's call of 2026-10-28). `derive_status(…, status_rule=3)` gives
   `formalized` for a `broadMatch` to a proved theorem or to data (a definition without the

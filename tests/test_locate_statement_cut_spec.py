@@ -134,10 +134,13 @@ class TestTheShapes(unittest.TestCase):
                                           "differentiable at"))
 
     def test_an_older_document_keeps_its_rows(self):
-        """The two new location fields come last: a rules-2 location's copy is unchanged."""
+        """The new location fields come last: a rules-2 location's copy is unchanged.
+
+        Judgment rules 3's two, then judgment rules 4's ``pd6``."""
         self.assertEqual(vocab.JUDGMENT_LOCATION_FIELDS[:4],
                          ("clauses", "instantiation", "step", "convention"))
-        self.assertEqual(vocab.JUDGMENT_LOCATION_FIELDS[4:], ("conjunct_relation", "tests"))
+        self.assertEqual(vocab.JUDGMENT_LOCATION_FIELDS[4:], ("conjunct_relation", "tests",
+                                                              "pd6"))
 
 
 class TestTheFates(unittest.TestCase):
