@@ -42,6 +42,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The receipt of a rule-3 audited run counts the gaps** (`scripts/harvest/audit_summary.py`,
+  `references/locate-documents.md` §13.10 and §13.12). When a verdicts file is `audit/3`, the
+  receipt's `audit` block gains `gaps`: round 1's gap reports summed (`before`), the reviewed
+  round's (`after`), each with its gaps and words by section, and each document's two whole; `cf
+  harvest` prints one line of it. A rule-3 run keeps rule 2's `skips` block. Reported, never
+  refusing; a rule-1 or rule-2 receipt has no such key and is what it was.
 - **The audit's prompts under rule 3** (`templates/prompts/locate-inventory-{audit-system,audit,
   skeptic,check,revision}.md.tmpl`, `scripts/locate/prompts.py`; `references/locate-documents.md`
   §13.12). Rule 3's text sits in `{{#if audit_gaps}}` blocks that render empty under rules 1 and
