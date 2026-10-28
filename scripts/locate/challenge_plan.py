@@ -111,7 +111,7 @@ _PART_KEYS = ("location_key", "library", "declaration", "relation", "rank")
 #: part carries them: the conjuncts it states and its relation to them (the statement
 #: cut's section 1.2).  Only there: a part of an earlier run carries ``clauses`` too, the
 #: claim ids of its own claim list, which its coverage record never showed
-_BUNDLE_PART_KEYS = ("clauses", "conjunct_relation")
+_BUNDLE_PART_KEYS = ("clauses", "conjunct_relation", "pd6")
 #: what a record copies from a status-rule-2 outcome row, where the row carries it
 _STATEMENT_KEYS = ("statement", "conjuncts", "shape")
 #: the challenge target a conditional record waits on (outcomes.CONDITIONAL_PROMINENCE)

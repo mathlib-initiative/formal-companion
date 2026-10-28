@@ -319,7 +319,7 @@ class TestTheVersionKeys(InventoryCase):
         self.assertEqual(vl.KNOWN_STATEMENT_CUT_RULE,
                          max(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_WIDE))
         self.assertEqual(vl.KNOWN_JUDGMENT_RULES,
-                         max(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT))
+                         max(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4))
         self.assertEqual(vl.KNOWN_SPAN_END_RULE,
                          max(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED))
         # the gate never knows a span-end rule the end it recomputes would refuse
