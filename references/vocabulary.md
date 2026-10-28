@@ -565,10 +565,12 @@ their mechanical halves (a strong location's `tests` and `instantiation`, a `has
   definition passage defines is R-DEFFORM's `closeMatch`); a name is no statement, so read what
   the lemma states before you credit it.
 - **Fix 4b** — on a definition, construction or notation passage, a declaration that is the
-  defined object is an `exactMatch` or `closeMatch` (R7), never a part; and before you call a
-  declaration's hypothesis stronger than the passage's, read it with its roles swapped (a
-  symmetric hypothesis, the two objects exchanged), and call it stronger only when no such
-  reading is the passage's.
+  defined object is an `exactMatch` or `closeMatch` (R7), or a `broadMatch` when it
+  generalises the passage's object (defined over a general type, PD1, or on a larger input
+  domain with real content, R-PD7), never a part; and before you call a declaration's
+  hypothesis stronger than the passage's, read it with its roles swapped (a symmetric
+  hypothesis, the two objects exchanged), and call it stronger only when no such reading is
+  the passage's.
 - **Fix 5a** — search each clause's special case too: for every clause, one query for its
   conclusion under a stronger hypothesis (PD4's `narrowMatch`), and search the universe's
   statement-only conjecture libraries, where a `narrowMatch` to a declaration stated without a
@@ -642,7 +644,15 @@ Displays) into locate and the challenge; R-PD7 limits PD7's value test to values
 input space with content is a generalisation; R-DEFFORM limits Fix 3a to a term the passage
 glosses, and keeps a definition passage partial against a theorem about its object; PD11 settles
 Fix 2a's r3 test on an instance argument that excludes only a trivial case, which the test's
-earlier words, "no extra instance argument", made a narrowing.
+earlier words, "no extra instance argument", made a narrowing. Two words the flip left behind
+contradicted these rules and were corrected the same day: Fix 4b's defined object, which its
+earlier words held to `exactMatch` or `closeMatch` (R7) even when it generalises, is a `broadMatch`
+when it does (PD1, R-PD7); and a bundle part's instance argument (the locate prompt's step 7, the
+challenger's coverage claim), which "an extra instance argument" made a stronger hypothesis
+whatever case it excludes, adds one only when the case has real content (PD11). They kept the
+labeler at `locate-label/7`: they add no gate check and leave `JUDGMENT_RULES` at 4, the reason
+PD10 and PD7's test kept it at `/5`, and the labeler's file sha moved with them, so the transcriber
+refuses a result of args emitted from the earlier text.
 
 **PD11 in the record of the call** (2026-10-27): "[Nontrivial R] excludes only the zero ring, a
 trivial case, so it does not narrow" — so `Matrix.charpoly_fin_two` is an `exactMatch` and

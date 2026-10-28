@@ -2085,6 +2085,11 @@ class TestThePrompts(unittest.TestCase):
         self.assertIn("states PD7's three-way test", lines["2e"])
         self.assertIn("`mem_*_iff`, `*_apply`, `*_def`", lines["3a"])
         self.assertIn("read it with its roles swapped", lines["4b"])
+        # 2026-10-28: the defined object generalises as PD1 and R-PD7 say, never as a part
+        self.assertIn("is an `exactMatch` or `closeMatch` (R7), or a `broadMatch` when it "
+                      "generalises the passage's object (defined over a general type, PD1, or "
+                      "on a larger input domain with real content, R-PD7), never a part",
+                      lines["4b"])
         self.assertIn("one query for its conclusion under a stronger hypothesis", lines["5a"])
 
     def test_pd9_carries_the_maintainers_rewording(self):
@@ -2365,6 +2370,34 @@ class TestTheSmoke4Rules(unittest.TestCase):
         self.assertIn("judge its structure by R-EQ", rules["FM7"])
         vocabulary = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
         self.assertIn("**PD11 in the record of the call** (2026-10-27)", vocabulary)
+
+    def test_no_word_lets_a_trivial_instance_argument_narrow_or_keeps_a_defined_object_from_broad(self):
+        """2026-10-28: the words the flip left behind that contradicted PD11, PD1 and R-PD7.
+        Every "extra instance argument" in the rule text names a case with real content (PD11),
+        a bundle part's included (the locate prompt's step 7, the challenger's coverage claim),
+        and every defined object of Fix 4b may be broadMatch when it generalises."""
+        vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
+                              .read_text(encoding="utf-8").split())
+        texts = {"locate": self.worker(), "challenge": self.worker(vocab.LOCATE_CHALLENGE),
+                 "labeler": self.labeler_rules(), "vocabulary": vocabulary}
+        for name, text in texts.items():
+            with self.subTest(text=name):
+                quoted = text.count('"no extra instance argument"') + text.count(
+                    '"an extra instance argument"')
+                self.assertEqual(text.count("extra instance argument") - quoted,
+                                 text.count("extra instance argument that excludes a case with "
+                                            "real content"))
+                self.assertNotIn("(R7), never a part", text)
+        self.assertIn("no part assumes more than the passage does (a stronger hypothesis, an "
+                      "extra instance argument that excludes a case with real content, a special "
+                      "case; one that excludes only a trivial case does not narrow, PD11)",
+                      texts["locate"])
+        self.assertIn("no part adds a hypothesis the passage does not have (a stronger "
+                      "assumption, an extra instance argument that excludes a case with real "
+                      "content, a special case, another object; one that excludes only a trivial "
+                      "case adds none, PD11)", texts["challenge"])
+        self.assertIn("Two words the flip left behind contradicted these rules", vocabulary)
+        self.assertIn("They kept the labeler at `locate-label/7`", vocabulary)
 
     def test_the_prompts_ask_for_the_fields_of_rules_4(self):
         worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)
