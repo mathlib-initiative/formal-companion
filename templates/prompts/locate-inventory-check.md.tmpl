@@ -1,0 +1,33 @@
+You are the **checker** of round $CF_AUDIT_ROUND (of at most $CF_AUDIT_ROUNDS) for task `tasks/$TEND_TASK_ID.yaml`, in worktree $TEND_WORKTREE_PATH. The worker revised `$CF_AUDIT_DOCUMENT` to apply the last round's verdicts, with recorded edit operations; you judge what the revision did, against the spec in your system prompt.
+
+## The data
+Staged under `.tend/audit/` ("This call" names each file; the last round is the one before yours):
+
+- the last round's `verdicts.json`: `verdicts`, what the revision was to apply, each `{id, item, start, verdict, rule, merge_with, action, origin, …}`, its item a passage of the snapshot that round reviewed, and `history`, the verdicts found applied before;
+- the last round's `document.json`: that snapshot;
+- the last round's `repair.json`, when the worker's report holds together: one entry per verdict, `applied`, `not_applied`, `gate_refused` (with the gate's refusal line, verbatim, as `gate_line`) or `disputed` (with the worker's reason as `why`);
+- `r$CF_AUDIT_ROUND.diff.md`: every passage changed, added or removed since that snapshot, before and after{{#if audit_skips}}, then its `SKIPS` section (each skip removed, changed or added since the snapshot) and one `SKIP VERDICT` line per `{{skip_verdict}}` verdict: the math paragraphs under no passage in its span before and now, how many of its statements now start inside a passage, and the skips left in its span{{/if}}{{#if audit_gaps}}, then its `GAPS` line and one `GAP VERDICT` line per `{{gap_verdict}}` verdict: the words in its span no passage and no skip holds before and now, and how many of its statements now start inside a passage{{/if}};
+- `r$CF_AUDIT_ROUND.collateral.json`: `collateral`, each change no cited operation produced, with its id (`r$CF_AUDIT_ROUND-x001`, …) and what changed: `hand_edit`, `moved` (a passage no operation names whose span moved with a neighbour's merge or drop), `uncited_op` or `ops_refused`{{#if audit_skips}}, or `skip_edit` (a skip changed, removed or added with no `unskip` that makes it: `before` and `after` are its span and reason){{/if}};
+- `r$CF_AUDIT_ROUND.check.part<i>.expect.json`: the verdict ids and collateral ids your part judges;
+- your part of the rendering of the revised document, `r$CF_AUDIT_ROUND.render.part<i>.md` (`[n] item · span · scope · kind · prominence · section`, `TEXT`, `STATEMENT`, `SHAPE`, `HINT`, `GAP`).
+
+## What you write
+The file "This call" names, `.tend/audit/r$CF_AUDIT_ROUND.audit.part<i>.json`:
+
+```json
+{"schema": "{{audit_schema}}", "kind": "check", "round": $CF_AUDIT_ROUND, "source_id": "$CF_AUDIT_SOURCE",
+ "checked": [
+   {"verdict_id": "r1-v001", "status": "applied", "reason": ""},
+   {"verdict_id": "r1-v002", "status": "partial", "reason": "split made, but the reason PD9 leaves out is still in it"}],
+ "collateral": [
+   {"id": "r2-x001", "harmful": false, "reason": "the neighbour's default end moved with the merge"}],
+ "new": [],
+ "regressions": []}
+```
+
+1. **`checked`: one entry for every verdict id your expect file names**, with a `status`, one of {{check_statuses}}: `applied`; `partial`; `missing`; `wrong` (applied in a way the spec makes wrong); `gate_refused_ok` (the worker quotes a gate refusal, and the change the verdict asks for is one the gate's bound refuses: see "What the gate allows"); `gate_refused_doubtful` (the quoted refusal does not show that the change cannot pass); `disputed` (the worker declined it: leave the judgment to the skeptic). A status other than `applied` gives its `reason`{{#if audit_skips}}. A `{{skip_verdict}}` verdict is `applied` when no statement is left under a skip in its span (its narration expository, not skipped) and the statements it named start inside passages; the `SKIP VERDICT` line counts both{{/if}}{{#if audit_gaps}}. A `{{gap_verdict}}` verdict is `applied` when the statements it named start inside passages and its span leaves no run that holds a statement; the `GAP VERDICT` line counts both{{/if}}.
+2. **`collateral`: one entry for every collateral id your expect file names**, `harmful` when the change makes the cut worse under the spec, with its reason.
+3. **`new`**: defects only in the passages the revision changed and their immediate neighbours, the kind rule included, as `{"item", "verdict", "rule", "merge_with", "reason", "action"}` (the auditor's verdicts and caps; `merge_with` is `""` when it names no neighbour). Judge every passage of your part marked `HINT widened`, changed or not: it crosses its block only because the gate's widest bound lets it, so say whether its sentence really runs on into the block it crosses (C2), and when not, it is a `new` entry. Do not re-audit the passages the revision left alone: the first round did.
+4. **`regressions`**: a verdict of an earlier round, applied before, that the latest change undid, as `{"verdict_id", "reason"}`.
+
+Then run the validator line below until it passes, and stop: no result file, no commit.

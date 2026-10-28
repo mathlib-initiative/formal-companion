@@ -34,7 +34,8 @@ source or their owners' details into this repo.
 SKILL.md README.md CLAUDE.md CONTRIBUTING.md CHANGELOG.md POLICY.md LICENSE
 docs/design/stage_map.md   the current spec; change it in the same commit as the code
 docs/design/archive/       the design record it came from (historical)
-docs/proposals/            designs not yet built (pdf-to-companion.md)
+docs/proposals/            designs: pdf-to-companion.md (not yet built) and
+                           wikipedia-locate.md (locate; its §1 says what is built)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
 vendor/              literature_links/: Literature Links 2.0.0, unreleased,
@@ -48,19 +49,36 @@ bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
 scripts/cflib/       shared library (no stage logic, no network):
                      workspace, paths, registry, discovery, inference, state,
-                     items, vocab, hashing, yamlio/jsonio, adapters_api, vendored
+                     items, passages, vocab, hashing, yamlio/jsonio,
+                     adapters_api, vendored
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
-                     route, detect, report, recheck, score, share, cost, pipeline
+                     route, detect, report, recheck, score, share, cost, pipeline,
+                     and for locate corpus, locate, bench (below)
 scripts/annotations/ the skill's tooling around the legacy format, not a stage:
                      export/ (the companion exporters behind `cf export`),
                      review_tags.py (`cf review-tags`), see docs/exporters.md, and
                      sync_format.py, which vendors a release; the legacy format
                      itself (schema, checker, id rules) is
                      vendor/formal_companion_annotations/
+scripts/corpus/      locate's universes (`cf corpus`): the host probe drivers and the two
+                     host tools, stdlib-only with no cflib, plus universe.yaml, ingest,
+                     corpus.sqlite and its read API; templates/corpus/ holds the probe
+                     and its acceptance canary (references/locate-documents.md §8)
 scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
+scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
+                     its three presets, outcomes with the derived status, and the
+                     Literature Links export (references/locate-documents.md);
+                     records.py and passage_ids.py import no cflib, so the gate
+                     directory carries them to a run host beside
+                     gate/verify_locate.py, gate/verify_findings.py (which it
+                     imports), gate/locate_text.py and the two corpus host tools
+scripts/bench/       locate's benchmark (`cf bench`; references/locate-bench.md) and
+                     workflows/locate-label.workflow.js, its frozen labeler
 templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
                      tests/ holds its node --test suites
+templates/campaign/  the host-side sequencer `cf campaign render` writes
+templates/tend/      the tend root's config, faithfulness and locate (`*-locate*`)
 templates/  workflows/  tests/  .github/workflows/
 ```
 
@@ -84,8 +102,18 @@ Those two lines move together or not at all.
   installed.
 - No network in library code. The only exceptions are the errata fetcher
   (curl, raw HTML kept, never a summarising fetch), an explicit
-  `cf onboard --download` of a PDF the author publishes himself, and the
-  run/harvest commands (ssh/rsync to an allowlisted host).
+  `cf onboard --download` of a PDF the author publishes himself, the
+  run/harvest commands (ssh/rsync to an allowlisted host), and the Wikipedia
+  fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — `scripts/sources/wikinet.py`,
+  the one module that may reach Wikipedia: curl, the raw bytes kept, one fixed
+  parameter set, each revision fetched once, and only under an explicit
+  `cf sourceset fetch --execute`, `cf sourceset enumerate-wikiproject --execute`
+  or `cf sourceset adopt --execute` (which only asks the page of a pinned
+  revision that names no page id) (`--fixtures <dir>` replays recorded responses
+  instead). The same module, under `cf sourceset flag-biographies --execute`
+  only, asks the Wikidata Query Service one fixed SPARQL shape (which items are
+  instances of human). A test refuses any other module that fetches from
+  Wikipedia or Wikidata.
 - Every module starts with a docstring saying **what** it was ported from — the
   v1 campaign script, cell or workflow, named for what it did — or saying it is
   new code, and pointing at the section it implements:
@@ -143,6 +171,9 @@ Those two lines move together or not at all.
   through `cflib.state` (atomic read-modify-write), version 2: a per-source
   `{sha, rows, items}` map and an `anchor_source`, never one top-level sha.
   Every stage writes its counts there; `cf status` prints only what it read.
+  Locate, which plans from a sourceset rather than a companion, writes its counts
+  to `sourcesets/<id>/state.json` instead, and only through `Sourceset.record_state`
+  and `refresh_state` (`scripts/sources/sourceset.py`), the file's one writer.
 - **Idempotence.** Every command may be re-run. Extraction keys on (repo
   commit, adapter key including any ledger/export sha); planning is
   deterministic given `run.yaml`; harvest diffs against the previous receipt;
@@ -286,3 +317,14 @@ by `CF_TML` and `CF_MT` (plus the optional `CF_BASELINE_CORPUS`) — it defaults
 no path of its own and says what to set — and, unless `--offline`, network access
 for the errata fetch. Its generated
 fixtures are gitignored.
+
+`tests/e2e/locate_synthetic/driver.py` is the same for locate, on synthetic
+inputs and with nothing outside the checkout: a universe through `cf corpus`, a
+sourceset through `cf sourceset` from the recorded answers in
+`tests/data/locate/wiki`, L2, the three `cf plan-locate` presets, the staged
+gate and `passage_ids.py` run as the run host runs them (a copy of the planned
+root's `gate/`, `python3 -I`, a bare environment, a scratch working directory),
+bad documents refused under the rule they break, then harvest, the locate
+tally, the Literature Links export and the bench. Run it with `python3
+tests/e2e/locate_synthetic/driver.py [--keep <dir>]`; the suite runs it as
+`tests/test_e2e_locate_synthetic.py`.

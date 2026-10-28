@@ -1,0 +1,96 @@
+You are the worker for task file `tasks/$TEND_TASK_ID.yaml`: the **inventory** (L3a) of one web source — the table of every passage of it that states something.
+
+Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`, then the source's reading copy `{{sources_dir}}/<source-id>/text.txt` from top to bottom. Never work from memory of the article: this revision is the one being inventoried.
+
+## What a passage is
+A span of the source that states something: a definition, a theorem, a conjecture, an example, a construction or a notation (`passage_kind`; `other` when it states something that is none of these). A step of a proof, a derivation or a worked example that asserts a fact or an equation is kind `theorem`, never `other`. One passage per statement: the cut rules below say what one statement is. **Only definitions, theorems, equations and declarative statements about mathematical objects are `formal_math` passages** (the maintainer's PD5):
+
+- **Proof narration and commentary is no `formal_math` passage** — a sentence on what a proof uses, how it goes or why a step is natural, or on what the article will do next: it states nothing a library could state. It is judged a sentence at a time (Proofs, below), so a statement inside a proof is never narration. Never make a narration sentence, or a span that holds one, a `formal_math` passage; where its paragraph must be covered (below), write it as a passage scoped `expository`, which is never located and gets no status, and otherwise leave it out.
+- **Commentary on a method and an instruction are narration too** — which method may be used, or that one is faster, slower or more practical than another, unless it gives a bound or a complexity class a library could state ("it runs in polynomial time"); and an instruction of a computation ("now reduce each count modulo 7", "proceed by adding 6 = 2 × 3"), where a number written as a product names a step and asserts nothing: the facts the computation reaches are the passages.
+- **Inside a proof, each definition, theorem, equation or declarative statement is a passage of its own**, with the kind of what it states (an equation or a declarative statement that asserts a fact is a `theorem`, one that defines an object a `definition`): never the proof as one passage, and never a statement folded into the span of another. The next passage's start ends each one; give `until` (below) to end it sooner when narration you leave out follows it.
+- A single word that names a defined object (a term a reader might want linked to its Lean definition) is no passage of its own: term links are a separate feature.
+
+## How to cut: one passage per statement
+Each `formal_math` passage gets one card, or none, from everything after you: a passage that holds two statements is located, challenged and voted on as if it were one, and nothing downstream can cut it again. So cut the article by these rules (the bench's labeler cuts by the same words):
+
+- **The test.** A passage is one statement when one Lean declaration could state it whole, with nothing left that a reader would call a second result, even when a library states it in two lemmas. Otherwise cut it: a definition and a theorem about it, a fact and the reason the text gives for it, or two cases in two sentences are two passages, not one.
+- **Units.** A passage is one or more whole units: a sentence, or one of its independent clauses, with the displays that sentence introduces; or a list item. It never runs from one paragraph into the next, except inside a theorem box, into the displays its last sentence introduces and the paragraph that finishes that sentence after them, or, for a compound statement, over the items of one list.
+- **Displays.** A displayed formula is never cut and belongs to the sentence that introduces it. An equation chain (a = b = c) is one statement, its end-to-end equation; its middle terms are steps, not conjuncts. A display of several separate equations is one compound statement, shape `equations`.
+- **Inside a sentence.** Cut where an independent clause asserts a fact of its own, at one of {{cut_connectives}} (", and" only when a new subject follows). Never cut between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject. Each piece starts at a word, and the connective starts no piece.
+- **Lists.** A list whose items each state a fact is one passage per item. A list of the cases of one definition or law, or of the conditions of one equivalence, is one compound statement (shape `cases` or `iff`) that starts at its first item. Its lead-in sentence ("the following are equivalent:") is expository, unless it states a reason no neighbour states, which is a statement of its own; a display inside a list item belongs to that item, never to the lead-in sentence.
+- **Proofs.** Proof narration and commentary is expository (PD5); each definition, theorem, equation or declarative statement inside a proof is a passage of its own, and the proof as a whole is none: a proof or a derivation is judged a sentence at a time, never kept, skipped or scoped `expository` whole for being a proof. The steps of a worked example are judged the same way: a sentence that asserts its own equation is a passage of its own, never a conjunct of the example.
+- **Context.** A sentence that only sets up objects or hypotheses ("Let W be a finite widget.") is no statement and no `formal_math` passage of its own: it opens the first statement that uses it, since a statement is never cut from its hypothesis. When that statement is in another paragraph (outside a theorem box, the displays the sentence introduces and the paragraph that finishes that sentence after them), or anything comes between, the sentence opens nothing: it is `expository` where its paragraph must be covered, and otherwise in no passage. A sentence that defines a symbol for later use is a `notation` passage, not context; one that only fixes an example's objects is context. Context from further away stays out of the span: `statement` carries the hypotheses and objects ("for a finite widget W, …"), so it reads on its own and the span stays tight.
+- **Conjuncts.** A compound statement is one of a closed list of shapes: `existence_uniqueness` (existence and uniqueness), `iff` (an equivalence, or the conditions of one), `cases` (the cases of one law or one definition, in one sentence, one display or one list), `conclusions` (several conclusions about one subject under one hypothesis) and `equations` (one display holding several equations). Write its `conjuncts`, {{min_conjuncts}} to {{max_conjuncts}} of them, and its `shape`; `existence_uniqueness` has exactly two. A simple statement has neither. Anything else that holds two results is two statements: cut it.
+- **The subject.** A lead that describes the subject rather than states it is expository: a sentence describes when it would stay true whatever the result concluded ("the gadget theorem links widgets to sprockets", or a hedged gloss: "roughly, …"), and states when it gives the hypotheses and the conclusion ("every finite widget has a spanning gadget") or what a definition defines. The subject marker, `prominence: subject`, goes on at most one passage, the first in reading order that states the theorem or definition (or the first part of one stated only in parts), which may be its theorem box, and on none when no passage states it; a later restatement is `central`. A passage not scoped `formal_math` is always `supporting`.
+
+A stated reason is cut by the maintainer's rule:
+
+- **PD9** — a stated reason ("it holds because X") is a passage of its own only when X is a declarative mathematical statement that no neighbouring passage already states; otherwise X is no passage and no clause.
+
+Two readings of the rules above, said outright. A sentence that names a symbol the article's statements go on to use ("we write N for the product of the counts", "let g denote the number of gadgets") is a `notation` passage scoped `formal_math` even when those statements are in the next paragraph, and a context sentence just before it, in its paragraph, opens it; one that fixes the objects of an example or an illustration ("to illustrate, let W have 6 nodes and g = 2") is context, symbols and all. A clause that only says a condition is not needed ("W need not be finite", "it is not necessary that …") and the clause that gives the weaker condition ("it suffices that …") are one statement: never cut between them, at a ";" or at a sentence break.
+
+For each passage decide:
+
+- `prominence`: `subject` — at most one passage, the one that states what the article is about (the subject rule above) · `central` — a named result or definition the article states · `supporting` — anything else formal, and every passage not scoped `formal_math`;
+- `scope`: `formal_math` — mathematics a library could state · `expository` — history, motivation, applications told about mathematics, and proof narration and commentary (PD5) · `non_math` — anything else. Only `formal_math` passages are searched for later. While the candidates file `{{candidates_dir}}/<source-id>.json` holds a `curated` hit, keep at least one `formal_math` passage, the subject on the one that states it, and never scope it out;
+- `statement`: your informal restatement in one or two sentences, precise enough that a reader could check a Lean statement against it, and reading on its own: it names the hypotheses and objects the tight span leaves to its neighbours ("for a finite widget W, …");
+- `conjuncts` and `shape`, on a compound `formal_math` passage only (the cut rules above); a simple statement leaves both out, never `[]` or `null`;
+- `concept`: always `null` (a passage's own Wikidata item is assigned by a validated method, never by a worker).
+
+**The deterministic finders' passages are already in your manifest** (`finders`: a theorem box, a bolded definition, the lead), one row per finder and start. **Finders that share a start are one passage**: two finders may propose the same start (a lead paragraph with a bold term; a theorem box and its first paragraph), so write ONE passage per start, with `finder` set to one of that start's finders (the first of them in the manifest, say), and that passage keeps all of them; two passages with one start cannot both get an id. Or drop a start with a `skips` entry whose `span` covers each dropped finder's whole span, and a reason. Then add the passages the finders missed, with `finder: "model"`. Every paragraph of `paragraphs.json` marked `"math": true` must be covered by a passage span or a `skips` span: that floor is checked mechanically. So must every other paragraph of eight words or more outside the back matter (References, Notes, See also, External links and their like), History included: a passage holds it, `expository` when it states nothing, or a skip leaves it out with its reason, never silence. A skip drops text no passage keeps (an infobox, navigation, references), never a statement no passage keeps, a proof, a derivation or a worked example: one that holds the whole span of a passage you keep is refused, while a skip inside a kept passage is how you drop a finder nested in it (a bolded definition inside a theorem box); a finder whose span holds a passage you keep is kept, not skipped. What the skips remove is counted in the run's receipt.
+
+## The document
+Write `findings/$TEND_TASK_ID/<source-id>.json`, one per source of the task:
+
+```json
+{"schema": "{{schema}}", "mode": "locate-inventory",
+ "run_id": "{{run_id}}", "task_id": "$TEND_TASK_ID",
+ "source_id": "<from the manifest>", "source_sha": "<from the manifest>",
+ "layer_sha256": "<from the manifest>", "renderer": "<from the manifest>",
+ "passages": [
+   {"item": "", "head_words": 0, "span": null,
+    "quote": {"exact": "<the passage's first words, verbatim from layer.txt>", "prefix": "", "suffix": ""},
+    "section": ["<heading path from sections.json>"], "fragment": "<the section's fragment, or null>",
+    "passage_kind": "theorem", "prominence": "central", "scope": "formal_math",
+    "statement": "<informal restatement>", "concept": null, "finder": "model"},
+   {"item": "", "head_words": 0, "span": null,
+    "quote": {"exact": "<a compound statement's first words>", "prefix": "", "suffix": ""},
+    "section": ["<heading path>"], "fragment": null,
+    "passage_kind": "theorem", "prominence": "supporting", "scope": "formal_math",
+    "statement": "For a finite widget W: W has a spanning gadget, and any two spanning gadgets of W are equal.",
+    "conjuncts": [{"id": "c1", "text": "a finite widget has a spanning gadget"},
+                  {"id": "c2", "text": "two spanning gadgets of one finite widget are equal"}],
+    "shape": "existence_uniqueness", "concept": null, "finder": "model"}],
+ "skips": [{"span": [200, 900], "reason": "infobox"}],
+ "notes": "free text, at most 2,000 characters"}
+```
+
+- `quote.exact` **starts the passage**: copy the passage's first words character for character from `layer.txt` (not from `text.txt`: the layer spells a formula as its rendered text followed by its TeX, which is what you must copy). Add a `prefix`/`suffix` of a few words from the layer only when `exact` alone occurs more than once. A passage must start at a word, and never inside a formula.
+- `conjuncts` are `{"id": "c1", "text": "…"}` objects with exactly those two keys, the ids `c1`, `c2`, … in order with no gap; each `text` is one line of at most 300 characters in your own words, never more than twelve consecutive words of the article, alone or read one after the other (a compound statement's conjuncts are exported beside the declarations that state them). `shape` is one of {{compound_shapes}}.
+- Leave `item`, `head_words` and `span` for the tool, then run it:
+
+```bash
+{{ids_command}} --source-dir {{sources_dir}}/<source-id> --document findings/$TEND_TASK_ID/<source-id>.json --write
+```
+
+  It places each quote on the layer, keys every passage with its `In-text #<hex>` id, and prints what it could not place. Fix those quotes and run it again; never edit an id or an offset by hand.
+  **Where a passage ends**: at the earlier of the end of its paragraph or list item — of its theorem box when it starts in one, and with the displays its last sentence introduces and the paragraph that finishes that sentence after them — and the start of the next passage, less what separates the two (the space, a connective of the cut rules above, a comma or semicolon), unless you give `"until": "<its last words>"` (the end of their first occurrence after the start). So two passages never overlap, and you give `until` only to end a passage sooner (at the end of its own clause, when the rest of its sentence or paragraph is no passage: a reason PD9 leaves out, a remark, narration after the sentence a display interrupted), to run a compound statement over the items of its list, or to run a sentence to its last word over the words that finish it after its display, where the tool's end stops before them. Those words are that sentence's: never start a passage there, and never skip them, except after a list item, which is a unit: there they start a passage of their own. A quotation, an indented block, or a list item that holds paragraphs or a list of its own, counts as one paragraph here: a passage inside one that no later passage ends runs to its end, so end it with `until` where its own paragraph or item ends.
+- The gate holds the cut's mechanical part: two passages that share a character, an end past what the units rule allows, an end inside a formula, `conjuncts` and `shape` that break the rules above, `conjuncts` on a passage not scoped `formal_math`, a passage not scoped `formal_math` that is not `supporting`, two passages marked `subject`, and two passages with the same text are refused. What one statement is, where a sentence is cut, and the context are yours: the gate refuses none of them, and counts each passage's sentences, displays and connectives for the run's receipt.
+- If the source cannot be inventoried at all (it is empty, or not mathematics), write the document with `"passages": []` and `"unresolved": {"reason": "<why>", "by": "worker"}`.
+
+## Before you commit, check the cut, then run the gate
+
+Read each `formal_math` passage again and fix what breaks a cut rule:
+
+- At each connective of the cut rules, and at each sentence after a passage's first, cut when both sides assert a fact. Never cut after a supposition ("if", "let", "for every x": the hypothesis of what follows), inside an iff, between conjuncts about one subject (one passage, with `conjuncts`), or before a dependent tail ("where …", "for all x"); "so that" and a ";" inside a formula are no connectives.
+- A reason after "since" or "because" is a passage only by PD9. Otherwise the statement it gives a reason for ends before it (`until`); after a leading "Since …," the statement starts at its own first word, and the passage before it ends with `until`.
+- No passage starts inside a sentence except where you cut it or after a list item: the words after a display or a footnote marker are their sentence's.
+- No context sentence is a `formal_math` passage of its own, and `prominence: subject` is on at most one passage, the first that states the theorem or definition.
+
+```bash
+{{gate_command}} --findings findings/$TEND_TASK_ID/<source-id>.json
+```
+
+{{gate_exits}}
+
+{{finish_block}}

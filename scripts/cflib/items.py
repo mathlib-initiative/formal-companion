@@ -24,6 +24,20 @@ The canonical id is ``"<Kind> <n>[.<n>...]"`` or ``"In-text p.<n>"``; the
 sub-part is carried separately so ``Exercise 1.1.6(i)`` and
 ``Exercise 1.1.6(ii)`` pair on the same book item but stay distinguishable.
 
+A third form is new code, for sources with no numbering and no printed page
+at all (a web page): ``"In-text #<hex>"``, a PASSAGE keyed by 8 to 16
+lowercase hex digits of the hash of its head (docs/proposals/wikipedia-locate.md
+section 2.2; ``cflib.passages`` computes the hash).  It is one production of
+the in-text grammar, parsed whitespace-tolerantly like the others, and a
+malformed one is a reject (``bad_passage_id``), never a guess.  It is tried
+LAST, after the printed page and the cross-reference, so only a label those
+two refuse can become a passage and no label that parsed before it existed
+parses differently now.
+:func:`passage_item` / :func:`passage_hex` convert between the item and its
+hex, and :func:`to_vendored_passage_id` / :func:`from_vendored_passage_id`
+between the item and the vendored format's ``passage-<8 hex>`` id.  Nothing
+about ``clean()`` or ``finding_id`` changed to admit it.
+
 How many numeric segments a label may carry is the SOURCE's numbering, not a
 constant: ``Theorem 7``, ``Theorem 3.4`` and ``Lemma 2.3.4.1`` are all real
 book numbering, and ``cflib.inference.infer_numbering`` reads a source's own
@@ -67,6 +81,20 @@ REJECT_IN_TEXT_NO_TARGET = "in_text_no_target"
 REJECT_UNPARSEABLE = "unparseable"
 #: the label carries more numeric segments than the source's numbering has
 REJECT_TOO_MANY_SEGMENTS = "too_many_segments"
+#: an ``In-text #...`` label whose hash is not 8 to 16 lowercase hex digits
+REJECT_BAD_PASSAGE_ID = "bad_passage_id"
+
+#: ``In-text #<hex>``: a passage keyed by the hash of its head
+#: (docs/proposals/wikipedia-locate.md section 2.2).  The bounds are the
+#: production's; ``cflib.passages`` writes 8, the vendored ``passage-<hex>``
+#: form admits exactly 8, and the rest of the range is room for a longer hash
+#: without a second grammar.
+PASSAGE_ITEM_PREFIX = IN_TEXT + " #"
+PASSAGE_HEX_MIN = 8
+PASSAGE_HEX_MAX = 16
+_PASSAGE_HEX_RE = re.compile(r"[0-9a-f]{%d,%d}" % (PASSAGE_HEX_MIN, PASSAGE_HEX_MAX))
+#: the vendored format's quote-hash passage id: ``passage-<8 hex>``
+VENDORED_PASSAGE_PREFIX = "passage-"
 
 #: the deepest numbering any source may declare (``Lemma 2.3.4.1``)
 MAX_NUMBER_SEGMENTS = 4
@@ -150,6 +178,16 @@ class Item:
     @property
     def in_text(self) -> bool:
         return self.kind == IN_TEXT
+
+    @property
+    def is_passage(self) -> bool:
+        """An ``In-text #<hex>`` passage, keyed by the hash of its head."""
+        return self.kind == IN_TEXT and self.id.startswith(PASSAGE_ITEM_PREFIX)
+
+    @property
+    def passage_hex(self) -> str:
+        """The hex of an ``In-text #<hex>`` passage; ``""`` for any other item."""
+        return self.id[len(PASSAGE_ITEM_PREFIX):] if self.is_passage else ""
 
     @property
     def numbered(self) -> bool:
@@ -303,7 +341,16 @@ def try_parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS,
 
 
 def _parse_in_text(raw: str, s: str, kinds: Sequence[str], *, numbering=None):
-    """In-text items: the printed page wins; else a named cross-reference."""
+    """In-text items: the printed page wins; else a named cross-reference; else a ``#<hex>`` passage.
+
+    The passage production is LAST on purpose: it takes only a body the page
+    and cross-reference grammar refuse, so a label that parsed before the
+    production existed parses exactly as it did -- ``In-text #3, book p. 71``
+    is still the p.71 item and ``In-text #1, Definition 1.4.35`` still the
+    anchored Definition 1.4.35 (``TestNoExistingIdMoved`` pins them).  A
+    well-formed ``#<hex>`` can never reach the first two: a hex run holds no
+    ``p`` and no space, which a page and a ``<Kind> <n>`` mention both need.
+    """
     body = _IN_TEXT_RE.sub("", s).strip().lstrip(",").strip()
     page_m = _PAGE_RE.search(s)
     qualifier = re.split(r",|\(|\bbook\b|\bpp?\.", body, maxsplit=1)[0].strip()
@@ -316,7 +363,45 @@ def _parse_in_text(raw: str, s: str, kinds: Sequence[str], *, numbering=None):
         return Item(id=f"{IN_TEXT} {ref.full}", kind=IN_TEXT, chapter=ref.chapter,
                     section=ref.section, number=ref.number, levels=ref.levels,
                     qualifier=qualifier, raw=raw), None
+    if body.startswith("#"):
+        return _parse_passage(raw, body)
     return None, Reject(raw, REJECT_IN_TEXT_NO_TARGET, {"body": body[:60]})
+
+
+def _passage_problem(text: str) -> str:
+    """Why ``text`` is not 8 to 16 lowercase hex digits, or ``""`` when it is."""
+    if not text:
+        return "empty"
+    if " " in text:
+        return "trailing_text"
+    if not re.fullmatch(r"[0-9A-Fa-f]+", text):
+        return "not_hex"
+    if text != text.lower():
+        return "uppercase"
+    if not _PASSAGE_HEX_RE.fullmatch(text):
+        return "length"
+    return ""
+
+
+def _parse_passage(raw: str, body: str):
+    """``#<hex>`` after the in-text prefix: a passage, or a ``bad_passage_id`` reject.
+
+    Whitespace-tolerant the way the rest of the grammar is -- ``In-text#3fa91c07``,
+    ``in text  # 3fa91c07`` and ``In-text #3fa91c07`` are one item -- and strict
+    about the hash itself: an uppercase, short, long or non-hex hash, or anything
+    after it, is refused with the problem named, because a hash that is almost
+    right is a different key.  Reached only for a body the page and the
+    cross-reference grammar refused (:func:`_parse_in_text`), so "anything after
+    it" never includes a printed page or a named item: those still win.
+    """
+    hexpart = body[1:].strip()
+    problem = _passage_problem(hexpart)
+    if problem:
+        return None, Reject(raw, REJECT_BAD_PASSAGE_ID,
+                            {"hex": hexpart[:40], "problem": problem,
+                             "expected": f"{PASSAGE_HEX_MIN} to {PASSAGE_HEX_MAX} "
+                                         "lowercase hex digits"})
+    return Item(id=PASSAGE_ITEM_PREFIX + hexpart, kind=IN_TEXT, raw=raw), None
 
 
 def _mention_re(kinds: Sequence[str], numbering=None) -> "re.Pattern[str]":
@@ -524,6 +609,108 @@ def join_keys(raws: Iterable[str], kinds: Sequence[str] = DEFAULT_KINDS,
     return keys, rejects
 
 
+# --------------------------------------------------------------------------
+# passages: ``In-text #<hex>`` (docs/proposals/wikipedia-locate.md section 2.2)
+# --------------------------------------------------------------------------
+#
+# A passage's join key IS its canonical spelling, ``In-text #<hex>``: the hex
+# is already the identity, so ``join_key`` only folds the whitespace and the
+# prefix spellings the in-text grammar accepts.  ``clean()`` and ``finding_id``
+# are untouched, so -- as for every other label -- ``In-text#3fa91c07`` and
+# ``In-text #3fa91c07`` JOIN as one item and HASH as two; a stage that writes
+# a passage label writes :func:`passage_item`'s spelling.
+
+
+def passage_item(hex_digits: str) -> str:
+    """``"In-text #<hex>"`` for 8 to 16 lowercase hex digits; raises on anything else."""
+    text = str(hex_digits or "")
+    problem = _passage_problem(text)
+    if problem:
+        raise ItemGrammarError(f"{PASSAGE_ITEM_PREFIX}{text}", REJECT_BAD_PASSAGE_ID,
+                               hint=f"a passage hash is {PASSAGE_HEX_MIN} to {PASSAGE_HEX_MAX} "
+                                    f"lowercase hex digits ({problem})")
+    return PASSAGE_ITEM_PREFIX + text
+
+
+def passage_hex(item: "Item | str") -> str:
+    """The hex of an ``In-text #<hex>`` item, parsed whitespace-tolerantly.
+
+    The inverse of :func:`passage_item`.  Raises ItemGrammarError on any other
+    item -- a numbered item, an ``In-text p.<n>`` -- and on a malformed hash.
+    A string goes through the in-text grammar itself (:func:`_parse_in_text`),
+    so this answers exactly what :func:`try_parse` answers: ``In-text
+    #3fa91c07, p. 12`` is the p.12 item there, and not a passage here.
+    """
+    if isinstance(item, Item):
+        if not item.is_passage:
+            raise ItemGrammarError(item.full, "not a passage item",
+                                   hint=f"expected {PASSAGE_ITEM_PREFIX}<hex>")
+        return item.passage_hex
+    raw = str(item or "")
+    s = clean(raw)
+    if not _IN_TEXT_RE.match(s):
+        raise ItemGrammarError(raw, "not a passage item",
+                               hint=f"expected {PASSAGE_ITEM_PREFIX}<hex>")
+    parsed, reject = _parse_in_text(raw, s, DEFAULT_KINDS)
+    if parsed is None:
+        assert reject is not None
+        if reject.reason != REJECT_BAD_PASSAGE_ID:
+            raise ItemGrammarError(raw, "not a passage item",
+                                   hint=f"expected {PASSAGE_ITEM_PREFIX}<hex>")
+        raise ItemGrammarError(raw, reject.reason,
+                               hint=f"a passage hash is {reject.context['expected']} "
+                                    f"({reject.context['problem']})")
+    if not parsed.is_passage:
+        raise ItemGrammarError(raw, "not a passage item",
+                               hint=f"{raw!r} is the in-text item {parsed.full!r}; "
+                                    f"expected {PASSAGE_ITEM_PREFIX}<hex>")
+    return parsed.passage_hex
+
+
+def is_passage_item(raw: "Item | str") -> bool:
+    """True when ``raw`` parses as an ``In-text #<hex>`` passage."""
+    try:
+        passage_hex(raw)
+    except ItemGrammarError:
+        return False
+    return True
+
+
+def to_vendored_passage_id(item: "Item | str") -> str:
+    """``In-text #<8 hex>`` -> the vendored format's ``passage-<8 hex>`` id.
+
+    The vendored ``PASSAGE_QUOTE_ID_PATTERN`` admits exactly eight hex digits,
+    so a longer hash has no vendored spelling and is refused rather than cut.
+    """
+    from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+    from formal_companion_annotations import vocab as fmt_vocab
+
+    hexpart = passage_hex(item)
+    vid = VENDORED_PASSAGE_PREFIX + hexpart
+    if not re.fullmatch(fmt_vocab.PASSAGE_QUOTE_ID_PATTERN, vid):
+        raise ItemGrammarError(str(item), "no vendored passage id",
+                               hint=f"the vendored format's passage id is "
+                                    f"{fmt_vocab.PASSAGE_QUOTE_ID_PATTERN}; this hash has "
+                                    f"{len(hexpart)} digits")
+    return vid
+
+
+def from_vendored_passage_id(passage_id: str) -> str:
+    """The vendored ``passage-<8 hex>`` id -> ``In-text #<8 hex>``.
+
+    Only the quote-hash form converts: a ``passage-p<page>-<hex>`` id hashes a
+    TITLE on a printed page, not a passage head, and is refused.
+    """
+    from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+    from formal_companion_annotations import vocab as fmt_vocab
+
+    text = str(passage_id or "").strip()
+    if not re.fullmatch(fmt_vocab.PASSAGE_QUOTE_ID_PATTERN, text):
+        raise ItemGrammarError(text, "not a vendored quote-hash passage id",
+                               hint=f"expected {fmt_vocab.PASSAGE_QUOTE_ID_PATTERN}")
+    return passage_item(text[len(VENDORED_PASSAGE_PREFIX):])
+
+
 _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8,
           "ix": 9, "x": 10, "xi": 11, "xii": 12, "xiii": 13, "xiv": 14, "xv": 15}
 
@@ -558,6 +745,10 @@ def sort_key(item: "Item | str", kinds: Sequence[str] = DEFAULT_KINDS, *, number
         return (0, levels[0], levels[1] if len(levels) > 1 else -1,
                 levels[2] if len(levels) > 2 else -1,
                 tuple((0, n) for n in levels[3:]) + sub_rank(obj.sub), obj.kind)
+    if obj.is_passage:
+        # no page and no number: the hash orders passages, deterministically
+        # (it is not reading order -- a passage table carries its own span)
+        return (1, 0, 0, 0, ((1, obj.passage_hex),), obj.kind)
     return (1, obj.page or 0, 0, 0, (), obj.kind)
 
 

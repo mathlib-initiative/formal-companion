@@ -15,16 +15,18 @@ name fails every task immediately and repeatedly.  And the budget ceiling is set
 BEFORE concurrency is raised, because `request_changes` sends a task back for
 another worker turn, so the agent count is a lower bound, not a total.
 
-Two steps here are checks rather than commands the operator ran by hand:
+Some steps here are checks rather than commands the operator ran by hand:
 preflight compares the host's ``tend --version`` against the range recorded in
 ``workspace.yaml`` (``hosts.<host>.tend_version``) instead of printing a version
-nobody reads, and the verify/monitor stages recompute the digest of each
+nobody reads, the verify/monitor stages recompute the digest of each
 transferred companion tree, so a read-only copy an agent made writable again is
-visible before its findings are harvested.  Both record their output into
-run.yaml through :func:`execute`, including when they REFUSE: a step that exits
-non-zero raises, and the one outcome worth a durable record must not be the one
-that writes nothing, so :func:`execute` appends into a caller-owned ``results``
-list rather than only returning it.
+visible before its findings are harvested, and a locate run's verify stage
+checks its databases and every source layer its gate reads against the shas
+gate.json pins (references/locate-documents.md section 9).  They record their
+output into run.yaml through :func:`execute`, including when they REFUSE: a
+step that exits non-zero raises, and the one outcome worth a durable record
+must not be the one that writes nothing, so :func:`execute` appends into a
+caller-owned ``results`` list rather than only returning it.
 
 Nothing in this module runs anything unless ``execute=True`` is passed, and
 cf run only passes it when the operator gave --execute for a host on the
@@ -39,7 +41,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-from ._compat import CfError, iso_now
+from ._compat import CfError, hashing, iso_now
 
 
 #: Compare the host's ``tend --version`` (on stdin) with a spec like
@@ -159,6 +161,42 @@ TEND_VERSION_PROBE = (
 )
 
 
+#: the agent CLI each bridge launches, for the preflight's version line
+AGENT_CLIS = {"agentbox-claude": "claude", "claude-p": "claude", "agentbox-codex": "codex"}
+#: the preflight step that prints ``<label>: <version>`` lines, and the run.yaml
+#: ``versions`` key each label fills (references/locate-documents.md section 9)
+VERSIONS_TITLE = "versions: tend, agentbox, the agent CLI (recorded in run.yaml)"
+VERSION_LABELS = {"tend-version": "tend", "agentbox-version": "agentbox",
+                  "agent-cli-version": "agent_cli"}
+
+
+def _versions_step(tend: str, bridge: str) -> str:
+    """Print one ``<label>: <version>`` line per pin; ``unknown`` when a probe finds none."""
+    cli = AGENT_CLIS.get(bridge, "")
+    cli_probe = (f"$( ({cli} --version || echo unknown) 2>/dev/null | head -1)" if cli
+                 else "none (this bridge launches no agent CLI of its own)")
+    return ("printf 'tend-version: %s\\n' \"$( { " + f"{tend} {TEND_VERSION_PROBE}"
+            + "; } 2>/dev/null | tail -1)\"; "
+            "printf 'agentbox-version: %s\\n' \"$( (agentbox --version || echo unknown) "
+            "2>/dev/null | head -1)\"; "
+            f"printf 'agent-cli-version: %s\\n' \"{cli_probe}\"")
+
+
+def recorded_versions(results: Iterable[dict]) -> dict[str, str]:
+    """``{tend, agentbox, agent_cli}`` parsed from the executed versions step, or ``{}``."""
+    for record in results:
+        if record.get("title") != VERSIONS_TITLE or not record.get("ran"):
+            continue
+        out = {}
+        for line in str(record.get("stdout") or "").splitlines():
+            label, _, value = line.partition(":")
+            key = VERSION_LABELS.get(label.strip())
+            if key and value.strip():
+                out[key] = value.strip()
+        return out
+    return {}
+
+
 def _tend_version_step(host: dict, tend: str) -> str:
     """The preflight fragment that checks -- or, unrecorded, only prints -- tend's version."""
     required = str(host.get("tend_version_required") or "")
@@ -168,8 +206,156 @@ def _tend_version_step(host: dict, tend: str) -> str:
                 "echo 'tend version NOT checked: record hosts."
                 f"{host.get('name', '<host>')}.tend_version (e.g. \">=0.4,<0.6\") in "
                 "workspace.yaml and cf run will refuse a mismatch'")
-    return (f"{probe} 2>&1 | tail -1 | python3 -c "
+    # grouped: a pipeline binds tighter than the probe's own `||`, so ungrouped
+    # the check read the probe's output only when the probe FAILED, so a host with tend
+    # installed was never checked at all
+    return ("{ " + probe + "; } 2>&1 | tail -1 | python3 -c "
             + shlex.quote(TEND_VERSION_CHECK) + " " + shlex.quote(required))
+
+
+#: Check every source layer a locate run's gate reads, on the run host, against
+#: the host's own ``gate.json`` (argv[1]) -- the file that gate reads -- once
+#: that file is shown to be the one the transfer sent (argv[2], its sha256;
+#: empty skips that check).  It reads gate.json there rather than taking the
+#: pins as arguments: one quoted ``<sha>  <path>`` line per source made one ssh
+#: argument of about 136 bytes a source, over Linux's 128 KiB cap on a single
+#: argument at about 960 sources, and an article-tier shard holds up to 4,000
+#: (8 sources a task, 500 tasks a root).  Beside each layer it opens the two tables the
+#: gate's ``SourceView`` reads there and fails closed without (``formulas.json`` and
+#: ``paragraphs.json``): each must be a JSON list of objects and, when the source's pin
+#: carries ``views`` (a run planned since the gate pins them), the sha256 the pin
+#: names.  Whether the formulas fit the layer, and the gate's stricter JSON reader,
+#: stay the gate's own checks.  A failure is printed as ``sha256sum -c`` prints one
+#: (``<path>: FAILED``, ``FAILED open or read``), on stdout, which run.yaml keeps;
+#: argv[3] is how many failure lines are named before the rest are counted.
+LAYER_CHECK_PY = r'''
+import hashlib, json, sys
+
+config, want, named = sys.argv[1], sys.argv[2], int(sys.argv[3])
+#: the tables the gate's SourceView opens beside each layer.txt (gate/verify_locate.py)
+TABLES = ("formulas.json", "paragraphs.json")
+
+
+def refuse(why):
+    sys.stderr.write("REFUSED: %s\n" % why)
+    raise SystemExit(1)
+
+
+try:
+    with open(config, "rb") as fh:
+        raw = fh.read()
+except OSError as exc:
+    refuse("cannot read %s on the host (%s): the gate reads its pins there" % (config, exc))
+if want and hashlib.sha256(raw).hexdigest() != want:
+    refuse("%s on the host is not the gate.json this transfer sent; send the run again" % config)
+try:
+    gate = json.loads(raw.decode("utf-8"))
+except ValueError as exc:
+    refuse("%s on the host is not JSON (%s)" % (config, exc))
+sourceset = gate.get("sourceset") if isinstance(gate.get("sourceset"), dict) else {}
+sources_dir = str(sourceset.get("sources_dir") or "").rstrip("/")
+sources = gate.get("sources") if isinstance(gate.get("sources"), dict) else {}
+if not sources_dir:
+    refuse("gate.json has no sourceset.sources_dir; the gate fails closed without one")
+if not sources:
+    refuse("gate.json pins no source layer; the gate fails closed without one")
+
+
+def layer_failure(path, pin):
+    """``sha256sum -c``'s failure line for ``path`` against ``pin``, or None."""
+    if not pin:
+        return "%s: FAILED (gate.json pins no layer_sha256)" % path
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return "%s: FAILED open or read" % path
+    return None if digest.hexdigest() == pin else "%s: FAILED" % path
+
+
+def table_failure(path, pin=None):
+    """The failure line for a table the gate opens beside the layer, or None."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        data = json.loads(raw.decode("utf-8"))
+    except OSError:
+        return "%s: FAILED open or read" % path
+    except ValueError:
+        return "%s: FAILED (not JSON)" % path
+    if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
+        return "%s: FAILED (not a JSON list of objects)" % path
+    if pin is not None and hashlib.sha256(raw).hexdigest() != pin:
+        return "%s: FAILED" % path
+    return None
+
+
+lines, bad = [], 0
+for sid in sorted(sources):
+    pins = sources[sid] if isinstance(sources[sid], dict) else {}
+    base = "%s/%s/" % (sources_dir, sid)
+    failed = [layer_failure(base + "layer.txt", str(pins.get("layer_sha256") or ""))]
+    views = pins.get("views") if isinstance(pins.get("views"), dict) else None
+    failed += [table_failure(base + name, None if views is None else str(views.get(name) or ""))
+               for name in TABLES]
+    failed = [line for line in failed if line]
+    lines += failed
+    bad += 1 if failed else 0
+for line in lines[:named]:
+    print(line)
+if len(lines) > named:
+    print("... and %d more" % (len(lines) - named))
+if bad:
+    refuse("%d of %d source(s) of this run are not in %s on the host as the gate reads them "
+           "(a layer.txt missing or not the rendering gate.json pins, or a %s missing, "
+           "unreadable or not its pinned view; the lines above name them); send them with "
+           "`cf run --include-source-text`" % (bad, len(sources), sources_dir, " or ".join(TABLES)))
+print("source layers: %d pinned sha256 verified, each with its %s"
+      % (len(sources), " and ".join(TABLES)))
+'''
+
+#: how many failure lines the verify step names before it counts the rest
+LAYERS_NAMED = 50
+
+
+def layer_check(gate_config: str, want_sha256: str = "") -> str:
+    """The verify command that checks each source layer of a locate run on the host.
+
+    The gate reads ``<sources_dir>/<id>/layer.txt`` and fails closed (exit 3)
+    when it is missing or is not gate.json's ``layer_sha256``, and so it does
+    when the ``formulas.json`` or ``paragraphs.json`` beside it is missing,
+    unreadable or not the pin's ``views`` sha; a run whose layers were neither sent (``--include-source-text``)
+    nor already on the host would pass the other checks and fail every task,
+    after the agents' cost was spent.  So each one is checked here, from the host's
+    ``gate_config`` -- refused unless
+    its sha256 is ``want_sha256``, the gate.json the transfer sent
+    (:func:`sent_gate_json_sha256`) -- and the failures are named.  The command
+    is the same size for any number of sources (:data:`LAYER_CHECK_PY`).
+    """
+    return " ".join(["python3 -c", shlex.quote(LAYER_CHECK_PY), shlex.quote(gate_config),
+                     shlex.quote(want_sha256 or ""), str(LAYERS_NAMED)])
+
+
+def sent_gate_json_sha256(entries: Iterable[dict], gate_dir: str) -> str:
+    """The sha256 of the gate.json this transfer sends into ``gate_dir``; ``""`` for none.
+
+    The staged ``gate/`` directory's when the root has one (a locate plan), else
+    the run directory's own copy: the layer check refuses a host gate.json that
+    is neither, so the pins it trusts are the ones this invocation sent.
+    """
+    gate_dir = gate_dir.rstrip("/")
+    for entry in entries:
+        dest = str(entry.get("dest") or "").rstrip("/")
+        if entry.get("kind") == "dir" and dest == gate_dir:
+            src = Path(entry["src"]) / "gate.json"
+        elif entry.get("kind") == "file" and dest == f"{gate_dir}/gate.json":
+            src = Path(entry["src"])
+        else:
+            continue
+        return hashing.sha256_file(src) if entry.get("exists") and src.is_file() else ""
+    return ""
 
 
 def _tree_check(host: dict, entry: dict) -> dict:
@@ -190,7 +376,7 @@ def _tree_check(host: dict, entry: dict) -> dict:
 
 def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                   names: dict, budget: dict, concurrency: dict,
-                  force: bool = False) -> list[dict]:
+                  force: bool = False, locate: dict | None = None) -> list[dict]:
     """The ordered command plan: preflight, transfer, verify, smoke, raise, monitor.
 
     Each step is ``{stage, title, argv, shell, safe}``; ``safe`` marks the
@@ -211,6 +397,8 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"set -e; uname -sm; df -h {shlex.quote(root)} | tail -1; "
                    f"command -v agentbox >/dev/null && echo 'agentbox: ok' || echo 'agentbox: MISSING'; "
                    + _tend_version_step(host, tend)), safe=True, record_output=True)
+    add("preflight", VERSIONS_TITLE, _ssh(host, _versions_step(tend, str(run.get("bridge") or ""))),
+        safe=True, record_output=True)
 
     if not force:
         # Every transfer commits tasks/ over main, so once tend has merged into
@@ -224,8 +412,18 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                        f"tasks/ would reopen every finished task\\n' \"$head\" {tasks_commit} >&2; "
                        "exit 1; }"), safe=True)
 
-    dirs = sorted({str(Path(e["dest"]).parent) if e["kind"] == "file" else e["dest"].rstrip("/")
-                   for e in entries})
+    # An entry that locks its directories (``lock_dirs``, outermost first) creates
+    # them inside its own open/close bracket: an earlier transfer left them
+    # read-only, so a `mkdir -p` here, before the bracket opens them, fails on a
+    # kind directory inside a closed per-universe one.  And an entry
+    # whose rsync creates its own directory (``rsync_creates_dest``: rsync makes
+    # the last component of a destination) needs only its parent here: a locate
+    # run's source layers are one directory each, and naming them all made this
+    # one ssh argument too long for Linux at about 2,800 sources.
+    dirs = sorted({str(Path(e["lock_dirs"][0]).parent) if e.get("lock_dirs")
+                   else str(Path(e["dest"].rstrip("/")).parent)
+                   if e["kind"] == "file" or e.get("rsync_creates_dest")
+                   else e["dest"].rstrip("/") for e in entries})
     add("transfer", "create remote directories",
         _ssh(host, "mkdir -p " + " ".join(shlex.quote(d) for d in dirs)))
     for entry in entries:
@@ -238,7 +436,16 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
             add("transfer", f"make the earlier copy of {entry['name']} writable so --delete "
                             f"can remove what was deleted since",
                 _ssh(host, f"test ! -e {dest} || chmod -R u+w {dest}"))
+        locked = [shlex.quote(str(d).rstrip("/")) for d in entry.get("lock_dirs") or []]
+        if locked:
+            add("transfer", f"open {entry['dest']} for the files of this run (creating it, "
+                            f"and opening every locked directory around it)",
+                _ssh(host, f"set -e; for d in {' '.join(locked)}; do "
+                           "test -d \"$d\" || mkdir \"$d\"; chmod u+w \"$d\"; done"))
         add("transfer", f"rsync {entry['name']} -> {entry['dest']}", _rsync(entry, host))
+        if locked:
+            add("transfer", f"close {entry['dest']} again (read-only, owner-reversible)",
+                _ssh(host, f"chmod a-w {' '.join(locked)}"))
         modes = _chmod_fallback_modes(entry)
         if modes:
             # This rsync cannot express --chmod (macOS ships 2.6.9), so the
@@ -270,9 +477,56 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"{tend} tend-task verify {shlex.quote(entrypoint + '/tasks')}"), safe=True)
     add("verify", "orchestrator config",
         _ssh(host, f"{tend} tend validate-config --root {shlex.quote(tend_root)}"), safe=True)
-    add("verify", "gate runs out of tree against one staged finding (fails closed)",
-        _ssh(host, f"test -f {shlex.quote(root + '/' + names['gate'] + '/verify_findings.py')} "
-                   f"&& echo 'gate present (out of tree)'"), safe=True)
+    gate_script = "verify_locate.py" if locate is not None else "verify_findings.py"
+    gate_dir = f"{root}/{names['gate']}"
+    if locate is not None:
+        # Not just present: the locate gate must RUN from its own directory, with
+        # nothing else on the path (-I).  A gate directory staged without one of
+        # its modules passed a `test -f` and then failed every worker's first
+        # validation (field defect P2); --self-check imports everything, checks
+        # the vendored pins, the task manifests, the sources and corpus.sqlite,
+        # and exits 3 on anything missing, before any agent starts.
+        add("verify", "the locate gate runs out of tree from its own directory (python3 -I "
+                      "--self-check: modules, vendored pins, manifests, sources, corpus)",
+            _ssh(host, f"python3 -I {shlex.quote(gate_dir + '/' + gate_script)} --gate-config "
+                       f"{shlex.quote(gate_dir + '/gate.json')} --self-check"),
+            safe=True, record_output=True)
+    else:
+        add("verify", "gate runs out of tree against one staged finding (fails closed)",
+            _ssh(host, f"test -f {shlex.quote(gate_dir + '/' + gate_script)} "
+                       f"&& echo 'gate present (out of tree)'"), safe=True)
+    corpus = (locate or {}).get("corpus_db") or {}
+    if corpus.get("path") and corpus.get("sha256"):
+        # Verified here, before any agent starts, so a wrong database stops the run at
+        # verify rather than at every task's first gate call; the gate itself also
+        # compares it when it first opens it (mode=ro&immutable=1), since a gate run
+        # anywhere else -- a contributor's machine, a harvest -- has no verify stage.
+        line = shlex.quote(f"{corpus['sha256']}  {corpus['path']}")
+        add("verify", "corpus.sqlite is the pinned database (sha256, once per run)",
+            _ssh(host, f"echo {line} | sha256sum -c --status - && echo 'corpus.sqlite: pinned "
+                       f"sha256 verified' || {{ echo 'REFUSED: corpus.sqlite on the host is not "
+                       f"the database gate.json pins' >&2; exit 1; }}"),
+            safe=True, record_output=True, expected=corpus["sha256"])
+    if locate is not None:
+        sent = sent_gate_json_sha256(entries, gate_dir)
+        add("verify", "every source layer this run reads is on the host as pinned "
+                      "(sha256 of each layer.txt, read from the host's gate.json, and the "
+                      "formulas.json and paragraphs.json beside it)",
+            _ssh(host, layer_check(f"{gate_dir}/gate.json", sent)),
+            safe=True, record_output=True, **({"expected": sent} if sent else {}))
+    tools = (locate or {}).get("tools_corpus_db") or {}
+    if isinstance(tools, dict) and tools.get("path") and tools.get("sha256") \
+            and tools["path"] != corpus.get("path"):
+        # the blind or planted copy the worker's search tools read (gate.json
+        # tools_corpus_db): pinned the same way, so a worker searches the
+        # database the run recorded
+        line = shlex.quote(f"{tools['sha256']}  {tools['path']}")
+        add("verify", f"the {tools.get('kind') or 'tools'} database the search tools read is the "
+                      f"pinned one (sha256)",
+            _ssh(host, f"echo {line} | sha256sum -c --status - && echo 'tools database: pinned "
+                       f"sha256 verified' || {{ echo 'REFUSED: the tools database on the host is "
+                       f"not the one gate.json pins' >&2; exit 1; }}"),
+            safe=True, record_output=True, expected=tools["sha256"])
     # BEFORE: the companion trees as they landed, hashed on the host. Recorded in
     # run.yaml (run.executed) with the digest they were sent with.
     for entry in entries:
@@ -311,7 +565,8 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
     add("monitor", "progress and spend",
         _ssh(host, f"{tend} tend-control status --root {shlex.quote(tend_root)}"), safe=True)
     add("monitor", "merged findings so far",
-        _ssh(host, f"ls -1 {shlex.quote(entrypoint + '/findings')} | wc -l"), safe=True)
+        _ssh(host, f"find {shlex.quote(entrypoint + '/findings')} -type f -name '*.json' "
+                   f"| wc -l"), safe=True)
     # AFTER: the same digests, so an agent that chmod'ed a companion copy and
     # edited it is caught before the findings that cite it are harvested.
     for entry in entries:

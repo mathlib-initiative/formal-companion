@@ -33,12 +33,20 @@ from typing import Mapping, Sequence
 if __package__ in (None, ""):  # `python3 scripts/harvest/harvest.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from harvest._compat import (NON_FINDING_FILES, CfError, hashing, iso_now,
-                             iter_finding_files, read_json, write_json)
+from harvest._compat import (NON_FINDING_FILES, CfError, finding_name, hashing,
+                             is_finding_name, iso_now, iter_finding_files, read_json,
+                             vocab, write_json)
 
 RECEIPT_NAME = "RECEIPT.json"
 #: how many missing names an error message spells out before truncating
 MAX_NAMED = 20
+#: The remote listing and checksums, RECURSIVE: a locate run's findings are
+#: ``findings/<task-id>/<source-id>.json`` (docs/proposals/wikipedia-locate.md
+#: section 3), so ``ls -1`` over the findings directory listed task directories
+#: and never a document.  NUL-separated, so no name is split; a flat
+#: faithfulness directory lists exactly what ``ls -1`` listed.
+REMOTE_LIST = "cd {path} && find . -type f -name '*.json' -print0"
+REMOTE_SHAS = "cd {path} && find . -type f -name '*.json' -print0 | xargs -0 shasum -a 256"
 
 
 def parse_source(spec: str) -> dict:
@@ -69,11 +77,10 @@ def list_commands(source: dict, dest: Path) -> list[dict]:
     if source["kind"] != "remote":
         return []
     remote = f"{source['host']}:{source['path']}/"
-    ls = ["ssh", source["host"], f"ls -1 {shlex.quote(source['path'])}"]
-    rsync = ["rsync", "-a", "--prune-empty-dirs", "--include=*.json", "--include=*/",
-             "--exclude=*", remote, str(dest) + "/"]
-    shas = ["ssh", source["host"],
-            f"cd {shlex.quote(source['path'])} && shasum -a 256 *.json"]
+    ls = ["ssh", source["host"], REMOTE_LIST.format(path=shlex.quote(source["path"]))]
+    rsync = ["rsync", "-a", "--no-links", "--prune-empty-dirs", "--include=*.json",
+             "--include=*/", "--exclude=*", remote, str(dest) + "/"]
+    shas = ["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(source["path"]))]
     return [
         {"title": "expected set (the source listing IS the expectation)", "argv": ls,
          "shell": " ".join(shlex.quote(a) for a in ls)},
@@ -94,46 +101,63 @@ def source_names(source: dict) -> list[str]:
     those names as MISSING -- files that were on disk in both places.
     """
     if source["kind"] == "remote":
-        out = _run(["ssh", source["host"], f"ls -1 {shlex.quote(source['path'])}"],
+        out = _run(["ssh", source["host"], REMOTE_LIST.format(path=shlex.quote(source["path"]))],
                    "remote listing")
-        names = [line.strip() for line in out.splitlines() if line.strip()]
+        names = [_strip_dot(n) for n in out.split("\0") if n.strip()]
     else:
         directory = Path(source["path"])
         if not directory.is_dir():
             raise CfError(f"source directory does not exist: {directory}")
-        names = [p.name for p in sorted(directory.iterdir()) if p.is_file()]
-    return sorted(n for n in names if n.endswith(".json") and not n.startswith(".")
-                  and n not in NON_FINDING_FILES)
+        names = [finding_name(p, directory) for p in iter_finding_files(directory)]
+    return sorted({n for n in names if is_finding_name(n)})
+
+
+def _strip_dot(name: str) -> str:
+    """``./t-1/a.json`` -> ``t-1/a.json``: a `find .` path as a receipt name."""
+    name = name.strip("\n")
+    return name[2:] if name.startswith("./") else name
 
 
 def source_shas(source: dict) -> dict[str, str]:
     """{name: sha256} at the SOURCE (``--verify-sha``; remote uses shasum -a 256)."""
     if source["kind"] == "remote":
-        out = _run(["ssh", source["host"],
-                    f"cd {shlex.quote(source['path'])} && shasum -a 256 *.json"],
+        out = _run(["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(source["path"]))],
                    "remote checksums")
         shas = {}
-        for line in out.splitlines():
-            parts = line.split()
-            if len(parts) >= 2:
-                shas[Path(parts[-1]).name] = parts[0]
+        # split on "\n" only (splitlines also splits a name at U+2028 or \r), and
+        # read shasum's escaped form: a name holding a backslash or a newline is
+        # printed as "\<digest>  <name with \\ and \n>"
+        for line in out.split("\n"):
+            escaped = line.startswith("\\")
+            digest, _, name = (line[1:] if escaped else line).partition(" ")
+            name = name[1:] if name.startswith((" ", "*")) else name
+            if escaped:
+                name = name.replace("\\\\", "\0").replace("\\n", "\n").replace("\0", "\\")
+            name = _strip_dot(name)
+            if len(digest) == 64 and name and name != "-":
+                shas[name] = digest
         return shas
     directory = Path(source["path"])
-    return {p.name: hashing.sha256_file(p) for p in sorted(directory.iterdir())
-            if p.is_file() and p.suffix == ".json"}
+    return {finding_name(p, directory): hashing.sha256_file(p)
+            for p in iter_finding_files(directory)}
 
 
 def transfer(source: dict, dest: Path) -> None:
     """Copy the findings to *dest*; rsync for remote, a plain copy for local."""
     dest.mkdir(parents=True, exist_ok=True)
     if source["kind"] == "remote":
-        argv = ["rsync", "-a", "--prune-empty-dirs", "--include=*.json", "--include=*/",
-                "--exclude=*", f"{source['host']}:{source['path']}/", str(dest) + "/"]
+        # --no-links: the expected set is `find -type f`, so a link would land
+        # as an extra that the readers then follow
+        argv = ["rsync", "-a", "--no-links", "--prune-empty-dirs", "--include=*.json",
+                "--include=*/", "--exclude=*", f"{source['host']}:{source['path']}/",
+                str(dest) + "/"]
         _run(argv, "rsync")
         return
-    for path in sorted(Path(source["path"]).iterdir()):
-        if path.is_file() and path.suffix == ".json" and not path.name.startswith("."):
-            shutil.copy2(path, dest / path.name)
+    root = Path(source["path"])
+    for path in iter_finding_files(root):
+        target = dest / finding_name(path, root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
@@ -172,11 +196,12 @@ def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
         sid = str(payload.get("source_id") or meta.get("source_id") or "")
         sha = payload.get("source_sha") or meta.get("source_sha") \
             or payload.get("book_sha") or meta.get("book_sha")
+        name = finding_name(path, dest)
         if not sha and not sid:
-            missing.append(path.name)
+            missing.append(name)
             continue
         if sid and sid not in expected:
-            unknown.append(path.name)
+            unknown.append(name)
             continue
         want = expected.get(sid) if sid else None
         if want is None:
@@ -185,10 +210,10 @@ def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
             if str(sha) in set(expected.values()):
                 matched += 1
                 continue
-            mismatched.append(path.name)
+            mismatched.append(name)
             continue
         if str(sha) != want:
-            mismatched.append(path.name)
+            mismatched.append(name)
             continue
         matched += 1
         seen[sid] = seen.get(sid, 0) + 1
@@ -211,18 +236,66 @@ def malformed_files(dest: Path) -> list[str]:
         try:
             payload = read_json(path, default=None)
         except CfError:  # invalid JSON: read_json already refuses it
-            bad.append(path.name)
+            bad.append(finding_name(path, dest))
             continue
         if not isinstance(payload, dict):
-            bad.append(path.name)
+            bad.append(finding_name(path, dest))
     return sorted(bad)
+
+
+#: the ``schema`` of every locate document
+LOCATE_SCHEMA = vocab.LOCATE_DOCUMENT_SCHEMA
+
+
+def locate_counts(dest: Path) -> dict | None:
+    """The locate documents in *dest*, counted by mode, or None when there are none.
+
+    UNRESOLVED is counted on its own and never as "not formalized" (the
+    proposal's section 2.6), and the documents the bridge wrote at the attempt
+    cap (``unresolved.by: attempt_cap``) are counted apart from the workers' own:
+    a shard whose receipt is mostly attempt-capped is a shard to re-plan, not a
+    shard that found nothing (docs/proposals/wikipedia-locate.md section 6).
+    """
+    out = {"documents": 0, "by_mode": {}, "unresolved_documents": 0,
+           "attempt_capped_documents": 0, "passages": 0, "unresolved_passages": 0,
+           "verdicts": 0, "tasks": 0}
+    tasks: set[str] = set()
+    for path in iter_finding_files(dest):
+        try:
+            payload = read_json(path, default=None)
+        except CfError:
+            continue
+        if not isinstance(payload, dict) or payload.get("schema") != LOCATE_SCHEMA:
+            continue
+        mode = str(payload.get("mode") or "?")
+        out["documents"] += 1
+        out["by_mode"][mode] = out["by_mode"].get(mode, 0) + 1
+        tasks.add(str(payload.get("task_id") or Path(path).parent.name))
+        block = payload.get("unresolved")
+        if isinstance(block, dict):
+            out["unresolved_documents"] += 1
+            if block.get("by") == vocab.UNRESOLVED_ATTEMPT_CAP:
+                out["attempt_capped_documents"] += 1
+        passages = payload.get("passages") if isinstance(payload.get("passages"), list) else []
+        out["passages"] += len(passages)
+        out["unresolved_passages"] += sum(1 for p in passages if isinstance(p, dict)
+                                          and p.get("outcome") == "unresolved")
+        if isinstance(payload.get("verdicts"), list):
+            out["verdicts"] += len(payload["verdicts"])
+    if not out["documents"]:
+        return None
+    out["tasks"] = len(tasks)
+    out["by_mode"] = dict(sorted(out["by_mode"].items()))
+    return out
 
 
 def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: Path,
                   sources: Mapping[str, str] | None = None, previous: dict | None = None,
                   source_manifest: dict[str, str] | None = None,
                   run_yaml: str | None = None, allow_edition_mismatch: bool = False,
-                  gate: dict | None = None, cost: dict | None = None) -> dict:
+                  gate: dict | None = None, cost: dict | None = None,
+                  host_artifacts: dict | None = None, audit: dict | None = None,
+                  turns: dict | None = None) -> dict:
     """Reconcile the destination against the expected set.
 
     ``expected`` is the REMOTE listing, never a number someone remembered.
@@ -241,10 +314,21 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     ``cost`` is the block ``cost.fleet.cost_block`` computed from the agents'
     transcripts (issue #11), or None when the harvest was given none; it never
     affects ``complete``, because a run's findings are whole or not regardless
-    of whether anyone priced them.
+    of whether anyone priced them.  ``host_artifacts`` is what
+    ``harvest.host_artifacts.fetch`` brought home beside the corpus (a locate
+    run's gate log, usage export and canary scan); an EXPECTED one that did
+    not arrive (the gate log) makes the receipt incomplete and is named in
+    ``host_artifacts_missing``, the others never affect ``complete``.
+    ``audit`` is an audited inventory run's block (``harvest.audit_summary.
+    summarise``, references/locate-documents.md section 13.10), recorded as given
+    and only when given; it never affects ``complete``.  ``turns`` is an unaudited
+    locate run's turn-record blocks (``harvest.turn_records.summarise``: ``needs_review``,
+    ``worker_documents``, ``merged_not_worker``, ``reviewer_tampered``), recorded as given
+    and only when given; a ``merged_not_worker`` row -- a merged document that is not the
+    blob its worker committed -- makes the receipt incomplete.
     """
     actual_paths = iter_finding_files(dest)
-    actual = sorted(p.name for p in actual_paths)
+    actual = sorted(finding_name(p, dest) for p in actual_paths)
     expected_set, actual_set = set(expected), set(actual)
     missing = sorted(expected_set - actual_set)
     extra = sorted(actual_set - expected_set)
@@ -253,6 +337,10 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         name for name, sha in (source_manifest or {}).items()
         if name in manifest and manifest[name] != sha
     )
+    # Checksums asked for and a landed file with none from the source: it was
+    # never compared, so the receipt cannot say it was (fail closed).
+    sha_unverified = (sorted(set(manifest) - set(source_manifest or {}))
+                      if source_manifest is not None else [])
     malformed = malformed_files(dest)
     sources = {str(k): str(v) for k, v in dict(sources or {}).items()}
     edition = source_audit(dest, sources)
@@ -261,6 +349,10 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     edition["allowed_mismatch"] = bool(allow_edition_mismatch)
     edition["ok"] = not edition_mismatch or bool(allow_edition_mismatch)
     gate_ok = True if gate is None else bool(gate.get("ok"))
+    from harvest import host_artifacts as host_mod   # local, as describe() imports it
+
+    artifacts_missing = host_mod.missing(host_artifacts) if host_artifacts is not None else []
+    not_worker = list((turns or {}).get("merged_not_worker") or [])
     receipt = {
         "run_id": run_id,
         "harvested_at": iso_now(),
@@ -272,10 +364,12 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "missing": missing,
         "extra": extra,
         "sha_mismatched": mismatched,
-        "sha_verified": bool(source_manifest),
+        "sha_verified": bool(source_manifest) and not sha_unverified,
+        "sha_unverified": sha_unverified,
         "malformed": malformed,
-        "complete": (not missing and not mismatched and not malformed
-                     and edition["ok"] and gate_ok),
+        "complete": (not missing and not mismatched and not sha_unverified and not malformed
+                     and edition["ok"] and gate_ok and not artifacts_missing
+                     and not not_worker),
         "manifest_algo": "sha256",
         "manifest": manifest,
         "run_yaml": run_yaml or "",
@@ -286,6 +380,16 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "gate": gate,
         "cost": cost,
     }
+    locate = locate_counts(dest)
+    if locate:
+        receipt["locate"] = locate
+    if host_artifacts is not None:
+        receipt["host_artifacts"] = host_artifacts
+        receipt["host_artifacts_missing"] = artifacts_missing
+    if audit is not None:
+        receipt["audit"] = audit
+    if turns is not None:
+        receipt.update(turns)
     if previous:
         receipt["previous"] = {
             "harvested_at": previous.get("harvested_at"),
@@ -369,6 +473,10 @@ def describe(receipt: dict) -> str:
     if receipt["sha_mismatched"]:
         lines.append(f"  SHA MISMATCH {len(receipt['sha_mismatched'])}: "
                      f"{', '.join(receipt['sha_mismatched'][:MAX_NAMED])}")
+    if receipt.get("sha_unverified"):
+        lines.append(f"  SHA UNVERIFIED {len(receipt['sha_unverified'])}: "
+                     f"{', '.join(receipt['sha_unverified'][:MAX_NAMED])} -- the source "
+                     f"listed no checksum for them, so they were never compared")
     if receipt.get("malformed"):
         lines.append(f"  MALFORMED {len(receipt['malformed'])}: "
                      f"{', '.join(receipt['malformed'][:MAX_NAMED])} -- valid JSON, but not a "
@@ -389,6 +497,14 @@ def describe(receipt: dict) -> str:
         if edition.get("no_source"):
             lines.append(f"  source: {len(edition['no_source'])} findings carry no source_id "
                          f"(v1 findings; convert_v1.py stamps them)")
+    locate = receipt.get("locate")
+    if isinstance(locate, dict):
+        modes = ", ".join(f"{m} {n}" for m, n in sorted((locate.get("by_mode") or {}).items()))
+        lines.append(f"  locate: {locate.get('documents')} document(s) over {locate.get('tasks')} "
+                     f"task(s) ({modes}); UNRESOLVED {locate.get('unresolved_documents')} "
+                     f"document(s), {locate.get('attempt_capped_documents')} at the attempt cap, "
+                     f"{locate.get('unresolved_passages')} of {locate.get('passages')} passage(s) "
+                     f"-- counted on their own, never as not formalized")
     gate = receipt.get("gate")
     if gate:
         lines.append(f"  gate: {'PASSED' if gate.get('ok') else 'FAILED'} "
@@ -400,6 +516,17 @@ def describe(receipt: dict) -> str:
         from cost import fleet as cost_fleet  # local: cost.fleet reads receipts through this module
 
         lines.extend(cost_fleet.describe(cost))
+    if isinstance(receipt.get("host_artifacts"), dict):
+        from harvest import host_artifacts as host_mod
+
+        lines.extend(host_mod.describe(receipt["host_artifacts"]))
+    if isinstance(receipt.get("audit"), dict):
+        from harvest import audit_summary
+
+        lines.extend(audit_summary.describe(receipt["audit"]))
+    from harvest import turn_records   # local, as the two above
+
+    lines.extend(turn_records.describe(receipt))
     prev = receipt.get("previous")
     if prev:
         lines.append(f"  previous harvest: {prev.get('actual')} files at {prev.get('harvested_at')}"
@@ -416,12 +543,17 @@ def describe(receipt: dict) -> str:
 def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str] | None = None,
             run_yaml_src: Path | None = None, verify_sha: bool = False,
             execute: bool = True, allow_edition_mismatch: bool = False,
-            gate_runner=None, cost: dict | None = None) -> dict:
+            gate_runner=None, cost: dict | None = None,
+            host_artifacts: dict | None = None, audit_runner=None,
+            turns_runner=None) -> dict:
     """Transfer, reconcile and write RECEIPT.json. Returns the receipt.
 
     ``execute=False`` only makes sense for a remote source: it prints the
     commands and returns a receipt marked ``planned``.  ``cost`` is the priced
     block of the run's transcripts, recorded on the receipt as given.
+    ``audit_runner``, an audited run's, is called on the landed corpus like
+    ``gate_runner`` and its block recorded as the receipt's ``audit``; ``turns_runner``,
+    an unaudited locate run's, likewise, for its turn-record blocks.
     """
     dest = Path(dest)
     if source["kind"] == "remote" and not execute:
@@ -440,11 +572,14 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
         run_yaml_name = "run.yaml"
 
     gate = gate_runner(dest) if gate_runner else None
+    audit = audit_runner(dest) if audit_runner else None
+    turns = turns_runner(dest) if turns_runner else None
     receipt = build_receipt(run_id=run_id, source=source, expected=expected, dest=dest,
                             sources=sources, previous=previous, source_manifest=shas,
                             run_yaml=run_yaml_name,
                             allow_edition_mismatch=allow_edition_mismatch, gate=gate,
-                            cost=cost)
+                            cost=cost, host_artifacts=host_artifacts, audit=audit,
+                            turns=turns)
     write_json(dest / RECEIPT_NAME, receipt, indent=1, sort_keys=True)
     return receipt
 
@@ -455,7 +590,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--from", dest="source", required=True,
                         help="host:/path/to/findings or a local directory")
     parser.add_argument("--dest", required=True, help="corpus/<run-id> directory")
-    parser.add_argument("--source", action="append", default=[], metavar="ID=SHA256",
+    # its own dest: `--from` already owns `source`, and argparse would make the
+    # two one option
+    parser.add_argument("--source", dest="source_specs", action="append", default=[],
+                        metavar="ID=SHA256",
                         help="a source this run reads (repeatable); the receipt records them "
                              "and a finding stamped with any other is refused")
     parser.add_argument("--run-yaml", default=None)
@@ -468,10 +606,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"# {step['title']}\n{step['shell']}")
         return 0
     sources = {}
-    for spec in args.source:
+    for spec in args.source_specs:
         sid, _, sha = str(spec).partition("=")
-        if sid and sha:
-            sources[sid] = sha
+        if not (sid and sha):
+            parser.error(f"--source {spec!r} is not ID=SHA256")
+        sources[sid] = sha
     receipt = harvest(run_id=args.run_id, source=source, dest=Path(args.dest),
                       sources=sources,
                       run_yaml_src=Path(args.run_yaml) if args.run_yaml else None,

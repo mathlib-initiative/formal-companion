@@ -277,6 +277,9 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
      "a step of that render recipe"),
     ("scripts/check_lazy_pages.py",
      "the same companion's check that the _lazy/ rewrite lost no text, the last step of that render recipe"),
+    ("scripts/lake-cache-get.sh",
+     "a library's own olean-cache script (TauCeti ships one), which "
+     "scripts/corpus/build_universe_host.sh runs from that library's checkout when it exists"),
     ("schema/companion.schema.json",
      "the Literature Links repository's schema, which sync_format.py vendors as "
      "vendor/literature_links/schema/companion.schema.json"),
@@ -378,6 +381,14 @@ DATA_ALLOWLIST: tuple[tuple[str, str], ...] = (
      "5,207 rows of {model, usage} token counts and nothing else -- no text, "
      "paths, hosts or users (tests/data/m0a/README.md); small packed, over the "
      "cap unpacked"),
+    ("tests/data/locate/status-parity.json",
+     "the hand-written D1 status parity table (118 cases of synthetic keys k1, k2, "
+     "... and enum values, no source text), copied byte for byte by its consumer; "
+     "it crossed the cap with P05 in review 4 and grows a case per rule"),
+    ("tests/data/locate/status-parity-3.json",
+     "the hand-written status rule 3 parity table (81 cases of synthetic keys k1, k2, "
+     "... and enum values, no source text): status rule 2's cases again with their "
+     "rule-2 expectation beside each, and R-BROAD's own, copied by its consumer"),
 )
 
 

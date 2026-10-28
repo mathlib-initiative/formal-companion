@@ -514,7 +514,8 @@ class TestReceipt(unittest.TestCase):
         with self.assertRaises(Exception):
             harvest_mod.harvest(run_id="run-1", source=source, dest=self.dest, execute=False)
         commands = harvest_mod.list_commands(source, self.dest)
-        self.assertTrue(any("ls -1" in c["shell"] for c in commands))
+        # recursive since locate's findings/<task-id>/<source-id>.json layout
+        self.assertTrue(any("find . -type f" in c["shell"] for c in commands))
         self.assertTrue(any(c["shell"].startswith("rsync") for c in commands))
 
     def test_local_path_with_a_colon_is_not_a_host(self):
@@ -1564,7 +1565,35 @@ class TestRemoteTendCommandExportsPath(unittest.TestCase):
     def test_default_tend_cmd_exports_uv_on_path(self):
         facts = self._host({"allowlist": ["examplebox"], "remote_root": "/srv/runs"})
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', facts["tend_cmd"])
-        self.assertIn("cd /srv/runs/tend && uv run", facts["tend_cmd"])
+        self.assertIn('cd "$HOME"/tend && uv run', facts["tend_cmd"])
+
+    def test_the_tend_checkout_is_not_under_the_run_root(self):
+        """P4: a run root other than the home directory sent tend into <root>/tend."""
+        import subprocess
+
+        facts = self._host({"allowlist": ["examplebox"], "remote_root": "/srv/runs/locate-smoke"})
+        self.assertNotIn("/srv/runs/locate-smoke", facts["tend_cmd"])
+        self.assertEqual(facts["tend_dir"], "$HOME/tend")
+        # the command runs in the host's shell: $HOME expands there, from any cwd
+        home = pathlib.Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        (home / "tend").mkdir()
+        out = subprocess.run(["sh", "-c", facts["tend_cmd"].replace("uv run", "pwd")],
+                             capture_output=True, text=True, cwd="/",
+                             env={"HOME": str(home), "PATH": "/usr/bin:/bin"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(pathlib.Path(out.stdout.strip()).resolve(), home / "tend")
+
+    def test_a_host_may_name_only_its_tend_checkout(self):
+        for spec, cd in (("/opt/tend", "cd /opt/tend &&"), ("~/src/tend", 'cd "$HOME"/src/tend &&'),
+                         ("/opt/my tend", "cd '/opt/my tend' &&")):
+            with self.subTest(tend_dir=spec):
+                facts = self._host({"allowlist": ["examplebox"], "remote_root": "/srv/runs",
+                                    "examplebox": {"tend_dir": spec}})
+                self.assertIn(cd, facts["tend_cmd"])
+                self.assertIn('export PATH="$HOME/.local/bin:$PATH"', facts["tend_cmd"])
+        facts = self._host({"allowlist": ["examplebox"], "tend_dir": "/opt/shared-tend"})
+        self.assertIn("cd /opt/shared-tend &&", facts["tend_cmd"])
 
     def test_a_host_may_override_the_tend_command(self):
         facts = self._host({

@@ -1,0 +1,686 @@
+"""``universe.yaml``: a named, frozen set of Lean libraries at 40-hex commits.
+
+New code for docs/proposals/wikipedia-locate.md section 2.3 (universes), in the
+shape references/locate-documents.md section 8 fixes.  One file per universe,
+``corpora/<universe>/universe.yaml``, written atomically through
+``cflib.yamlio`` and read by every locate stage that names a library:
+
+* ``libraries`` -- one row per library: the universe-local ``id`` a document
+  names as ``library``, ``brain_lib``, ``repo``, ``commit``, ``toolchain``,
+  ``roots``, ``licence`` (``{spdx}``, or null until a re-add records it: the
+  export refuses a library with none), ``conventions`` and, once ingested,
+  ``index: {path, sha256, declarations}``.  Two libraries may share a
+  repository, spelled one way (:func:`repo_key`), and a ``brain_lib`` token
+  names one repository, compared without case;
+* ``published_index`` on a library row -- the recorded acceptance of an index
+  the library publishes itself, which the probe and its canary never checked;
+* ``host`` on a library row -- ``{kind, ref, options}``, the rest of the line the
+  host driver's universe list carries for it (``scripts/corpus/universe_host.py``):
+  ``build`` (the default), ``published-index``, ``core`` or ``package-in-workspace``,
+  the ref the driver resolves (the commit by default; a published index's tag),
+  and the driver options (``SHARD_COUNT``, ``SPARSE``, ``WORKSPACE`` ...), validated by
+  the driver's own parser.  Build instructions, not a pin: they are outside
+  ``universe_sha256`` and may be changed on a re-add;
+* ``excluded`` -- ``{id, reason}`` for a library that failed to build or probe,
+  so an absence honestly names the smaller universe;
+* ``canaries`` -- one row per toolchain whose acceptance canary was ingested
+  (section 2.4): no library on a toolchain without a passed canary is ingested;
+* ``corpus_db`` -- ``corpus.sqlite``'s sha256, set by ``build-db`` and cleared
+  by any ingest that changes an index; ``corpus_db_blind`` the same for
+  ``corpus.blind.sqlite``, the G1-blind database ``build-db --blind`` writes;
+* ``universe_sha256`` -- recomputed on every save: sha256 over
+  ``<id>\\t<commit>\\t<index sha256>``, one line per library sorted by id,
+  joined with ``\\n``.
+"""
+from __future__ import annotations
+
+import datetime as _dt
+import re
+from pathlib import Path
+from typing import Any, Iterable
+
+from cflib.errors import CfError
+from cflib.hashing import sha256_text
+from cflib.yamlio import read_yaml, write_yaml
+
+from . import universe_host
+
+#: the YAML bool and null words a lowercase id could spell, which both readers type
+#: (``no`` reads as False, ``null`` as None) wherever such an id is written bare
+YAML_WORD_IDS = ("yes", "no", "true", "false", "on", "off", "null")
+#: the universe-local library id (and a universe's own id, and an exclusion's): a
+#: lowercase letter, then lowercase letters, digits and ``._-``, at most 64, and none
+#: of :data:`YAML_WORD_IDS`.  The letter first means no id is a YAML number or date
+#: look-alike (``1.5e-3``, ``0x10``, ``2026-10-17``), and without the words no id is a
+#: bool or null, so an id reads as itself wherever it is written, quoted or bare; the
+#: host drivers' universe list (``universe_host._ID``) also admits a leading digit and
+#: the words, a superset of what a universe may name
+LIBRARY_ID = re.compile(rf"(?!(?:{'|'.join(YAML_WORD_IDS)})\Z)[a-z][a-z0-9._-]{{0,63}}\Z")
+#: how a refusal states :data:`LIBRARY_ID`
+LIBRARY_ID_RULE = ("[a-z][a-z0-9._-]* (a lowercase letter first, at most 64, and no YAML "
+                   "bool or null word: " + ", ".join(YAML_WORD_IDS) + ")")
+COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+#: a library's repository, as a record set names it and its consumer links it
+#: (references/locate-documents.md section 8): https, a dotted host, one to four path
+#: segments of letters, digits and ``._~-`` (at most 100 each), none of them ``.`` or
+#: ``..``, so no empty segment and no trailing slash
+REPO = re.compile(r"https://[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?:/[A-Za-z0-9_.~-]{1,100}){1,4}\Z")
+#: hosts whose repository owners and names are case-insensitive, so :func:`repo_key`
+#: casefolds the path there (and only there)
+CASE_INSENSITIVE_REPO_HOSTS = frozenset({"github.com"})
+#: an elan toolchain spelling (``leanprover/lean4:v4.34.0``,
+#: ``leanprover/lean4-nightly:nightly-2026-10-01``) or a bare version: nothing that
+#: needs quoting in the shell lines ``cf corpus probe-command`` prints
+TOOLCHAIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._+-]*)?\Z")
+#: a root module glob, exactly as the host driver's universe list accepts one
+#: (``universe_host._GLOB``: a module name, optionally ``.+`` or ``.*``)
+_MODULE = r"[A-Za-z_][A-Za-z0-9_'!?]*(?:\.[A-Za-z_][A-Za-z0-9_'!?]*)*"
+ROOT_GLOB = re.compile(rf"{_MODULE}(?:\.\+|\.\*)?\Z")
+_TOOLCHAIN_PREFIX = "leanprover/lean4:"
+#: the record set's length caps (references/locate-documents.md section 8), which its
+#: consumer refuses a whole set over: a library's ``brain_lib``, ``toolchain`` and each
+#: root are names of at most this many characters, an exclusion's reason a sentence or
+#: two of at most ``MAX_REASON_CHARS``
+MAX_NAME_CHARS = 300
+MAX_REASON_CHARS = 1000
+#: a library's ``brain_lib``, as a library added from now on carries it: the consumer's
+#: library token, a letter then letters, digits and ``_`` (at most 64 in all), the
+#: grammar the consumer's Brain admits as a library's area name (``FF_AdicModules``,
+#: never ``FF.AdicModules``).  :meth:`Universe.add_library` holds a NEW row to it, and a
+#: re-add's ``--brain-lib`` too; a universe written before it (u1's ``FF.<Root>``) still
+#: loads and exports, its tokens held to the length cap alone, since a frozen universe
+#: is never rewritten -- and the export report names every written token outside it
+#: (``locate.export``'s ``brain_lib_not_token``), the id fallback included.  A token
+#: names one repository, compared without case (``Mathlib`` and ``MATHLIB`` are one)
+BRAIN_LIB = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}\Z")
+#: an SPDX licence id or expression, as a row's ``licence: {spdx: ...}`` carries it
+#: (``Apache-2.0``, ``MIT OR Apache-2.0``, ``LicenseRef-x``): a record set names it
+SPDX = re.compile(r"[A-Za-z0-9(][A-Za-z0-9.+:() -]{0,99}\Z")
+
+#: the order the keys of one library row are written in
+LIBRARY_KEYS = ("id", "brain_lib", "repo", "commit", "toolchain", "roots", "licence",
+                "conventions", "index")
+
+
+def universe_sha256(libraries: Iterable[dict]) -> str:
+    """sha256 over ``<id>\\t<commit>\\t<index sha256>`` per library, sorted by id, ``\\n``-joined.
+
+    A library not yet ingested contributes an empty index sha, so the value is
+    defined at every stage; ``Universe.validate(require_indexes=True)`` is what
+    refuses to build a database over such a universe.
+    """
+    lines = []
+    for lib in sorted(libraries, key=lambda row: str(row.get("id") or "")):
+        index = lib.get("index") if isinstance(lib.get("index"), dict) else {}
+        lines.append(f"{lib.get('id') or ''}\t{lib.get('commit') or ''}\t"
+                     f"{(index or {}).get('sha256') or ''}")
+    return sha256_text("\n".join(lines))
+
+
+def lean_version(toolchain: str | None) -> str:
+    """``leanprover/lean4:v4.34.0-rc2`` or ``v4.34.0-rc2`` or ``4.34.0-rc2`` -> ``4.34.0-rc2``.
+
+    The probe's header carries ``Lean.versionString`` and a lake checkout's
+    ``lean-toolchain`` the elan spelling; a canary recorded under one must match
+    a library declared under the other.
+    """
+    text = str(toolchain or "").strip()
+    if text.startswith(_TOOLCHAIN_PREFIX):
+        text = text[len(_TOOLCHAIN_PREFIX):]
+    if text[:1] == "v" and text[1:2].isdigit():
+        text = text[1:]
+    return text
+
+
+class Universe:
+    """One ``universe.yaml``: load, change through the methods below, :meth:`save`."""
+
+    def __init__(self, path: Path, data: dict[str, Any]):
+        self.path = Path(path)
+        self.data = data
+
+    # -- construction ----------------------------------------------------
+    @classmethod
+    def create(cls, path: Path, universe_id: str, frozen: str | None = None) -> "Universe":
+        """A new, empty universe; refused when ``path`` already holds one."""
+        if not LIBRARY_ID.match(str(universe_id or "")):
+            raise CfError(f"universe id {universe_id!r} is not {LIBRARY_ID_RULE}",
+                          hint="a short lowercase id such as u1")
+        if Path(path).exists():
+            raise CfError(f"{path} already exists",
+                          hint="a universe is frozen once made; use another id for a new one")
+        frozen = frozen or _dt.date.today().isoformat()
+        if not _DATE.match(str(frozen)):
+            raise CfError(f"--frozen {frozen!r} is not a YYYY-MM-DD date")
+        data = {"id": universe_id, "frozen": str(frozen), "libraries": [], "excluded": [],
+                "canaries": [], "corpus_db": None, "corpus_db_blind": None}
+        return cls(Path(path), data)
+
+    @classmethod
+    def load(cls, path: Path) -> "Universe":
+        path = Path(path)
+        if not path.is_file():
+            raise CfError(f"no universe at {path}",
+                          hint="create it with `cf corpus init <universe>`")
+        data = read_yaml(path)
+        if not isinstance(data, dict):
+            raise CfError(f"{path} is not a YAML mapping")
+        data.setdefault("libraries", [])
+        data.setdefault("excluded", [])
+        data.setdefault("canaries", [])
+        data.setdefault("corpus_db", None)
+        data.setdefault("corpus_db_blind", None)
+        if data.get("frozen") is not None:
+            data["frozen"] = str(data["frozen"])
+        universe = cls(path, data)
+        problems = universe.validate()
+        if problems:
+            raise CfError(f"{path} is not a valid universe: " + "; ".join(problems[:5]),
+                          hint="fix the file, or recreate the universe with `cf corpus init`")
+        return universe
+
+    # -- reading ---------------------------------------------------------
+    @property
+    def id(self) -> str:
+        return str(self.data.get("id") or "")
+
+    @property
+    def frozen(self) -> str:
+        return str(self.data.get("frozen") or "")
+
+    @property
+    def libraries(self) -> list[dict]:
+        return list(self.data.get("libraries") or [])
+
+    @property
+    def excluded(self) -> list[dict]:
+        return list(self.data.get("excluded") or [])
+
+    @property
+    def canaries(self) -> list[dict]:
+        return list(self.data.get("canaries") or [])
+
+    @property
+    def corpus_db(self) -> dict | None:
+        value = self.data.get("corpus_db")
+        return value if isinstance(value, dict) else None
+
+    @property
+    def corpus_db_blind(self) -> dict | None:
+        """The G1-blind database's record (``build-db --blind``), or None."""
+        value = self.data.get("corpus_db_blind")
+        return value if isinstance(value, dict) else None
+
+    def library_ids(self) -> list[str]:
+        return [str(lib.get("id")) for lib in self.libraries]
+
+    def library(self, library_id: str) -> dict:
+        for lib in self.libraries:
+            if lib.get("id") == library_id:
+                return lib
+        for row in self.excluded:
+            if row.get("id") == library_id:
+                raise CfError(f"library {library_id!r} is excluded from universe {self.id}: "
+                              f"{row.get('reason')}")
+        raise CfError(f"universe {self.id} has no library {library_id!r}",
+                      hint="known: " + (", ".join(self.library_ids()) or "none") +
+                           "; add it with `cf corpus add`")
+
+    def sha256(self) -> str:
+        return universe_sha256(self.libraries)
+
+    def mathlib_library(self) -> dict | None:
+        """The universe's Mathlib: the one library whose ``brain_lib`` is ``Mathlib``, else
+        the one whose id is ``mathlib``, else None.
+
+        The one rule for which library Mathlib's own curated lists (its
+        ``1000.yaml`` and ``100.yaml``) name, which the candidates stage and the
+        bench both need.  Two libraries carrying the ``Mathlib`` token is refused, not guessed.
+        """
+        tokened = [lib for lib in self.libraries if lib.get("brain_lib") == "Mathlib"]
+        if len(tokened) > 1:
+            raise CfError(f"universe {self.id} has {len(tokened)} libraries with brain_lib "
+                          f"Mathlib: {', '.join(str(lib.get('id')) for lib in tokened)}",
+                          hint="a brain_lib token names one repository")
+        if tokened:
+            return tokened[0]
+        return next((lib for lib in self.libraries if lib.get("id") == "mathlib"), None)
+
+    def canary(self, toolchain: str) -> dict | None:
+        """The canary row of a toolchain, matched on the Lean version, or None."""
+        want = lean_version(toolchain)
+        for row in self.canaries:
+            if lean_version(row.get("toolchain")) == want:
+                return row
+        return None
+
+    def canary_passed(self, toolchain: str) -> bool:
+        row = self.canary(toolchain)
+        return bool(row and row.get("passed") is True)
+
+    def driver_lines(self) -> list[list[str]]:
+        """The host driver's universe list for this universe: one field list per library.
+
+        ``[id, repo, ref, roots, kind]`` plus the options when there are any
+        (:func:`host_of`), libraries probed inside a workspace after every other one,
+        since the driver requires a workspace to come first.
+        """
+        rows = sorted(self.libraries, key=lambda lib: (
+            host_of(lib)["kind"] in universe_host.WORKSPACE_KINDS, str(lib.get("id"))))
+        return [driver_fields(lib) for lib in rows]
+
+    # -- changing --------------------------------------------------------
+    def add_library(self, *, library_id: str, repo: str, commit: str, toolchain: str,
+                    roots: list[str], brain_lib: str | None = None,
+                    licence: str | None = None, conventions: str | None = None,
+                    host: dict | None = None) -> dict:
+        """Add one library row; refused when the id exists with other facts or is excluded.
+
+        Re-adding the same id with the same repo, commit and toolchain is a no-op,
+        so the command is idempotent; changing a pinned commit is not -- a
+        universe is frozen, and a new pin is a new universe.  ``host`` (the
+        driver line's kind, ref and options, see the module docstring) is set or
+        replaced on a re-add: it says how the pin is built, not what is pinned.
+
+        ``licence`` may be left out when a library is pinned (the export refuses
+        a library without one, by name) and recorded by a later re-add: it is
+        outside ``universe_sha256``, so the pins and indexes stay valid.  A
+        re-add that names another licence or another ``brain_lib`` than the row
+        records is refused, never silently ignored.
+
+        A new row's ``brain_lib`` -- the one given, else the id -- is a token of
+        :data:`BRAIN_LIB`, or the row is refused naming ``--brain-lib``; a re-add
+        without ``--brain-lib`` keeps the token its row records, which may predate the
+        grammar, and a re-add whose ``--brain-lib`` is no token is refused even when the
+        row records that very name.  A token names one repository: a new row whose
+        token is another repository's, compared without case, is refused.
+
+        One repository is spelled one way: a new row whose ``repo`` is another
+        library's repository spelled differently (:func:`repo_key`: another case of
+        the host, a ``www.``, a trailing ``.git`` in any case, or another case of the
+        owner or name on github.com) is refused, naming the spelling the universe
+        already uses.
+        Everything downstream compares a repo exactly as written -- an absence's one
+        end per ``(repo, commit)``, the consumer's ``(repo, root)`` rule -- and this rule
+        is what keeps that correct.
+        """
+        licence = str(licence).strip() if licence is not None else None
+        row = {"id": library_id, "brain_lib": brain_lib or library_id, "repo": repo,
+               "commit": commit, "toolchain": toolchain, "roots": list(roots),
+               "licence": {"spdx": licence} if licence else None,
+               "conventions": conventions, "index": None}
+        if host is not None:
+            row["host"] = normalised_host(host, commit)
+        problems = _library_problems(row)
+        if problems:
+            raise CfError(f"library {library_id!r}: " + "; ".join(problems))
+        if any(r.get("id") == library_id for r in self.excluded):
+            raise CfError(f"library {library_id!r} is excluded from universe {self.id}",
+                          hint="an exclusion is a record; use a new universe to include it")
+        for existing in self.libraries:
+            if existing.get("id") != library_id:
+                continue
+            same = all(existing.get(k) == row[k] for k in ("repo", "commit", "toolchain"))
+            if not same:
+                if (existing.get("repo") != repo
+                        and repo_key(existing.get("repo")) == repo_key(repo)
+                        and all(existing.get(k) == row[k] for k in ("commit", "toolchain"))):
+                    raise CfError(f"library {library_id!r} spells its repository "
+                                  f"{existing.get('repo')!r}, not {repo!r}",
+                                  hint=f"a universe spells one repository one way: re-add "
+                                       f"with --repo {existing.get('repo')}")
+                raise CfError(f"library {library_id!r} is already pinned at "
+                              f"{str(existing.get('commit'))[:12]} ({existing.get('repo')})",
+                              hint="a universe is frozen: make a new universe for a new pin")
+            if brain_lib and existing.get("brain_lib") != brain_lib:
+                raise CfError(f"library {library_id!r} already records brain_lib "
+                              f"{existing.get('brain_lib')!r}, not {brain_lib!r}",
+                              hint="a brain_lib token names the library to its consumer; a "
+                                   "universe is frozen, so make a new universe for a new one")
+            if brain_lib and not BRAIN_LIB.match(brain_lib):
+                raise CfError(f"library {library_id!r}: --brain-lib {brain_lib!r} is not a "
+                              f"library token: a letter, then letters, digits and _, at most 64",
+                              hint="leave --brain-lib out to keep the name the row records (a "
+                                   "universe written before the token grammar keeps its own); "
+                                   "the next universe carries tokens, e.g. --brain-lib "
+                                   f"{_token_hint(brain_lib)}")
+            recorded = existing.get("licence")
+            if row["licence"] is not None and recorded != row["licence"]:
+                if recorded:
+                    raise CfError(f"library {library_id!r} already records licence "
+                                  f"{(recorded or {}).get('spdx')!r}, not {licence!r}",
+                                  hint="a recorded licence is not replaced by a re-add; if it "
+                                       "was recorded wrong, correct `licence:` in universe.yaml "
+                                       "(it is outside universe_sha256)")
+                existing["licence"] = row["licence"]
+            if host is not None:
+                existing["host"] = row["host"]
+            return existing
+        for existing in self.libraries:
+            if existing.get("repo") != repo and repo_key(existing.get("repo")) == repo_key(repo):
+                raise CfError(f"library {library_id!r}: repo {repo!r} is the repository library "
+                              f"{existing.get('id')!r} spells {existing.get('repo')!r}",
+                              hint=f"a universe spells one repository one way (the record set "
+                                   f"and its consumer compare repos exactly as written): pass "
+                                   f"--repo {existing.get('repo')}")
+        if not BRAIN_LIB.match(row["brain_lib"]):
+            given = "brain_lib" if brain_lib else "brain_lib (the library id, as none was given)"
+            raise CfError(f"library {library_id!r}: {given} {row['brain_lib']!r} is not a "
+                          f"library token: a letter, then letters, digits and _, at most 64",
+                          hint=f"name the consumer's token for it with --brain-lib, e.g. "
+                               f"--brain-lib {_token_hint(row['brain_lib'])}")
+        token = row["brain_lib"]
+        for existing in self.libraries:
+            theirs = written_brain_lib(existing)
+            if theirs.casefold() == token.casefold() and existing.get("repo") != repo:
+                same = "" if theirs == token else f" as {theirs!r}"
+                raise CfError(f"brain_lib {token!r} already names {existing.get('id')}{same} "
+                              f"({existing.get('repo')})",
+                              hint="a brain_lib token names one repository, compared without "
+                                   "case (references/locate-documents.md section 8); pass "
+                                   "another --brain-lib")
+        self.data.setdefault("libraries", []).append(row)
+        return row
+
+    def exclude(self, library_id: str, reason: str) -> dict:
+        """Record that a library is not in the universe, and why; drops its row if present."""
+        if not LIBRARY_ID.match(str(library_id or "")):
+            raise CfError(f"library id {library_id!r} is not {LIBRARY_ID_RULE}")
+        reason = " ".join(str(reason or "").split())
+        if not reason:
+            raise CfError("an exclusion needs a reason", hint="--exclude 'licence forbids ML use'")
+        if len(reason) > MAX_REASON_CHARS:
+            raise CfError(f"an exclusion's reason is {len(reason)} characters, longer than "
+                          f"{MAX_REASON_CHARS}",
+                          hint="a record set names it, and its consumer refuses a longer one; "
+                               "say why in a sentence or two")
+        self.data["libraries"] = [lib for lib in self.libraries if lib.get("id") != library_id]
+        rows = [r for r in self.excluded if r.get("id") != library_id]
+        row = {"id": library_id, "reason": reason}
+        rows.append(row)
+        self.data["excluded"] = sorted(rows, key=lambda r: str(r.get("id")))
+        self.clear_corpus_db()
+        return row
+
+    def set_index(self, library_id: str, *, path: str, sha256: str, declarations: int,
+                  published: dict | None = None) -> None:
+        """Pin a library's normalised index.
+
+        ``published`` is the recorded acceptance of an index the library
+        publishes itself (``{schema, reason, accepted}``): the probe did not
+        produce it, so its canary says nothing about it, and the row says who
+        took it on trust and why.  A probe index clears any earlier one.
+        """
+        lib = self.library(library_id)
+        new = {"path": path, "sha256": sha256, "declarations": int(declarations)}
+        if lib.get("index") != new:
+            lib["index"] = new
+            self.clear_corpus_db()
+        if published:
+            lib["published_index"] = dict(published)
+        else:
+            lib.pop("published_index", None)
+
+    def record_canary(self, *, toolchain: str, passed: bool, cases: dict, index_sha256: str,
+                      checked: str) -> dict:
+        row = {"toolchain": toolchain, "lean_version": lean_version(toolchain),
+               "passed": bool(passed), "checked": checked, "index_sha256": index_sha256,
+               "cases": cases}
+        rows = [r for r in self.canaries
+                if lean_version(r.get("toolchain")) != lean_version(toolchain)]
+        rows.append(row)
+        self.data["canaries"] = sorted(rows, key=lambda r: str(r.get("lean_version")))
+        return row
+
+    def set_corpus_db(self, *, sha256: str, built: str, declarations: int,
+                      blind: bool = False) -> None:
+        """Record a built database: ``corpus_db``, or with ``blind`` ``corpus_db_blind``."""
+        key, name = (("corpus_db_blind", "corpus.blind.sqlite") if blind
+                     else ("corpus_db", "corpus.sqlite"))
+        self.data[key] = {"path": name, "sha256": sha256, "built": built,
+                          "declarations": int(declarations), "universe_sha256": self.sha256()}
+
+    def clear_corpus_db(self) -> None:
+        """An index changed: neither database describes this universe any more."""
+        self.data["corpus_db"] = None
+        self.data["corpus_db_blind"] = None
+
+    # -- checking and writing ----------------------------------------------
+    def validate(self, *, require_indexes: bool = False) -> list[str]:
+        problems: list[str] = []
+        problem = _id_problem(self.data.get("id"))
+        if problem:
+            problems.append(f"id {problem}")
+        if self.frozen and not _DATE.match(self.frozen):
+            problems.append(f"frozen {self.frozen!r} is not a YYYY-MM-DD date")
+        seen: set[str] = set()
+        for lib in self.libraries:
+            if not isinstance(lib, dict):
+                problems.append(f"a library row is not a mapping: {lib!r}")
+                continue
+            lib_id = str(lib.get("id") or "")
+            if lib_id in seen:
+                problems.append(f"library {lib_id!r} is listed twice")
+            seen.add(lib_id)
+            problems.extend(f"library {lib_id!r}: {p}" for p in _library_problems(lib))
+            index = lib.get("index")
+            if index is not None:
+                if not isinstance(index, dict) or not SHA256.match(str(index.get("sha256") or "")):
+                    problems.append(f"library {lib_id!r}: index has no sha256")
+            elif require_indexes:
+                problems.append(f"library {lib_id!r} has no index; run `cf corpus ingest`")
+        for row in self.excluded:
+            problem = _id_problem(row.get("id")) if isinstance(row, dict) else None
+            if problem:
+                problems.append(f"an exclusion's id {problem}")
+            if not isinstance(row, dict) or not row.get("reason"):
+                problems.append(f"an exclusion carries no reason: {row!r}")
+            elif len(str(row["reason"])) > MAX_REASON_CHARS:
+                problems.append(f"the exclusion of {row.get('id')!r} has a reason of "
+                                f"{len(str(row['reason']))} characters, longer than "
+                                f"{MAX_REASON_CHARS}")
+            elif row.get("id") in seen:
+                problems.append(f"library {row.get('id')!r} is both listed and excluded")
+        kinds = {str(lib.get("id")): host_of(lib)["kind"] for lib in self.libraries
+                 if isinstance(lib, dict)}
+        for lib in self.libraries:
+            if not isinstance(lib, dict):
+                continue
+            host = host_of(lib)
+            workspace = host["options"].get("WORKSPACE")
+            if host["kind"] in universe_host.WORKSPACE_KINDS and kinds.get(workspace, "build") != "build":
+                problems.append(f"library {lib.get('id')!r} is probed inside {workspace!r}, a "
+                                f"{kinds[workspace]} library; a workspace is a built one")
+        spelled: dict[str, tuple[str, str]] = {}      # repo_key -> (repo, first library)
+        for lib in self.libraries:
+            if not isinstance(lib, dict) or not is_repo_url(lib.get("repo")):
+                continue
+            repo, lib_id = str(lib["repo"]), str(lib.get("id") or "")
+            first = spelled.setdefault(repo_key(repo), (repo, lib_id))
+            if first[0] != repo:
+                problems.append(f"library {lib_id!r}: repo {repo!r} is the repository library "
+                                f"{first[1]!r} spells {first[0]!r}; a universe spells one "
+                                f"repository one way")
+        brain: dict[str, tuple[str, str]] = {}        # casefolded token -> (token, repo_key)
+        for lib in self.libraries:
+            if not isinstance(lib, dict):
+                continue
+            token = written_brain_lib(lib)
+            if not token:
+                continue
+            key = repo_key(lib.get("repo"))
+            first = brain.setdefault(token.casefold(), (token, key))
+            if first[1] != key:
+                problems.append(f"brain_lib {token!r} names two repositories" if first[0] == token
+                                else f"brain_lib {token!r} and {first[0]!r} are one token "
+                                     f"(compared without case) and name two repositories")
+        if require_indexes and not self.libraries:
+            problems.append("the universe has no library")
+        return problems
+
+    def save(self) -> Path:
+        problems = self.validate()
+        if problems:
+            raise CfError(f"refusing to write an invalid universe: " + "; ".join(problems[:5]))
+        libraries = [{key: lib.get(key) for key in LIBRARY_KEYS}
+                     | {k: v for k, v in lib.items() if k not in LIBRARY_KEYS}
+                     for lib in self.libraries]
+        out = {"id": self.id, "frozen": self.frozen,
+               "libraries": sorted(libraries, key=lambda lib: str(lib.get("id"))),
+               "excluded": self.excluded, "canaries": self.canaries,
+               "corpus_db": self.corpus_db, "corpus_db_blind": self.corpus_db_blind,
+               "universe_sha256": universe_sha256(libraries)}
+        self.data = out
+        return write_yaml(self.path, out,
+                          header=f"# universe.yaml -- {self.id} (references/locate-documents.md "
+                                 f"section 8). Written by `cf corpus`; universe_sha256 is "
+                                 f"recomputed on every write.\n")
+
+
+def normalised_host(host: dict, commit: str) -> dict:
+    """``{kind, ref, options}`` with the defaults filled: kind ``build``, ref the commit."""
+    options = host.get("options") or {}
+    if not isinstance(options, dict):
+        raise CfError(f"host options {options!r} are not KEY=VALUE pairs")
+    return {"kind": str(host.get("kind") or "build"), "ref": str(host.get("ref") or commit),
+            "options": {str(k): str(v) for k, v in sorted(options.items())}}
+
+
+def host_of(lib: dict) -> dict:
+    """A row's ``host``, or what the driver is told for a row without one: build its commit."""
+    host = lib.get("host")
+    if isinstance(host, dict):
+        return normalised_host(host, str(lib.get("commit") or ""))
+    return {"kind": "build", "ref": str(lib.get("commit") or ""), "options": {}}
+
+
+def driver_fields(lib: dict) -> list[str]:
+    """One row as the fields of the host driver's universe-list line."""
+    host = host_of(lib)
+    fields = [str(lib.get("id") or ""), str(lib.get("repo") or ""), host["ref"],
+              ",".join(str(r) for r in lib.get("roots") or []), host["kind"]]
+    options = ";".join(f"{k}={v}" for k, v in host["options"].items())
+    return fields + [options] if options else fields
+
+
+def _host_problems(lib: dict) -> list[str]:
+    """The row's driver line, parsed by the driver's own parser: what it would refuse."""
+    if "host" not in lib or lib.get("host") is None:
+        return []
+    if not isinstance(lib["host"], dict):
+        return [f"host {lib['host']!r} is not a mapping of kind, ref and options"]
+    try:
+        universe_host.Entry(0, driver_fields(lib))
+    except (universe_host.UniverseError, CfError) as exc:
+        return [f"the host driver would refuse its line: {str(exc).replace('line 0: ', '')}"]
+    return []
+
+
+def _token_hint(name: str) -> str:
+    """A spelling of ``name`` that :data:`BRAIN_LIB` admits, for a refusal's hint only:
+    each other character becomes ``_`` (``FF.AdicModules`` -> ``FF_AdicModules``)."""
+    token = re.sub(r"[^A-Za-z0-9_]", "_", str(name))
+    if not token[:1].isalpha():
+        token = "L" + token
+    return token[:64]
+
+
+def repo_key(repo) -> str:
+    """The repository a ``repo`` URL names, one key for each way of spelling it.
+
+    The host lowercased and without ``www.``, no trailing ``.git`` (in any case:
+    ``.GIT`` is the same suffix), and on a host of :data:`CASE_INSENSITIVE_REPO_HOSTS`
+    (github.com) the owner and name casefolded:
+    ``https://www.GitHub.com/LeanProver/Lean4.git`` and
+    ``https://github.com/leanprover/lean4`` are one key.  Only a universe's
+    one-spelling rule compares on it (:meth:`Universe.add_library`,
+    :meth:`Universe.validate`); every other comparison of a repo is exact, as
+    written, and that rule is what keeps them right.
+    """
+    text = str(repo or "")
+    scheme, sep, rest = text.partition("://")
+    if not sep:
+        return text
+    host, slash, path = rest.partition("/")
+    host = host.lower()
+    if host.startswith("www."):
+        host = host[len("www."):]
+    if host in CASE_INSENSITIVE_REPO_HOSTS:
+        path = path.casefold()
+    if path[-len(".git"):].lower() == ".git":
+        path = path[:-len(".git")]
+    return f"{scheme.lower()}://{host}{slash}{path}"
+
+
+def _id_problem(value) -> str | None:
+    """Why ``value``, as a universe file holds an id, is no :data:`LIBRARY_ID`; else None.
+
+    A value YAML typed -- a bare ``no`` read as False, ``1e3`` as 1000.0 by PyYAML --
+    is named as the type it was read as, since its own spelling is gone by then.
+    """
+    if isinstance(value, str):
+        return None if LIBRARY_ID.match(value) else f"{value!r} is not {LIBRARY_ID_RULE}"
+    if value is None:
+        return f"None is not {LIBRARY_ID_RULE}"
+    return (f"{value!r} was read as a YAML {type(value).__name__}, not a string: an id is "
+            f"{LIBRARY_ID_RULE}")
+
+
+def written_brain_lib(lib: dict) -> str:
+    """The ``brain_lib`` a record set writes for a library row: its own, else its id."""
+    return str(lib.get("brain_lib") or lib.get("id") or "")
+
+
+def is_repo_url(repo) -> bool:
+    """Is ``repo`` a repository URL a record set may name (:data:`REPO`, no dot segment)?"""
+    return (isinstance(repo, str) and REPO.match(repo) is not None
+            and all(part not in (".", "..") for part in repo.split("/")[3:]))
+
+
+def _library_problems(lib: dict) -> list[str]:
+    problems: list[str] = []
+    problem = _id_problem(lib.get("id"))
+    if problem:
+        problems.append(f"id {problem}")
+    if not is_repo_url(lib.get("repo")):
+        problems.append(f"repo {lib.get('repo')!r} is not an https repository URL: a dotted "
+                        f"host and one to four path segments of letters, digits and ._~- "
+                        f"(none of them . or .., no trailing slash), e.g. "
+                        f"https://github.com/leanprover-community/mathlib4")
+    if not COMMIT.match(str(lib.get("commit") or "")):
+        problems.append(f"commit {lib.get('commit')!r} is not 40 lowercase hex digits")
+    licence = lib.get("licence")
+    if licence is not None and not (isinstance(licence, dict) and set(licence) == {"spdx"}
+                                    and isinstance(licence["spdx"], str)
+                                    and licence["spdx"] == licence["spdx"].strip()
+                                    and SPDX.match(licence["spdx"])):
+        problems.append(f"licence {licence!r} is not {{spdx: <SPDX id>}} (e.g. --licence "
+                        f"Apache-2.0)")
+    brain = lib.get("brain_lib")
+    if brain is not None and (not isinstance(brain, str) or not brain.strip()):
+        problems.append(f"brain_lib {brain!r} is not a non-empty name")
+    elif isinstance(brain, str) and len(brain) > MAX_NAME_CHARS:
+        problems.append(f"brain_lib is {len(brain)} characters, longer than {MAX_NAME_CHARS}")
+    if len(str(lib.get("toolchain") or "")) > MAX_NAME_CHARS:
+        problems.append(f"toolchain is {len(str(lib.get('toolchain')))} characters, longer "
+                        f"than {MAX_NAME_CHARS}")
+    elif not TOOLCHAIN.match(str(lib.get("toolchain") or "")):
+        problems.append(f"toolchain {lib.get('toolchain')!r} is not an elan toolchain such as "
+                        f"leanprover/lean4:v4.34.0")
+    roots = lib.get("roots")
+    if not isinstance(roots, list) or not roots:
+        problems.append("roots must be a non-empty list of module names")
+    else:
+        long = [r for r in roots if isinstance(r, str) and len(r) > MAX_NAME_CHARS]
+        bad = [r for r in roots if not isinstance(r, str) or not ROOT_GLOB.match(r)]
+        if long:
+            problems.append(f"{len(long)} root(s) longer than {MAX_NAME_CHARS} characters "
+                            f"({', '.join(str(len(r)) for r in long)})")
+        elif bad:
+            problems.append(f"roots {bad!r} are not Lake module globs (a module name, "
+                            f"optionally .+ or .*), which the host driver refuses")
+        else:
+            problems.extend(_host_problems(lib))
+    return problems

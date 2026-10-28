@@ -75,6 +75,49 @@ against the text is not a finding. The limits:
   holds the same edition recovers each one with `cf quotes hydrate`, out of
   their own copy.
 
+### 4.1 Licence classes
+
+Every source has a **licence class**, and it decides one thing: what an
+*exported* record may quote of it. It is a registry field, `licence_class`
+(`cflib.vocab.LICENCE_CLASSES`), checked by `cf sources validate-registry`:
+
+| class | for | what an exported record may quote |
+|---|---|---|
+| `closed` | the default: every entry that names no class, which is every book entry written before the field existed | nothing beyond the redaction above |
+| `open_attribution` | CC BY and the like | a capped quote, with a citation and the licence named |
+| `open_share_alike` | CC BY-SA 4.0 — Wikipedia's article text (the `enwiki` family in `registry/sources.yaml`) | a capped quote, with a citation and the licence named; a consumer that republishes the records under another licence (CC0) states that the quote fields stay CC BY-SA |
+| `public_domain` | no copyright | a capped quote; attribution is a courtesy |
+
+The cap is the locate record's (`docs/proposals/wikipedia-locate.md` §2.7):
+twelve words of the quote itself and at most 32 characters either side of it —
+quotation, not reproduction. `cf export literature-links` is the export that
+applies it: it quotes only a source whose class is open (and, for an
+attribution class, only with the licence named), and refuses a closed one; no
+other command quotes more of an open source than of a closed one.
+
+What a class does **not** change:
+
+- the skill repository still holds **no source text** of any class, open or
+  not: section 1 is a rule about this repository, not only about copyright;
+- nothing is **redistributed** — `licence.redistribute` stays `false` for every
+  entry and every family. Quoting a capped span with attribution is quotation;
+  copying an article is redistribution, and the skill does not do it;
+- **fetching** is section 2's business (`licence.fetch`), not the class's. The
+  one fetcher a web family uses is a named network exception in `CLAUDE.md`
+  §3: `scripts/sources/wikinet.py`, which `cf sourceset fetch`,
+  `enumerate-wikiproject` and `adopt` (only to ask the page of a pinned
+  revision that names no page id and that the sourceset does not hold) reach
+  only under `--execute`, at the family's site; and `cf sourceset
+  flag-biographies --execute`, which asks the Wikidata Query Service one fixed
+  SPARQL shape (which items are instances of human) and nothing else.
+
+A web source is not a registry entry: Wikipedia has millions of revisions and
+the registry holds none of them. Its class comes from its **family**, one row
+per site (`registry/README.md`, "Web-source families"), and
+`Registry.licence_class(source_id)` answers for any id — `closed` for one it
+does not know. A workspace overlay cannot change the class or the licence of
+a confirmed shipped family; it can only be reported for trying.
+
 ## 5. Contributing an edition
 
 By opening a PR that adds a registry entry you are asserting that:
@@ -88,7 +131,9 @@ By opening a PR that adds a registry entry you are asserting that:
   records a judgement rather than a permission.
 
 `cf sources promote <id>` writes the entry as a patch file for exactly this
-purpose; nothing writes the shipped registry from a workspace.
+purpose; nothing writes the shipped registry from a workspace. An entry that
+claims an open `licence_class` asserts, in addition, that the edition itself
+is published under that licence, and its `licence.note` names the licence.
 
 ## 6. If a rights holder objects
 

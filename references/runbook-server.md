@@ -10,7 +10,7 @@ No host address, account or profile name appears in this file. They live in `wor
 
 **Contents** — §0 the two tools this needs · §1 the topology · §2 preconditions ·
 §3 `cf plan-run` · §4 `cf run` · §5 monitoring · §6 failure modes · §7 `cf harvest` ·
-§8 the local fallback · §9 what stays manual · §10 sources.
+§8 the local fallback · §9 a locate root · §10 what stays manual · §11 sources.
 
 ---
 
@@ -33,7 +33,9 @@ write: put a spec in your own `workspace.yaml` as `hosts.<host>.tend_version` (f
 `">=0.4,<0.6"`), and `cf run`'s preflight compares it against `tend --version` on the host and
 refuses the run on a mismatch. With no spec recorded, preflight only prints the version and
 continues — which is how a config-schema change becomes a run that validates locally and fails on
-the host with no diagnosis.
+the host with no diagnosis. Every tend command runs as `cd <tend_dir> && uv run …`, with
+`tend_dir` from `hosts.<host>.tend_dir` (default `$HOME/tend`, whatever `remote_root` is); set
+`hosts.<host>.tend_cmd` instead to replace the whole prefix.
 
 **Without them**, the supported path is the local Workflow fleet (§8) for anything under ~100
 items, plus every mechanical stage — `pair`, `detect-proxies`, the anchor check, `import-corpus`,
@@ -130,21 +132,36 @@ What it does, in order — and each step is one you can also do by hand:
 4. **Smoke test 1/1.** Set limits to one worker and one reviewer, start the run, and watch exactly
    one task through worker → gate → reviewer → merge. Do not launch hundreds of tasks blind: model
    ids that have never been exercised from this machine fail immediately and repeatedly.
-5. **Read that task's gate output once per tend version.** Its last line is `changed files: …`.
-   `ownership checked against task <id>` means the orchestrator exported `TEND_TASK_ID` into the
-   validation command's environment and the full ownership rule is running. `ownership: single-stem
-   rule` means it did not: only the weaker rule (one task's findings/task pair per contribution) is
+5. **Read that task's gate output once per tend version** — the validation command's, not the
+   worker's or the reviewer's own. Its last line is `changed files: …`, and the same line is the
+   `ownership` field of that call's `gate-log/gate.jsonl` record, beside `task_id_from` (where the
+   id came from: `--task-id`, `$TEND_TASK_ID` or `orchestrator.sqlite`), `changed_files` (true
+   for a validation or pre-merge call) and `pre_merge` (true for the pre-merge call alone). An
+   agent runs with `TEND_TASK_ID` in its environment, so the worker's and the reviewer's own gate
+   calls log the task id from `$TEND_TASK_ID`: a non-empty `task_id` in the log is **not** by
+   itself evidence that the validation command found it, and only a `--changed-files` record says
+   how the validation found it. `ownership checked against
+   task <id> (task id from $TEND_TASK_ID)` on a validation call means the orchestrator exported
+   `TEND_TASK_ID` into the validation command's environment; `(task id recovered from
+   orchestrator.sqlite: …)` means it did not and the gate found the id in tend's database; either
+   way the full ownership rule is running. `ownership: single-stem
+   rule` means neither: only the weaker rule (one task's findings/task pair per contribution) is
    in force, so a worker that rewrites a neighbour's landed findings file inside its own single
    stem is not caught. **Whether tend exports it has never been verified here**, and it is a
    property of the orchestrator version, not of the run — so check it again after an upgrade. To
    restore the full rule, append `--task-id <the id>` to both gate commands in the tend root's
    `config.yaml` by whatever substitution that version supports; an argv list is not shell-expanded,
-   so a literal `$TEND_TASK_ID` element makes the gate refuse every run. The same argv serves
-   `validation_commands` and `pre_merge_validation_commands`, and with `batched_merge: true` a
-   pre-merge change set carries one findings/task pair per batched task — the findings file added,
-   the task file modified, because step 3 above committed the tasks to the merge target. The stem
-   count therefore only refuses several stems when some stem's findings file was already on the
-   merge target, so a batch of new findings merges and a rewritten neighbour is still named. A 1/1
+   so a literal `$TEND_TASK_ID` element makes the gate refuse every run. With `batched_merge: true`
+   a pre-merge change set carries one findings/task pair per batched task — the findings file
+   added, the task file modified, because step 3 above committed the tasks to the merge target. In
+   a findings root (`verify_findings.py`) the same argv serves `validation_commands` and
+   `pre_merge_validation_commands`, and the stem count only refuses several stems when some stem's
+   findings file was already on the merge target, so a batch of new findings merges and a
+   rewritten neighbour is still named. A locate root's `pre_merge_validation_commands` runs the
+   same argv plus `--pre-merge`: only with that flag does `verify_locate.py` admit several stems
+   (every document a stem carries must be new, so a stem whose findings were already on the merge
+   target is refused, and so is one that brings no document); without it, as in every
+   `validation_commands` call, a change set of several stems is refused. A 1/1
    smoke test cannot exercise that
    — there is nothing to batch at limits 1/1 — so read the pre-merge gate output again after step 6.
 6. Only then raise the limits to the preset's concurrency.
@@ -178,7 +195,10 @@ agents genuinely read the book and the Lean. At 8 workers that is ~8–12 h for 
 limit is the hosted-session cap and the review loop, not CPU.
 
 **Hard cap: 16 concurrent hosted sessions per account, across workspaces.** 8 workers + 5 reviewers
-leaves three. Above the cap you get 409s.
+leaves three. Above the cap the API answers 409. The bridges now take one of 15 per-user `flock`
+slots before every agent call (`CF_SLOT_DIR`, `CF_SLOTS`) and wait for a free one rather than
+failing, so roots on one Unix user cannot together pass the cap; an empty or 409 envelope still
+exits 75 so tend retries the same worktree.
 
 ## 6. Failure modes you will actually meet
 
@@ -188,7 +208,8 @@ leaves three. Above the cap you get 409s.
 | a task loops, repeating a rejected mistake | the bridge re-ran the original prompt on rework | the shipped bridge appends the reviewer's feedback from `.tend/discussion.md` |
 | the gate fails on every task | the book text is missing at the configured path | intended: the gate fails closed. Check the book directory before blaming the run |
 | `aggregate usage: input=0` | agents run inside hosted sessions | expected; watch the gateway, not the orchestrator |
-| 409s when starting | the session cap | lower concurrency, or wait for the other workspace |
+| 409s when starting | the session cap, reached from another Unix user or account | the bridge exits 75 and tend retries; lower concurrency, or wait for the other workspace |
+| an agent call never returns | a hung session | every call runs under `timeout ${CF_AGENT_TIMEOUT:-45m}`; expiry exits 124, an infrastructure failure tend retries, never a verdict. A locate run whose task needs longer calls is planned with `cf plan-locate --agent-timeout <5m..3h>`, which the two wrappers export |
 | the disk fills minutes after launch | one worktree per ready task | see §2.6 |
 | a run dies | the orchestrator resumes from its sqlite state (`worker_running` → pending) | re-`tend run --root` with the same root; `run.yaml` records the exact command |
 
@@ -228,7 +249,156 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
   is why turning it off here is worse than turning it off on the server path, where
   `validation_commands` and `pre_merge_validation_commands` have already run it per task.
 
-## 9. What stays manual, permanently
+## 9. A locate root
+
+A locate run (`cf plan-locate`; `docs/proposals/wikipedia-locate.md` §3, §6) uses the same tend
+root, bridge and harvest, with these differences:
+
+- **One task, its own directory.** A task writes `findings/<task-id>/<source-id>.json`, one
+  document per source its manifest (`gate/tasks/<task-id>.json`) names, and changes nothing else
+  but `tasks/<task-id>.yaml`. The gate is `gate/verify_locate.py`, invoked by tend's validation
+  commands with `--changed-files --base <branch>`; it reads only the documents the change set
+  touched and only the sources, candidates and manifest they name. Its last line names the
+  ownership rule that judged the change set: the task id from `--task-id`/`TEND_TASK_ID`, the
+  task id recovered from `<tend-root>/orchestrator.sqlite` (opened `mode=ro`, which reads the
+  rows tend's WAL holds; `immutable=1` only when no `-wal` lies beside it or its directory
+  cannot be written, and then the line says it was read immutably; **with an assumed
+  schema**: read that line on the smoke task, as for §4 step 5), or the single-stem rule,
+  with the reason the lookup found no task.
+- **What travels.** `cf run` sends `corpus.sqlite` (and the database the workers search, when the
+  run is blind or planted) and the candidates directory, and checks the database's sha once at the
+  verify stage. The run's own sources (their rendered directories, and nothing of any other run's)
+  travel only with `--include-source-text`: the gate fails closed without their layers, so the
+  verify stage checks each of the run's sources on the host as the gate reads it (its `layer.txt`
+  against `gate.json`'s `layer_sha256`, and the `formulas.json` and `paragraphs.json` beside it)
+  and fails while one is missing, and `--execute` without the flag names the sources it expects
+  to find there already. Every `cf run` below therefore carries `--host` and
+  `--include-source-text`. **A locate run needs a spend cap**: `cf run --execute` refuses one
+  without a `budget.max_cost`, and has no `--no-budget-cap` escape for it.
+- **The host-side directories**, all in the tend root and outside every worktree: `usage/` (each
+  agent call's JSON envelope, a cost cross-check), `attempts/<task-id>.json` (genuine reviewer
+  rejections only; the third makes the worker bridge write `UNRESOLVED` documents with
+  `unresolved.by: attempt_cap`, which the reviewer bridge approves mechanically), `gate-log/gate.jsonl`
+  (one line per gate call, by rule, with its `ownership` line, `task_id_from`, `caller` and
+  `changed_files`; the watchdog's gate-failure rate and the bench's rejection rates count only the
+  `changed_files: true` lines that are not `pre_merge`, tend's validation calls
+  (`caller: validation`), never an agent's `--findings` check).
+- **The worker's tools.** The worker allowlist adds the two corpus host tools by absolute path,
+  pinned to the run's database (`CF_EXTRA_TOOLS`), and an inventory worker's passage-id tool.
+- **Bringing it home.** `cf harvest <run-id>` lands `corpus/<run-id>/<task-id>/<source-id>.json`,
+  re-gates the whole corpus with the run's own staged gate (`runs/<run-id>/tend-root/gate/`,
+  checked against `run.yaml` `locate.gate_files`, named by hash in the receipt) and
+  `gate.local.json`, counts `UNRESOLVED` documents and
+  attempt-capped ones separately in the receipt, and also brings the host's gate log (and, for a
+  campaign shard, its usage export and canary scan) to `runs/<run-id>/host/`. Then
+  `cf tally --locate --run <run-id>`.
+- **What travels, for a blind or planted run.** The gate always checks the full `corpus.sqlite`
+  (`gate.json` `corpus_db`); the workers search the tools database (`tools_corpus_db`: the full one,
+  `corpus.blind.sqlite` for `--blind`, or a planted file given to `cf plan-locate --tools-corpus-db`).
+  `cf run` transfers the tools database too when it is another file, and checks both shas at the
+  verify stage. A P run of the bench is planned that way with the bench's planted database
+  (`references/locate-bench.md` §7).
+- **A kept run's sourceset (Tier A).** The first kept run plans from a sourceset that is
+  created new and filled only by `adopt` from the consumer feed's first delivery, whose every
+  pin carries its bytes and the producer's `layer_sha256`:
+  `cf sourceset create <id>` (no `--from`), `cf sourceset adopt <id> --from <delivery>/pins.jsonl
+  --consumer <consumer>`, `cf sourceset render <id>`, then `cf sourceset status <id> --verify`.
+  It is **never** seeded with `cf sourceset create <id> --from wpm3` (the smoke runs' sourceset),
+  nor from any sourceset whose sources were adopted before, and the delivery is never adopted
+  into one that was. **Why:** a source adopted from a pin that carried no producer sha records
+  an `adopted_from` without one, a recorded `adopted_from` never changes, and `create --from`
+  copies it, so a seeded source can never be given the producer's `layer_sha256`:
+  adopting the delivery into it only lists each such pin under
+  `commands.adopt.layer_sha256_not_recorded`, and no render of it is ever held to the
+  producer's text layer. Adopted into a new sourceset, each pin's `layer_sha256` is recorded in
+  its `adopted_from`, `render` refuses by name a source whose layer is not that sha, and
+  `state.json`'s `parity_refusals` is the parity measurement on the run's real pages
+  (`references/locate-documents.md` §7).
+  TODO (due before contributors or runs 2–10; not built): `adopt` fills a missing
+  `adopted_from.layer_sha256` once, in a new sourceset version, and only when the pin's bytes
+  hash to the recorded `raw_sha256`; it records the delivering pins file's sha beside it (a new
+  optional `adopted_from` key, documented in `references/locate-documents.md` §7); and when a
+  layer already exists it compares at once and writes `parity_refusals`. Until then this
+  procedure is the only way a source is held to the producer's layer.
+- **Shards.** More than 500 tasks is a campaign:
+  1. Run a **pilot** first: a small locate run taken to the smoke stage with `cf run <pilot>
+     --host <alias> --i-have-consent --include-source-text --execute`, watched through worker →
+     gate → reviewer → merge, then raised with `--stage raise --smoke-verified --execute`, which
+     records `run.smoke_verified`. Harvest it (`cf harvest <pilot> --execute`), which brings its
+     agent envelopes home to `runs/<pilot>/host/envelopes/`, and read its p90 cost per merged
+     task and gate-failure rate from the harvest.
+  2. Plan each shard with `cf plan-locate` (each with its own `--max-cost`), then
+     `cf campaign plan <id> --shard <r1> --shard <r2> … --host <alias> --pilot <pilot>` with the
+     pilot's p90s. The watchdog estimates a call that left no priced envelope (a timeout, a
+     signal) at `--unpriced-usd-per-hour <usd>` until its shard has a priced envelope of its
+     own; without the flag the plan measures the pilot's highest priced dollars per hour over
+     its harvested envelopes that carry a duration, and says which rate it took (or that it
+     has none). `cf campaign plan` stamps `locate.campaign` into each shard's `run.yaml` and
+     refuses a shard stamped by another campaign; run again, it reads every shard's `run.yaml`
+     afresh and keeps the thresholds, the flag's rate, pilot, transcript directories and
+     canaries it is not given, and measures a pilot's rate again.
+     Give `--transcript-dirs` (or set `hosts.<alias>.transcript_dirs` in `workspace.yaml`) to have
+     each shard's transcripts exported and pruned, and `--canaries <host path>` to have them scanned
+     for the bench's label canaries; each is an absolute host path or `~/…` (the host's home).
+     **What the sequencer takes from those directories:** a file that appeared there since a shard
+     first started and names the shard's tend root, entrypoint or gate directory (an agent works in
+     a worktree of the run, from prompts that name its gate) is that shard's: it is scanned,
+     exported into the shard's `usage-<run-id>.jsonl` and then **deleted**. A new file that names
+     none of them (another session of the same user, another run) is left alone, so an agent CLI's
+     per-user directory works; but nothing else of the run itself may write there.
+  3. Take every shard through `cf run <shard> --host <alias> --i-have-consent
+     --include-source-text --execute --stage verify`, which transfers and verifies it and launches
+     nothing. `cf campaign render <id>` refuses a campaign without a smoke-verified pilot or
+     without a rate for unpriced calls (harvest the pilot and plan again, or give
+     `--unpriced-usd-per-hour`), and a
+     shard whose `run.yaml` no longer matches the campaign's record of it (its cap, task count,
+     limits or `locate.campaign` stamp): a shard re-planned since is planned into the campaign
+     again with `cf campaign plan`, then rendered.
+  4. Run the two commands `cf campaign render <id>` prints: the transfer (`ssh <alias> mkdir -p
+     <remote root>/campaigns/<id> && rsync …`, which copies `campaigns/<id>/host/` there) and the
+     start of its `sequencer.sh` under `nohup` (or start it in a terminal multiplexer). It takes a
+     lock (`sequencer.lock`), so a second start exits 3, and nothing it launches holds that lock,
+     so a sequencer that was killed can be started again. It refuses a root that already has a
+     live `tend run` (a killed sequencer's tend run lives on, watched by its watchdog to the end;
+     a watchdog still on a root when its shard is launched again is stopped first), keys its state
+     by run id, and runs shard k+1 only after shard k's `tend run` ends. Beside each
+     shard its model-free watchdog drains the root (`tend-control drain`) when the shard's spend
+     passes its cap, or when the gate-failure rate or the cost per merged task passes the
+     configured multiple of the pilot's p90. After each shard it scans that shard's transcripts for
+     canaries (`canary_scan.py` writes `{"scanned": N, "hits": [<file>, …], "canaries": K,
+     "canary_sha256": [<sha256 of each canary>]}`; `cf bench score` refuses a report that does not
+     list its bench's canary), exports their usage and prunes them; a canary hit keeps them, and a
+     scan that cannot run keeps them unexported for the next attempt. A drain, a reason to drain,
+     a canary hit, a scan that could not run, a watchdog that died during the shard or an
+     unreadable watchdog record stops the campaign (`STOPPED`; `sequencer.log` and
+     `shard-<run-id>.stopped` say why). `CF_TEND_CMD`, `CF_TRANSCRIPT_DIRS`, `CF_CANARIES` and
+     `CF_WATCH_INTERVAL` override what was rendered; a transcript directory or canaries file that
+     is not there stops the sequencer before any shard.
+  5. **Resuming.** Remove `STOPPED` and start the sequencer again. A shard that was interrupted
+     (a reboot, a killed sequencer) keeps the transcript baseline it first took, and its earlier
+     attempt's transcripts are scanned, exported and pruned before anything is relaunched. A
+     shard is **not relaunched** while one of its canary reports holds a hit (a report with a hit
+     is never replaced: a later scan is kept beside it in `canary-<run-id>.attempts/`), or while
+     the watchdog, run once before the launch, already finds a reason to drain it: relaunching it
+     would only spend past the cap and stop again. A shard stopped **at its cap** goes on with a
+     higher one (re-plan the shard with `cf plan-locate … --max-cost <usd>`, run `cf campaign
+     plan` and `cf campaign render` again, and transfer). A higher cap passes nothing else: a
+     gate-failure rate or a cost per merged task past its threshold is the same at any cap, and
+     a **canary hit** is passed only by accepting the shard as it stands. `CF_ACCEPT=<run-id>`
+     (several, separated by commas) settles what the shard left, marks it done, writing into
+     `shard-<run-id>.done` why it had stopped, and the campaign moves on to the next shard; its
+     canary report stays as it is for the harvest. While the canary scan of what the shard left
+     cannot run, the accept is refused and the campaign stops again (its transcripts stay
+     unexported); accept it once the scan works. Only a shard that has started (stopped or
+     interrupted) is accepted: an id naming a shard that never started, or no shard of the
+     campaign, is ignored with a line in `sequencer.log`, and that shard runs.
+  6. Harvest each shard as it finishes (`cf harvest <shard> --execute`); `cf campaign status <id>`
+     reads the shards' receipts.
+
+  The sequencer needs, on the host: bash 4.4 or later (`mapfile -d`), GNU `comm` and `sort` (with
+  `-z`), `flock`, `pgrep`, `grep`, `gzip`, `python3` and rsync.
+
+## 10. What stays manual, permanently
 
 - ssh access and any credential or login on the host;
 - the hosted-agent profile login;
@@ -246,7 +416,7 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
 
 ---
 
-## 10. Sources
+## 11. Sources
 
 | claim | source |
 |---|---|

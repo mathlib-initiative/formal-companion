@@ -63,6 +63,18 @@ class ItemGrammarError(CfError):
         super().__init__(f"unparseable book item {raw!r} ({reason})", hint=hint)
 
 
+class PassageIdError(CfError):
+    """A source's passages cannot all be keyed by their heads (see cflib.passages).
+
+    ``starts`` names the passage offsets the refusal is about -- both of them
+    when two passages collide -- so a caller can report the pair, not a count.
+    """
+
+    def __init__(self, message: str, *, starts=(), hint: str | None = None):
+        super().__init__(message, hint=hint)
+        self.starts = tuple(starts)
+
+
 class AdapterError(CfError):
     """An adapter could not be loaded or failed its dry run."""
 

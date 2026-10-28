@@ -25,9 +25,12 @@ from cflib.yamlio import read_yaml
 
 from cost import fleet as cost_fleet
 from cost import pricing
+from harvest import audit_summary as audit_mod
 from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
 from harvest import harvest_journal, record as record_mod
+from harvest import host_artifacts as host_mod
+from harvest import turn_records as turns_mod
 from recheck import pin as pin_mod
 from run import manifest
 
@@ -69,6 +72,12 @@ def register(subparsers) -> None:
                            "(the receipt then records gate: null, and `cf tally` says so)")
     p.add_argument("--gate-config", default=None,
                    help="the gate.json to use (default: runs/<id>/gate.local.json)")
+    p.add_argument("--checkout-gate", action="store_true",
+                   help="a locate run: re-gate with this checkout's gate instead of the run's "
+                        "own copy (runs/<id>/tend-root/gate/, checked against run.yaml "
+                        "locate.gate_files), e.g. for a run planned before run.yaml recorded "
+                        "gate_files; the receipt's gate_code records which gate judged the "
+                        "corpus")
     p.add_argument("--allow-edition-mismatch", action="store_true",
                    help="accept findings judged against another edition (they are refused by default)")
     # NOT `--source`: that dest already belongs to `--from` above, and argparse
@@ -94,36 +103,133 @@ def run(args) -> int:
         receipt = _from_findings(workspace, args, data, dest, run_yaml_path, cost=cost)
 
     log.info(harvest_mod.describe(receipt))
+    # the receipt's own cost block: --transcripts, a campaign usage export, or the
+    # envelopes the remote harvest brought home -- each is warned about alike
+    cost = receipt.get("cost") if isinstance(receipt.get("cost"), dict) else None
+    envelopes = bool(cost and cost.get("basis") == cost_fleet.BASIS_ENVELOPES)
     empty = cost_fleet.empty_warning(cost) if cost else None
     if empty:
-        log.warn(f"NO RESPONSES priced for run {args.run_id}: {empty}. Check --transcripts; "
-                 f"a stage receipt refuses this cost block.")
-    if cost and cost.get("unpriced"):
+        log.warn(f"NO RESPONSES priced for run {args.run_id}: {empty}. "
+                 + ("Check the tend root's usage/ on the host; " if envelopes
+                    else "Check --transcripts; ")
+                 + "a stage receipt refuses this cost block.")
+    if cost and cost.get("unpriced") and not envelopes:
         log.warn(f"UNPRICED model(s) {', '.join(cost['unpriced'])}: their tokens are in the "
                  f"receipt and priced nowhere, so {pricing.format_usd(cost['usd'])} is a lower "
                  f"bound. Add them to workspace.yaml budget.prices and re-run the harvest.")
-    if receipt["missing"] or receipt["sha_mismatched"]:
+    elif cost and cost.get("unpriced"):
+        log.warn(f"model(s) {', '.join(cost['unpriced'])} are not in the price table: the "
+                 f"envelopes' own total is unaffected, but its cross-check "
+                 f"usd_from_price_table leaves them out. Add them to workspace.yaml budget.prices.")
+    bound = cost_fleet.lower_bound(cost) if cost else None
+    if bound and cost.get("unpriced_calls"):
+        log.warn(f"LOWER BOUND cost for run {args.run_id}: {bound}; "
+                 f"{pricing.format_usd(float(cost.get('usd') or 0.0))} is not the run's spend, "
+                 f"and `cf bench score` refuses it unless --article-costs prices every article.")
+    if receipt["missing"] or receipt["sha_mismatched"] or receipt.get("sha_unverified"):
         log.warn("harvest INCOMPLETE: the corpus is not the whole corpus, so every number "
                  "derived from it is a lower bound. Re-run the missing tasks, then `cf harvest` again.")
-    if not ((receipt.get("gate") or {"ok": True}).get("ok", True)):
+    if receipt.get("host_artifacts_missing"):
+        log.warn(f"harvest INCOMPLETE: the host artifact(s) "
+                 f"{', '.join(receipt['host_artifacts_missing'])} did not come home (the reason "
+                 f"is on the host: line above), so the run's record of its gate calls is not "
+                 f"here. Fix the transfer and run `cf harvest {args.run_id}` again.")
+    gated = receipt.get("gate") or {"ok": True}
+    if not gated.get("ok", True) and gated.get("broken"):
+        # the gate did not judge the findings, so nothing above is a verdict on them
+        log.warn("harvest REFUSED the gate: it could not judge the findings (the reason is "
+                 "above), which says nothing against them. "
+                 + (str(gated.get("hint") or "Fix what it names and run the harvest again")
+                    .replace("<run-id>", args.run_id).rstrip("."))
+                 + ". The receipt is not complete.")
+    elif not gated.get("ok", True):
         log.warn("harvest REFUSED the gate: the findings above do not validate against "
-                 "gate.local.json. Fix or re-run them; the receipt is not complete.")
+                 f"{Path(str(gated.get('config') or 'gate.local.json')).name}. Fix or re-run "
+                 "them; the receipt is not complete.")
     if not receipt.get("gate"):
         # the trust boundary, said out loud: nothing downstream re-checks a quote
         log.warn(f"UNGATED run {args.run_id}: RECEIPT.json carries no gate block, so no quote "
                  "in this corpus was checked against the source text and no witness was "
                  "checked at all. Every number computed from it is unvalidated. Re-run "
                  f"`cf harvest {args.run_id} --gate-config <file>` when you have one.")
+    for line in audit_mod.problems(receipt.get("audit")):
+        log.warn(f"AUDIT of run {args.run_id}: {line}.")
+    warn_turns(args.run_id, receipt)
     if not (receipt.get("edition") or {}).get("ok", True):
         log.warn("harvest REFUSED the edition: findings judged against another edition are in "
                  "this corpus. Re-run them against the pinned edition, or pass "
                  "--allow-edition-mismatch and say so in the report.")
 
+    if is_locate(data):
+        # A locate corpus is no companion's: it pins no companion revision, the
+        # faithfulness tally has no row to count in it, and its counts belong to
+        # the sourceset, which the locate harvest records.
+        log.info("locate run: the faithfulness tally, the companion pin and the companions' "
+                 "state.json are not written for it; the receipt's locate block carries its "
+                 "counts, and the sourceset's state.json records the harvest")
+        record_sourceset_state(workspace, args.run_id, data, receipt)
+        return 0 if receipt["complete"] else 1
     pin = _pin(workspace, args.run_id, data, dest)
     counts = ({} if args.no_tally
               else record_mod.write_run_tally(workspace, args.run_id, dest))
     record_mod.record_run_state(workspace, args.run_id, data, receipt, counts, pin)
     return 0 if receipt["complete"] else 1
+
+
+def is_locate(data: dict) -> bool:
+    """Is this run.yaml a locate run's (references/locate-documents.md section 9)?"""
+    from cflib import vocab
+
+    block = data.get("locate") if isinstance(data, dict) else None
+    return isinstance(block, dict) or str((data or {}).get("mode") or "") in vocab.LOCATE_MODES
+
+
+def record_sourceset_state(workspace, run_id: str, data: dict, receipt: dict) -> dict | None:
+    """Merge the harvest into the sourceset's ``state.json`` (``runs.<run>``).
+
+    Through ``Sourceset.record_state``, the file's one writer, which MERGES into
+    the row ``cf plan-locate`` wrote: the planned fields stay and ``status``
+    moves on.  A sourceset this workspace no longer holds is warned about and
+    skipped; the receipt is still the corpus's record.
+    """
+    from sources.sourceset import Sourceset, SourcesetError
+
+    block = data.get("locate") if isinstance(data.get("locate"), dict) else {}
+    pin = block.get("sourceset")
+    sourceset_id = str((pin.get("id") if isinstance(pin, dict) else pin) or "")
+    if not sourceset_id:
+        log.warn(f"run {run_id}: run.yaml names no locate.sourceset, so no sourceset's "
+                 "state.json records this harvest")
+        return None
+    gate = receipt.get("gate")
+    payload = {"status": "harvested", "harvested_at": receipt.get("harvested_at"),
+               "complete": bool(receipt.get("complete")),
+               "gate_ok": None if not gate else bool(gate.get("ok")),
+               "locate": receipt.get("locate")}
+    try:
+        return Sourceset.open(workspace.paths, sourceset_id).record_state(
+            "runs", payload, key=run_id)
+    except SourcesetError as exc:
+        log.warn(f"run {run_id}: sourceset {sourceset_id!r} not updated ({exc.message})")
+        return None
+
+
+def locate_source_shas(workspace, run_id: str) -> dict[str, str]:
+    """``{source_id: html_sha256}`` a locate run pinned, from its gate.local.json.
+
+    A web source lives in a sourceset, never in workspace.yaml, so the edition
+    audit of the receipt reads the run's own pin instead of the workspace's
+    sources table.
+    """
+    path = Path(workspace.paths.run_dir(run_id)) / "gate.local.json"
+    try:
+        import json
+
+        sources = json.loads(path.read_text(encoding="utf-8")).get("sources") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {str(sid): str(pin.get("html_sha256")) for sid, pin in sorted(sources.items())
+            if isinstance(pin, dict) and pin.get("html_sha256")}
 
 
 def _cost_block(workspace, args) -> dict | None:
@@ -136,6 +242,11 @@ def _cost_block(workspace, args) -> dict | None:
     path = getattr(args, "transcripts", None)
     if not path:
         return None
+    return _price(workspace, path, model=getattr(args, "transcripts_model", None))
+
+
+def _price(workspace, path, *, model: str | None = None) -> dict:
+    """Price the logs (or the usage export) at *path* with this workspace's table."""
     try:
         table, source = pricing.from_workspace_data(workspace.data)
     except ValueError as exc:
@@ -145,8 +256,18 @@ def _cost_block(workspace, args) -> dict | None:
     if source == pricing.SOURCE_DEFAULT:
         log.detail("  cost: workspace.yaml has no budget.prices; priced with the shipped "
                    "default table")
-    return cost_fleet.cost_block(path, table=table, table_source=source,
-                                 model=getattr(args, "transcripts_model", None))
+    return cost_fleet.cost_block(path, table=table, table_source=source, model=model)
+
+
+def _price_envelopes(workspace, path, *, model: str | None = None) -> dict:
+    """The ``cost`` block from the bridge's kept envelopes (``cost.fleet.envelope_cost_block``)."""
+    try:
+        table, source = pricing.from_workspace_data(workspace.data)
+    except ValueError as exc:
+        raise CfError(str(exc),
+                      hint="one entry per model id with input, output, cache_write, cache_read "
+                           "(US dollars per million tokens) and a source note")
+    return cost_fleet.envelope_cost_block(path, table=table, table_source=source, model=model)
 
 
 def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
@@ -161,19 +282,108 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
             _check_remote_source(workspace, args, source)
     else:
         source = _default_source(workspace, args, data)
+    locate = is_locate(data)
+    host_files = (host_mod.remote_files(workspace, args.run_id, data)
+                  if locate and source["kind"] == "remote" else [])
+    host_dir = Path(workspace.paths.run_host_dir(args.run_id))
     if source["kind"] == "remote" and not args.execute:
         log.info(f"# dry run: harvesting {source['host']}:{source['path']} -> {dest}")
-        for step in harvest_mod.list_commands(source, dest):
+        for step in (harvest_mod.list_commands(source, dest)
+                     + host_mod.commands(source["host"], host_files, host_dir)):
             log.info(f"# {step['title']}\n{step['shell']}")
         raise CfError("remote harvest needs --execute",
                       hint="the commands above are exactly what it will run")
+    host = None
+    if host_files:
+        # outside the findings rsync, which carries *.json documents only, and
+        # outside corpus/<run>/, whose tree is the receipt's manifest
+        host = host_mod.fetch(source["host"], host_files, host_dir)
+        usage = host.get(host_mod.USAGE) or {}
+        envelopes = host.get(host_mod.ENVELOPES) or {}
+        if cost is None and usage.get("fetched"):
+            cost = _price(workspace, usage["path"],
+                          model=getattr(args, "transcripts_model", None))
+            log.detail(f"  cost: priced from the sequencer's usage export {usage['path']}")
+        elif cost is None and envelopes.get("fetched"):
+            # no transcripts and no usage export: the bridge's own envelopes, one per
+            # agent call, carry each call's total_cost_usd and its tokens by model
+            cost = _price_envelopes(workspace, envelopes["path"],
+                                    model=getattr(args, "transcripts_model", None)
+                                    or (str(data.get("model") or "") or None))
+            log.detail(f"  cost: priced from {cost['envelope_count']} agent envelope(s) in "
+                       f"{envelopes['path']}")
     return harvest_mod.harvest(
         run_id=args.run_id, source=source, dest=dest,
-        sources=manifest.source_shas(workspace, data),
+        sources=(locate_source_shas(workspace, args.run_id) if locate
+                 else manifest.source_shas(workspace, data)),
         run_yaml_src=run_yaml_path if run_yaml_path.exists() else None,
         verify_sha=args.verify_sha, execute=True,
         allow_edition_mismatch=args.allow_edition_mismatch,
-        gate_runner=gate_runner(workspace, args), cost=cost)
+        gate_runner=gate_runner(workspace, args, locate=locate, run_doc=data), cost=cost,
+        host_artifacts=host,
+        audit_runner=audit_runner(data, host_dir, host) if locate else None,
+        turns_runner=turns_runner(data, host_dir) if locate else None)
+
+
+def turns_runner(data: dict, host_dir: Path):
+    """An unaudited locate run's turn-record blocks (``harvest.turn_records``), else None.
+
+    It reads ``runs/<run>/host/``: what this harvest fetched from the tend root, or the
+    copy a previous harvest left there; with no record at all the receipt gets no block.
+    An audited run's turns are the turn machine's (:func:`audit_runner`).
+    """
+    if audit_mod.plan_of(data) is not None:
+        return None
+
+    def _summarise(dest: Path) -> dict | None:
+        return turns_mod.summarise(dest, host_dir)
+
+    return _summarise
+
+
+def warn_turns(run_id: str, receipt: dict) -> None:
+    """Say every needs_review and every merged document that is not its worker's."""
+    needs = receipt.get(turns_mod.NEEDS_REVIEW_KEY) or {}
+    if needs.get("count"):
+        log.warn(f"NEEDS REVIEW in run {run_id}: {needs['count']} task(s) a worker marked "
+                 f"needs_review ({', '.join(needs.get('tasks') or [])}). Each merged as before; "
+                 f"read each one (RECEIPT.json needs_review.entries, runs/{run_id}/host/"
+                 f"{turns_mod.NEEDS_REVIEW_LEDGER}) and list it in the run's closeout before "
+                 f"its tally is used.")
+    wrong = receipt.get(turns_mod.MERGED_NOT_WORKER_KEY) or []
+    if wrong:
+        log.warn(f"harvest INCOMPLETE: {len(wrong)} merged document(s) are not the blob their "
+                 f"worker committed ({', '.join(r['path'] for r in wrong[:5])}): something other "
+                 f"than the worker changed them before the merge. Explain each from "
+                 f"runs/{run_id}/host/{turns_mod.CONTRACTS}/ and tamper.jsonl before the corpus "
+                 f"is used.")
+
+
+def audit_runner(data: dict, host_dir: Path, host: dict | None):
+    """An audited run's ``audit`` block builder (``harvest.audit_summary``), else None.
+
+    It reads ``runs/<run>/host/audit/``: what this harvest fetched from the tend root
+    (``source: fetched``), or, when nothing was fetched -- a local ``--from``, a failed
+    transfer -- the copy a previous harvest left there (``kept``); with neither every
+    document is ``unaudited`` and the harvest says so.  The cost by step is read from
+    ``runs/<run>/host/envelopes/`` beside it.  A run whose ``run.yaml`` names no
+    ``locate.audit`` gets None, and its receipt no block.
+    """
+    plan = audit_mod.plan_of(data)
+    if plan is None:
+        return None
+    audit_dir = Path(host_dir) / host_mod.AUDIT
+    envelopes = Path(host_dir) / host_mod.ENVELOPES
+    fetched = bool(((host or {}).get(host_mod.AUDIT) or {}).get("fetched"))
+
+    def _summarise(dest: Path) -> dict:
+        here = audit_dir.is_dir() and not audit_dir.is_symlink()
+        return audit_mod.summarise(
+            dest, plan, audit_dir=audit_dir if here else None,
+            source=(audit_mod.SOURCE_FETCHED if fetched else audit_mod.SOURCE_KEPT),
+            envelopes=envelopes if envelopes.is_dir() else None)
+
+    return _summarise
 
 
 def _check_remote_source(workspace, args, source: dict) -> None:
@@ -199,7 +409,8 @@ def _check_remote_source(workspace, args, source: dict) -> None:
             hint="this moves data from a machine you may not own onto this one")
 
 
-def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
+def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None,
+                locate: bool = False, run_doc: dict | None = None):
     """A callable harvest() invokes on the landed corpus, or None with ``--no-gate``.
 
     ``--gate-config`` always wins.  Otherwise a run this workspace PLANNED has a
@@ -219,12 +430,37 @@ def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
     built at all -- an import of a foreign directory is the case -- so that path
     warns loudly, leaves ``gate: null`` on the receipt, and lets the harvest
     finish; ``cf tally`` reports every ungated run it counts.
+
+    A locate run is re-gated by its OWN gate, the copy planned into
+    ``runs/<id>/tend-root/gate/`` and checked against ``run_doc``'s (run.yaml's)
+    ``locate.gate_files`` -- never by whatever gate this checkout holds now --
+    unless ``--checkout-gate`` says otherwise; the receipt's ``gate_code`` names
+    the gate that ran.
     """
     if not getattr(args, "gate", True):
         return None
     explicit = getattr(args, "gate_config", None)
     planned = Path(workspace.paths.run_dir(args.run_id)) / "gate.local.json"
     config = Path(explicit).expanduser() if explicit else planned
+    if locate:
+        # A locate run is gated by gate/verify_locate.py over the whole landed
+        # corpus, with the gate.local.json its planner wrote: the same rules the
+        # host ran per task, run once more over what actually arrived.
+        own = None if getattr(args, "checkout_gate", False) else (
+            Path(workspace.paths.tend_root(args.run_id)) / "gate")
+        pins = ((run_doc or {}).get("locate") or {}).get("gate_files")
+        # the plan's own record of every task manifest, beside run.yaml (locate/outcomes.py
+        # reads the planned passages from it): the manifests the re-gate reads must be its
+        planned_tasks = Path(workspace.paths.run_dir(args.run_id)) / "planned.json"
+
+        def _run_locate_gate(dest: Path) -> dict:
+            result = gate_mod.gate_locate_corpus(
+                dest, config, gate_dir=own, gate_files=pins if isinstance(pins, dict) else None,
+                run_doc=run_doc, planned=planned_tasks)
+            log.info(gate_mod.render(result))
+            return result
+
+        return _run_locate_gate
 
     def _run_gate(dest: Path) -> dict | None:
         cfg = config

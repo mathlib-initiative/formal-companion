@@ -249,6 +249,17 @@ class WorkspacePaths:
     def gate_json(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "gate.json"
 
+    def challenge_plan_json(self, run_id: str) -> Path:
+        """A locate challenge run's record plan (references/locate-documents.md section 9)."""
+        return self.run_dir(run_id) / "challenge-plan.json"
+
+    def run_host_dir(self, run_id: str) -> Path:
+        """What `cf harvest` brings home from the run host besides the findings:
+        the gate log, the usage export and the canary scan
+        (references/locate-documents.md section 10).  Not under corpus/<run>/,
+        whose tree is the receipt's manifest."""
+        return self.run_dir(run_id) / "host"
+
     def tasks_dir(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "tasks"
 
@@ -294,6 +305,141 @@ class WorkspacePaths:
     def stage_receipt_json(self, pipeline_id: str, stage: str) -> Path:
         return self.stage_receipts_dir(pipeline_id) / (
             f"{_safe_id(stage, 'stage')}.stage-receipt.json")
+
+    # -- locate (docs/proposals/wikipedia-locate.md; the layout is
+    # references/locate-documents.md section 7) -------------------------
+    #
+    # A web source does not live in sources/ or in workspace.yaml -- twenty
+    # thousand of them fit neither -- but in a SOURCESET: append-only manifests
+    # plus one directory per source.  The per-source directories sit under
+    # sourcesets/<id>/sources/, so the workspace .gitignore's `sources/` line
+    # keeps their page text out of git with no rule of its own.
+    @property
+    def sourcesets_dir(self) -> Path:
+        return self.root / "sourcesets"
+
+    def sourceset_dir(self, sourceset_id: str) -> Path:
+        return self.sourcesets_dir / _safe_id(sourceset_id, "sourceset id")
+
+    def sourceset_manifest(self, sourceset_id: str, version: int) -> Path:
+        """``manifest-<n>.jsonl``: version ``n`` of the sourceset, never rewritten."""
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise CfError(f"a sourceset manifest version is a positive integer, not {version!r}")
+        return self.sourceset_dir(sourceset_id) / f"manifest-{version}.jsonl"
+
+    def sourceset_manifests(self, sourceset_id: str) -> list[tuple[int, Path]]:
+        """``[(n, path)]`` of every manifest on disk, oldest first."""
+        directory = self.sourceset_dir(sourceset_id)
+        if not directory.is_dir():
+            return []
+        found = []
+        for path in directory.glob("manifest-*.jsonl"):
+            number = path.name[len("manifest-"):-len(".jsonl")]
+            if number.isdigit() and not number.startswith("0"):
+                found.append((int(number), path))
+        return sorted(found)
+
+    def sourceset_sources_dir(self, sourceset_id: str) -> Path:
+        return self.sourceset_dir(sourceset_id) / "sources"
+
+    def sourceset_source_dir(self, sourceset_id: str, source_id: str) -> Path:
+        """One web source's files: the raw bytes, the body, the layer and its views."""
+        return self.sourceset_sources_dir(sourceset_id) / _safe_id(source_id, "source_id")
+
+    def sourceset_state_json(self, sourceset_id: str) -> Path:
+        """The sourceset-level state file locate writes instead of companions/<n>/state.json."""
+        return self.sourceset_dir(sourceset_id) / "state.json"
+
+    def sourceset_enumerate_checkpoint(self, sourceset_id: str) -> Path:
+        """What an interrupted ``enumerate-wikiproject`` had been answered, to resume from."""
+        return self.sourceset_dir(sourceset_id) / "enumerate.checkpoint.json"
+
+    def candidates_dir(self, sourceset_id: str, universe_id: str) -> Path:
+        """L2: one candidates file per source, for one universe."""
+        return (self.sourceset_dir(sourceset_id) / "candidates"
+                / _safe_id(universe_id, "universe id"))
+
+    def candidates_json(self, sourceset_id: str, universe_id: str, source_id: str) -> Path:
+        return (self.candidates_dir(sourceset_id, universe_id)
+                / f"{_safe_id(source_id, 'source_id')}.json")
+
+    def candidates_kind_dir(self, sourceset_id: str, universe_id: str, kind: str) -> Path:
+        """L2 retrieved from another TOOLS database than the full one (``blind``,
+        ``planted-<sha16>``): a directory of its own under the full one's, so one arm
+        never overwrites another's files (references/locate-documents.md section 5)."""
+        return self.candidates_dir(sourceset_id, universe_id) / _safe_id(kind, "candidates kind")
+
+    @property
+    def corpora_dir(self) -> Path:
+        """Universes of libraries.  Not ``corpus/``, which holds harvested findings."""
+        return self.root / "corpora"
+
+    @property
+    def corpora(self) -> "CorporaPaths":
+        """The universe layout under ``corpora/`` (:class:`CorporaPaths`)."""
+        return CorporaPaths(self.corpora_dir)
+
+    def universe_dir(self, universe_id: str) -> Path:
+        return self.corpora.universe_dir(universe_id)
+
+    def universe_yaml(self, universe_id: str) -> Path:
+        return self.corpora.universe_yaml(universe_id)
+
+    def universe_index_dir(self, universe_id: str, library_id: str) -> Path:
+        return self.corpora.universe_index_dir(universe_id, library_id)
+
+    def universe_conventions_md(self, universe_id: str, library_id: str) -> Path:
+        return self.corpora.universe_conventions_md(universe_id, library_id)
+
+    def corpus_db(self, universe_id: str) -> Path:
+        """``corpus.sqlite``: derived from the indexes, rebuildable, opened read-only."""
+        return self.corpora.corpus_db(universe_id)
+
+    def corpus_db_blind(self, universe_id: str) -> Path:
+        """``corpus.blind.sqlite``: the G1-blind database -- no tags, no docstring Wikipedia URLs."""
+        return self.corpora.corpus_db_blind(universe_id)
+
+    @property
+    def exports_dir(self) -> Path:
+        return self.root / "exports"
+
+    def export_dir(self, set_id: str) -> Path:
+        """One sealed record set (references/locate-documents.md section 6)."""
+        return self.exports_dir / _safe_id(set_id, "record set id")
+
+    def export_report_json(self, set_id: str) -> Path:
+        """What one export refused and why: beside the set, never inside its seal."""
+        return self.reports_dir / f"export.{_safe_id(set_id, 'record set id')}.json"
+
+    @property
+    def benches_dir(self) -> Path:
+        return self.root / "benches"
+
+    def bench_dir(self, bench_id: str) -> Path:
+        return self.benches_dir / _safe_id(bench_id, "bench id")
+
+    @property
+    def campaigns_dir(self) -> Path:
+        return self.root / "campaigns"
+
+    def campaign_dir(self, campaign_id: str) -> Path:
+        return self.campaigns_dir / _safe_id(campaign_id, "campaign id")
+
+    def campaign_yaml(self, campaign_id: str) -> Path:
+        return self.campaign_dir(campaign_id) / "campaign.yaml"
+
+    def locate_outcomes_jsonl(self, run_id: str) -> Path:
+        """One row per passage of a harvested locate run, with its derived status."""
+        return self.reports_dir / f"locate-outcomes.{_safe_id(run_id, 'run_id')}.jsonl"
+
+    def locate_tally_json(self, run_id: str) -> Path:
+        return self.reports_dir / f"locate-tally.{_safe_id(run_id, 'run_id')}.json"
+
+    def locate_carry_json(self, from_run: str, to_run: str) -> Path:
+        """The carry-over map from one inventory run's cut to another's
+        (references/locate-documents.md section 12)."""
+        return (self.reports_dir / "locate-carry" / _safe_id(from_run, "run_id")
+                / f"{_safe_id(to_run, 'run_id')}.json")
 
     # -- ledger, routing, detection ------------------------------------
     @property
@@ -380,3 +526,39 @@ class WorkspacePaths:
             return []
         return sorted(p.name for p in self.runs_dir.iterdir()
                       if p.is_dir() and (p / "run.yaml").exists())
+
+
+@dataclass(frozen=True)
+class CorporaPaths:
+    """The universe layout under one directory: a workspace's ``corpora/``, or any other.
+
+    The one definition of where a universe's files live, which
+    ``WorkspacePaths`` delegates to for its ``corpora/``.  ``cf corpus --base
+    <dir>`` addresses a universe kept outside any workspace -- on the run host,
+    ``<dir>/<universe>/universe.yaml`` beside ``index/`` and ``corpus.sqlite`` --
+    through this class alone, so both places hold one layout
+    (references/locate-documents.md section 8).
+    """
+
+    base: Path
+
+    def universe_dir(self, universe_id: str) -> Path:
+        return self.base / _safe_id(universe_id, "universe id")
+
+    def universe_yaml(self, universe_id: str) -> Path:
+        return self.universe_dir(universe_id) / "universe.yaml"
+
+    def universe_index_dir(self, universe_id: str, library_id: str) -> Path:
+        return self.universe_dir(universe_id) / "index" / _safe_id(library_id, "library id")
+
+    def universe_conventions_md(self, universe_id: str, library_id: str) -> Path:
+        return (self.universe_dir(universe_id) / "conventions"
+                / f"{_safe_id(library_id, 'library id')}.md")
+
+    def corpus_db(self, universe_id: str) -> Path:
+        """``corpus.sqlite``: derived from the indexes, rebuildable, opened read-only."""
+        return self.universe_dir(universe_id) / "corpus.sqlite"
+
+    def corpus_db_blind(self, universe_id: str) -> Path:
+        """``corpus.blind.sqlite``: the G1-blind database -- no tags, no docstring Wikipedia URLs."""
+        return self.universe_dir(universe_id) / "corpus.blind.sqlite"
