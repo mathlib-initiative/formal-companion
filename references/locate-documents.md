@@ -3236,14 +3236,20 @@ audit: {rule, review_rounds, source: fetched | kept | null, documents, audited,
   whose `document_sha256` is the document's (the last round's, or the one a revert or the cap
   restored), per formal passage; the kind rule's counts are taken before (round 1) and after
   over the same documents.
-- **The skips** (`skips`, only when a verdicts file is `audit/2`, §13.11; a rule-1 receipt has no
-  such key): `before` sums round 1's `skip_report` and `after` the reviewed round's (the one
+- **The skips** (`skips`, only when a verdicts file is `audit/2` or `audit/3`, §13.11; a rule-1
+  receipt has no such key): `before` sums round 1's `skip_report` and `after` the reviewed round's (the one
   `residual` reads) over the documents that have one, `outside` the math paragraphs under skips
   outside the lead and the back matter and `mostly_skipped` the count of mostly skipped
   sections; `by_source` holds each document's two reports whole, with `by_section`. `cf harvest`
   prints `skips: <before> -> <after>, holding <outside> -> <outside> math paragraph(s) outside the
   lead and back matter; <mostly> -> <mostly> mostly skipped section(s)`. Reported, never refusing:
   the gate's `skipped` block (§2) stays what it was.
+- **The gaps** (`gaps`, only when a verdicts file is `audit/3`, §13.12; a rule-1 or rule-2
+  receipt has no such key): `before` sums round 1's `gap_report` and `after` the reviewed
+  round's over the documents that have one — `gaps`, `words`, `whole`, `documents` and
+  `by_section` (`{"<section>": {gaps, words}}`, summed) — and `by_source` holds each document's
+  two reports whole. `cf harvest` prints `gaps: <before> -> <after>, holding <words> -> <words>
+  word(s) of the body no passage and no skip holds`. Reported, never refusing.
 - **The cost** is the fetched envelopes' dollars by step (`cost.fleet.envelope_by_step`,
   `AUDIT_COST_STEPS`): a worker envelope named with no step is the first call
   (`worker_initial`), `revision` its revisions; a reviewer envelope with no step would be
