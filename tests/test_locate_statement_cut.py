@@ -1833,8 +1833,9 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 #: (:data:`COMMENTARY_BULLET`, PD5 for commentary on a method and an instruction;
 #: :data:`READINGS`, a notation sentence before the context rule's reading and a "need not"
 #: clause kept with its condition, the notation passage named `formal_math`) add 1,243:
-#: 18,567 with placeholders and 18,886 with real paths, so the ceiling is 18,900.  They are the prompt's own sentences, not edits of the
-#: shared cut rules, so the bench labeler and its gold stay as they are
+#: 18,567 with placeholders and 18,886 with real paths, so the ceiling is 18,900.  They are
+#: the prompt's own sentences, not edits of the shared cut rules, so the bench labeler and
+#: its gold stay as they are
 WORKER_MD_MAX_BYTES = 18_900
 
 #: the inventory prompt's one kind sentence, in "What a passage is" after the kinds: the
@@ -1867,10 +1868,9 @@ NOTATION_READING = (
     "A sentence that names a symbol the article's statements go on to use (\"we write N for "
     "the product of the counts\", \"let g denote the number of gadgets\") is a `notation` "
     "passage scoped `formal_math` even when those statements are in the next paragraph, and a "
-    "context sentence "
-    "just before it, in its paragraph, opens it; one that fixes the objects of an example or "
-    "an illustration (\"to illustrate, let W have 6 nodes and g = 2\") is context, symbols "
-    "and all.")
+    "context sentence just before it, in its paragraph, opens it; one that fixes the objects "
+    "of an example or an illustration (\"to illustrate, let W have 6 nodes and g = 2\") is "
+    "context, symbols and all.")
 NEED_NOT_READING = (
     "A clause that only says a condition is not needed (\"W need not be finite\", \"it is not "
     "necessary that …\") and the clause that gives the weaker condition (\"it suffices that "
