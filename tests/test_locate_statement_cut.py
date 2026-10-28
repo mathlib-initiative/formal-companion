@@ -9,7 +9,9 @@ cut points -- the units the
 receipt counts (``locate_text.units``), ``passage_ids.py``'s two passes and the
 rule it reads from the ``gate.json`` beside it, and the cut rules the inventory
 prompt and the bench labeler's inventory mode carry word for word with
-references/vocabulary.md section 1.11.  Every layer is rendered by the
+references/vocabulary.md section 1.11, and the maintainer's two calls on the cut (R-SPLIT
+and R-INSTANCE), which only a plan audited under audit rule 3 renders, in those rules'
+places and a paragraph of their own.  Every layer is rendered by the
 producer, ``sources.render_html``, from a synthetic page about widgets and
 gadgets, and every cut case -- connectives inside a sentence, lists, chains,
 displays, proofs, nested containment, a passage that would cross a paragraph --
@@ -1603,18 +1605,29 @@ def realistic_host() -> tuple[str, dict]:
                     "tasks_dir": f"{gate}/tasks"}
 
 
-def rendered_inventory(host: dict | None = None, run_id: str = "r1") -> str:
+def rendered_inventory(host: dict | None = None, run_id: str = "r1",
+                       audit_rule: int | None = None) -> str:
     """The inventory worker prompt as the planner renders it (placeholder host paths
-    unless ``host`` is given)."""
+    unless ``host`` is given): an unaudited plan's, or with ``audit_rule`` an audited plan's
+    under that audit rule (``vocab.INVENTORY_AUDIT_RULE`` patched as a flip sets it)."""
+    from unittest import mock
+
     from locate import presets as lpresets, prompts as lprompts
 
     class _Universe:
         id, sha256, libraries = "u1", "0" * 64, {}
 
     preset = lpresets.get(vocab.LOCATE_INVENTORY)
-    ctx = lprompts.build_context(preset, run_id=run_id, host=host or PLACEHOLDER_HOST,
-                                 universe=_Universe(), per_task=8)
-    return lprompts.render_prompts(preset, ctx)["worker.md"]
+    host = dict(host or PLACEHOLDER_HOST)
+    if audit_rule is None:
+        ctx = lprompts.build_context(preset, run_id=run_id, host=host, universe=_Universe(),
+                                     per_task=8)
+        return lprompts.render_prompts(preset, ctx)["worker.md"]
+    host.setdefault("prompts_dir", host["gate_dir"].replace("gate", "prompts"))
+    with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", audit_rule):
+        ctx = lprompts.build_context(preset, run_id=run_id, host=host, universe=_Universe(),
+                                     per_task=8, audit_rounds=3)
+        return lprompts.render_prompts(preset, ctx)["worker.md"]
 
 
 def labeler_cut_rules() -> str:
@@ -1835,13 +1848,15 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 #: clause kept with its condition, the notation passage named `formal_math`) add 1,243:
 #: 18,567 with placeholders and 18,886 with real paths, so the ceiling is 18,900.  They are
 #: the prompt's own sentences, not edits of the shared cut rules, so the bench labeler and
-#: its gold stay as they are.  The maintainer's two calls on the cut of 2026-10-28
-#: (:data:`CUT_CALLS`, R-SPLIT and R-INSTANCE, a paragraph after the two readings) add
-#: 1,380: 19,947 with placeholders and 20,266 with real paths, so the ceiling is 20,300, the
-#: next hundred that holds it.  The calls change what the worker cuts, so the worker must
-#: read them; no other sentence was shortened to pay for them, since each of those is a
-#: rule a test or the audit's rule card holds word for word
-WORKER_MD_MAX_BYTES = 20_300
+#: its gold stay as they are
+WORKER_MD_MAX_BYTES = 18_900
+#: the same ceiling for the worker prompt of a plan audited under audit rule 3, which says
+#: the maintainer's two calls on the cut of 2026-10-28 (R-SPLIT and R-INSTANCE: the edits of
+#: :data:`CUT_CALL_EDITS` and the paragraph :data:`CUT_CALLS`): 21,125 bytes with placeholders
+#: and 21,444 with real paths, so 21,500.  The calls change what the worker cuts, so the
+#: worker must read them; no other sentence was shortened to pay for them, since each of
+#: those is a rule a test or the audit's rule card holds word for word
+WORKER_MD_RULE3_MAX_BYTES = 21_500
 
 #: the inventory prompt's one kind sentence, in "What a passage is" after the kinds: the
 #: kind rule the audit's merge applies mechanically to a formal ``other`` passage in a
@@ -1883,21 +1898,22 @@ NEED_NOT_READING = (
 READINGS = ("Two readings of the rules above, said outright. " + NOTATION_READING + " "
             + NEED_NOT_READING)
 #: the maintainer's R-SPLIT of 2026-10-28 (references/vocabulary.md section 1.11, "Two calls
-#: on the cut"): a compound statement's conjuncts are the clauses of one statement, and
-#: independent facts are cut, one passage per fact; one formula that holds several is the
-#: one compound passage of independent facts left, since no passage can cut a formula
+#: on the cut"), in a plan audited under audit rule 3: facts that each stand as a result of
+#: their own are independent, the clauses of one statement are not; independent facts in
+#: separate sentences, clauses, list items or formulas are cut, and those one clause or one
+#: formula states are one passage with a conjunct (and a part) per fact, since no cut falls
+#: inside a clause or a formula but R-INSTANCE's
 SPLIT_CALL = (
-    "**Independent facts are separate passages.** The conjuncts of a compound statement, "
-    "which no cut separates, are the clauses of one statement: the existence and uniqueness "
-    "of one object, the directions or conditions of one equivalence, the cases of one law or "
-    "definition, or conclusions that make one result together (\"the series converges, and "
-    "its sum is s\"). Facts that each stand as a result of their own are separate statements "
-    "even about one subject, under one hypothesis or in one sentence (\"a prime widget is "
-    "cyclic and simple\"; \"the rank of W ⊕ V is the sum of theirs, and of W ⊗ V the "
-    "product\"): cut them, one passage per fact, where the clause, sentence, list item or "
-    "display that states each begins, each `statement` carrying the hypotheses they share. "
-    "Only one formula that holds several, which no passage can cut, stays one passage, shape "
-    "`equations`, a conjunct per fact.")
+    "**Independent facts are separate passages.** Facts that each stand as a result of their "
+    "own are independent, even about one subject or under one hypothesis; the clauses of one "
+    "statement are not: the existence and uniqueness of one object, the directions or "
+    "conditions of one equivalence, the cases of one law or definition in one sentence, display "
+    "or list. Independent facts in separate sentences, independent clauses, list items or "
+    "formulas of a display are separate passages, one per fact, each `statement` carrying the "
+    "hypotheses they share (\"the series converges, and its sum is s\" is two). Independent "
+    "facts that share one clause (\"a widget is round and red\") or one formula stay one "
+    "passage, shape `conclusions` or `equations`, a conjunct per fact, each linked by a part "
+    "of its own: no cut falls inside a clause or a formula, but R-INSTANCE's.")
 #: the maintainer's R-INSTANCE of 2026-10-28: a sentence naming several structures with one
 #: property is cut per structure, each linked to its own instance downstream (R-SPECIFIC),
 #: and the general notion with its definition is a passage of its own
@@ -1905,10 +1921,75 @@ INSTANCE_CALL = (
     "**A sentence that names several structures having one property is cut per structure**, "
     "one passage at the words that name each, the one place a passage is less than a clause "
     "(\"finite widgets, cyclic widgets and widgets over a field are sprocketed\" is three), "
-    "each `statement` saying that structure has the property; the general notion, with what "
-    "the sentence says defines it, is a `definition` passage of its own.")
-CUT_CALLS = ("Two calls of the maintainer on what one statement is (R-SPLIT, R-INSTANCE). "
-             + SPLIT_CALL + " " + INSTANCE_CALL)
+    "each `statement` saying that structure has the property, however short its words; the "
+    "general notion, with what the sentence says defines it, is a `definition` passage of its "
+    "own.")
+CUT_CALLS = ("Two calls of the maintainer on what one statement is (R-SPLIT, R-INSTANCE), "
+             "which the rules above say in their places. " + SPLIT_CALL + " " + INSTANCE_CALL)
+#: the shared cut rules' words a plan audited under audit rule 3 renders in their places
+#: (``{{#if cut_calls}}`` blocks), each ``(the unaudited prompt's words, rule 3's)``: the
+#: single-word line, the labeler's words, Units, Displays, Inside a sentence, the two shapes
+#: R-SPLIT reads and the worker's check; the paragraph :data:`CUT_CALLS` after the readings
+#: and the check's bullet :data:`CUT_CHECK` are rule 3's only (:func:`with_cut_calls`)
+CUT_CALL_EDITS = (
+    ("is no passage of its own: term links are a separate feature.\n",
+     "is no passage of its own: term links are a separate feature; an R-INSTANCE piece (below) "
+     "is no such word, however short: its `statement` says the sentence's property of the "
+     "structure it names.\n"),
+    ("(the bench's labeler cuts by the same words):",
+     "(the bench's labeler cuts by the same words, but for the maintainer's two calls below):"),
+    ("with the displays that sentence introduces; or a list item. It never runs",
+     "with the displays that sentence introduces; or a list item; or, by the two calls below, "
+     "one formula of a display or the words that name one structure. It never runs"),
+    ("A displayed formula is never cut and belongs to the sentence that introduces it. An "
+     "equation chain (a = b = c) is one statement, its end-to-end equation; its middle terms "
+     "are steps, not conjuncts. A display of several separate equations is one compound "
+     "statement, shape `equations`.",
+     "A formula is never cut. A display belongs to the sentence that introduces it, unless its "
+     "separate formulas each state an independent fact (R-SPLIT, below): then each formula "
+     "after the first starts a passage of its own (one with no space before it starts none, "
+     "and the display stays whole), and the sentence's words open the first. An equation chain "
+     "(a = b = c) is one statement, its end-to-end equation; its middle terms are steps, not "
+     "conjuncts. One formula that holds several equations, or separate formulas that state the "
+     "clauses of one statement (a system of equations for shared unknowns), are one compound "
+     "statement, shape `equations`, a conjunct per equation."),
+    ("(\", and\" only when a new subject follows). Never cut between a hypothesis and its "
+     "conclusion, inside an iff, or between conjuncts about one subject.",
+     "(\", and\" only when a clause with a subject of its own follows, a pronoun for the same "
+     "object too: \"W is finite, and it is abelian\" is two). Never cut between a hypothesis "
+     "and its conclusion, inside an iff, between the clauses of one statement (R-SPLIT, "
+     "below), or inside a clause, but by R-INSTANCE (below)."),
+    ("`conclusions` (several conclusions about one subject under one hypothesis) and "
+     "`equations` (one display holding several equations)",
+     "`conclusions` (independent facts that one clause states: R-SPLIT) and `equations` (one "
+     "formula holding several equations, or the equations of one statement: Displays)"),
+    ("inside an iff, between conjuncts about one subject (one passage, with `conjuncts`), or",
+     "inside an iff, between the clauses of one statement or inside a clause, but by "
+     "R-INSTANCE (one passage, with `conjuncts`), or"),
+)
+#: the worker's check of the cut under audit rule 3: one bullet more, after the first
+CUT_CHECK = ("- A compound passage holds the clauses of one statement, or independent facts "
+             "that one clause or one formula states (R-SPLIT): cut any other independent facts "
+             "it holds, and cut per structure a sentence that names several structures having "
+             "one property (R-INSTANCE).")
+#: where the paragraph and the check's bullet go: after the readings, after the check's first
+READINGS_END = "at a \";\" or at a sentence break.\n\n"
+CHECK_FIRST_END = "\"so that\" and a \";\" inside a formula are no connectives.\n"
+
+
+def with_cut_calls(prompt: str) -> str:
+    """An unaudited inventory worker prompt (or a rule-1 or rule-2 plan's) as a plan audited
+    under audit rule 3 renders it: :data:`CUT_CALL_EDITS` in their places, :data:`CUT_CALLS`
+    after the readings and :data:`CUT_CHECK` after the check's first bullet, each once."""
+    for old, new in CUT_CALL_EDITS:
+        assert prompt.count(old) == 1, old[:60]
+        prompt = prompt.replace(old, new)
+    for mark, added in ((READINGS_END, CUT_CALLS + "\n\n"), (CHECK_FIRST_END, CUT_CHECK + "\n")):
+        assert prompt.count(mark) == 1, mark
+        prompt = prompt.replace(mark, mark + added)
+    return prompt
+
+
 PROSE_FLOOR_SENTENCE = ("So must every other paragraph of eight words or more outside the back "
                         "matter (References, Notes, See also, External links and their like), "
                         "History included: a passage holds it, `expository` when it states "
@@ -2063,9 +2144,8 @@ class TestThePilotsPromptFixes(unittest.TestCase):
         self.assertIn("and otherwise leave it out.\n" + COMMENTARY_BULLET + "\n- **Inside a "
                       "proof", what)
         self.assertEqual(self.prompt.count(READINGS), 1)
-        # the maintainer's two calls on the cut follow the readings (TestTheCutCalls)
-        self.assertIn("no passage and no clause.\n\n" + READINGS + "\n\n" + CUT_CALLS
-                      + "\n\nFor each passage decide:", self.prompt)
+        self.assertIn("no passage and no clause.\n\n" + READINGS + "\n\nFor each passage "
+                      "decide:", self.prompt)
         cut = self.prompt[self.prompt.index("## How to cut"):
                           self.prompt.index("For each passage decide")]
         self.assertEqual(len(re.findall(r"(?m)^- \*\*", cut)), 10)
@@ -2087,63 +2167,160 @@ class TestThePilotsPromptFixes(unittest.TestCase):
 
 
 class TestTheCutCalls(unittest.TestCase):
-    """The maintainer's notes of 2026-10-28 on the cut, R-SPLIT and R-INSTANCE: one
-    paragraph of the inventory prompt's own, after the two readings, outside the shared cut
-    rules, which stay word for word the vocabulary's and the labeler's (so the bench labeler
-    and its gold are unchanged: references/vocabulary.md section 1.11, "Two calls on the
-    cut", says why)."""
+    """The maintainer's notes of 2026-10-28 on the cut, R-SPLIT and R-INSTANCE, which a plan
+    audited under audit rule 3 renders (``cut_calls``): one cut rule, said in the shared cut
+    rules' places (:data:`CUT_CALL_EDITS`), in a paragraph after the two readings
+    (:data:`CUT_CALLS`) and in the worker's check (:data:`CUT_CHECK`).  An unaudited plan's
+    prompt and a rule-1 or rule-2 plan's say none of it, so their worker cuts by the rules
+    their reviewers judge, and the shared rules stay word for word the vocabulary's and the
+    labeler's (so the bench labeler and its gold are unchanged: references/vocabulary.md
+    section 1.11, "Two calls on the cut", says why)."""
 
     @classmethod
     def setUpClass(cls):
-        cls.prompt = rendered_inventory()
+        cls.plain = rendered_inventory()
+        cls.prompt = rendered_inventory(audit_rule=3)
         cls.flat = " ".join(cls.prompt.split())
+        cls.lines = {re.match(r"- \*\*(.*?)\*\*", line).group(1): line
+                     for line in cut_rule_lines()}
+
+    def rule(self, name: str) -> str:
+        """Rule 3's render of one shared cut rule, by its bold name."""
+        return re.search(r"(?m)^- \*\*" + re.escape(name) + r"\*\* .*$", self.prompt).group(0)
+
+    def test_rule_3_is_the_plain_prompt_with_the_calls(self):
+        self.assertEqual(self.prompt, with_cut_calls(self.plain))
+        self.assertNotRegex(self.prompt, r"\{\{")
+        # the calls are rule 3's: an unaudited plan's and a rule-1 or rule-2 plan's prompt is
+        # the one it was, and says none of them
+        for rule in (1, 2):
+            with self.subTest(rule=rule):
+                self.assertEqual(rendered_inventory(audit_rule=rule), self.plain)
+        for needle in ("R-SPLIT", "R-INSTANCE", "Independent facts are separate",
+                       "cut per structure", "less than a clause", "\" is two"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(needle, self.plain)
+        self.assertIn("{{#if cut_calls}}", TEMPLATE)
+        self.assertIn("{{#unless cut_calls}}", TEMPLATE)
 
     def test_once_and_in_its_place(self):
         self.assertEqual(self.prompt.count(CUT_CALLS), 1)
         self.assertEqual(TEMPLATE.count(CUT_CALLS), 1)
+        self.assertIn("no passage and no clause.\n\n" + READINGS + "\n\n" + CUT_CALLS
+                      + "\n\nFor each passage decide:", self.prompt)
         cut = self.prompt[self.prompt.index("## How to cut"):
                           self.prompt.index("For each passage decide")]
-        self.assertIn(CUT_CALLS, cut)
         # no bullet: the How-to-cut list still holds exactly the nine rules and PD9
         self.assertEqual(len(re.findall(r"(?m)^- \*\*", cut)), 10)
         self.assertNotRegex(CUT_CALLS, r"\n")
+        # the rules the calls leave alone are the vocabulary's word for word
+        for name in ("The test.", "Lists.", "Proofs.", "Context.", "The subject."):
+            with self.subTest(rule=name):
+                self.assertIn(self.lines[name], self.flat)
+        self.assertIn(pd9_line(), self.flat)
+        # the check holds one bullet more, after its first
+        check = self.prompt[self.prompt.index("## Before you commit"):
+                            self.prompt.index("```bash\n<gate cmd>")]
+        self.assertEqual(check.count("\n- "), 5)
+        self.assertIn(CHECK_FIRST_END + CUT_CHECK + "\n- A reason after", check)
 
-    def test_what_r_split_says(self):
-        # a conjunct is a clause of one statement, the shapes' readings named
-        for needle in ("the existence and uniqueness of one object",
+    def test_one_cut_rule(self):
+        """Findings 1 and 2: the prompt says one thing.  "Conjuncts about one subject" is
+        gone wherever the shared rules said it (Inside a sentence, the shapes' `conclusions`,
+        the check), and its replacement, the clauses of one statement, is said in each; a
+        clause is cut only by R-INSTANCE, so independent facts one clause states are one
+        passage with a conjunct per fact, and two independent clauses are two passages, the
+        series example among them."""
+        for text in ("conjuncts about one subject", "about one subject under one hypothesis",
+                     "A display of several separate equations is one compound statement",
+                     "only when a new subject follows", "conclusions that make one result",
+                     "cyclic and simple", "prime widget"):
+            with self.subTest(gone=text):
+                self.assertNotIn(text, self.flat)
+        inside = self.rule("Inside a sentence.")
+        self.assertIn("between the clauses of one statement (R-SPLIT, below), or inside a "
+                      "clause, but by R-INSTANCE (below)", inside)
+        self.assertIn("(\", and\" only when a clause with a subject of its own follows", inside)
+        self.assertIn("`conclusions` (independent facts that one clause states: R-SPLIT)",
+                      self.rule("Conjuncts."))
+        self.assertIn("between the clauses of one statement or inside a clause, but by "
+                      "R-INSTANCE (one passage, with `conjuncts`)", self.flat)
+        self.assertIn("or, by the two calls below, one formula of a display or the words that "
+                      "name one structure.", self.rule("Units."))
+        # R-SPLIT: what is independent, what is cut, and what stays one passage
+        for needle in ("Facts that each stand as a result of their own are independent, even "
+                       "about one subject or under one hypothesis",
+                       "the existence and uniqueness of one object",
                        "the directions or conditions of one equivalence",
-                       "the cases of one law or definition",
-                       "conclusions that make one result together"):
-            self.assertIn(needle, SPLIT_CALL)
-        # independent facts are cut even where the Inside-a-sentence rule's "one subject"
-        # would have kept them, each statement reading on its own (the Context rule)
-        self.assertIn("even about one subject, under one hypothesis or in one sentence",
-                      SPLIT_CALL)
-        self.assertIn("one passage per fact", SPLIT_CALL)
-        self.assertIn("each `statement` carrying the hypotheses they share", SPLIT_CALL)
-        # the one exception the passage model forces: a formula is never cut
-        self.assertIn("Only one formula that holds several, which no passage can cut, stays "
-                      "one passage, shape `equations`", SPLIT_CALL)
-        self.assertIn("equations", vocab.COMPOUND_SHAPE_ORDER)
-        lines = {re.match(r"- \*\*(.*?)\*\*", line).group(1): line for line in cut_rule_lines()}
-        self.assertIn("A displayed formula is never cut", lines["Displays."])
+                       "the cases of one law or definition in one sentence, display or list",
+                       "Independent facts in separate sentences, independent clauses, list items "
+                       "or formulas of a display are separate passages, one per fact",
+                       "each `statement` carrying the hypotheses they share",
+                       "(\"the series converges, and its sum is s\" is two)",
+                       "Independent facts that share one clause (\"a widget is round and red\") "
+                       "or one formula stay one passage, shape `conclusions` or `equations`, a "
+                       "conjunct per fact, each linked by a part of its own",
+                       "no cut falls inside a clause or a formula, but R-INSTANCE's"):
+            with self.subTest(needle=needle[:40]):
+                self.assertIn(needle, SPLIT_CALL)
+        # the series example is two independent clauses joined by ", and" with a subject of
+        # its own after it: the connective rule cuts it, and the paragraph says it is two
+        self.assertIn(", and", vocab.CUT_CONNECTIVES)
+        self.assertIn("the series converges, and its sum is s", SPLIT_CALL)
+        self.assertIn("\"W is finite, and it is abelian\" is two", inside)
+        self.assertIn("conclusions", vocab.COMPOUND_SHAPE_ORDER)
 
-    def test_what_r_instance_says(self):
-        self.assertIn("is cut per structure**, one passage at the words that name each",
-                      INSTANCE_CALL)
-        self.assertIn("the one place a passage is less than a clause", INSTANCE_CALL)
-        self.assertIn("each `statement` saying that structure has the property", INSTANCE_CALL)
-        self.assertIn("the general notion, with what the sentence says defines it, is a "
-                      "`definition` passage of its own", INSTANCE_CALL)
+    def test_displays(self):
+        """Finding 4: a display whose separate formulas each state an independent fact is cut
+        one passage per formula, its introducing words on the first; one formula with several
+        equations, or the formulas of one statement, stay one `equations` passage."""
+        displays = self.rule("Displays.")
+        self.assertIn("A formula is never cut. A display belongs to the sentence that "
+                      "introduces it, unless its separate formulas each state an independent "
+                      "fact (R-SPLIT, below): then each formula after the first starts a "
+                      "passage of its own", displays)
+        self.assertIn("and the sentence's words open the first.", displays)
+        self.assertIn("One formula that holds several equations, or separate formulas that "
+                      "state the clauses of one statement (a system of equations for shared "
+                      "unknowns), are one compound statement, shape `equations`, a conjunct per "
+                      "equation.", displays)
+        # what no passage can do: start inside a formula, or at one with no space before it
+        self.assertIn("(one with no space before it starts none, and the display stays whole)",
+                      displays)
+        self.assertIn("A passage must start at a word, and never inside a formula.", self.flat)
+        self.assertIn("`equations` (one formula holding several equations, or the equations of "
+                      "one statement: Displays)", self.rule("Conjuncts."))
+        # the chain rule stands
+        self.assertIn("An equation chain (a = b = c) is one statement", displays)
+        self.assertIn("A displayed formula is never cut", self.lines["Displays."])
+
+    def test_r_instance_and_its_exemptions(self):
+        """Finding 5: an R-INSTANCE piece is cut inside a clause, may be one word, and states
+        the sentence's property of its structure: the single-word line exempts it."""
+        for needle in ("is cut per structure**, one passage at the words that name each",
+                       "the one place a passage is less than a clause",
+                       "each `statement` saying that structure has the property, however short "
+                       "its words",
+                       "the general notion, with what the sentence says defines it, is a "
+                       "`definition` passage of its own"):
+            with self.subTest(needle=needle[:40]):
+                self.assertIn(needle, INSTANCE_CALL)
         self.assertIn("definition", vocab.PASSAGE_KINDS)
+        self.assertIn("term links are a separate feature; an R-INSTANCE piece (below) is no "
+                      "such word, however short: its `statement` says the sentence's property "
+                      "of the structure it names.", self.flat)
 
     def test_the_examples_are_synthetic(self):
-        self.assertEqual(re.findall(r"#([0-9a-f]{8})\b", CUT_CALLS), [])
-        for word in ("widget", "W ⊕ V"):
+        for text in (CUT_CALLS, CUT_CHECK, " ".join(new for _old, new in CUT_CALL_EDITS)):
+            with self.subTest(text=text[:30]):
+                self.assertEqual(re.findall(r"#([0-9a-f]{8})\b", text), [])
+                # no article's words: none of the calls' own examples is quoted, nor smoke 4's
+                # cyclic-and-simple group
+                for word in ("gcd", "lcm", "factorization", "principal ideal", "Euclidean",
+                             "cyclic and simple", "group"):
+                    self.assertNotIn(word, text)
+        for word in ("widget", "the series converges"):
             self.assertIn(word, CUT_CALLS)
-        # no article's words: none of the calls' own examples is quoted
-        for text in ("gcd", "lcm", "factorization", "principal ideal", "Euclidean"):
-            self.assertNotIn(text, CUT_CALLS)
 
     def test_the_shared_rules_and_the_labeler_carry_none_of_it(self):
         for text, name in ((" ".join(cut_rule_lines()), "vocabulary"),
@@ -2152,13 +2329,23 @@ class TestTheCutCalls(unittest.TestCase):
                 for needle in ("R-SPLIT", "R-INSTANCE", "Independent facts are separate",
                                "cut per structure", "less than a clause"):
                     self.assertNotIn(needle, text)
-        # the vocabulary says the calls and why the labeler leaves them out
+        # the vocabulary says the calls, rule 3's render of the shared rules and why the
+        # labeler leaves them out
         start = VOCABULARY_MD.index("**Two calls on the cut**")
         block = " ".join(VOCABULARY_MD[start:VOCABULARY_MD.index("**Challenge verdicts**",
                                                                  start)].split())
         for needle in ("R-SPLIT", "R-INSTANCE", "four whole layer words",
-                       "the labeler's cut and its gold stay as they are"):
-            self.assertIn(needle, block)
+                       "The labeler's cut and its gold stay as they are", "audit rule 3",
+                       "the clauses of one statement", "a widget is round and red"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, block)
+
+    def test_the_prompts_size(self):
+        run_id, host = realistic_host()
+        real = rendered_inventory(host, run_id=run_id, audit_rule=3)
+        self.assertNotIn("<gate", real)
+        self.assertLessEqual(len(real.encode("utf-8")), WORKER_MD_RULE3_MAX_BYTES)
+        self.assertGreater(len(real.encode("utf-8")), WORKER_MD_MAX_BYTES)
 
 
 if __name__ == "__main__":

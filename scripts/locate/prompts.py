@@ -36,7 +36,13 @@ verdict, ``unskip``, ``--rule 2`` on the tools' command lines) sits in ``{{#if a
 blocks that render empty under rule 1, so a rule-1 plan's prompts are the ones the base
 commit rendered; audit rule 3's (section 13.12: the gaps, the gap verdict, the three readings
 of the cut on the rule card, the kind rule's expository answer, the ``commentary`` hint) in
-``{{#if audit_gaps}}`` blocks that render empty under rules 1 and 2.
+``{{#if audit_gaps}}`` blocks that render empty under rules 1 and 2.  The maintainer's two calls
+on the cut of 2026-10-28 (R-SPLIT and R-INSTANCE, references/vocabulary.md section 1.11) are
+audit rule 3's too, in the worker prompt as well: ``locate-inventory.md.tmpl`` says them in
+``{{#if cut_calls}}`` blocks, beside ``{{#unless cut_calls}}`` blocks that keep the shared cut
+rules' words, and ``cut_calls`` is true only in an audited plan of rule 3, so an unaudited plan's
+worker prompt and a rule-1 or rule-2 plan's are the ones they were, and a re-planned rule-1 or
+rule-2 run's worker cuts by the rules its reviewers judge.
 
 Every invocation is rendered from the run's own host paths, and the renderer
 (``plan.render``) refuses a template with an unfilled slot.
@@ -186,13 +192,16 @@ def audit_context(host: Mapping[str, str], review_rounds: int) -> dict[str, Any]
     2 ``audit_skips`` keeps the templates' skip blocks (section 13.11), which render empty
     under rule 1, so a rule-1 plan's prompts are the base commit's byte for byte; under rule 3
     ``audit_gaps`` keeps the gap blocks too (section 13.12), which render empty under rules 1
-    and 2, so a rule-2 plan's prompts are 3b29518's."""
+    and 2, so a rule-2 plan's prompts are 3b29518's, and ``cut_calls`` the worker prompt's two
+    calls on the cut (R-SPLIT, R-INSTANCE), which an unaudited plan renders empty too."""
     from .tend_root import audit_commands
     cmd = audit_commands(host["gate_dir"])
     rule = vocab.INVENTORY_AUDIT_RULE
     skips = rule >= 2
     return {
         "audit_gaps": rule >= 3,
+        # the maintainer's two calls on the cut (R-SPLIT, R-INSTANCE) in the worker prompt
+        "cut_calls": rule >= 3,
         "gap_verdict": vocab.AUDIT_GAP_VERDICT,
         "audited": True,
         "review_rounds": review_rounds,
@@ -280,6 +289,8 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         "per_task": per_task,
         "batch": vocab.CHALLENGE_BATCH_RECORDS,
         "is_inventory": preset.mode == vocab.LOCATE_INVENTORY,
+        # the inventory prompt's two calls on the cut, audit rule 3's (audit_context sets it)
+        "cut_calls": False,
         # the challenge reviewer's rule card says the conditional rule and that its
         # approval is final (references/locate-documents.md section 4)
         "is_challenge": preset.mode == vocab.LOCATE_CHALLENGE,
