@@ -49,6 +49,12 @@ lt = passage_ids.lt
 VOCABULARY_MD = (SKILL / "references" / "vocabulary.md").read_text(encoding="utf-8")
 PROPOSAL = (SKILL / "docs" / "proposals" / "statement-cut.md").read_text(encoding="utf-8")
 LABELER = (SKILL / "workflows" / "locate-label.workflow.js").read_text(encoding="utf-8")
+
+
+def _labeler_rules() -> int:
+    """The judgment rules the labeler labels by (``bench.gold.LABELER_RULES``)."""
+    from bench import gold as gold_mod
+    return gold_mod.labeler_rules(gold_mod.LABELER_VERSION)
 TEMPLATE = (SKILL / "templates" / "prompts" / "locate-inventory.md.tmpl").read_text(
     encoding="utf-8")
 
@@ -1741,7 +1747,9 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
         the transcriber enforces (``bench.gold.gold_bundle``); a part's enum is
         ``CONJUNCT_RELATIONS``."""
         conjunct = re.search(r"const CONJUNCT_RELATIONS = \[(.*?)\]", LABELER).group(1)
-        self.assertEqual(set(re.findall(r"'(\w+)'", conjunct)), set(vocab.CONJUNCT_RELATIONS))
+        # judgment rules 4's: a part that states only part of its claims says hasPart
+        self.assertEqual(set(re.findall(r"'(\w+)'", conjunct)),
+                         set(vocab.conjunct_relations(_labeler_rules())))
         schema = LABELER[LABELER.index("const LABEL_SCHEMA"):LABELER.index("const CUT_FIELDS")]
         description = re.search(r"bundle: \{.*?description: \"(.*?)\" \}", schema, re.S).group(1)
         strong = sorted(vocab.BUNDLE_RELATIONS, key=vocab.RELATION_STRENGTH.__getitem__)

@@ -933,8 +933,8 @@ before them.
 
 **The record set of status rule 2** (`cf-locate-recordset/2`;
 `docs/proposals/statement-cut.md` §2.4). A locate run whose `run.yaml` names
-`locate.status_rule: 2` — from the statement cut's flip on, exactly the runs of
-judgment rules 3 — exports `/2`; every other run exports `cf-locate-recordset/1`
+`locate.status_rule: 2` — from the statement cut's flip to the flip of the smoke-4
+audit's calls, exactly the runs of judgment rules 3 — exports `/2`; every other run exports `cf-locate-recordset/1`
 byte for byte as below. `/2` is `/1` with these differences, and no other:
 
 - `SEAL.json` carries `/1`'s keys and one more, `status_rule` (`2`), the version of
@@ -1874,7 +1874,11 @@ like a faithfulness run:
   version 2, written since the maintainer's PD5–PD9 (2026-10-20), adds PD6's
   whole part and PD7's junk value (§3, §4), so a run that names 1 is gated, also
   by the checkout's gate, without them; version 3, written from the statement
-  cut's flip on, is that proposal's (below). The bench holds its gold to the same
+  cut's flip on, is that proposal's (below); version 4, written from the flip of
+  the smoke-4 audit's calls on, is theirs (§3 and §4, "Under judgment rules 4";
+  `references/vocabulary.md` §1.11), which the gate knew before the planner wrote
+  it, and the planner writes status rule 3 beside it in a locate run's `run.yaml`
+  (`cflib.vocab.status_rule_of_judgment`). The bench holds its gold to the same
   version (`references/locate-bench.md` §8). A version above the gate's own, or a
   value that is not a non-negative integer, is exit 3.
 
@@ -1996,8 +2000,9 @@ like a faithfulness run:
   frozen inventory's `statement`, and a compound statement's `conjuncts` and
   `shape`; into a challenge task's record the same three and `conditional`
   (anomaly A3: a prominence sample's other records, judged only beside an overturn
-  of their passage); writes `locate.status_rule` (`STATUS_RULE`, 2) into a locate
-  run's `run.yaml`, exactly when its `judgment_rules` is 3; and refuses `--preset
+  of their passage); writes `locate.status_rule` (`STATUS_RULE`: 2 when its
+  `judgment_rules` is 3, and 3 from the flip of the smoke-4 audit's calls, when they are
+  4; `cflib.vocab.status_rule_of_judgment`) into a locate run's `run.yaml`; and refuses `--preset
   locate` over an inventory run whose gate.json names no `statement_cut_rule`
   (inventory the sources again) and `--preset locate-challenge` of a locate run
   judged under `judgment_rules` below 3, whose documents carry their own claim

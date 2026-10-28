@@ -131,9 +131,11 @@ def before_the_flip():
 
 #: what the planner wrote from the statement cut's flip to the flip of inv-pilot-1's fixes
 #: (docs/proposals/statement-cut.md section 7): span-end rule 2 and statement-cut rule 1,
-#: the pair inv-pilot-1 names, beside judgment rules 3
+#: the pair inv-pilot-1 names, beside judgment rules 3 (and status rule 2)
 BEFORE_THE_CONTINUATION = {"SPAN_END_RULE": vocab.SPAN_END_STATEMENT_CUT,
-                           "STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_FIRST}
+                           "STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_FIRST,
+                           "JUDGMENT_RULES": vocab.RULES_STATEMENT_CUT,
+                           "STATUS_RULE": vocab.STATUS_RULE_BUNDLE}
 
 
 def before_the_continuation():
@@ -152,8 +154,10 @@ def before_the_continuation():
 #: what the planner wrote from the flip of inv-pilot-1's fixes to the flip of the wide bound
 #: (docs/proposals/statement-cut.md sections 3.3 and 7): statement-cut rule 2 beside
 #: span-end rule 3, the pair inv-pilot-2 names, under the gate that knows statement-cut
-#: rule 3 too
-BEFORE_THE_WIDE = {"STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_CONTINUED}
+#: rule 3 too, beside judgment rules 3 (and status rule 2)
+BEFORE_THE_WIDE = {"STATEMENT_CUT_RULE": vocab.STATEMENT_CUT_CONTINUED,
+                   "JUDGMENT_RULES": vocab.RULES_STATEMENT_CUT,
+                   "STATUS_RULE": vocab.STATUS_RULE_BUNDLE}
 
 
 def before_the_wide():
@@ -168,6 +172,26 @@ def before_the_wide():
     from unittest import mock
 
     return mock.patch.multiple(vocab, **BEFORE_THE_WIDE)
+
+
+#: what the planner wrote from the flip of the wide bound to the flip of the smoke-4 audit's
+#: calls (references/vocabulary.md section 1.11): judgment rules 3, and status rule 2 in a
+#: locate run's run.yaml -- what smoke 4's runs name
+BEFORE_THE_SMOKE4_CALLS = {"JUDGMENT_RULES": vocab.RULES_STATEMENT_CUT,
+                           "STATUS_RULE": vocab.STATUS_RULE_BUNDLE}
+
+
+def before_the_smoke4_calls():
+    """Plan as the planner did before the flip of the smoke-4 audit's calls: rules 3, not 4.
+
+    A context manager over ``cflib.vocab`` (:data:`BEFORE_THE_SMOKE4_CALLS`), for a test of
+    how a run planned under judgment rules 3 and status rule 2 is gated, tallied or
+    re-planned now that the planner writes 4 and 3.  Its prompts are the ones a plan made
+    now renders, as :func:`before_the_flip`'s are.
+    """
+    from unittest import mock
+
+    return mock.patch.multiple(vocab, **BEFORE_THE_SMOKE4_CALLS)
 
 
 def cf(*argv: str) -> tuple[int, str, str]:

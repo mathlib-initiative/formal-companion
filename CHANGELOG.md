@@ -42,6 +42,34 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **Judgment rules 4, the flip: the smoke-4 audit's calls in the rules and the prompts**
+  (`references/vocabulary.md` §1.11; `templates/prompts/locate.md.tmpl`,
+  `locate-challenge.md.tmpl`, `locate-worker-system.md.tmpl`,
+  `workflows/locate-label.workflow.js`). `vocab.JUDGMENT_RULES` is `RULES_SMOKE4` (4) and
+  `STATUS_RULE` is `STATUS_RULE_BROAD` (3), so a run planned now names judgment rules 4 in its
+  gate.json and, for a locate run, status rule 3 in its run.yaml; a run planned before keeps its
+  versions and prompts and is gated, tallied and exported as before. The rules, word for word in
+  vocabulary.md, both locate prompts and the labeler: **PD11** (an instance argument that
+  excludes only a trivial case, `[Nontrivial R]` and the zero ring, does not narrow), with Fix
+  2a's r3 test amended to match ("no extra instance argument that excludes a case with real
+  content"); **R-EQ** (an equivalence is judged by the structure the passage asserts: more is
+  `broadMatch`, less `narrowMatch` or `hasPart`, the inverse no extra structure); **R-NAT**
+  (natural-number moduli for integer ones are an encoding, and PD2 says so); **R-ASSOC**
+  (`Associated` against equality in ℕ is PD10); **R-CHAIN** (the inventory's chain rule, a = b = c
+  asserts a = c, carried into locate and the challenge); **R-PD7** (a larger input domain with
+  content is `broadMatch`); **R-DEFFORM** (a theorem stating a defined object's formula on a
+  definition passage is `closeMatch`, so partial there, with Fix 3a amended to leave it);
+  **R-TABLE** (the default taken: the inventory statement sets a table's domain); **Fix 6d**
+  (PD6 judged with the readings the parts are credited with, a characterisation is one location,
+  quantifier order, a `hasPart` part); and, in the challenge prompt only, **Fix 6e** (a
+  downgrade's bridge, a confirm's `part_conventions` and `part_limits`). FM7 applies R-BROAD and
+  judges an equivalence by R-EQ. The prompts ask for the rules-4 fields (`pd6`, `bridge` or
+  `incomparable`, `part_conventions`, `part_limits`, a `hasPart` conjunct relation), and the
+  system prompt's gate list names their refusals. The labeler is `locate-label/7`, which
+  `bench.gold.LABELER_RULES` maps to 4 and whose gold is derived under status rule 3; its label
+  schema admits a `hasPart` conjunct relation, so gold of `/6` scores only runs of rules 3 and
+  the bench's gold is relabelled before a run planned now is scored. No inventory prompt changed
+  (it carries the chain rule already), so no byte ceiling moved.
 - **Judgment rules 4, the gate's checks** (`scripts/gate/verify_locate.py`,
   `cflib.vocab.RULES_SMOKE4`; `references/locate-documents.md` §3, §4 and §10,
   `references/vocabulary.md` §1.11). The gate knows judgment rules 4 before the planner

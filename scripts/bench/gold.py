@@ -64,7 +64,10 @@ from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GO
 #: the labeler, frozen by its file's sha (its prompts are inline in it)
 LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: bumped whenever the labeler's contract (args or result shape) or the rules it
-#: labels by change (/6: the statement cut's judgment rules 3 -- the cut rules in the
+#: labels by change (/7: the smoke-4 audit's judgment rules 4 -- PD11, the maintainer's
+#: calls R-EQ, R-NAT, R-ASSOC, R-CHAIN, R-PD7, R-DEFFORM and the tables default, fix 6d
+#: and a hasPart's conjunct_relation of hasPart, references/vocabulary.md section 1.11;
+#: /6: the statement cut's judgment rules 3 -- the cut rules in the
 #: inventory mode, a hasPart's conjunct_relation and the span's bundle in the label
 #: mode, PD9 reworded and the smoke-3 audit's prompt rules, docs/proposals/
 #: statement-cut.md section 7; /5: PD5-PD10, and R1's junk values replaced by PD7's test; PD10
@@ -78,7 +81,7 @@ LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: PD4, a stronger-hypotheses special case is narrowMatch; /3: the judgment rules
 #: R1-R7 and the policy defaults PD1-PD3 of references/vocabulary.md section 1.11,
 #: word for word)
-LABELER_VERSION = "locate-label/6"
+LABELER_VERSION = "locate-label/7"
 #: the first labeler version whose label rows name it (``labeler_version``): a row
 #: without the field was labelled before it (``cf bench freeze``)
 LABELER_VERSION_NAMED_FROM = "locate-label/5"
@@ -90,7 +93,7 @@ LABELER_VERSION_NAMED_FROM = "locate-label/5"
 #: (for a rules change or any other change to the labeler's contract) adds a line
 #: and never moves an old one
 LABELER_RULES = {"locate-label/3": 1, "locate-label/4": 1, "locate-label/5": 2,
-                 "locate-label/6": 3}
+                 "locate-label/6": 3, "locate-label/7": 4}
 #: G4: at most this many maintainer spot checks per release (section 8.1)
 G4_MAX_NEGATIVES = 30
 G4_MAX_POSITIVES = 20
@@ -696,12 +699,15 @@ def gold_bundle(declarations: list[dict], named: Any) -> tuple[dict | None, str 
 
 
 def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list[dict],
-             *, conjuncts: bool = False) -> tuple[list[dict], list[dict]]:
+             *, conjuncts: bool = False,
+             rules: int = vocab.RULES_STATEMENT_CUT) -> tuple[list[dict], list[dict]]:
     """The labeler's declarations kept at the pin, and the ones dropped with the reason.
 
     ``conjuncts`` (gold of judgment rules 3, :func:`gold_status_rule`): a ``hasPart``
     keeps the ``conjunct_relation`` the labeler gave it, one of
-    ``CONJUNCT_RELATIONS`` or none (a part of a span that states one claim), and is
+    ``CONJUNCT_RELATIONS`` -- and ``hasPart`` too for a labeler of judgment rules 4,
+    ``rules`` (``vocab.conjunct_relations``) -- or none (a part of a span that states one
+    claim), and is
     dropped with the reason for any other value; no other relation carries one.  And
     a declaration is kept once (:func:`_once`): status rule 2 keys a location by
     ``library:declaration``, which a span's locations hold at most once each.
@@ -718,9 +724,10 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
             dropped.append({**d, "reason": f"relation {relation!r} is not a locate relation"})
             continue
         part = d.get("conjunct_relation") if conjuncts and relation == vocab.HAS_PART else None
-        if part is not None and part not in vocab.CONJUNCT_RELATIONS:
+        allowed = vocab.conjunct_relations(rules)
+        if part is not None and part not in allowed:
             dropped.append({**d, "reason": f"conjunct_relation {part!r} is not one of "
-                                           f"{', '.join(sorted(vocab.CONJUNCT_RELATIONS))}"})
+                                           f"{', '.join(sorted(allowed))}"})
             continue
         row = inputs.declaration(conn, lib, libs[lib]["commit"], name)
         if not row:
@@ -918,7 +925,8 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
             scope = label.get("scope") if label.get("scope") in vocab.SCOPES else None
             kind = label.get("passage_kind") if label.get("passage_kind") in vocab.PASSAGE_KINDS \
                 else vocab.PASSAGE_OTHER
-            kept, dropped = _recheck(conn, libs, label.get("declarations") or [], conjuncts=cut)
+            kept, dropped = _recheck(conn, libs, label.get("declarations") or [], conjuncts=cut,
+                                     rules=labeler_rules(stamp["labeler_version"]))
             if mode == "calibrate":
                 # h measures what the tag-blind HUNTERS found: a declaration counts only
                 # when a hunter returned it and the labeler kept it at the pin

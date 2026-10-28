@@ -589,8 +589,10 @@ RULES_SMOKE4 = 4
 #: parts alone names every claim of the passage is refused (PD6), and a junk value
 #: is no ``closeMatch`` convention (PD7: ``CONVENTION_JUNK_VALUE`` leaves
 #: ``CLOSE_MATCH_CONVENTIONS``); version 3 (``RULES_STATEMENT_CUT``) is the statement
-#: cut's, written from its flip on (docs/proposals/statement-cut.md section 7).
-JUDGMENT_RULES = RULES_STATEMENT_CUT
+#: cut's, written from its flip on (docs/proposals/statement-cut.md section 7) to the flip
+#: of the smoke-4 audit's calls; version 4 (``RULES_SMOKE4``) is theirs, written from that
+#: flip on, beside status rule 3 in a locate run's run.yaml.
+JUDGMENT_RULES = RULES_SMOKE4
 #: The first span-end rule version of the statement cut (gate rule 2's end check; the
 #: proposal's section 3): a passage that gives no ``until`` ends at the earlier of its
 #: extent (its block, and the displays its last sentence introduces) and the next
@@ -800,7 +802,9 @@ STATUS_RULE_BUNDLE = 2
 STATUS_RULE_BROAD = 3
 #: every status rule this code derives by, oldest first
 STATUS_RULES = (STATUS_RULE_D1, STATUS_RULE_BUNDLE, STATUS_RULE_BROAD)
-STATUS_RULE = STATUS_RULE_BUNDLE
+#: what ``cf plan-locate`` writes now: ``status_rule_of_judgment(JUDGMENT_RULES)``, 2 from the
+#: statement cut's flip and 3 from the flip of the smoke-4 audit's calls
+STATUS_RULE = STATUS_RULE_BROAD
 
 
 def status_rule_of_judgment(rules: int) -> int:
