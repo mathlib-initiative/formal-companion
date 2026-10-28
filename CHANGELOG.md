@@ -69,7 +69,12 @@ release has something to say.
   `bench.gold.LABELER_RULES` maps to 4 and whose gold is derived under status rule 3; its label
   schema admits a `hasPart` conjunct relation, so gold of `/6` scores only runs of rules 3 and
   the bench's gold is relabelled before a run planned now is scored. No inventory prompt changed
-  (it carries the chain rule already), so no byte ceiling moved.
+  (it carries the chain rule already), so no byte ceiling moved. Two words the flip left behind
+  are corrected to match PD1, R-PD7 and PD11: Fix 4b's defined object is `exactMatch` or
+  `closeMatch` (R7), or `broadMatch` when it generalises the passage's object, never a part; and
+  the locate prompt's step 7 and the challenger's coverage claim count an extra instance argument
+  against a part only when it excludes a case with real content. The labeler stays
+  `locate-label/7` (no gate check moved), its file sha with the text.
 - **Judgment rules 4, the gate's checks** (`scripts/gate/verify_locate.py`,
   `cflib.vocab.RULES_SMOKE4`; `references/locate-documents.md` §3, §4 and §10,
   `references/vocabulary.md` §1.11). The gate knows judgment rules 4 before the planner
