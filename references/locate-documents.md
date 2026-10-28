@@ -250,6 +250,17 @@ is enough.
   `skipped: {skips, chars, math_paragraphs, finder_passages, by_source}`, the
   math paragraphs and deterministic finders' passages a skip covers and no
   passage keeps.
+- **The prose floor** (`prose_floor_rule` 1 in `gate.json`, `cflib.vocab.PROSE_FLOOR_RULE`,
+  which the planner writes into every inventory it plans from the prose floor's flip on; the
+  smoke-4 audit: two statements in formula-free paragraphs no passage and no skip held, which
+  the floor above never asked about): every other `paragraphs.json` entry outside the back
+  matter (a top heading of `AUDIT_BACK_MATTER`: References, Notes, See also, External links
+  and their like) that holds at least `PROSE_FLOOR_MIN_WORDS` (8) words of the layer
+  overlaps a passage span or a `skips` span too. History sections are not exempt: a skip
+  leaves one out with its reason, and an audited run's skip audit judges it (§13.11). The
+  receipt's `skipped` block gains `prose_paragraphs`, those entries a skip covers and no
+  passage keeps. A `gate.json` without the key — every inventory planned before it — is
+  gated without the prose floor, and its `skipped` block has no such key.
 - With L2 curated hits for the article (§5; gate rule 4, off in the blind arm),
   the inventory keeps a passage of prominence `subject` scoped `formal_math`
   (the hits are for the article's own subject, so relabelling it `central`

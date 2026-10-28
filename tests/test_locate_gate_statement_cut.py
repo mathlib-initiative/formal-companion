@@ -189,7 +189,7 @@ class CutFixture(G.Fixture):
         self.write_gate()
 
     def versions(self, **keys) -> None:
-        for key in ("judgment_rules", "span_end_rule", "statement_cut_rule"):
+        for key in ("judgment_rules", "span_end_rule", "statement_cut_rule", "prose_floor_rule"):
             self.gate.pop(key, None)
         self.gate.update({k: v for k, v in keys.items() if v is not None})
         self.write_gate()

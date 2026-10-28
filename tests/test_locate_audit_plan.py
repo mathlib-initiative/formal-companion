@@ -10,8 +10,8 @@ reads with no unfilled slot of the plan's or the turn's, the rule card's C1 to C
 against docs/proposals/statement-cut.md section 3.4, every JSON shape the prompts
 show against the schema ``inventory_audit.py`` holds the files to, and an unaudited
 plan equal to the base commit's (99fbad4) apart from its commit, the staged files
-whose source changed since and the inventory prompt's kind sentence.  Every page,
-library and document is made up.
+whose source changed since, the inventory prompt's kind and prose-floor sentences and
+the gate.json files' prose floor.  Every page, library and document is made up.
 """
 from __future__ import annotations
 
@@ -92,6 +92,24 @@ def admitted(command: str, tools: str) -> bool:
 
 def json_blocks(text: str) -> list[str]:
     return re.findall(r"```json\n(.*?)\n```", text, re.DOTALL)
+
+
+#: the coverage floor's sentence of the inventory prompt, which the prose floor's follows
+FLOOR = b"that floor is checked mechanically."
+#: the prose floor's line of an inventory's gate.json (gate rule 8, ``prose_floor_rule``)
+PROSE_FLOOR_LINE = b'  "prose_floor_rule": %d,\n' % vocab.PROSE_FLOOR_RULE
+
+
+def with_prose_floor(worker: bytes) -> bytes:
+    """A worker prompt rendered before the prose floor, with its sentence after the floor's."""
+    assert worker.count(FLOOR) == 1
+    return worker.replace(FLOOR, FLOOR + b" " + TS.PROSE_FLOOR_SENTENCE.encode("utf-8"))
+
+
+def without_prose_floor(gate: bytes) -> bytes:
+    """An inventory's gate.json planned now, less its ``prose_floor_rule`` line (once)."""
+    assert gate.count(PROSE_FLOOR_LINE) == 1, gate[:400]
+    return gate.replace(PROSE_FLOOR_LINE, b"")
 
 
 class Audited(Campaign):
@@ -616,11 +634,12 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     files staged from a source this branch changed, ``audit_turn.py``, which
     every locate root's ``bin/`` stages since the turn machine, the worker
     prompt, which is the base commit's with the kind sentence
-    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and nothing else,
-    and the three gate.json files, which name statement-cut rule 3 where the base
-    commit's named 2 (the flip of the wide bound, docs/proposals/statement-cut.md
-    section 7) and nothing else; ``run.yaml`` differs only in its skill commit, those
-    files' pins and the worker prompt's two shas.
+    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and the prose floor's
+    (``PROSE_FLOOR_SENTENCE``) after the coverage floor's and nothing else, and the three
+    gate.json files, which name statement-cut rule 3 where the base commit's named 2 (the
+    flip of the wide bound, docs/proposals/statement-cut.md section 7) and
+    ``prose_floor_rule`` 1 (gate rule 8's prose floor) and nothing else; ``run.yaml``
+    differs only in its skill commit, those files' pins and the worker prompt's two shas.
     """
 
     def setUp(self):
@@ -671,24 +690,28 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         allowed = {f"tend-root/{staged}" for staged, rel in sources.items()
                    if rel in self.changed}
         self.assertIn("tend-root/bin/audit_turn.py", allowed)
-        # the worker prompt gains the kind sentence after the kinds, and only that
+        # the worker prompt gains the kind sentence after the kinds and the prose floor's
+        # after the coverage floor's, and only those
         kinds = b"(`passage_kind`; `other` when it states something that is none of these)."
         worker = ("prompts/worker.md", "tend-root/prompts/worker.md")
         for name in worker:
             with self.subTest(prompt=name):
                 self.assertEqual(then[name].count(kinds), 1)
-                self.assertEqual(now[name], then[name].replace(
-                    kinds, kinds + b" " + TS.KIND_SENTENCE.encode("utf-8")))
+                self.assertEqual(now[name], with_prose_floor(then[name].replace(
+                    kinds, kinds + b" " + TS.KIND_SENTENCE.encode("utf-8"))))
         self.assertEqual(sorted(set(differ) & set(worker)), sorted(worker))
-        # the gate.json files name statement-cut rule 3 for 2, and only that
+        # the gate.json files name statement-cut rule 3 for 2 and the prose floor, and only
+        # that
         gates = ("gate.json", "gate.local.json", "tend-root/gate/gate.json")
         rule = b'"statement_cut_rule": '
         for name in gates:
             with self.subTest(gate=name):
                 was = rule + str(vocab.STATEMENT_CUT_CONTINUED).encode()
                 self.assertEqual(then[name].count(was), 1)
-                self.assertEqual(now[name], then[name].replace(
+                self.assertEqual(without_prose_floor(now[name]), then[name].replace(
                     was, rule + str(vocab.STATEMENT_CUT_WIDE).encode()))
+                self.assertEqual(json.loads(now[name])["prose_floor_rule"],
+                                 vocab.PROSE_FLOOR_RULE)
                 self.assertEqual(json.loads(now[name])["statement_cut_rule"],
                                  vocab.STATEMENT_CUT_RULE)
         self.assertEqual(sorted(set(differ) & set(gates)), sorted(gates))
@@ -747,9 +770,11 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
 
     Under audit rule 1 every file of the run directory is byte for byte the base
     commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
-    the files staged from a source this branch changed (the three audit tools and
-    ``bin/audit_turn.py``); ``run.yaml`` differs only in its skill commit, those files'
-    pins and the five audit templates' shas.  Under rule 2 the five rendered audit
+    the files staged from a source this branch changed (the three audit tools,
+    ``bin/audit_turn.py`` and the gate), the worker prompt, which gains the prose floor's
+    sentence, and the three gate.json files, which gain ``prose_floor_rule``; ``run.yaml``
+    differs only in its skill commit, those files' pins, the five audit templates' shas
+    and the worker prompt's two.  Under rule 2 the five rendered audit
     prompts (in ``prompts/`` and the tend root's copy), the two wrappers' ``CF_AUDIT_RULE``,
     ``locate.audit.rule`` and ``config_shas.agents.audit.rule`` and the rendered prompts'
     shas differ too, and nothing else.  An unaudited plan stays the base commit's
@@ -801,9 +826,29 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
                 + (BRIDGE_SCRIPTS["agentbox-claude"][0],) if f"scripts/run/{name}" in self.changed}
         return out
 
-    def yaml_left(self, then_yaml: dict, now_yaml: dict) -> tuple[dict, dict]:
+    def floor_only(self, then: dict, now: dict, differ: set) -> set:
+        """``differ`` less the worker prompts and gate.json files, after holding each to the
+        base commit's with the prose floor's sentence or key added and nothing else."""
+        worker = {"prompts/worker.md", "tend-root/prompts/worker.md"}
+        gates = {"gate.json", "gate.local.json", "tend-root/gate/gate.json"}
+        for name in sorted(worker):
+            self.assertEqual(now[name], with_prose_floor(then[name]), name)
+        for name in sorted(gates):
+            self.assertEqual(without_prose_floor(now[name]), then[name], name)
+        self.assertLessEqual(worker | gates, differ)
+        return differ - worker - gates
+
+    def yaml_left(self, then_yaml: dict, now_yaml: dict, now: dict) -> tuple[dict, dict]:
         """Both run.yaml files with what may differ popped: the time each was made (two
-        fresh plans), the commit, the staged files' pins and the audit templates' shas."""
+        fresh plans), the commit, the staged files' pins, the audit templates' shas and the
+        worker prompt's two (its rendered prompt's and its template's)."""
+        self.assertEqual(now_yaml["prompts"].pop("worker.md"),
+                         hashlib.sha256(now["prompts/worker.md"]).hexdigest())
+        then_yaml["prompts"].pop("worker.md")
+        template = "locate-inventory.md.tmpl"
+        self.assertEqual(now_yaml["locate"]["config_shas"]["prompts"].pop(template),
+                         hashing.sha256_file(SKILL / "templates" / "prompts" / template))
+        then_yaml["locate"]["config_shas"]["prompts"].pop(template)
         for doc in (then_yaml, now_yaml):
             doc.pop("created")
         for block in (then_yaml["locate"], now_yaml["locate"]):
@@ -818,23 +863,26 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         then, now, then_yaml, now_yaml = self.both(1)
         differ = {k for k in then.keys() | now.keys()
                   if k != "run.yaml" and then.get(k) != now.get(k)}
+        differ = self.floor_only(then, now, differ)
         self.assertEqual(differ, self.staged_changed())
-        self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
-                          "tend-root/gate/inventory_render.py",
-                          "tend-root/gate/inventory_edit.py"}, differ)
+        self.assertLessEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
+                              "tend-root/gate/inventory_render.py",
+                              "tend-root/gate/inventory_edit.py",
+                              "tend-root/gate/verify_locate.py"}, differ)
         for name in AUDIT_PROMPTS:
             self.assertEqual(now[f"prompts/{name}"], then[f"prompts/{name}"], name)
         self.assertEqual(now_yaml["locate"]["audit"], {"rule": 1, "review_rounds": 3})
         moved = {f"tend-root/{k}" for k, v in now_yaml["locate"]["gate_files"].items()
                  if then_yaml["locate"]["gate_files"].get(k) != v}
-        self.assertEqual(moved, differ)
-        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml)
+        self.assertEqual(moved, differ | {"tend-root/gate/gate.json"})
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml, now)
         self.assertEqual(now_yaml, then_yaml)
 
     def test_rule_2_differs_in_the_rule_and_its_prompts_only(self):
         then, now, then_yaml, now_yaml = self.both(2)
         differ = {k for k in then.keys() | now.keys()
                   if k != "run.yaml" and then.get(k) != now.get(k)}
+        differ = self.floor_only(then, now, differ)
         prompts = {f"{d}{name}" for d in ("prompts/", "tend-root/prompts/")
                    for name in AUDIT_PROMPTS}
         wrappers = {"tend-root/bin/worker-agent.sh", "tend-root/bin/reviewer-agent.sh"}
@@ -851,7 +899,7 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
             self.assertEqual(now_yaml["prompts"].pop(name),
                              hashlib.sha256(now[f"prompts/{name}"]).hexdigest())
             then_yaml["prompts"].pop(name)
-        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml)
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml, now)
         self.assertEqual(now_yaml, then_yaml)
 
 
