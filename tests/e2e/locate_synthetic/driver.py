@@ -511,6 +511,10 @@ class Pipeline:
             at = end + 1
         return " ".join(words)
 
+    #: the reason this run's worker gives the skip of a paragraph the prose floor holds
+    #: (gate rule 8 under ``prose_floor_rule`` 1) and it locates nothing in
+    PROSE_SKIP_REASON = "a paragraph without a formula: nothing to locate"
+
     #: how this run's worker labels each finder passage, by finder
     LABELS = {"theorem_box": ("theorem", "central", "formal_math"),
               # the widget lemma's lead bolds the name of the theorem it states
@@ -556,7 +560,9 @@ class Pipeline:
         """An inventory worker's documents for ``run_id``, cut one passage per statement.
 
         The finders' passages, then one "model" passage per math paragraph the finders
-        left uncovered (the coverage floor, gate rule 8), and a re-cut's ``more_starts``
+        left uncovered (the coverage floor, gate rule 8) and one skip per other paragraph of
+        the body of at least ``PROSE_FLOOR_MIN_WORDS`` words they left uncovered (rule 8's
+        prose floor, which the plan's gate.json names), and a re-cut's ``more_starts``
         (``{source: [(start, scope)]}``) and ``untils`` (``{source: {start: until}}``).
         Each quote stops before the passage's end, since under the span-end rule 3 (as
         under 2) a passage ends at the next passage's start, or its ``until``, and never
@@ -580,12 +586,24 @@ class Pipeline:
                 paragraphs = self.read_json(source_dir / "paragraphs.json")
                 formulas = self.read_json(source_dir / "formulas.json")
                 proposals = [dict(f) for f in d.get("finders") or []]
+                skips = []
                 for para in paragraphs:
                     a, b = para["span"]
-                    if para.get("math") and not any(f["span"][0] <= a < f["span"][1]
-                                                    for f in proposals):
+                    if any(f["span"][0] <= a < f["span"][1] for f in proposals):
+                        continue
+                    section = para.get("section") or []
+                    if para.get("math"):
                         proposals.append({"finder": "model", "start": a, "span": [a, b],
-                                          "section": para.get("section") or []})
+                                          "section": section})
+                    elif (len(layer[a:b].split()) >= vocab.PROSE_FLOOR_MIN_WORDS
+                          and not (section and str(section[0]).strip().casefold()
+                                   in vocab.AUDIT_BACK_MATTER)):
+                        # the prose floor: a paragraph of the body this worker locates
+                        # nothing in is left out with a skip and its reason, never
+                        # silently (a skip, not an expository passage, so the passages
+                        # and their ids, which the later stages pin, are the ones every
+                        # earlier plan made)
+                        skips.append({"span": [a, b], "reason": self.PROSE_SKIP_REASON})
                 for start, scope in (more_starts or {}).get(sid, []):
                     proposals.append({"finder": "model", "start": start, "scope": scope,
                                       "span": [start, start], "section": []})
@@ -628,7 +646,7 @@ class Pipeline:
                         passage["scope"] = "expository"
                     passages.append(passage)
                 doc = self._header("locate-inventory", run_id, task_id, d)
-                doc.update(passages=passages, skips=[], notes="")
+                doc.update(passages=passages, skips=skips, notes="")
                 path = self.write_json(out / task_id / f"{sid}.json", doc)
                 proc = self.isolated(run_id, "passage_ids.py", "--source-dir", str(source_dir),
                                      "--document", str(path), "--write")
@@ -1882,19 +1900,22 @@ class Pipeline:
         in a git worktree of its own, and each turn runs the planned wrapper
         (``tend-root/bin/<role>-agent.sh``: ``CF_AUDIT_RULE`` makes the bridge hand it to
         ``bin/audit_turn.py``, which calls ``agent_call.py --step``) with a fake
-        ``agentbox`` first on PATH (:data:`FAKE_AGENTBOX`).  The plan is audit rule 2's
-        (references/locate-documents.md section 13.11), and the widget page's worker
+        ``agentbox`` first on PATH (:data:`FAKE_AGENTBOX`).  The plan is audit rule 3's
+        (references/locate-documents.md sections 13.11 and 13.12: the skips and the gaps
+        judged; this page's gaps, if any, are judged clean), and the widget page's worker
         skipped its first corollary (:meth:`_skip_corollaries`).  Its auditor flags its
         first formal passage and the skip, with the statement the skip hides; the skeptic
-        upholds both, the skip's with evidence from inside it; the merge rejects; the
-        worker's revision applies a ``set`` and, for the skip, an ``unskip`` and an ``add``
-        through the staged ``inventory_edit.py --rule 2``, ``passage_ids.py`` and the
-        gate, and commits; round 2's checker finds both applied and, the final round, the
-        merge approves.  The other pages are clean in round 1.  The tend root's ``audit/``
+        upholds both, the skip's with evidence from inside it; the merge adds rule 3's kind
+        rule verdict on the page's model passage of kind other and rejects; the worker's
+        revision applies a ``set`` per passage verdict and, for the skip, an ``unskip`` and
+        an ``add`` through the staged ``inventory_edit.py --rule 3``, ``passage_ids.py`` and
+        the gate, and commits; round 2's checker finds all three applied and, the final
+        round, the merge approves.  The other pages are clean in round 1.  The tend root's ``audit/``
         and ``usage/`` are landed under ``runs/<run>/host/`` as the remote harvest's
         fetch lands them (``*.json`` only), and ``cf harvest`` writes the receipt's
         ``audit`` block (section 13.10), its ``skips`` one skip of one math paragraph
-        before and none after.
+        before and none after, beside the prose floor's skips of paragraphs with no math,
+        which stay.
         """
         from cflib import vocab
 
@@ -1905,7 +1926,7 @@ class Pipeline:
         paths = cf_main_paths(self.ws)
         root = paths.tend_root(run_id)
         rule = vocab.INVENTORY_AUDIT_RULE
-        check(rule == 2, f"the planner writes audit rule {rule}, not the skip audit's 2")
+        check(rule == 3, f"the planner writes audit rule {rule}, not the gap audit's 3")
         for role in ("worker", "reviewer"):
             wrapper = (root / "bin" / f"{role}-agent.sh").read_text(encoding="utf-8")
             check(f'export CF_AUDIT_RULE="{rule}"' in wrapper and 'export CF_AUDIT_ROUNDS="2"'
@@ -1964,26 +1985,33 @@ class Pipeline:
                                                        "revert": 0}
               and rounds.get("2", {}).get("decisions") == {"approve": 1, "request_changes": 0,
                                                            "revert": 0}
-              and rounds["2"]["counts"].get("status_applied") == 2
+              and rounds["2"]["counts"].get("status_applied") == 3
               and rounds["1"]["counts"].get("skips_upheld") == 1
-              and rounds["1"]["counts"].get("hidden_statements") == 1,
+              and rounds["1"]["counts"].get("hidden_statements") == 1
+              # rule 3's kind rule reads every formal passage of kind other: the widget
+              # page's model passage of kind other, outside a proof, gets its verdict too
+              and rounds["1"]["counts"].get("kind_rule") == 1
+              and rounds["1"]["counts"].get("gaps") == 0,
               f"the rounds are not round 1's rejection and round 2's approval: {rounds}")
-        check(per.get(WIDGET, {}).get("actionable_by_round") == [2, 0]
+        check(per.get(WIDGET, {}).get("actionable_by_round") == [3, 0]
               and per[WIDGET].get("reviewed_round") == 2
               and block.get("residual", {}).get("actionable") == 0,
               f"the widget page's verdicts were not applied: {per.get(WIDGET)}")
         skips = block.get("skips") or {}
         before, after = skips.get("before") or {}, skips.get("after") or {}
+        # beside the corollary's skip, the prose floor's: two on the widget page and one on
+        # the gadget-lattice page, which hold no math paragraph and stay
         check((before.get("skips"), before.get("math_paragraphs"), before.get("outside"),
-               before.get("documents")) == (1, 1, 1, 3)
-              and (after.get("skips"), after.get("math_paragraphs")) == (0, 0)
+               before.get("documents")) == (4, 1, 1, 3)
+              and (after.get("skips"), after.get("math_paragraphs")) == (3, 0)
               and (skips.get("by_source") or {}).get(WIDGET, {}).get("before", {})
               .get("by_section") == {"Statement > Corollaries": {"skipped": 1, "math": 1}},
               f"the receipt's skips are not one skip of one math paragraph before and none "
               f"after: {skips}")
         widget_doc = json.loads(widget.read_text(encoding="utf-8"))
-        check(widget_doc["skips"] == [] and sum(p["section"] == ["Statement", "Corollaries"]
-                                                for p in widget_doc["passages"]) == 1,
+        check({s["reason"] for s in widget_doc["skips"]} == {self.PROSE_SKIP_REASON}
+              and sum(p["section"] == ["Statement", "Corollaries"]
+                      for p in widget_doc["passages"]) == 1,
               f"the corollary was not repaired into its passage: {widget_doc['skips']}")
         check(block.get("turns", {}).get("rejections") == 1,
               f"the turn machine recorded {block.get('turns')} rejections, not one")
@@ -2012,7 +2040,8 @@ class Pipeline:
         doc = self.read_json(draft)
         doc["passages"] = [p for p in doc["passages"]
                            if not span[0] <= p["span"][0] < span[1]]
-        doc["skips"] = [{"span": span, "reason": self.AUDIT_SKIP_REASON}]
+        doc["skips"] = sorted(doc["skips"] + [{"span": span, "reason": self.AUDIT_SKIP_REASON}],
+                              key=lambda s: s["span"])
         self.write_json(draft, doc)
         proc = self.isolated(run_id, "passage_ids.py", "--source-dir", str(source_dir),
                              "--document", str(draft), "--write")
@@ -2072,8 +2101,9 @@ class Pipeline:
 #: ``audit_turn.py`` makes through ``agent_call.py`` from what the call's prompt names, at the
 #: audit rule its rendering index names.  The auditor flags the first formal passage of the
 #: page when FAKE_FLAG is set, and every skip whose reason is FAKE_SKIP with the statements its
-#: list items start; the skeptic upholds every flag with the first words of its span, a
-#: skip's from inside the skip, and hunts every unflagged skip of its part; the checker finds
+#: list items start, and (rule 3) every gap clean; the skeptic upholds every flag with the
+#: first words of its span, a skip's from inside the skip, and hunts every unflagged skip and
+#: (rule 3) every gap of its part; the checker finds
 #: every verdict applied and no collateral harmful; the worker's revision writes one ``set``
 #: operation per passage verdict and, per skip verdict, an ``unskip`` and an ``add`` per
 #: statement, runs the edit tool, the id tool and the gate the prompt names, reports each
@@ -2153,6 +2183,11 @@ if call:
                                              for st in statements(row["span"])]
                               if flagged else []})
             data["skips"] = skips
+        if rule >= 3:
+            # every gap of the part judged: clean (this page's worker leaves none that states)
+            data["gaps"] = [{"gap": gid, "verdict": "clean", "rule": 0, "merge_with": "",
+                             "reason": "", "action": "", "statements": []}
+                            for gid in index["parts"][part - 1].get("gaps") or []]
     elif step == "skeptic":
         flags = load("r%d.flags.part%d.json" % (k, part))
         flagged = {f["item"] for f in flags["flags"]}
@@ -2173,6 +2208,9 @@ if call:
             skipped = {f.get("skip") for f in flags["flags"]}
             data.update(examined_skips=[x for x in shown if x not in skipped] if k == 1 else [],
                         missed_skips=[])
+        if rule >= 3:
+            gaps = index["parts"][part - 1].get("gaps") or []
+            data.update(examined_gaps=list(gaps) if k == 1 else [], missed_gaps=[])
     else:
         expect = load("r%d.check.part%d.expect.json" % (k, part))
         data = dict(head("check", k, schema),

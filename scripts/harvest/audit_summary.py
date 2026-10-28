@@ -25,8 +25,13 @@ approved exactly those bytes:
   refusals, retries, audit_failed, reverts, gate resets, tampering);
 * ``cost_usd``: the envelopes' dollars by step (``cost.fleet.envelope_by_step``),
   named by :data:`cflib.vocab.AUDIT_COST_STEPS`;
-* ``skips``, only when a verdicts file is ``audit/2`` (section 13.11, audit rule 2): what
-  the documents skip, before (round 1's ``skip_report``) and after (the reviewed round's,
+* ``gaps``, only when a verdicts file is ``audit/3`` (section 13.12, audit rule 3): what the
+  documents leave in gaps, before (round 1's ``gap_report``) and after (the reviewed round's),
+  summed and by source, each with its gaps by section (:func:`gaps_block`).  Reported, never
+  refusing.
+* ``skips``, only when a verdicts file is ``audit/2`` or ``audit/3`` (section 13.11, audit
+  rule 2): what the documents skip, before (round 1's ``skip_report``) and after (the
+  reviewed round's,
   the one ``residual`` reads), summed, and by source with each section's count
   (:func:`skips_block`).  Reported, never refusing.
 
@@ -224,17 +229,31 @@ def _skip_sum(reports: list[dict]) -> dict:
 
 def skips_block(per_source_rounds: dict[str, tuple[int | None, dict[int, dict]]]) -> dict | None:
     """The receipt's ``audit.skips``: ``{before, after, by_source}`` over the documents whose
-    verdicts files are ``audit/2``, ``before`` round 1's ``skip_report`` summed and ``after``
-    the reviewed round's; ``by_source`` each document's two reports whole (``by_section``
-    and ``mostly_skipped`` with them).  None when no verdicts file is ``audit/2``, so a rule-1
-    receipt is what it was."""
-    if not any(str(v.get("decision_rule")) == "audit/2"
+    verdicts files are ``audit/2`` or ``audit/3``, ``before`` round 1's ``skip_report``
+    summed and ``after`` the reviewed round's; ``by_source`` each document's two reports
+    whole (``by_section`` and ``mostly_skipped`` with them).  None when no verdicts file is
+    either, so a rule-1 receipt is what it was."""
+    if not any(str(v.get("decision_rule")) in SKIP_DECISION_RULES
                for _reviewed, rounds in per_source_rounds.values() for v in rounds.values()):
         return None
+    before, after, by_source = _reports(per_source_rounds, "skip_report")
+    return {"before": _skip_sum(before), "after": _skip_sum(after), "by_source": by_source}
+
+
+#: the decision tables whose verdicts files carry a ``skip_report`` (audit rule 2 and on) and
+#: a ``gap_report`` (audit rule 3)
+SKIP_DECISION_RULES = ("audit/2", "audit/3")
+GAP_DECISION_RULES = ("audit/3",)
+
+
+def _reports(per_source_rounds: dict[str, tuple[int | None, dict[int, dict]]], key: str
+             ) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    """Each document's round-1 and reviewed-round report under ``key``: ``(befores, afters,
+    {source: {before, after}})``, a document with neither left out."""
     before, after, by_source = [], [], {}
     for sid, (reviewed, rounds) in sorted(per_source_rounds.items()):
-        first = (rounds.get(1) or {}).get("skip_report")
-        last = (rounds.get(reviewed) or {}).get("skip_report") if reviewed else None
+        first = (rounds.get(1) or {}).get(key)
+        last = (rounds.get(reviewed) or {}).get(key) if reviewed else None
         if not isinstance(first, dict) and not isinstance(last, dict):
             continue
         row = {}
@@ -245,7 +264,39 @@ def skips_block(per_source_rounds: dict[str, tuple[int | None, dict[int, dict]]]
             after.append(last)
             row["after"] = last
         by_source[sid] = row
-    return {"before": _skip_sum(before), "after": _skip_sum(after), "by_source": by_source}
+    return before, after, by_source
+
+
+def _gap_sum(reports: list[dict]) -> dict:
+    """Gap reports summed: the gaps, their words, the whole blocks among them, the documents
+    and the gaps by section."""
+    out: dict[str, Any] = {"gaps": 0, "words": 0, "whole": 0, "documents": len(reports),
+                           "by_section": {}}
+    for report in reports:
+        for key in ("gaps", "words", "whole"):
+            if _int(report.get(key)):
+                out[key] += report[key]
+        for section, row in (report.get("by_section") or {}).items():
+            if not isinstance(row, Mapping):
+                continue
+            mine = out["by_section"].setdefault(str(section), {"gaps": 0, "words": 0})
+            for key in ("gaps", "words"):
+                if _int(row.get(key)):
+                    mine[key] += row[key]
+    out["by_section"] = dict(sorted(out["by_section"].items()))
+    return out
+
+
+def gaps_block(per_source_rounds: dict[str, tuple[int | None, dict[int, dict]]]) -> dict | None:
+    """The receipt's ``audit.gaps`` (section 13.12): ``{before, after, by_source}`` over the
+    documents whose verdicts files are ``audit/3``, ``before`` round 1's ``gap_report``
+    summed and ``after`` the reviewed round's, each with the gaps by section; None when no
+    verdicts file is ``audit/3``, so a rule-1 or rule-2 receipt is what it was."""
+    if not any(str(v.get("decision_rule")) in GAP_DECISION_RULES
+               for _reviewed, rounds in per_source_rounds.values() for v in rounds.values()):
+        return None
+    before, after, by_source = _reports(per_source_rounds, "gap_report")
+    return {"before": _gap_sum(before), "after": _gap_sum(after), "by_source": by_source}
 
 
 def _cost(envelopes: Path | None) -> tuple[dict | None, dict | None, int]:
@@ -366,6 +417,9 @@ def summarise(corpus_dir: Path, plan: Mapping[str, Any], *, audit_dir: Path | No
     skips = skips_block(skip_rounds)
     if skips is not None:
         out["skips"] = skips
+    gaps = gaps_block(skip_rounds)
+    if gaps is not None:
+        out["gaps"] = gaps
     return out
 
 
@@ -420,6 +474,12 @@ def describe(block: Mapping[str, Any], indent: str = "  ") -> list[str]:
                      f"{a.get('outside', 0)} -> {b.get('outside', 0)} math paragraph(s) outside "
                      f"the lead and back matter; {a.get('mostly_skipped', 0)} -> "
                      f"{b.get('mostly_skipped', 0)} mostly skipped section(s)")
+    gaps = block.get("gaps")
+    if isinstance(gaps, Mapping):
+        a, b = gaps.get("before") or {}, gaps.get("after") or {}
+        lines.append(f"{indent}  gaps: {a.get('gaps', 0)} -> {b.get('gaps', 0)}, holding "
+                     f"{a.get('words', 0)} -> {b.get('words', 0)} word(s) of the body no "
+                     f"passage and no skip holds")
     turns = block.get("turns") or {}
     lines.append(f"{indent}  turns: " + ", ".join(f"{k} {v}" for k, v in turns.items()))
     if block.get("cost_usd"):

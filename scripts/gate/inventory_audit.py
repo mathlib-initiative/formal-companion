@@ -19,7 +19,15 @@ flag names, the merge keeps an upheld skip flag whose evidence is inside the ski
 the mechanical **skip rule** (:func:`skip_facts`), ``collateral`` reports ``skip_edit``,
 the decision table ``audit/2`` adds one clause, and every verdicts file carries the
 round's :func:`skip_report`.  ``validate --rule 2 --gate-config`` also reads the layer and
-names what the merge would drop of a valid file (:func:`skip_text_problems`).
+names what the merge would drop of a valid file (:func:`skip_text_problems`).  **Audit rule
+3** (section 13.12, ``cf-inventory-audit/3``) audits the gaps too: each run of a block's own
+text of the body that no passage and no skip holds, of :data:`GAP_MIN_WORDS` words or more
+(:func:`gap_facts`), is named ``r<k>-g<nnn>`` and judged once in the auditor's ``gaps``
+(``clean`` or ``gap_statements``), the skeptic hunts every gap no flag names, the merge keeps an
+upheld gap flag whose evidence is inside the gap, ``strip --rule 3`` reads the gaps on the
+layer (``--gate-config``), every verdicts file carries the round's :func:`gap_report`, and the
+kind rule reads every formal ``other`` passage with its expository answer
+(:func:`kind_rule_applies`, :data:`KIND_RULE_ACTION_3`).
 
 It runs on the run host from the gate directory, like the gate: standard
 library only, no ``cflib`` (``cflib.vocab`` holds the vocabulary, and
@@ -70,10 +78,12 @@ EXIT_BROKEN = 3
 # --------------------------------------------------------------------------- #
 
 #: the audit rules this tool knows (``--rule``, default 1): rule 1 audits the passages, rule
-#: 2 the skips too (references/locate-documents.md section 13.11); a run's files carry its
-#: rule's schema, and the decision table's version is ``audit/<rule>`` in a verdicts file
-AUDIT_RULES = (1, 2)
-AUDIT_SCHEMAS = {1: "cf-inventory-audit/1", 2: "cf-inventory-audit/2"}
+#: 2 the skips too (references/locate-documents.md section 13.11), rule 3 the gaps too and
+#: the smoke-4 readings (section 13.12); a run's files carry its rule's schema, and the
+#: decision table's version is ``audit/<rule>`` in a verdicts file
+AUDIT_RULES = (1, 2, 3)
+AUDIT_SCHEMAS = {1: "cf-inventory-audit/1", 2: "cf-inventory-audit/2",
+                 3: "cf-inventory-audit/3"}
 AUDIT_SCHEMA = AUDIT_SCHEMAS[1]
 #: the rule a call runs at without ``--rule``: rule 1, so inv-pilot-3's calls are what they were
 DEFAULT_RULE = 1
@@ -167,6 +177,34 @@ SKIP_RULE_ACTION = ("cut each definition, theorem, equation or declarative state
                     "this skip into a passage of its own (C6); proof narration becomes "
                     "expository; keep a skip only on furniture")
 SKIP_BLOCK_BYTES = 20_000
+#: --- rule 3: the gaps and the smoke-4 readings (section 13.12).  A gap is a run of the
+#: body that no passage and no skip holds, inside one block's own text (a block's span less
+#: the blocks nested in it), outside the back matter, of at least GAP_MIN_WORDS words; it is
+#: named ``r<k>-g<nnn>``, round k's numbering in span order, and judged once, ``clean`` or
+#: ``gap_statements`` (the statements it holds, which no passage keeps)
+GAP_VERDICT = "gap_statements"
+GAP_VERDICTS = (VERDICT_CLEAN, GAP_VERDICT)
+GAP_MIN_WORDS = 8
+#: the rendering's body block of a gap, in full to GAP_BLOCK_MAX characters (its first and
+#: last GAP_BLOCK_SIDE past that)
+GAP_BLOCK_MAX = 1200
+GAP_BLOCK_SIDE = 500
+#: the kind rule's action under rule 3, whose kind rule reads every formal ``other`` passage
+#: and answers expository for one that asserts nothing (PD5)
+KIND_RULE_ACTION_3 = (KIND_RULE_ACTION + "; scope it expository instead when it asserts "
+                      "nothing about mathematical objects (narration, commentary on a method, "
+                      "an instruction, set-up: PD5)")
+#: the rendering's ``commentary`` hint under rule 3 (advisory, never a verdict): a formal
+#: passage with an efficiency word and no digit and no complexity term, one that starts as an
+#: instruction, or one with a meta phrase
+COMMENTARY_EFFICIENCY = ("faster", "slower", "quicker", "efficient", "efficiently",
+                         "efficiency", "inefficient", "practical", "impractical",
+                         "dramatically", "speeds up", "speed up")
+COMMENTARY_COMPLEXITY = ("polynomial", "exponential", "logarithmic", "linear time",
+                         "quadratic", "complexity", "o(")
+COMMENTARY_STARTS = ("compute", "proceed", "repeat", "for each of them", "to illustrate")
+COMMENTARY_PHRASES = ("follows from this proof", "one additional fact", "may be used for",
+                      "need not be")
 #: how the lead's section path is written where a section is named
 LEAD = "(lead)"
 FORMAL = "formal_math"
@@ -181,6 +219,7 @@ VERDICT_ID = re.compile(r"r([1-9][0-9]?)-v([0-9]{3,})\Z")
 FLAG_ID = re.compile(r"r([1-9][0-9]?)-f([0-9]{3,})\Z")
 COLLATERAL_ID = re.compile(r"r([1-9][0-9]?)-x([0-9]{3,})\Z")
 SKIP_ID = re.compile(r"r([1-9][0-9]?)-s([0-9]{3,})\Z")
+GAP_ID = re.compile(r"r([1-9][0-9]?)-g([0-9]{3,})\Z")
 MAX_PROBLEMS = 200
 #: where every file this module writes must be: the worktree's mirror of the stage's files
 OUT_DIR = (".tend", "audit")
@@ -287,10 +326,35 @@ def _rule2_records() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     return out
 
 
+def _rule3_records() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    """Rule 3's shapes: rule 2's, with every gap judged (``gaps``, a row in the skip row's
+    shape but for ``skip_ok``), the skeptic's gap hunt, and the gap verdict a skeptic may
+    uphold.  The repair has no operation of its own: a gap's statements are ``add`` and
+    ``set`` operations, as any passage's."""
+    out = _rule2_records()
+    out["audit"][0]["gaps"] = ("rows", "gap_row")
+    out["gap_row"] = ({"gap": "gap_id", "verdict": ("enum", GAP_VERDICTS), "rule": "rule",
+                       "merge_with": "item?", "reason": ("words", REASON_WORDS),
+                       "action": ("words", ACTION_WORDS),
+                       "statements": ("rows", "skip_statement")}, {"n": "count"})
+    out["skeptic"][0].update(examined_gaps="gap_ids",
+                             missed_gaps=("rows", "missed_gap_row"))
+    out["skeptic_verdict"][0]["verdict"] = ("enum",
+                                            AUDIT_VERDICTS + (SKIP_VERDICT, GAP_VERDICT))
+    out["missed_gap_row"] = ({"gap": "gap_id", "verdict": ("enum", (GAP_VERDICT,)),
+                              "rule": "rule", "merge_with": "item?",
+                              "evidence": ("words", EVIDENCE_WORDS),
+                              "reason": ("words", REASON_WORDS),
+                              "action": ("words", ACTION_WORDS),
+                              "statements": ("rows", "skip_statement")}, {"n": "count"})
+    return out
+
+
 #: the shapes of each rule: rule 1's are :data:`RECORDS`, as inv-pilot-3's files were held
-RECORDS_BY_RULE = {1: RECORDS, 2: _rule2_records()}
-#: the operations of each rule, and what each takes
+RECORDS_BY_RULE = {1: RECORDS, 2: _rule2_records(), 3: _rule3_records()}
+#: the operations of each rule, and what each takes (rule 3 adds none)
 OP_KEYS_BY_RULE = {1: OP_KEYS, 2: {**OP_KEYS, "unskip": (("skip",), ("keep",))}}
+OP_KEYS_BY_RULE[3] = OP_KEYS_BY_RULE[2]
 
 
 def edit_ops(rule: int) -> tuple[str, ...]:
@@ -368,15 +432,17 @@ def _type_problem(value: Any, spec: Any, where: str, rule: int = DEFAULT_RULE) -
     for name, pattern, shape in (("verdict_id", VERDICT_ID, "r<round>-v<nnn>"),
                                  ("flag_id", FLAG_ID, "r<round>-f<nnn>"),
                                  ("collateral_id", COLLATERAL_ID, "r<round>-x<nnn>"),
-                                 ("skip_id", SKIP_ID, "r<round>-s<nnn>")):
+                                 ("skip_id", SKIP_ID, "r<round>-s<nnn>"),
+                                 ("gap_id", GAP_ID, "r<round>-g<nnn>")):
         if spec == name:
             return None if isinstance(value, str) and pattern.match(value) else \
                 f"{where} is {value!r}, not an id {shape}"
-    if spec == "skip_ids":
+    if spec in ("skip_ids", "gap_ids"):
+        what = spec[:-1]
         if not isinstance(value, list):
-            return f"{where} is not a list of skip ids"
+            return f"{where} is not a list of {what[:-3]} ids"
         for i, one in enumerate(value):
-            problem = _type_problem(one, "skip_id", f"{where}[{i}]")
+            problem = _type_problem(one, what, f"{where}[{i}]")
             if problem:
                 return problem
         return None
@@ -538,10 +604,38 @@ def in_example(passage: dict) -> bool:
     return any(re.search(r"\bexamples?\b", s, re.IGNORECASE) for s in section_path(passage))
 
 
-def kind_rule_applies(passage: dict) -> bool:
-    """The kind rule's passages: formal, of kind ``other``, in a proof or example section."""
-    return (is_formal(passage) and passage.get("passage_kind") == KIND_OTHER
-            and any(KIND_RULE_SECTION.search(s) for s in section_path(passage)))
+def kind_rule_applies(passage: dict, rule: int = DEFAULT_RULE) -> bool:
+    """The kind rule's passages: formal, of kind ``other``, in a proof or example section;
+    under rule 3 every formal passage of kind ``other`` (section 13.12: a method's
+    commentary in a "Computation" section escaped the section filter)."""
+    if not (is_formal(passage) and passage.get("passage_kind") == KIND_OTHER):
+        return False
+    return rule >= 3 or any(KIND_RULE_SECTION.search(s) for s in section_path(passage))
+
+
+def kind_rule_action(rule: int = DEFAULT_RULE) -> str:
+    """The kind rule's fixed action: rule 3's names the expository answer too."""
+    return KIND_RULE_ACTION_3 if rule >= 3 else KIND_RULE_ACTION
+
+
+def _has_phrase(text: str, phrase: str) -> bool:
+    return re.search(r"(?<![\w])" + re.escape(phrase) + r"(?![\w])", text) is not None
+
+
+def commentary_hint(text: str) -> bool:
+    """Rule 3's advisory ``commentary`` hint on a formal passage's text (never a verdict):
+    an efficiency word (:data:`COMMENTARY_EFFICIENCY`) with no digit and no complexity term
+    (:data:`COMMENTARY_COMPLEXITY`), a start that instructs (:data:`COMMENTARY_STARTS`), or a
+    meta phrase (:data:`COMMENTARY_PHRASES`), each matched case-folded as whole words."""
+    folded = " ".join(str(text).casefold().split())
+    if any(folded.startswith(start) and not folded[len(start):len(start) + 1].isalnum()
+           for start in COMMENTARY_STARTS):
+        return True
+    if any(_has_phrase(folded, phrase) for phrase in COMMENTARY_PHRASES):
+        return True
+    return (any(_has_phrase(folded, word) for word in COMMENTARY_EFFICIENCY)
+            and not re.search(r"[0-9]", folded)
+            and not any(term in folded for term in COMMENTARY_COMPLEXITY))
 
 
 def threshold(formal: int) -> int:
@@ -804,6 +898,119 @@ def skip_text(layer: str, fact: dict) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# rule 3: the gaps (section 13.12)
+# --------------------------------------------------------------------------- #
+
+def subtract(span: tuple[int, int], spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The pieces of ``span`` no span of ``spans`` covers, in order."""
+    a, b = span
+    out, cursor = [], a
+    for x, y in sorted((max(a, x), min(b, y)) for x, y in spans if x < b and a < y):
+        if x > cursor:
+            out.append((cursor, x))
+        cursor = max(cursor, y)
+    if cursor < b:
+        out.append((cursor, b))
+    return out
+
+
+def own_text(paragraphs: list[dict]) -> list[dict]:
+    """Each ``paragraphs.json`` block's own text: its span less the blocks nested in it, as
+    ``{span, block, block_span, math, section}`` pieces in span order, so no character is
+    any two blocks' (of two entries of one span, a theorem box and its paragraph, the first
+    in the table's order owns it)."""
+    rows = _paragraph_rows(paragraphs)
+    out = []
+    for i, row in enumerate(rows):
+        a, b = row["span"]
+        if any(other["span"] == row["span"] for other in rows[:i]):
+            continue
+        inner = [other["span"] for other in rows
+                 if other["span"] != row["span"] and a <= other["span"][0]
+                 and other["span"][1] <= b]
+        for piece in subtract((a, b), inner):
+            out.append({"span": piece, "block": row["block"], "block_span": list(row["span"]),
+                        "math": row["math"], "section": row["section"]})
+    return sorted(out, key=lambda r: r["span"])
+
+
+def is_back_matter(path: list[str]) -> bool:
+    """A section of the back matter: a top heading of :data:`BACK_MATTER` (not the lead)."""
+    return bool(path) and is_furniture(path)
+
+
+def gap_id(round_: int, n: int) -> str:
+    return f"r{round_}-g{n:03d}"
+
+
+def gap_number(value: str) -> tuple[int, int] | None:
+    """``(round, n)`` of a gap id, else None."""
+    m = GAP_ID.match(str(value)) if isinstance(value, str) else None
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def held_spans(doc: dict) -> list[tuple[int, int]]:
+    """What holds the layer's text: the passages' spans and the skips'."""
+    return ([s for p in doc.get("passages") or [] if (s := span_of(p))]
+            + [span_of(s) for _i, s in skip_order(doc)])
+
+
+def gap_facts(doc: dict, paragraphs: list[dict], layer: str, round_: int) -> list[dict]:
+    """Every gap of ``doc`` (rule 3, section 13.12), in span order: each run of a block's own
+    text (:func:`own_text`) outside the back matter that no passage and no skip holds, its
+    whitespace trimmed, of at least :data:`GAP_MIN_WORDS` words, as ``{id, span, block,
+    block_span, section, words, math, whole}`` -- ``section`` its block's path, ``whole`` the
+    run is all its block's own text.  Under the prose floor (gate rule 8) a whole block of
+    the body is never one; what is left are the runs inside a partly held block."""
+    held = held_spans(doc)
+    out = []
+    for piece in own_text(paragraphs):
+        if is_back_matter(piece["section"]):
+            continue
+        for x, y in subtract(tuple(piece["span"]), held):
+            text = layer[x:y]
+            x2 = x + len(text) - len(text.lstrip())
+            y2 = y - (len(text) - len(text.rstrip()))
+            if x2 >= y2:
+                continue
+            n = len(layer[x2:y2].split())
+            if n < GAP_MIN_WORDS:
+                continue
+            own = layer[piece["span"][0]:piece["span"][1]]
+            out.append({"span": [x2, y2], "block": piece["block"],
+                        "block_span": piece["block_span"], "section": piece["section"],
+                        "words": n, "math": piece["math"],
+                        "whole": layer[x2:y2] == own.strip()})
+    out.sort(key=lambda f: f["span"])
+    for n, fact in enumerate(out, 1):
+        fact["id"] = gap_id(round_, n)
+    return [{"id": f.pop("id"), **f} for f in out]
+
+
+def gap_report(facts: list[dict]) -> dict:
+    """What the round's document leaves in gaps (the receipt's ``audit.gaps``):
+    ``{gaps, words, whole, by_section: {section: {gaps, words}}}``."""
+    by_section: dict[str, dict] = {}
+    for fact in facts:
+        row = by_section.setdefault(section_key(fact["section"]), {"gaps": 0, "words": 0})
+        row["gaps"] += 1
+        row["words"] += fact["words"]
+    return {"gaps": len(facts), "words": sum(f["words"] for f in facts),
+            "whole": sum(bool(f["whole"]) for f in facts),
+            "by_section": dict(sorted(by_section.items()))}
+
+
+def passage_before(doc: dict, start: int) -> str | None:
+    """The item of the last passage that starts before ``start`` (an ``add``'s ``after``)."""
+    best = None
+    for p in ordered(doc):
+        span = span_of(p)
+        if span and span[0] < start:
+            best = str(p.get("item"))
+    return best
+
+
+# --------------------------------------------------------------------------- #
 # validation of each file, against what it answers
 # --------------------------------------------------------------------------- #
 
@@ -858,10 +1065,14 @@ def _verdict_rules(row: dict, where: str, problems: list[str], *, items: dict[st
 
 def validate_audit(data: Any, doc: dict, *, expect: list[str] | None = None,
                    rule: int = DEFAULT_RULE, skips: list[dict] | None = None,
-                   expect_skips: list[str] | None = None) -> list[str]:
+                   expect_skips: list[str] | None = None, gaps: list[dict] | None = None,
+                   expect_gaps: list[str] | None = None) -> list[str]:
     """Round 1's auditor file: every formal passage it is to judge, judged exactly once;
     under rule 2 also every skip it is to judge (``expect_skips``, a part's; else every
-    skip of ``skips``, the document's facts or its index rows: :func:`validate_skip_rows`)."""
+    skip of ``skips``, the document's facts or its index rows: :func:`validate_skip_rows`);
+    under rule 3 also every gap (``expect_gaps``, else every gap of ``gaps``, the document's
+    facts or its index rows; with neither, only the rows' own rules: the gaps need the
+    layer)."""
     problems: list[str] = []
     if not check_record(data, "audit", "audit", problems, rule=rule):
         return problems
@@ -922,6 +1133,17 @@ def validate_audit(data: Any, doc: dict, *, expect: list[str] | None = None,
                                 f"document")
         _exactly_once([r["skip"] for r in data["skips"]], want_skips, "skip", "audit.skips",
                       problems)
+    if rule >= 3:
+        validate_gap_rows(data["gaps"], "audit.gaps", gaps, items, problems)
+        if gaps is not None:
+            want_gaps = [f["id"] for f in gaps
+                         if expect_gaps is None or f["id"] in set(expect_gaps)]
+            if expect_gaps is not None:
+                for key in sorted(set(expect_gaps) - {f["id"] for f in gaps}):
+                    problems.append(f"audit: the part names {key}, which is no gap of the "
+                                    f"document")
+            _exactly_once([r["gap"] for r in data["gaps"]], want_gaps, "gap", "audit.gaps",
+                          problems)
     return problems
 
 
@@ -943,17 +1165,18 @@ def _statement_rows(rows: list[dict], where: str, problems: list[str]) -> None:
 
 
 def _skip_verdict_rules(row: dict, where: str, items: dict[str, dict],
-                        problems: list[str]) -> None:
-    """One skip verdict row beyond its types: a defect names its rule, reason, action and
-    what it hides (statements or the passage it finishes); a clean row names none."""
+                        problems: list[str], what: str = "skip") -> None:
+    """One skip verdict row beyond its types (or, ``what`` "gap", a gap's): a defect names
+    its rule, reason, action and what it hides (statements or the passage it finishes); a
+    clean row names none."""
     verdict, rule = row.get("verdict"), row.get("rule")
     if verdict == VERDICT_CLEAN:
         if rule != 0:
-            problems.append(f"{where}: a clean skip gives rule 0, not {rule}")
+            problems.append(f"{where}: a clean {what} gives rule 0, not {rule}")
         if row.get("statements"):
-            problems.append(f"{where}: a clean skip lists no statements")
+            problems.append(f"{where}: a clean {what} lists no statements")
         if row.get("merge_with"):
-            problems.append(f"{where}: a clean skip names no merge_with")
+            problems.append(f"{where}: a clean {what} names no merge_with")
         return
     if rule == 0:
         problems.append(f"{where}: verdict {verdict} names no rule (give the 3.4 rule, 1-10)")
@@ -961,8 +1184,9 @@ def _skip_verdict_rules(row: dict, where: str, items: dict[str, dict],
         if key in row and not str(row.get(key) or "").strip():
             problems.append(f"{where}: verdict {verdict} gives no {key}")
     if not row.get("statements") and not row.get("merge_with"):
+        belongs = "skipped text" if what == "skip" else "gap's text"
         problems.append(f"{where}: {verdict} lists no statement and names no merge_with (the "
-                        f"kept passage the skipped text belongs to)")
+                        f"kept passage the {belongs} belongs to)")
     if row.get("merge_with") and row["merge_with"] not in items:
         problems.append(f"{where}: merge_with {row['merge_with']} is no passage of the document")
     _statement_rows(row.get("statements") or [], f"{where}.statements", problems)
@@ -989,6 +1213,65 @@ def validate_skip_rows(rows: list[dict], where: str, facts: list[dict], items: d
             if fact is not None and fact.get("rule") is False:
                 problems.append(f"{at}: skip_ok on {row['skip']}, which the skip rule does not "
                                 f"judge (no HINT skip-rule)")
+
+
+def validate_gap_rows(rows: list[dict], where: str, facts: list[dict] | None,
+                      items: dict[str, dict], problems: list[str]) -> None:
+    """An auditor's ``gaps`` rows (rule 3): each a gap of the document when the facts are
+    known, judged ``clean`` or ``gap_statements`` by :func:`_skip_verdict_rules`."""
+    by_id = None if facts is None else {f["id"]: f for f in facts}
+    for i, row in enumerate(rows):
+        at = f"{where}[{i}]"
+        if by_id is not None and row["gap"] not in by_id:
+            problems.append(f"{at}: {row['gap']} is no gap of the document")
+        _skip_verdict_rules(row, at, items, problems, what="gap")
+
+
+def gap_text_problems(data: Any, kind: str, facts: list[dict], layer: str,
+                      flags: dict | None = None) -> list[str]:
+    """Rule 3, with the layer: what the merge would drop of a valid audit or skeptic file
+    because it does not lie in the gap's own text -- a gap statement whose ``at`` is not in
+    its gap, and the ``evidence`` of an upheld gap flag or a missed gap."""
+    problems: list[str] = []
+    if not isinstance(data, dict):
+        return problems
+    by_id = {f["id"]: f for f in facts}
+
+    def statements(rows: list, where: str) -> None:
+        for i, row in enumerate(rows):
+            fact = by_id.get(row.get("gap")) if isinstance(row, dict) else None
+            if fact is None or row.get("verdict") != GAP_VERDICT:
+                continue
+            a, b = fact["span"]
+            for j, st in enumerate(row.get("statements") or []):
+                at = str(st.get("at") or "") if isinstance(st, dict) else ""
+                if at.strip() and find_folded(layer, a, b, at) is None:
+                    problems.append(
+                        f"{where}[{i}].statements[{j}].at {at[:60]!r} is not in the text of "
+                        f"{fact['id']} [{a}, {b}]: anchor it at the words, inside the gap, "
+                        f"where the statement starts, or the merge drops it")
+            if where.endswith("missed_gaps") and not _in_skip(str(row.get("evidence") or ""),
+                                                              layer, fact["span"]):
+                problems.append(f"{where}[{i}].evidence is not in the text of {fact['id']} "
+                                f"[{a}, {b}]: quote words inside the gap, or the merge drops "
+                                f"the row")
+
+    if kind == "audit":
+        statements(data.get("gaps") or [], "audit.gaps")
+    elif kind == "skeptic":
+        statements(data.get("missed_gaps") or [], "skeptic.missed_gaps")
+        gap_flags = {f["flag_id"]: f for f in (flags or {}).get("flags") or []
+                     if isinstance(f, dict) and f.get("gap")}
+        for i, row in enumerate(data.get("verdicts") or []):
+            flag = gap_flags.get(row.get("flag_id")) if isinstance(row, dict) else None
+            span = (flag or {}).get("span")
+            if not (flag and row.get("upheld") and isinstance(span, list) and len(span) == 2):
+                continue
+            if not _in_skip(str(row.get("evidence") or ""), layer, span):
+                problems.append(f"skeptic.verdicts[{i}].evidence is not in the text of "
+                                f"{flag['gap']} [{span[0]}, {span[1]}]: an upheld gap flag "
+                                f"quotes words inside the gap, or the merge refutes it")
+    return problems
 
 
 def skip_text_problems(data: Any, kind: str, facts: list[dict], layer: str,
@@ -1104,7 +1387,8 @@ def validate_check(data: Any, doc: dict, previous: dict, collateral: dict | None
 def validate_skeptic(data: Any, doc: dict, flags: dict, *, round_: int,
                      expect: list[str] | None = None, rule: int = DEFAULT_RULE,
                      skips: list[dict] | None = None,
-                     expect_skips: list[str] | None = None) -> list[str]:
+                     expect_skips: list[str] | None = None, gaps: list[dict] | None = None,
+                     expect_gaps: list[str] | None = None) -> list[str]:
     """The skeptic's file: every flag and every dispute judged once, its hunt over passages
     no flag names, at least the floor of them in round 1.
 
@@ -1114,7 +1398,10 @@ def validate_skeptic(data: Any, doc: dict, flags: dict, *, round_: int,
     Under rule 2 a skip flag is upheld only as ``skipped_statements`` and a passage flag
     never so, and in round 1 ``examined_skips`` holds every skip of the part
     (``expect_skips``, else of ``skips``) no flag names that holds a math paragraph no
-    passage holds outside the furniture (its fact's ``unheld_outside``)."""
+    passage holds outside the furniture (its fact's ``unheld_outside``).  Under rule 3 a
+    gap flag is upheld only as ``gap_statements`` and no other flag so, and in round 1
+    ``examined_gaps`` holds every gap of the part (``expect_gaps``, else of ``gaps``) no flag
+    names (:func:`_skeptic_gaps`)."""
     problems: list[str] = []
     if not check_record(data, "skeptic", "skeptic", problems, rule=rule):
         return problems
@@ -1160,7 +1447,57 @@ def validate_skeptic(data: Any, doc: dict, flags: dict, *, round_: int,
     if rule >= 2:
         _skeptic_skips(data, doc, flags, round_=round_, skips=skips,
                        expect_skips=expect_skips, problems=problems)
+    if rule >= 3:
+        _skeptic_gaps(data, doc, flags, round_=round_, gaps=gaps, expect_gaps=expect_gaps,
+                      problems=problems)
     return problems
+
+
+def _skeptic_gaps(data: dict, doc: dict, flags: dict, *, round_: int,
+                  gaps: list[dict] | None, expect_gaps: list[str] | None,
+                  problems: list[str]) -> None:
+    """Rule 3's part of a skeptic file: the verdicts on gap flags, the gap hunt (round 1:
+    every gap of the part no flag names) and its missed gaps; without the facts (no layer
+    read) the ids are held to their shape only."""
+    items = by_item(doc)
+    by_id = None if gaps is None else {f["id"]: f for f in gaps}
+    kinds = {f["flag_id"]: bool(f.get("gap")) for f in flags.get("flags") or []}
+    for i, row in enumerate(data["verdicts"]):
+        if not row["upheld"] or row["flag_id"] not in kinds:
+            continue
+        if kinds[row["flag_id"]] and row["verdict"] != GAP_VERDICT:
+            problems.append(f"skeptic.verdicts[{i}]: a gap flag is upheld as {GAP_VERDICT} "
+                            f"or refuted, not {row['verdict']}")
+        elif not kinds[row["flag_id"]] and row["verdict"] == GAP_VERDICT:
+            problems.append(f"skeptic.verdicts[{i}]: {GAP_VERDICT} is a gap's verdict, not a "
+                            f"passage's or a skip's")
+    flagged = {f["gap"] for f in flags.get("flags") or [] if f.get("gap")}
+    mine = None if gaps is None else [f["id"] for f in gaps
+                                      if expect_gaps is None or f["id"] in set(expect_gaps)]
+    for i, gid in enumerate(data["examined_gaps"]):
+        if by_id is not None and gid not in by_id:
+            problems.append(f"skeptic.examined_gaps[{i}]: {gid} is no gap of the document")
+        elif expect_gaps is not None and gid not in set(expect_gaps):
+            problems.append(f"skeptic.examined_gaps[{i}]: {gid} is no gap of this part")
+        elif gid in flagged:
+            problems.append(f"skeptic.examined_gaps[{i}]: {gid} is flagged; the hunt is over "
+                            f"the gaps no flag names")
+    if round_ == 1 and mine is not None:
+        missing = [gid for gid in mine if gid not in flagged
+                   and gid not in set(data["examined_gaps"])]
+        if missing:
+            problems.append(f"skeptic.examined_gaps leaves out {len(missing)} unflagged "
+                            f"gap(s): {', '.join(missing[:10])}"
+                            + (" …" if len(missing) > 10 else ""))
+    for i, row in enumerate(data["missed_gaps"]):
+        at = f"skeptic.missed_gaps[{i}]"
+        if by_id is not None and row["gap"] not in by_id:
+            problems.append(f"{at}: {row['gap']} is no gap of the document")
+        elif expect_gaps is not None and row["gap"] not in set(expect_gaps):
+            problems.append(f"{at}: {row['gap']} is no gap of this part")
+        _skip_verdict_rules(row, at, items, problems, what="gap")
+        if not row["evidence"].strip():
+            problems.append(f"{at}: gives no evidence (verbatim, from inside the gap)")
 
 
 def _skeptic_skips(data: dict, doc: dict, flags: dict, *, round_: int,
@@ -1361,7 +1698,7 @@ def _order_key(doc: dict):
 
 def strip(round_: int, doc: dict, *, audits: list[dict] = (), checks: list[dict] = (),
           repair: dict | None = None, previous: dict | None = None,
-          rule: int = DEFAULT_RULE) -> dict:
+          rule: int = DEFAULT_RULE, gaps: list[dict] | None = None) -> dict:
     """The flags file: the flags with only what the skeptic may see, in reading order.
 
     Round 1: every non-clean auditor row and every expository flag (as
@@ -1370,11 +1707,14 @@ def strip(round_: int, doc: dict, *, audits: list[dict] = (), checks: list[dict]
     checker's new entries, and the worker's disputes of the last round's verdicts.
     Under rule 2, round 1 also flags every ``skipped_statements`` skip row, as ``{flag_id,
     item: "", skip, span, verdict, rule, merge_with, reason}`` -- its statements and action
-    withheld -- placed among the passage flags by where it starts.
+    withheld -- placed among the passage flags by where it starts.  Under rule 3 round 1
+    also flags every ``gap_statements`` gap row the same way, as ``{flag_id, item: "", gap,
+    span, verdict, rule, merge_with, reason}``, its span read from ``gaps`` (the round's gap
+    facts).
     """
     if rule >= 2:
         return _strip2(round_, doc, audits=audits, checks=checks, repair=repair,
-                       previous=previous, rule=rule)
+                       previous=previous, rule=rule, gaps=gaps)
     rows = []
     if round_ == 1:
         for audit in audits:
@@ -1407,12 +1747,15 @@ def strip(round_: int, doc: dict, *, audits: list[dict] = (), checks: list[dict]
             "source_id": doc.get("source_id"), "flags": flags, "disputes": disputes}
 
 
-def _strip2(round_: int, doc: dict, *, audits, checks, repair, previous, rule: int) -> dict:
-    """:func:`strip` under rule 2: the passage flags of rule 1 and the skip flags, ordered
-    by where each starts (a passage by its span, a skip by its own)."""
+def _strip2(round_: int, doc: dict, *, audits, checks, repair, previous, rule: int,
+            gaps: list[dict] | None = None) -> dict:
+    """:func:`strip` under rule 2: the passage flags of rule 1 and the skip flags (and under
+    rule 3 the gap flags), ordered by where each starts (a passage by its span, a skip or a
+    gap by its own)."""
     starts = {str(p.get("item")): (span_of(p) or (math.inf,))[0] for p in ordered(doc)}
     key = _order_key(doc)
     spans = {f["id"]: f["span"] for f in bare_skips(doc, 1)}
+    gap_spans = {f["id"]: list(f["span"]) for f in gaps or []}
     rows = []
     if round_ == 1:
         for audit in audits:
@@ -1434,6 +1777,14 @@ def _strip2(round_: int, doc: dict, *, audits, checks, repair, previous, rule: i
                              {"item": "", "skip": row["skip"], "span": spans.get(row["skip"]),
                               "verdict": row["verdict"], "rule": row["rule"],
                               "merge_with": row["merge_with"], "reason": row["reason"]}))
+            for row in (audit.get("gaps") or []) if rule >= 3 else []:
+                if row["verdict"] == VERDICT_CLEAN:
+                    continue
+                span = gap_spans.get(row["gap"]) or [math.inf, math.inf]
+                rows.append(((span[0], 2, 0),
+                             {"item": "", "gap": row["gap"], "span": gap_spans.get(row["gap"]),
+                              "verdict": row["verdict"], "rule": row["rule"],
+                              "merge_with": row["merge_with"], "reason": row["reason"]}))
     else:
         for check in checks:
             for row in check["new"]:
@@ -1451,7 +1802,7 @@ def _strip2(round_: int, doc: dict, *, audits, checks, repair, previous, rule: i
             if entry["status"] == "disputed" and v is not None:
                 row = {"verdict_id": v["id"], "item": v["item"], "verdict": v["verdict"],
                        "rule": v["rule"], "action": v["action"], "worker_reason": entry["why"]}
-                if v["verdict"] == SKIP_VERDICT:
+                if v["verdict"] in (SKIP_VERDICT, GAP_VERDICT):
                     row["span"] = v.get("span")
                 disputes.append(row)
     return {"schema": AUDIT_SCHEMAS[rule], "kind": "flags", "round": round_,
@@ -1705,20 +2056,20 @@ def _record(*, item: str, doc: dict, verdict: str, rule: int, merge_with: str, a
 
 
 def _kind_rule(doc: dict, actionable: list[dict], exempt_starts: set,
-               seen_starts: set) -> list[dict]:
-    """The mechanical wrong_kind verdicts: :func:`kind_rule_applies`, less the passages the
-    auditor said ``other`` is right for and those a verdict already settles."""
+               seen_starts: set, rule: int = DEFAULT_RULE) -> list[dict]:
+    """The mechanical wrong_kind verdicts: :func:`kind_rule_applies` (at ``rule``), less the
+    passages the auditor said ``other`` is right for and those a verdict already settles."""
     settled = {v["item"] for v in actionable if v["verdict"] in KIND_SETTLED}
     out = []
     for p in ordered(doc):
         span = span_of(p)
         start = span[0] if span else None
-        if not kind_rule_applies(p) or p.get("item") in settled:
+        if not kind_rule_applies(p, rule) or p.get("item") in settled:
             continue
         if start in exempt_starts or start in seen_starts:
             continue
         out.append(_record(item=str(p["item"]), doc=doc, verdict="wrong_kind",
-                           rule=KIND_RULE_RULE, merge_with="", action=KIND_RULE_ACTION,
+                           rule=KIND_RULE_RULE, merge_with="", action=kind_rule_action(rule),
                            origin="kind_rule"))
     return out
 
@@ -1749,12 +2100,17 @@ def _by_verdict(records: list[dict]) -> dict[str, int]:
 
 def merge_round1(doc: dict, audits: list[dict], skeptic: dict, *,
                  layer: str | None, rule: int = DEFAULT_RULE,
-                 paragraphs: list[dict] | None = None) -> dict:
+                 paragraphs: list[dict] | None = None,
+                 gaps: list[dict] | None = None) -> dict:
     """Round 1's verdicts: upheld flags plus the skeptic's evidenced missed entries plus the
     kind rule's, the refuted flags apart, with their counts; under rule 2 the skip flags,
-    missed skips and the skip rule's too (:func:`_skips_round1`)."""
+    missed skips and the skip rule's too (:func:`_skips_round1`); under rule 3 the gap flags
+    and missed gaps (:func:`_gaps_round1`, over ``gaps``, else the round's gap facts read on
+    the layer)."""
     layer_folded = fold(layer) if layer is not None else None
-    flags = strip(1, doc, audits=audits, rule=rule)
+    if rule >= 3 and gaps is None:
+        gaps = gap_facts(doc, paragraphs or [], layer, 1) if layer is not None else []
+    flags = strip(1, doc, audits=audits, rule=rule, gaps=gaps)
     rows = {}
     for audit in audits:
         for row in audit["passages"]:
@@ -1764,13 +2120,14 @@ def merge_round1(doc: dict, audits: list[dict], skeptic: dict, *,
     rulings = {r["flag_id"]: r for r in skeptic["verdicts"]}
     actionable, refuted = [], []
     counts = {"formal": len(formal_items(doc)), "audited": sum(len(a["passages"]) for a in audits),
-              "flagged": sum(1 for f in flags["flags"] if not f.get("skip")), "upheld": 0,
+              "flagged": sum(1 for f in flags["flags"]
+                             if not f.get("skip") and not f.get("gap")), "upheld": 0,
               "corrected": 0, "refuted": 0, "refuted_no_evidence": 0, "missed_added": 0,
               "missed_dropped": 0, "kind_rule": 0, "kind_other_ok": 0}
     for flag in flags["flags"]:
         ruling = rulings[flag["flag_id"]]
-        if flag.get("skip"):
-            continue                    # rule 2's skip flags: _skips_round1
+        if flag.get("skip") or flag.get("gap"):
+            continue                    # rule 2's skip flags and rule 3's gap flags
         why = None
         if not ruling["upheld"]:
             why = "refuted"
@@ -1801,13 +2158,16 @@ def merge_round1(doc: dict, audits: list[dict], skeptic: dict, *,
             exempt[_start(doc, item)] = {"item": item, "start": _start(doc, item),
                                          "reason": row["reason"]}
     counts["kind_other_ok"] = len(exempt)
-    kind = _kind_rule(doc, actionable, set(exempt), set())
+    kind = _kind_rule(doc, actionable, set(exempt), set(), rule)
     counts["kind_rule"] = len(kind)
     actionable.extend(kind)
     skips = None
     if rule >= 2:
         skips = _skips_round1(doc, audits, skeptic, flags, actionable, refuted, counts,
                               layer=layer, paragraphs=paragraphs or [])
+    if rule >= 3:
+        skips.update(_gaps_round1(doc, audits, skeptic, flags, actionable, refuted, counts,
+                                  layer=layer, facts=gaps))
     verdicts = _number(1, doc, actionable, rule)
     counts.update(_kind_counts(doc))
     counts["actionable"] = len(verdicts)
@@ -1835,16 +2195,17 @@ def _in_skip(evidence: str, layer: str | None, span) -> bool:
     return layer is None or text in fold(layer[span[0]:span[1]])
 
 
-def _statements(rows: list[dict], layer: str | None, span, counts: dict) -> list[dict]:
-    """A skip verdict's statements whose ``at`` starts inside its span; the others dropped
-    and counted (``statements_dropped``)."""
+def _statements(rows: list[dict], layer: str | None, span, counts: dict,
+                key: str = "statements_dropped") -> list[dict]:
+    """A skip (or gap) verdict's statements whose ``at`` starts inside its span; the others
+    dropped and counted (``key``)."""
     out = []
     for st in rows:
         if layer is None or find_folded(layer, span[0], span[1], st["at"]) is not None:
             out.append({"at": st["at"], "until": st["until"],
                         "passage_kind": st["passage_kind"]})
         else:
-            counts["statements_dropped"] += 1
+            counts[key] += 1
     return out
 
 
@@ -1967,6 +2328,100 @@ def _skips_round1(doc: dict, audits: list[dict], skeptic: dict, flags: dict,
             "skip_report": skip_report(doc, paragraphs)}
 
 
+# rule 3: the gap verdicts of a merge (section 13.12)
+
+GAP_COUNTS_1 = ("gaps", "gaps_judged", "gaps_flagged", "gaps_upheld", "gaps_refuted",
+                "gap_missed_added", "gap_missed_dropped", "gap_statements",
+                "gap_statements_dropped")
+GAP_COUNTS_LATER = ("gaps", "gap_carried", "gap_missed_added", "gap_missed_dropped",
+                    "gap_statements", "gap_statements_dropped")
+
+
+def _gap_record(*, span, facts: list[dict], doc: dict, verdict: str, rule: int,
+                merge_with: str, action: str, origin: str, statements: list[dict],
+                fact: dict | None = None, **extra) -> dict:
+    """A gap verdict: its target is the span; ``gaps`` is ``fact``'s id alone when it judges
+    one gap of the round's snapshot, else -- a verdict carried by its span -- the snapshot's
+    gaps that overlap the span (``gap`` the one when there is one); ``words`` their words, and
+    ``after`` the passage an ``add`` of its statements goes after (the last that starts before
+    the span, None for the first)."""
+    span = [int(span[0]), int(span[1])]
+    under = [fact] if fact is not None else \
+        [f for f in facts if f["span"][0] < span[1] and span[0] < f["span"][1]]
+    ids = [f["id"] for f in under]
+    return {"item": "", "gap": ids[0] if len(ids) == 1 else "", "gaps": ids, "span": span,
+            "start": span[0], "verdict": verdict, "rule": rule, "merge_with": merge_with,
+            "action": action, "origin": origin, "statements": statements,
+            "words": sum(f["words"] for f in under), "after": passage_before(doc, span[0]),
+            **extra}
+
+
+def _add_missed_gaps(doc: dict, skeptic: dict, facts: list[dict], actionable: list[dict],
+                     counts: dict, layer: str | None) -> None:
+    by_id = {f["id"]: f for f in facts}
+    for row in skeptic.get("missed_gaps") or []:
+        fact = by_id.get(row["gap"])
+        settled = {gid for v in actionable if v["verdict"] == GAP_VERDICT for gid in v["gaps"]}
+        if fact is None or not _in_skip(row["evidence"], layer, fact["span"]) \
+                or fact["id"] in settled:
+            counts["gap_missed_dropped"] += 1
+            continue
+        counts["gap_missed_added"] += 1
+        statements = _statements(row["statements"], layer, fact["span"], counts,
+                                 "gap_statements_dropped")
+        counts["gap_statements"] += len(statements)
+        actionable.append(_gap_record(
+            span=fact["span"], facts=facts, doc=doc, verdict=GAP_VERDICT, rule=row["rule"],
+            merge_with=row["merge_with"], action=row["action"], origin="skeptic_missed",
+            statements=statements, fact=fact, skeptic_reason=row["reason"],
+            evidence=row["evidence"]))
+
+
+def _gaps_round1(doc: dict, audits: list[dict], skeptic: dict, flags: dict,
+                 actionable: list[dict], refuted: list[dict], counts: dict, *,
+                 layer: str | None, facts: list[dict]) -> dict:
+    """Rule 3's part of round 1's merge: each gap flag the skeptic upheld with evidence
+    inside the gap (its statements those that start there), and the skeptic's evidenced
+    missed gaps.  No mechanical rule raises a gap: the auditor judges every gap and the
+    skeptic hunts every one no flag names."""
+    by_id = {f["id"]: f for f in facts}
+    rows = {r["gap"]: r for a in audits for r in a.get("gaps") or []}
+    rulings = {r["flag_id"]: r for r in skeptic["verdicts"]}
+    counts.update({k: 0 for k in GAP_COUNTS_1})
+    counts["gaps"] = len(facts)
+    counts["gaps_judged"] = len(rows)
+    for flag in flags["flags"]:
+        if not flag.get("gap"):
+            continue
+        counts["gaps_flagged"] += 1
+        ruling = rulings[flag["flag_id"]]
+        fact = by_id.get(flag["gap"])
+        why = None
+        if not ruling["upheld"]:
+            why = "refuted"
+        elif fact is None or not _in_skip(ruling["evidence"], layer, fact["span"]):
+            why = "no_evidence"
+        if why:
+            counts["gaps_refuted"] += 1
+            refuted.append({"flag_id": flag["flag_id"], "item": "", "gap": flag["gap"],
+                            "verdict": flag["verdict"], "why": why,
+                            "skeptic_reason": ruling["reason"]})
+            continue
+        counts["gaps_upheld"] += 1
+        row = rows[flag["gap"]]
+        statements = _statements(row["statements"], layer, fact["span"], counts,
+                                 "gap_statements_dropped")
+        counts["gap_statements"] += len(statements)
+        actionable.append(_gap_record(
+            span=fact["span"], facts=facts, doc=doc, verdict=GAP_VERDICT, rule=ruling["rule"],
+            merge_with=flag["merge_with"], action=row["action"], origin="auditor",
+            statements=statements, fact=fact, flag_id=flag["flag_id"],
+            auditor_reason=flag["reason"], skeptic_reason=ruling["reason"],
+            evidence=ruling["evidence"]))
+    _add_missed_gaps(doc, skeptic, facts, actionable, counts, layer)
+    return {"gap_report": gap_report(facts)}
+
+
 def _estimate(audits: list[dict]) -> int | None:
     values = [a["per_spec_formal_estimate"] for a in audits]
     return sum(values) if values else None
@@ -1996,16 +2451,23 @@ def _add_missed(doc: dict, skeptic: dict, actionable: list[dict], counts: dict,
 
 def merge_later(round_: int, doc: dict, checks: list[dict], skeptic: dict, previous: dict,
                 repair: dict | None, collateral_doc: dict, *, layer: str | None,
-                rule: int = DEFAULT_RULE, paragraphs: list[dict] | None = None) -> dict:
+                rule: int = DEFAULT_RULE, paragraphs: list[dict] | None = None,
+                gaps: list[dict] | None = None) -> dict:
     """Round 2 on: each verdict the last round asked for by its check status (or, when the
     worker disputed it, by the skeptic's ruling on the dispute), harmful collateral as
     ``revert`` verdicts, regressions re-issued, the checker's upheld new entries, and the
     kind rule over passages no earlier verdict judged.  Under rule 2 a skip verdict that
     goes back to the worker keeps its span and names the skips of this round's snapshot
     there, a skip verdict set aside adds its span to ``skip_seen``, and the skip rule runs
-    over the skips no verdict and no earlier exemption settles."""
+    over the skips no verdict and no earlier exemption settles.  Under rule 3 a gap verdict
+    that goes back keeps its span and names the gaps of this round's snapshot there (or none,
+    when its text is held now), the skeptic's missed gaps join, the kind rule reads every
+    formal ``other`` passage, and the verdicts file carries the round's ``gap_report``."""
     layer_folded = fold(layer) if layer is not None else None
-    flags = strip(round_, doc, checks=checks, repair=repair, previous=previous, rule=rule)
+    if rule >= 3 and gaps is None:
+        gaps = gap_facts(doc, paragraphs or [], layer, round_) if layer is not None else []
+    flags = strip(round_, doc, checks=checks, repair=repair, previous=previous, rule=rule,
+                  gaps=gaps)
     status = {r["verdict_id"]: r for c in checks for r in c["checked"]}
     disputed = {d["verdict_id"]: d for d in flags["disputes"]}
     rulings = {r["verdict_id"]: r for r in skeptic["disputes"]}
@@ -2024,13 +2486,26 @@ def merge_later(round_: int, doc: dict, checks: list[dict], skeptic: dict, previ
         facts = skip_facts(doc, paragraphs or [], round_)
         counts.update({k: 0 for k in SKIP_COUNTS_LATER})
         counts["skips"] = len(facts)
+    if rule >= 3:
+        counts.update({k: 0 for k in GAP_COUNTS_LATER})
+        counts["gaps"] = len(gaps)
 
     def is_skip(v: dict) -> bool:
         return rule >= 2 and v.get("verdict") == SKIP_VERDICT and bool(v.get("span"))
 
+    def is_gap(v: dict) -> bool:
+        return rule >= 3 and v.get("verdict") == GAP_VERDICT and bool(v.get("span"))
+
     def again(v: dict, origin: str, **extra) -> dict:
-        """A verdict sent back to the worker: a skip verdict by its span, else by its item."""
+        """A verdict sent back to the worker: a skip or gap verdict by its span, else by its
+        item."""
         base = {k: v[k] for k in ("item", "verdict", "rule", "merge_with", "action")}
+        if is_gap(v):
+            counts["gap_carried"] += origin == "carried"
+            return _gap_record(span=v["span"], facts=gaps, doc=doc, verdict=v["verdict"],
+                               rule=v["rule"], merge_with=v["merge_with"], action=v["action"],
+                               origin=origin, statements=list(v.get("statements") or []),
+                               **extra)
         if is_skip(v):
             counts["skip_carried"] += origin == "carried"
             return _skip_record(span=v["span"], facts=facts, verdict=v["verdict"],
@@ -2042,7 +2517,7 @@ def merge_later(round_: int, doc: dict, checks: list[dict], skeptic: dict, previ
     def kept(v: dict) -> dict:
         """What history and set_aside keep of a verdict: its target, by item or span."""
         base = {k: v[k] for k in ("item", "verdict", "rule", "merge_with", "action")}
-        if is_skip(v):
+        if is_skip(v) or is_gap(v):
             base.update(span=list(v["span"]), statements=list(v.get("statements") or []))
         return base
 
@@ -2137,12 +2612,14 @@ def merge_later(round_: int, doc: dict, checks: list[dict], skeptic: dict, previ
     seen |= {e.get("start") for e in history if e.get("verdict") == "wrong_kind"}
     seen |= {v.get("start") for v in previous.get("verdicts") or []
              if v.get("verdict") == "wrong_kind"}
-    kind = _kind_rule(doc, actionable, exempt, seen)
+    kind = _kind_rule(doc, actionable, exempt, seen, rule)
     counts["kind_rule"] = len(kind)
     actionable.extend(kind)
     if rule >= 2:
         _add_missed_skips(skeptic, facts, actionable, counts, layer)
         _skip_rule(facts, actionable, counts, exempt=set(), seen=skip_seen)
+    if rule >= 3:
+        _add_missed_gaps(doc, skeptic, gaps, actionable, counts, layer)
     verdicts = _number(round_, doc, actionable, rule)
     counts.update({f"status_{s}": n for s, n in statuses.items()})
     counts.update(_kind_counts(doc))
@@ -2159,6 +2636,8 @@ def merge_later(round_: int, doc: dict, checks: list[dict], skeptic: dict, previ
                    skip_seen=sorted({tuple(x) for x in skip_seen}),
                    skip_report=skip_report(doc, paragraphs or []))
         out["skip_seen"] = [list(x) for x in out["skip_seen"]]
+    if rule >= 3:
+        out["gap_report"] = gap_report(gaps)
     return out
 
 
@@ -2193,10 +2672,11 @@ def verdicts_file(round_: int, review_rounds: int, doc: dict, document_sha: str,
 
 
 def failed_merge(doc: dict, previous: dict | None, *, rule: int = DEFAULT_RULE,
-                 report: dict | None = None) -> dict:
+                 report: dict | None = None, gaps: dict | None = None) -> dict:
     """What an audit whose output stayed invalid leaves: no verdicts, nothing carried
     forward as asked, the kind counts still taken; under rule 2 the exemptions carried
-    and, when the source could be read, the round's ``skip_report``."""
+    and, when the source could be read, the round's ``skip_report`` (and under rule 3 its
+    ``gap_report``, ``gaps``)."""
     previous = previous or {}
     out = {"verdicts": [], "refuted": [], "set_aside": list(previous.get("set_aside") or []),
            "history": list(previous.get("history") or []),
@@ -2210,6 +2690,8 @@ def failed_merge(doc: dict, previous: dict | None, *, rule: int = DEFAULT_RULE,
                    skip_seen=list(previous.get("skip_seen") or []))
         if report is not None:
             out["skip_report"] = report
+    if rule >= 3 and gaps is not None:
+        out["gap_report"] = gaps
     return out
 
 
@@ -2340,7 +2822,8 @@ def _check_files(paths: list[str], doc: dict, previous: dict, collateral_doc: di
 
 
 def _audit_files(paths: list[str], doc: dict, problems: list[str], rule: int = DEFAULT_RULE,
-                 skips: list[dict] | None = None) -> list[dict]:
+                 skips: list[dict] | None = None, gaps: list[dict] | None = None
+                 ) -> list[dict]:
     audits = []
     for path in paths:
         data = read_json(path, "audit file")
@@ -2349,7 +2832,10 @@ def _audit_files(paths: list[str], doc: dict, problems: list[str], rule: int = D
                                                 if isinstance(r, dict)]
                              if many else None, rule=rule, skips=skips,
                              expect_skips=[r["skip"] for r in data.get("skips") or []
-                                           if isinstance(r, dict)] if many else None)
+                                           if isinstance(r, dict)] if many else None,
+                             gaps=gaps,
+                             expect_gaps=[r["gap"] for r in data.get("gaps") or []
+                                          if isinstance(r, dict)] if many else None)
         problems.extend(f"{path}: {p}" for p in own)
         audits.append(data)
     if len(paths) > 1 and not problems:
@@ -2359,6 +2845,9 @@ def _audit_files(paths: list[str], doc: dict, problems: list[str], rule: int = D
             _exactly_once([r["skip"] for a in audits for r in a["skips"]],
                           [f["id"] for f in (skips or bare_skips(doc, 1))], "skip",
                           "the audits", problems)
+        if rule >= 3 and gaps is not None:
+            _exactly_once([r["gap"] for a in audits for r in a["gaps"]],
+                          [f["id"] for f in gaps], "gap", "the audits", problems)
     return audits
 
 
@@ -2378,36 +2867,60 @@ def _facts(args, doc: dict, index: dict | None, round_: int
     return None, None
 
 
+def _gap_facts(args, doc: dict, index: dict | None, round_: int) -> list[dict] | None:
+    """The gap facts a rule-3 check reads: the rendering index's rows when one is given,
+    else the source's (``--gate-config``), else None (the gaps unknown: their rows are held
+    to their own rules only)."""
+    if index is not None:
+        return list(index.get("gaps") or [])
+    if getattr(args, "gate_config", None):
+        _cfg, view = load_source(args.gate_config, str(doc.get("source_id")))
+        return gap_facts(doc, view.paragraphs(), view.layer, round_)
+    return None
+
+
 def cmd_validate(args) -> int:
     rule = known_rule(args.rule)
     doc = read_document(args.document)
     data = read_json(args.file, f"{args.kind} file")
     if args.kind == "audit":
         expect = _expect(args.expect)
-        index = expect_skips = None
+        index = expect_skips = expect_gaps = None
         if args.render_index:
             expect = _part_items(args.render_index, args.part, args.document, doc)
             if rule >= 2:
                 index, expect_skips = _part_skips(args.render_index, args.part)
+            if rule >= 3:
+                expect_gaps = _part_gaps(args.render_index, args.part)
         skips, layer = _facts(args, doc, index, 1) if rule >= 2 else (None, None)
+        gaps = _gap_facts(args, doc, index, 1) if rule >= 3 else None
         problems = validate_audit(data, doc, expect=expect, rule=rule, skips=skips,
-                                  expect_skips=expect_skips)
+                                  expect_skips=expect_skips, gaps=gaps,
+                                  expect_gaps=expect_gaps)
         if not problems and layer is not None:
             problems = skip_text_problems(data, "audit", skips, layer)
+            if rule >= 3:
+                problems += gap_text_problems(data, "audit", gaps, layer)
     elif args.kind == "skeptic":
         flags = read_json(_need(args.flags, "--flags"), "flags file")
-        expect = index = expect_skips = None
+        expect = index = expect_skips = expect_gaps = None
         if args.render_index:
             expect = _part_items(args.render_index, args.part, args.document, doc)
             if rule >= 2:
                 index, expect_skips = _part_skips(args.render_index, args.part)
+            if rule >= 3:
+                expect_gaps = _part_gaps(args.render_index, args.part)
         round_ = flags.get("round")
-        skips, layer = _facts(args, doc, index, round_ if isinstance(round_, int) else 1) \
-            if rule >= 2 else (None, None)
+        k = round_ if isinstance(round_, int) else 1
+        skips, layer = _facts(args, doc, index, k) if rule >= 2 else (None, None)
+        gaps = _gap_facts(args, doc, index, k) if rule >= 3 else None
         problems = validate_skeptic(data, doc, flags, round_=round_, expect=expect,
-                                    rule=rule, skips=skips, expect_skips=expect_skips)
+                                    rule=rule, skips=skips, expect_skips=expect_skips,
+                                    gaps=gaps, expect_gaps=expect_gaps)
         if not problems and layer is not None:
             problems = skip_text_problems(data, "skeptic", skips, layer, flags)
+            if rule >= 3:
+                problems += gap_text_problems(data, "skeptic", gaps, layer, flags)
     elif args.kind == "check":
         previous = read_json(_need(args.previous, "--previous"), "previous verdicts")
         collateral_doc = read_json(_need(args.collateral, "--collateral"), "collateral file")
@@ -2452,12 +2965,24 @@ def _part_skips(index_path: str, part: int) -> tuple[dict, list[str]]:
     """``(index, the skip ids part ``part`` shows)`` of a rule-2 rendering index (held to
     its document by :func:`_part_items` first)."""
     index = read_json(index_path, "rendering index")
-    if index.get("rule") != 2 or not isinstance(index.get("skips"), list):
+    if index.get("rule") not in (2, 3) or not isinstance(index.get("skips"), list):
         raise InputError(f"the rendering index {index_path} is no rule-2 rendering (no skips)")
     ids = index["parts"][part - 1].get("skips")
     if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
         raise InputError(f"part {part} of {index_path} lists no skips")
     return index, ids
+
+
+def _part_gaps(index_path: str, part: int) -> list[str]:
+    """The gap ids part ``part`` of a rule-3 rendering index shows (held to its document by
+    :func:`_part_items` first)."""
+    index = read_json(index_path, "rendering index")
+    if index.get("rule") != 3 or not isinstance(index.get("gaps"), list):
+        raise InputError(f"the rendering index {index_path} is no rule-3 rendering (no gaps)")
+    ids = index["parts"][part - 1].get("gaps")
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise InputError(f"part {part} of {index_path} lists no gaps")
+    return ids
 
 
 def _need(value: str | None, flag: str) -> str:
@@ -2470,10 +2995,17 @@ def cmd_strip(args) -> int:
     rule = known_rule(args.rule)
     doc = read_document(args.document)
     problems: list[str] = []
+    gaps = None
+    if rule >= 3:
+        # the gap flags' spans are the round's gaps, read on the layer
+        _cfg, view = load_source(_need(args.gate_config, "--gate-config (rule 3)"),
+                                 str(doc.get("source_id")))
+        gaps = gap_facts(doc, view.paragraphs(), view.layer, args.round)
     if args.round == 1:
         skips = None
-        audits = _audit_files(_need_list(args.audit, "--audit"), doc, problems, rule, skips)
-        flags = None if problems else strip(1, doc, audits=audits, rule=rule)
+        audits = _audit_files(_need_list(args.audit, "--audit"), doc, problems, rule, skips,
+                              gaps)
+        flags = None if problems else strip(1, doc, audits=audits, rule=rule, gaps=gaps)
     else:
         previous = read_json(_need(args.previous, "--previous"), "previous verdicts")
         collateral_doc = read_json(_need(args.collateral, "--collateral"), "collateral file")
@@ -2484,7 +3016,7 @@ def cmd_strip(args) -> int:
             problems.extend(validate_repair(repair, previous,
                                             source_id=str(doc.get("source_id")), rule=rule))
         flags = None if problems else strip(args.round, doc, checks=checks, repair=repair,
-                                             previous=previous, rule=rule)
+                                             previous=previous, rule=rule, gaps=gaps)
     if problems:
         return _report(problems)
     write_json(out_path(args.out), flags)
@@ -2525,32 +3057,39 @@ def cmd_merge(args) -> int:
     if previous is not None and previous.get("round") != args.round - 1:
         raise InputError(f"--previous is round {previous.get('round')!r}, not {args.round - 1}")
     if args.audit_failed is not None:
-        report = None
+        report = gaps_report = None
         if rule >= 2 and args.gate_config:
             try:
                 _cfg, view = load_source(args.gate_config, str(doc.get("source_id")))
                 report = skip_report(doc, view.paragraphs())
+                if rule >= 3:
+                    gaps_report = gap_report(gap_facts(doc, view.paragraphs(), view.layer,
+                                                       args.round))
             except (Broken, InputError):
                 report = None           # an audit that failed keeps its approval regardless
         out = verdicts_file(args.round, args.review_rounds, doc, document_sha,
-                            failed_merge(doc, previous, rule=rule, report=report), previous,
+                            failed_merge(doc, previous, rule=rule, report=report,
+                                         gaps=gaps_report), previous,
                             audit_failed=args.audit_failed or "invalid output", rule=rule)
         return _finish(args, out)
     problems: list[str] = []
     _cfg, view = load_source(_need(args.gate_config, "--gate-config"), str(doc.get("source_id")))
     paragraphs = view.paragraphs() if rule >= 2 else None
+    gaps = gap_facts(doc, paragraphs, view.layer, args.round) if rule >= 3 else None
     skeptic = read_json(_need(args.skeptic, "--skeptic"), "skeptic file")
     if args.round == 1:
         facts = skip_facts(doc, paragraphs, 1) if rule >= 2 else None
-        audits = _audit_files(_need_list(args.audit, "--audit"), doc, problems, rule, facts)
+        audits = _audit_files(_need_list(args.audit, "--audit"), doc, problems, rule, facts,
+                              gaps)
         if problems:
             return _report(problems)
-        flags = strip(1, doc, audits=audits, rule=rule)
-        problems.extend(validate_skeptic(skeptic, doc, flags, round_=1, rule=rule, skips=facts))
+        flags = strip(1, doc, audits=audits, rule=rule, gaps=gaps)
+        problems.extend(validate_skeptic(skeptic, doc, flags, round_=1, rule=rule, skips=facts,
+                                         gaps=gaps))
         if problems:
             return _report(problems)
         merged = merge_round1(doc, audits, skeptic, layer=view.layer, rule=rule,
-                              paragraphs=paragraphs)
+                              paragraphs=paragraphs, gaps=gaps)
     else:
         collateral_doc = read_json(_need(args.collateral, "--collateral"), "collateral file")
         repair = read_json(args.repair, "repair file") if args.repair else None
@@ -2562,14 +3101,14 @@ def cmd_merge(args) -> int:
         if problems:
             return _report(problems)
         flags = strip(args.round, doc, checks=checks, repair=repair, previous=previous,
-                      rule=rule)
+                      rule=rule, gaps=gaps)
         facts = skip_facts(doc, paragraphs, args.round) if rule >= 2 else None
         problems.extend(validate_skeptic(skeptic, doc, flags, round_=args.round, rule=rule,
-                                         skips=facts))
+                                         skips=facts, gaps=gaps))
         if problems:
             return _report(problems)
         merged = merge_later(args.round, doc, checks, skeptic, previous, repair, collateral_doc,
-                             layer=view.layer, rule=rule, paragraphs=paragraphs)
+                             layer=view.layer, rule=rule, paragraphs=paragraphs, gaps=gaps)
     out = verdicts_file(args.round, args.review_rounds, doc, document_sha, merged, previous,
                         rule=rule)
     return _finish(args, out)
@@ -2609,9 +3148,10 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--part", type=int, help="an audit or skeptic part: its number in "
                                             "--render-index")
     v.add_argument("--gate-config", help="rule 2: the run's gate.json, whose source the "
-                                         "skips are judged on (without --render-index) and "
-                                         "whose layer holds each skip statement's at and "
-                                         "each skip evidence to the skip's own text")
+                                         "skips (rule 3: and the gaps) are judged on (without "
+                                         "--render-index) and whose layer holds each skip "
+                                         "(or gap) statement's at and evidence to its own "
+                                         "text")
     _rule_arg(v)
     s = sub.add_parser("strip", help="write the flags file the skeptic sees")
     s.add_argument("--round", type=int, required=True)
@@ -2621,6 +3161,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--previous")
     s.add_argument("--collateral")
     s.add_argument("--repair")
+    s.add_argument("--gate-config", help="rule 3: the run's gate.json, whose layer the gap "
+                                         "flags' spans are read on")
     s.add_argument("--out", required=True)
     _rule_arg(s)
     c = sub.add_parser("collateral", help="list what changed that no operation asked for")

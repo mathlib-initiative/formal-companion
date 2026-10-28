@@ -283,6 +283,53 @@ class TestTheSkipsBlock(unittest.TestCase):
                       "\n".join(A.describe(block)))
 
 
+def gap_report(gaps: int, words: int, whole: int = 0, **by_section) -> dict:
+    return {"gaps": gaps, "words": words, "whole": whole,
+            "by_section": {k: {"gaps": a, "words": b} for k, (a, b) in by_section.items()}}
+
+
+class TestTheGapsBlock(unittest.TestCase):
+    """Audit rule 3's ``audit.gaps`` (references/locate-documents.md section 13.12): before
+    (round 1's gap report) and after (the reviewed round's), summed with the gaps by section
+    and by source; none for rules 1 and 2, whose skips block a rule-3 run keeps."""
+
+    def write_rounds(self, fx: Fixture, rule: int, reports: dict[int, dict]) -> None:
+        s = fx.shas
+        for k, sha_, decision in ((1, "old-a", "request_changes"), (2, s["a"], "approve")):
+            v = verdicts(k, sha_, decision, ["gap_statements"] if k == 1 else [])
+            v.update(schema=vocab.INVENTORY_AUDIT_SCHEMAS[rule], decision_rule=f"audit/{rule}",
+                     skip_report=skip_report(1, 0, 0, []))
+            if k in reports:
+                v["gap_report"] = reports[k]
+            write(fx.audit / "t-a" / "s-a" / f"r{k}.verdicts.json", v)
+
+    def test_rules_1_and_2_give_no_gaps_key(self):
+        self.assertNotIn("gaps", Fixture(self).summarise())
+        fx = Fixture(self)
+        self.write_rounds(fx, 2, {})
+        block = fx.summarise()
+        self.assertIn("skips", block)
+        self.assertNotIn("gaps", block)
+        self.assertFalse(any("gaps:" in line for line in A.describe(block)))
+
+    def test_rule_3_gives_before_after_and_by_section(self):
+        fx = Fixture(self)
+        first = gap_report(3, 40, 1, Moduli=(1, 15), History=(2, 25))
+        last = gap_report(1, 12, 0, History=(1, 12))
+        self.write_rounds(fx, 3, {1: first, 2: last})
+        block = fx.summarise()
+        gaps = block["gaps"]
+        self.assertEqual(gaps["before"], {"gaps": 3, "words": 40, "whole": 1, "documents": 1,
+                                          "by_section": {"History": {"gaps": 2, "words": 25},
+                                                         "Moduli": {"gaps": 1, "words": 15}}})
+        self.assertEqual((gaps["after"]["gaps"], gaps["after"]["words"]), (1, 12))
+        self.assertEqual(gaps["by_source"], {"s-a": {"before": first, "after": last}})
+        # a rule-3 run keeps rule 2's skips block
+        self.assertEqual(block["skips"]["before"]["skips"], 1)
+        self.assertIn("gaps: 3 -> 1, holding 40 -> 12 word(s) of the body no passage and no "
+                      "skip holds", "\n".join(A.describe(block)))
+
+
 def _envelopes(directory: Path) -> Path:
     for name, usd in (("t-a.worker.20261022T101010Z.11.json", 4.0),
                       ("t-a.reviewer.audit.20261022T101011Z.12.json", 2.0),
