@@ -198,24 +198,24 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
    passage per statement, with its `statement`, `conjuncts` and `shape`, and
    held to gate rule 10 (statement-cut rule 3, the wide bound) and span-end
    rule 3, which run a sentence on over the paragraph that finishes it after
-   its display; its locate and challenge documents to judgment rules 3 (gate
+   its display; its locate and challenge documents to judgment rules 4 (gate
    rule 9, `references/locate-documents.md` §3 and §4): no claim list (one is refused) — the clause ids are the frozen
    inventory's conjunct ids, `c1` for a simple statement —, the clauses every
    record states, an absence's query of its own per clause, both instantiation
    tests and the instantiation line on a strong location, a part's
    `conjunct_relation` and step, a closeMatch's convention, a coverage claim
    only as a bundle of strong parts on a compound statement, and no junk value
-   as a convention. A run planned before keeps the rules it names (a claim list
-   per passage under rules 1 and 2). Rules R1–R7 and the policy defaults
-   PD1–PD10 are in `references/vocabulary.md` §1.11.
+   as a convention, and rules 4's checks (`pd6`, `bridge`). A run planned before
+   keeps the rules it names (rules 1 and 2 a claim list per passage). R1–R7, the
+   PD1–PD11 defaults and the smoke-4 calls are in `references/vocabulary.md` §1.11.
    Larger work is a `cf campaign` of shards.
 5. `cf tally --locate --run <r> --challenge-run <c>` — passage outcomes and the
    derived status (`references/vocabulary.md` §1.11: a coverage claim over
-   `hasPart` parts counts only once a challenger confirms it; under status rule 2,
-   which a locate run planned now names, a confirmed bundle is one more location
-   of its weakest part's relation); then
+   `hasPart` parts counts only once a challenger confirms it; under status rules 2
+   and 3 a confirmed bundle is one more location of its weakest part's relation,
+   and under 3 (R-BROAD), which a run planned now names, a `broadMatch` formalizes); then
    `cf export literature-links` — a sealed record set (`cf-locate-recordset/2`
-   for a run of status rule 2),
+   for a run of status rule 2 or 3),
    every record checked by the vendored Literature Links checker, quotes capped
    and only from an open licence class.
 6. `cf bench build | anchor | freeze | score | compare | carry` — gold, metrics with
