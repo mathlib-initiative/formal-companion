@@ -424,9 +424,12 @@ class TestTheRemoteFiles(unittest.TestCase):
         base = {"host": {"remote_root": "/srv/r"}, "remote": {"tend_root": "r-1-tend"},
                 "locate": {"mode": "locate-inventory"}}
         plain = host_mod.remote_files(ws, "r-1", base)
-        self.assertEqual([f["name"] for f in plain], [host_mod.ENVELOPES])
+        # an unaudited run's turn records instead (harvest.turn_records)
+        self.assertEqual([f["name"] for f in plain],
+                         [host_mod.ENVELOPES, host_mod.CONTRACTS, host_mod.NEEDS_REVIEW,
+                          host_mod.TAMPER])
         audited = host_mod.remote_files(ws, "r-1", {**base, "locate": AUDITED["locate"]})
-        self.assertEqual(audited[:-1], plain)
+        self.assertEqual(audited[:-1], plain[:1])
         self.assertEqual(audited[-1], {"name": "audit", "remote": "/srv/r/r-1-tend/audit",
                                        "dir": True, "expected": True})
 

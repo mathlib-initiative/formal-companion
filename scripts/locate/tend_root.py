@@ -14,8 +14,9 @@ bridge reads:
   prefix alone does not hold a database (argparse keeps the LAST ``--db``): the
   tools refuse a repeated or abbreviated ``--db`` and, in the gate directory,
   any database but the one ``gate.json`` pins (``corpus_search.check_db``);
-* ``CF_REVIEWER_TOOLS`` (the reviewer's wrapper only) -- the bridge's read-only
-  default plus the gate's ``--findings`` check (the whole gate command with
+* ``CF_REVIEWER_TOOLS`` (the reviewer's wrapper only) -- Read, Glob, Grep, the
+  read-only git subcommands (:data:`REVIEWER_GIT_SUBCOMMANDS`, as the audited
+  reviewer's) and the gate's ``--findings`` check (the whole gate command with
   ``--findings``), which the reviewer prompt has it run; tend's
   ``--changed-files`` call stays tend's;
 * ``CF_TASK_MANIFESTS`` -- ``<gate>/tasks``, where the bridge finds the task
@@ -102,6 +103,15 @@ AUDIT_GATE_FILES = (
 #: what a locate run's ``bin/`` adds to every run's helpers
 LOCATE_BIN_HELPERS = BRIDGE_HELPERS
 VENDORED = ("literature_links", "formal_companion_annotations")
+#: the git a locate reviewer may run, audited or not: read-only subcommands, never
+#: ``Bash(git:*)``, which admitted checkout, commit, reset, stash and config (smoke 4's
+#: chl-0069 reviewer edited the document under review and put it back with a checkout)
+REVIEWER_GIT_SUBCOMMANDS = ("diff", "show", "log", "status")
+
+
+def reviewer_git() -> list[str]:
+    """The allowlist entries of :data:`REVIEWER_GIT_SUBCOMMANDS`, ``Bash(git <sub>:*)``."""
+    return [f"Bash(git {sub}:*)" for sub in REVIEWER_GIT_SUBCOMMANDS]
 
 
 def audit_commands(host_gate_dir: str) -> dict[str, str]:
@@ -128,7 +138,7 @@ def audit_tools(host_gate_dir: str, gate_command: str) -> dict[str, list[str]]:
     cmd = audit_commands(host_gate_dir)
     show, edit, validate = (f"Bash({cmd['show']}:*)", f"Bash({cmd['edit']}:*)",
                             f"Bash({cmd['validate']}:*)")
-    git = [f"Bash(git {sub}:*)" for sub in ("diff", "show", "log", "status")]
+    git = reviewer_git()
     return {"worker": [edit, show, validate],
             "reviewer": ["Read", "Glob", "Grep", *git, f"Bash({gate_command} --findings:*)",
                          show, validate]}
@@ -154,9 +164,11 @@ def wrapper_env(preset: Preset, host_gate_dir: str, host_tools_db: str,
     # the reviewer's job is the form and the gate's output: it runs the gate's --findings
     # check, the call its prompt renders, and nothing else -- never tend's --changed-files
     # call, the only one the gate log's readers count as an attempt (the bridge derives
-    # the same entry for a worker from CF_GATE_CMD)
+    # the same entry for a worker from CF_GATE_CMD); its git is read-only by subcommand,
+    # as the audited reviewer's, and the bridge's tamper guard undoes any other change
     gate_command = f"python3 {host_gate_dir}/{GATE_SCRIPT} --gate-config {host_gate_dir}/gate.json"
-    reviewer_tools = f"Read,Glob,Grep,Bash(git:*),Bash({gate_command} --findings:*)"
+    reviewer_tools = ",".join(["Read", "Glob", "Grep", *reviewer_git(),
+                               f"Bash({gate_command} --findings:*)"])
     if audit_rounds is not None:
         if preset.mode != vocab.LOCATE_INVENTORY or audit_rounds not in vocab.AUDIT_REVIEW_ROUNDS:
             raise CfError(f"an audit of {audit_rounds!r} review rounds on a {preset.mode} plan",

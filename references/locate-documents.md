@@ -727,7 +727,18 @@ list. Then:
   is judged exactly when the same document overturns that passage's prominence to
   `subject` or `central`: then every one is owed (a refuted-by-default or hunted
   record); without such an overturn none is owed, and a verdict on one is refused
-  (rule 1).
+  (rule 1). The gate's `OK:` line on a challenge says that it counted them: `each of
+  the <n> record(s) the task owes has one verdict`, and, when the document owed fewer
+  than its manifest lists, `and <k> conditional record(s) are not owed (no prominence
+  overturn to subject or central)` (the document's stats carry `records_owed` and
+  `conditional_not_owed`). The challenge reviewer's rule card (check 2) says the same
+  and quotes the gate's refusals, so a reviewer neither counts records by hand after an
+  exit 0 nor asks for a verdict on a conditional record or for an overturn that would
+  owe one; the challenge worker judges a prominence on its passage alone, and a request
+  for a conditional verdict, a reviewer's included, is never a reason to overturn it: it
+  changes nothing for it, quotes the rule in its summary and finishes `needs_review`
+  (§9). In smoke 4 every reviewer rejection of a challenge was such a request, and both
+  overturns made to meet one were wrong.
 
 - `target` ∈ {`location`, `absence`, `unresolved`, `scope`, `prominence`,
   `coverage`}.
@@ -2225,7 +2236,16 @@ signal, stdout_bytes, cost: unknown}}`, and prose stdout is kept beside it as
 `<task-id>.<role>.<step>.<UTC stamp>.<pid>.json`, and its record carries `step`, §13.9),
 `attempts/<task-id>.json` (`{task_id, rejections, history}`:
 the count of genuine reviewer rejections), `audit/<task-id>/` (an audited run only: the turn
-machine's `state.json` and the round files, §13.9), `gate-log/gate.jsonl` (one JSON line
+machine's `state.json` and the round files, §13.9), the **turn records** of an unaudited
+locate run (`scripts/run/review_record.py`, below): `contracts/<task-id>.<role>.<UTC
+stamp>.json` (`cf-turn-contract/1`: `{schema, role, task_id, worktree_id, head, documents,
+at}` and a worker's `status`, `summary`, `notes` or a reviewer's `verdict`, `notes`,
+`feedback_text`, `tampered`; `documents` is `{findings/<task>/<name>.json: git blob id}` at
+HEAD, one per agent call and one per turn the attempt cap answered), `needs-review.jsonl`
+(`{task_id, worktree_id, worker_head, worker_summary, worker_notes, reviewer_verdict,
+reviewer_notes, at}` for each review of a contribution whose worker contract said
+`needs_review`) and `tamper.jsonl` (`{task_id, worktree_id, head, changed, at}` for each
+reviewer call whose change the guard undid), `gate-log/gate.jsonl` (one JSON line
 per gate call: `at`, `run_id`, `mode`, `task_id`, `task_id_from` (`--task-id`,
 `$TEND_TASK_ID`, `orchestrator.sqlite…`, or null with no id), `caller` (which call
 it was: `validation` for `--changed-files`, tend's validation command; `pre_merge` for
@@ -2257,9 +2277,10 @@ count under `cflib.vocab.LOCATE_ATTEMPT_CAP`), `CF_TASK_MANIFESTS`
 change set is read against, as the gate reads it; default `main`), `CF_EXTRA_TOOLS` (the allowlist entries for the two
 host tools, each `Bash(python3 <gate>/corpus_search.py --db <tools path>:*)` —
 and in an inventory run the passage-id tool — worker role only),
-`CF_REVIEWER_TOOLS` (the reviewer's read-only default plus the gate's `--findings`
-check, which its prompt has it run, as the whole gate command with `--findings`;
-reviewer role only) and `CF_FINDINGS_GLOB`
+`CF_REVIEWER_TOOLS` (`Read,Glob,Grep`, the read-only git subcommands `git diff`, `git
+show`, `git log` and `git status` — never `Bash(git:*)`, which admitted checkout, commit,
+reset, stash and config — and the gate's `--findings` check, which its prompt has it run,
+as the whole gate command with `--findings`; reviewer role only) and `CF_FINDINGS_GLOB`
 (`findings/$TEND_TASK_ID/*.json` for the nested layout), all exported by the
 generated wrappers in `bin/`; in an audited inventory plan (§13.9) both wrappers also
 export `CF_AUDIT_RULE` and `CF_AUDIT_ROUNDS`, the worker's `CF_EXTRA_TOOLS` adds
@@ -2299,6 +2320,38 @@ passes. When an agent writes no result file,
 the bridge's fallback runs that command with `--findings <file>` for each of the
 task's own documents (the `CF_FINDINGS_GLOB` matches) and reports the gate's
 refusals from stderr.
+
+**A locate run's bridge** is one whose `CF_GATE_CMD` is the locate gate
+(`verify_locate.py`), read as the gate entry above is; the faithfulness pipeline's bridge
+is what it was. On a locate run:
+
+- **The revision** (both bridges) tells a worker that its task prompt and the gate are
+  the rules, that the reviewer can misread them, and that feedback asking for something
+  the prompt rules out or the gate refuses is declined: no verdict or judgment changed to
+  satisfy it, the rule (and the gate's refusal) quoted in the summary, status
+  `needs_review`. The faithfulness revision still says to fix exactly what the feedback
+  names. Smoke 4's two forced prominence overturns followed "do not re-litigate".
+- **The reviewer's default git** (both bridges, when no `CF_REVIEWER_TOOLS` is given) is
+  the four read-only subcommands, as the wrapper's.
+- **The turn records** (`bridge-agentbox.sh` with `bin/review_record.py`, on every turn
+  that is not an audit's, §13.9): after each agent call, and after a turn the attempt cap
+  answered, the normalised contract goes to `contracts/`; before a reviewer call whose
+  worktree's newest worker contract says `needs_review`, the reviewer's prompt gets `## The
+  worker marked this contribution needs_review`, the worker's summary, and that a
+  `needs_review` is no ground to reject and is recorded for a person whatever it decides;
+  after it, the review goes to `needs-review.jsonl`. tend 0.1.0 merges a `needs_review`
+  on approval like `completed`, and so does this: it is listed, never held (§10).
+- **The tamper guard** (`bridge-agentbox.sh`, reviewer turns as above, whatever the
+  call's exit): the reviewer runs with `--permission-mode acceptEdits`, which it needs to
+  write `.tend/agent_result.json`, so `review_record.py fingerprint` takes HEAD, the
+  sha256 of `git diff --binary HEAD`, the untracked files outside `.tend/` and HEAD's
+  branch before the call, and `guard` compares them after it. A change is undone with
+  `git checkout -f -B <branch> <head>`, `git reset --hard <head>` and `git clean -fd -e
+  .tend` (the worker's commit is what tend merges, on the branch it merges), written
+  to `tamper.jsonl` and a `reviewer_tampered:` line of `agentbox-reviewer.err`, and the
+  reviewer's verdict is kept, as the audited turn machine keeps it — whose guard this is,
+  shared through `review_record.fingerprint` and `restore`. The worker side is never
+  guarded. Every git call is pinned as `attempt_cap.py`'s are.
 
 ## 10. Harvested rows and passage outcomes
 
@@ -2367,6 +2420,9 @@ rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
 | `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<run-id>.json` (§11), `scripts/run/canary_scan.py`'s `{scanned, hits, canaries, canary_sha256}`, the last the sha256 of each canary's UTF-8 bytes it looked for; `cf bench score` refuses a scan that does not list its bench's canary (references/locate-bench.md §8) |
 | `envelopes/` | the tend root's `usage/` `*.json`: the bridge's kept envelope of each agent call, and the record of each call that left none (§9) |
 | `audit/` | an audited inventory run only (`run.yaml` `locate.audit`): the tend root's `audit/` `*.json`, the turn machine's state and round files (§13.9), which the receipt's `audit` block is read from (§13.10) |
+| `contracts/` | an unaudited locate run only: the tend root's `contracts/` `*.json`, one contract per agent call (§9) |
+| `needs-review.jsonl` | an unaudited locate run only: the tend root's needs_review ledger (§9) |
+| `tamper.jsonl` | an unaudited locate run only: the tend root's tamper ledger (§9) |
 
 A shard is a run whose `run.yaml` carries `locate.campaign` and which that
 campaign's `campaign.yaml` lists; the campaign directory is the rendered
@@ -2382,7 +2438,10 @@ fetched: false, reason, kept_previous?}}` (a shard's rows also carry
 home. `gate.jsonl` is expected — every merged task ran the gate, which logs
 each call — so a harvest without it is **INCOMPLETE** and exits 1, a previous
 harvest's copy notwithstanding, and so is an audited run's `audit/`, since every
-task it merged was reviewed by the turn machine, which keeps its state there; `usage.jsonl` and `canary.json` are not, and
+task it merged was reviewed by the turn machine, which keeps its state there, and so is
+`contracts/` when `run.yaml` `locate.gate_files` pins `bin/review_record.py` (that bridge
+records every worker call there); `usage.jsonl`, `canary.json`, `needs-review.jsonl` and
+`tamper.jsonl` are not, and
 one the host lacks is `absent on the host`, never a failed harvest
 (`envelopes/` and `audit/` are directories: `test -d`, then their `*.json` files only, each row
 carrying `files` and the sha256 over its sorted `path<TAB>sha256` lines). The
@@ -2400,7 +2459,21 @@ none>: {envelopes, usd, unpriced_calls}}`, which a run with no stepped envelope 
 not get. Of a lower bound `cf harvest` warns `LOWER BOUND`, and `NO RESPONSES
 priced` when no envelope was priced, on whichever block the receipt carries, and
 `cf bench score` refuses such a receipt unless `--article-costs` prices every
-article. `cf tally --locate` prints every
+article. From the turn records under `runs/<run-id>/host/` (fetched now or kept from a
+previous harvest; `scripts/harvest/turn_records.py`) an unaudited locate run's receipt
+carries four blocks, and a run with none of the records gets none of them:
+`needs_review: {count, tasks, merged, entries}` (every task a worker marked
+`needs_review`: the ledger's tasks and those whose last worker contract says so; `merged`
+the latter, whose `needs_review` contribution is what merged; `entries` the ledger's
+lines), which never makes the receipt incomplete — `cf harvest` warns `NEEDS REVIEW` and
+names each, and the run's closeout lists every one for a person before its tally is used;
+`worker_documents: {checked, matched, unrecorded}` and `merged_not_worker: [{task_id, path,
+merged_blob, worker_blob}]`, each landed `<task>/<source>.json` compared by its git blob id
+with the blob the task's last worker contract recorded for it — a document that differs
+(something other than its worker changed it before the merge) makes the receipt
+**INCOMPLETE**, and a task with no contract is `unrecorded`, reported only; and
+`reviewer_tampered: {count, tasks, entries}`, the tamper ledger, reported only, since each
+change was undone before the merge. `cf tally --locate` prints every
 read run's cost line — its source and envelope count — and records it under
 `cost` in the tally report. The harvest then merges `runs.<run-id>` of the sourceset's
 `state.json` through `Sourceset.record_state` — `{status: harvested,
@@ -3146,8 +3219,10 @@ refuse, or a rendering or collateral that exits other than 0 or 3 (a failure on 
 a retry would only repeat), and the round is `merge --audit-failed`: approve, counted. A step that validated for the
 round's document is not called again: a call that fails as infrastructure exits 124, 75, 64 or
 128 + N, tend retries the turn, and only what is left is paid for. Around every reviewer call the
-tamper guard compares HEAD, the tracked changes and the untracked files outside `.tend/`; a
-change is undone (`git reset --hard`, then `git clean -fd -e .tend`) and counted.
+tamper guard compares HEAD, the tracked changes, the untracked files outside `.tend/` and
+HEAD's branch; a change is undone (the branch checked out at HEAD again, `git reset --hard`,
+then `git clean -fd -e .tend`) and counted. It is `scripts/run/review_record.py`'s guard,
+which the unaudited locate bridge runs around its reviewer calls too (§9).
 
 **The decision.** `approve` ends the task's audit. `request_changes` moves the round to k + 1,
 opens the revision of round k's verdicts, and is recorded as a genuine rejection

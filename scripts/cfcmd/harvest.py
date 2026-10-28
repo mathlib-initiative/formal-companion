@@ -30,6 +30,7 @@ from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
 from harvest import harvest_journal, record as record_mod
 from harvest import host_artifacts as host_mod
+from harvest import turn_records as turns_mod
 from recheck import pin as pin_mod
 from run import manifest
 
@@ -153,6 +154,7 @@ def run(args) -> int:
                  f"`cf harvest {args.run_id} --gate-config <file>` when you have one.")
     for line in audit_mod.problems(receipt.get("audit")):
         log.warn(f"AUDIT of run {args.run_id}: {line}.")
+    warn_turns(args.run_id, receipt)
     if not (receipt.get("edition") or {}).get("ok", True):
         log.warn("harvest REFUSED the edition: findings judged against another edition are in "
                  "this corpus. Re-run them against the pinned edition, or pass "
@@ -319,7 +321,42 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
         allow_edition_mismatch=args.allow_edition_mismatch,
         gate_runner=gate_runner(workspace, args, locate=locate, run_doc=data), cost=cost,
         host_artifacts=host,
-        audit_runner=audit_runner(data, host_dir, host) if locate else None)
+        audit_runner=audit_runner(data, host_dir, host) if locate else None,
+        turns_runner=turns_runner(data, host_dir) if locate else None)
+
+
+def turns_runner(data: dict, host_dir: Path):
+    """An unaudited locate run's turn-record blocks (``harvest.turn_records``), else None.
+
+    It reads ``runs/<run>/host/``: what this harvest fetched from the tend root, or the
+    copy a previous harvest left there; with no record at all the receipt gets no block.
+    An audited run's turns are the turn machine's (:func:`audit_runner`).
+    """
+    if audit_mod.plan_of(data) is not None:
+        return None
+
+    def _summarise(dest: Path) -> dict | None:
+        return turns_mod.summarise(dest, host_dir)
+
+    return _summarise
+
+
+def warn_turns(run_id: str, receipt: dict) -> None:
+    """Say every needs_review and every merged document that is not its worker's."""
+    needs = receipt.get(turns_mod.NEEDS_REVIEW_KEY) or {}
+    if needs.get("count"):
+        log.warn(f"NEEDS REVIEW in run {run_id}: {needs['count']} task(s) a worker marked "
+                 f"needs_review ({', '.join(needs.get('tasks') or [])}). Each merged as before; "
+                 f"read each one (RECEIPT.json needs_review.entries, runs/{run_id}/host/"
+                 f"{turns_mod.NEEDS_REVIEW_LEDGER}) and list it in the run's closeout before "
+                 f"its tally is used.")
+    wrong = receipt.get(turns_mod.MERGED_NOT_WORKER_KEY) or []
+    if wrong:
+        log.warn(f"harvest INCOMPLETE: {len(wrong)} merged document(s) are not the blob their "
+                 f"worker committed ({', '.join(r['path'] for r in wrong[:5])}): something other "
+                 f"than the worker changed them before the merge. Explain each from "
+                 f"runs/{run_id}/host/{turns_mod.CONTRACTS}/ and tamper.jsonl before the corpus "
+                 f"is used.")
 
 
 def audit_runner(data: dict, host_dir: Path, host: dict | None):

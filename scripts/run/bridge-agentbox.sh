@@ -30,7 +30,9 @@
 #                          plus the same CF_GATE_CMD entry: both reviewer prompts tell
 #                          the reviewer to run the gate, and claude -p denies an
 #                          unlisted Bash command, so without it a reviewer either
-#                          approved unchecked or rejected sound work it could not check.)
+#                          approved unchecked or rejected sound work it could not check.
+#                          On a locate run the git is read-only by subcommand instead:
+#                          Bash(git diff:*), git show, git log and git status.)
 #   CF_CODEX_SANDBOX       codex --sandbox mode       (default: workspace-write)
 #   CF_ALLOW_SANDBOX_BYPASS=1  run with approvals and the sandbox OFF. An explicit
 #                          opt-in, NOT the default: the run host holds the companion
@@ -67,6 +69,13 @@
 #                          gate's tasks/ directory and
 #                          CF_MERGE_TARGET the branch the capped change set is read
 #                          against (default main)
+# A LOCATE RUN is one whose CF_GATE_CMD is the locate gate (verify_locate.py), read as
+# GATE_TOOL reads it below. Its worker's revision prompt lets it decline feedback its
+# rules forbid (status needs_review), its reviewer's default git is read-only, and on
+# its unaudited turns bin/review_record.py keeps each call's contract under
+# $ROOT/contracts/, the needs_review ledger $ROOT/needs-review.jsonl, and the tamper
+# guard around each reviewer call ($ROOT/tamper.jsonl; references/locate-documents.md
+# section 9). The faithfulness pipeline's bridge is what it was.
 # Claude's JSON envelope is KEPT, outside the worktree, under $ROOT/usage/ (one file
 # per call), for the spend watchdog and the cost cross-check; the counter is
 # $ROOT/attempts/<task-id>.json.
@@ -90,7 +99,16 @@ PROFILE="${CF_AGENTBOX_PROFILE:-${USER:-}}"
 [ -n "$PROFILE" ] || { echo "bridge-agentbox: no agentbox profile -- set CF_AGENTBOX_PROFILE" >&2; exit 78; }
 ERR="$ROOT/agentbox-$ROLE.err"
 BINDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-for helper in agent_call.py normalize_result.py; do
+LOCATE=0
+case "${CF_GATE_CMD:-}" in *"/verify_locate.py --"*) LOCATE=1 ;; esac
+# the records of review_record.py: an unaudited locate turn of a known task
+RECORD=0
+if [ "$LOCATE" = 1 ] && [ -z "${CF_AUDIT_RULE:-}" ] && [ -n "${TEND_TASK_ID:-}" ]; then
+  RECORD=1
+fi
+HELPERS="agent_call.py normalize_result.py"
+[ "$LOCATE" = 1 ] && HELPERS="$HELPERS review_record.py"
+for helper in $HELPERS; do
   [ -r "$BINDIR/$helper" ] || {
     echo "bridge-agentbox: missing helper $BINDIR/$helper (cf run ships it beside the bridge)" >&2
     exit 78; }
@@ -116,15 +134,33 @@ PROMPT="$(sed -e "s#\$TEND_TASK_ID#${TEND_TASK_ID:-}#g" \
 # normalize_result.py: a contribution whose `validation` field is a sentence instead of
 # list[ValidationEvidence] is rejected by tend's StrictModel and the finished work is
 # silently returned to the queue -- that is why nothing here prints to stdout.)
+#
+# On a locate run the revision does not tell the worker to comply: in smoke 4 two
+# challenge workers overturned a prominence to satisfy a reviewer who had misread the
+# rules ("do not re-litigate"), and the audit judged both overturns wrong. The task
+# prompt and the gate are the rules; a request they rule out is declined, quoted, and
+# the contribution finished as needs_review, which review_record.py records for a person.
 if [ "$ROLE" = worker ] && [ -s "$PWD/.tend/discussion.md" ]; then
   PRIOR="$(tail -c 6000 "$PWD/.tend/discussion.md")"
+  if [ "$LOCATE" = 1 ]; then
+    # a plain string, not a heredoc in $(...): bash 3.2 (macOS's /bin/bash) mis-parses an
+    # apostrophe in one and refuses the whole script
+    REVISE="Read the feedback below and fix what it names, without restarting from scratch. Your task
+prompt and the validation gate are the rules; the reviewer checks your work against them and
+can misread them. If the feedback asks for something your prompt rules out or the gate
+refuses, do not change a verdict or a judgment to make the request satisfiable: leave that
+part as it was, quote the rule (and the gate's refusal, if you ran it) in your summary, and
+finish with status \`needs_review\`. Re-run the validation gate before finishing."
+  else
+    REVISE="Read the feedback below and FIX EXACTLY WHAT IT NAMES. Do not restart from scratch and do
+not re-litigate the reviewer's judgement; if you disagree, address the point explicitly in
+your summary. Re-run the validation gate before finishing."
+  fi
   PROMPT="$PROMPT
 
 ## THIS IS A REVISION — a reviewer rejected the previous attempt
 
-Read the feedback below and FIX EXACTLY WHAT IT NAMES. Do not restart from scratch and do
-not re-litigate the reviewer's judgement; if you disagree, address the point explicitly in
-your summary. Re-run the validation gate before finishing.
+$REVISE
 
 --- prior discussion (most recent last) ---
 $PRIOR
@@ -178,7 +214,14 @@ if [ "$ROLE" = reviewer ]; then
   # The gate entry above: the gate reads, and its one write is the append-only
   # gate log outside the worktree. A reviewer that could not verify requested
   # changes, and that counted as a genuine rejection towards the attempt cap.
-  TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-Read,Glob,Grep,Bash(git:*)$GATE_TOOL}}"
+  # A locate reviewer's git is read-only by subcommand, as the audited reviewer's:
+  # Bash(git:*) admitted checkout, commit and config, and tend merges the worktree's
+  # HEAD (the tamper guard below undoes whatever gets past the list).
+  REVIEWER_DEFAULT="Read,Glob,Grep,Bash(git:*)$GATE_TOOL"
+  if [ "$LOCATE" = 1 ]; then
+    REVIEWER_DEFAULT="Read,Glob,Grep,Bash(git diff:*),Bash(git show:*),Bash(git log:*),Bash(git status:*)$GATE_TOOL"
+  fi
+  TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-$REVIEWER_DEFAULT}}"
 else
   TOOLS="${CF_ALLOWED_TOOLS:-${CF_WORKER_TOOLS:-Read,Glob,Grep,Edit,Write,Bash(git:*)$GATE_TOOL}}"
   # A locate worker's host tools (corpus_search.py, corpus_show.py), by absolute path.
@@ -196,7 +239,14 @@ if [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
   CAPPED="$(python3 "$BINDIR/attempt_cap.py" "$ROLE" --root "$ROOT" --task "$TEND_TASK_ID" \
               --cap "$CAP" --worktree "$PWD" 2>>"$ERR")"
   CAPRC=$?
-  if [ "$CAPRC" = 0 ]; then printf '%s\n' "$CAPPED"; exit 0; fi
+  if [ "$CAPRC" = 0 ]; then
+    printf '%s\n' "$CAPPED"
+    if [ "$RECORD" = 1 ]; then
+      printf '%s' "$CAPPED" | python3 "$BINDIR/review_record.py" contract --role "$ROLE" \
+        --root "$ROOT" --task "$TEND_TASK_ID" --worktree "$PWD" >/dev/null 2>>"$ERR" || true
+    fi
+    exit 0
+  fi
   if [ "$CAPRC" = 78 ]; then
     echo "bridge-agentbox: CF_ATTEMPT_CAP=$CAP is refused: under the locate gate's own cap (see $ERR)" >&2
     exit 78
@@ -215,9 +265,11 @@ fi
 # profile, host and bypass, calls agent_call.py as below, and prints the contract.
 # Without CF_AUDIT_RULE nothing here changes.
 if [ -n "${CF_AUDIT_RULE:-}" ]; then
-  [ -r "$BINDIR/audit_turn.py" ] || {
-    echo "bridge-agentbox: CF_AUDIT_RULE=$CF_AUDIT_RULE but $BINDIR/audit_turn.py is missing" >&2
-    exit 78; }
+  for helper in audit_turn.py review_record.py; do
+    [ -r "$BINDIR/$helper" ] || {
+      echo "bridge-agentbox: CF_AUDIT_RULE=$CF_AUDIT_RULE but $BINDIR/$helper is missing" >&2
+      exit 78; }
+  done
   exec python3 -I "$BINDIR/audit_turn.py" "$ROLE" --root "$ROOT" --prompts "$PROMPTS" \
     --host "$HOST" --profile "$PROFILE" --bypass "$BYPASS" --tools "$TOOLS" --err "$ERR"
 fi
@@ -226,6 +278,23 @@ RESULT="$PWD/.tend/agent_result.json"
 mkdir -p "$PWD/.tend"; rm -f "$RESULT"
 RAW="$(mktemp)"
 trap 'rm -f "$RAW"' EXIT
+
+# THE REVIEWER'S RECORDS (an unaudited locate turn; bin/review_record.py). A worker that
+# finished needs_review gets its summary in the reviewer's prompt, and the worktree is
+# fingerprinted for the tamper guard after the call: acceptEdits lets the reviewer write
+# (it must write .tend/agent_result.json), and tend merges whatever HEAD it leaves.
+BEFORE=""
+if [ "$RECORD" = 1 ] && [ "$ROLE" = reviewer ]; then
+  BLOCK="$(python3 "$BINDIR/review_record.py" needs-review-block --root "$ROOT" \
+             --task "$TEND_TASK_ID" --worktree "$PWD" 2>>"$ERR")"
+  if [ -n "$BLOCK" ]; then
+    PROMPT="$PROMPT
+
+$BLOCK"
+  fi
+  BEFORE="$(python3 "$BINDIR/review_record.py" fingerprint --worktree "$PWD" 2>>"$ERR")" \
+    || BEFORE=""
+fi
 # agent_call.py takes a session slot (flock, waiting), runs the call under
 # CF_AGENT_TIMEOUT in its own process group, keeps the envelope under usage/ and
 # exits 124 (timeout) or 75 (empty or 409) for an infrastructure failure.
@@ -266,6 +335,17 @@ else
   "${CALL[@]}" agentbox host claude --profile "$PROFILE" -- "${CLAUDE_ARGS[@]}"
   CALLRC=$?
 fi
+# THE TAMPER GUARD, whatever the call's exit: a change the reviewer made outside .tend/
+# is undone (reset to the worker's commit, untracked files cleaned), recorded in
+# $ROOT/tamper.jsonl and this role's err log, and its verdict kept, as the audited
+# inventory's guard keeps it.
+TAMPERED=""
+if [ -n "$BEFORE" ]; then
+  python3 "$BINDIR/review_record.py" guard --worktree "$PWD" --before "$BEFORE" \
+    --root "$ROOT" --task "$TEND_TASK_ID" 2>>"$ERR"
+  GUARDRC=$?
+  if [ "$GUARDRC" = 2 ]; then TAMPERED="--tampered"; fi
+fi
 case "$CALLRC" in
   124|75|64)
     echo "bridge-agentbox: the agent call failed as infrastructure (exit $CALLRC; see $ERR);" \
@@ -276,6 +356,13 @@ esac
 OUT="$(python3 "$BINDIR/normalize_result.py" "$ROLE" "$RESULT" "$RAW")"
 NORMRC=$?
 printf '%s\n' "$OUT"
+if [ "$RECORD" = 1 ]; then
+  # the normalised contract, kept where the harvest reads it: a worker's needs_review
+  # (its own, or one the normaliser made) and the blobs of its documents at HEAD
+  # shellcheck disable=SC2086
+  printf '%s' "$OUT" | python3 "$BINDIR/review_record.py" contract --role "$ROLE" \
+    --root "$ROOT" --task "$TEND_TASK_ID" --worktree "$PWD" $TAMPERED >/dev/null 2>>"$ERR" || true
+fi
 if [ "$ROLE" = reviewer ] && [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
   # Only a request_changes the reviewer stated (in $RESULT, or with no result file an
   # explicit `verdict:` in its prose) from a call that completed counts; attempt_cap.py
