@@ -42,6 +42,25 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **Audit rule 3 in the host tools and the turn machine, dormant: the gaps judged**
+  (`scripts/gate/inventory_audit.py`, `inventory_render.py`, `inventory_edit.py`,
+  `scripts/run/audit_turn.py`; `references/locate-documents.md` §13.12; the smoke-4 audit). A gap
+  is a run of a block's own text of the body, outside the back matter, of eight words or more,
+  that no passage and no skip holds, named `r<k>-g<nnn>`. Under `--rule 3`
+  (`cf-inventory-audit/3`, `audit/3`, whose table is `audit/2`'s) the rendering draws the layer no
+  passage holds block by block, each gap a line of its own in full to 1,200 characters (the first
+  renderer clipped a whole gap to its first and last 200, which hid smoke 4's lost paragraph); the
+  auditor judges every gap once, `clean` or `gap_statements` with the statements it holds; the
+  skeptic hunts every gap no flag names and upholds a gap flag only with evidence inside the gap;
+  the merge turns it into a gap verdict the worker repairs with `add` and `set` (no new
+  operation); every verdicts file carries the round's `gap_report`; the diff gains GAPS and GAP
+  VERDICT lines. The kind rule reads every formal `other` passage, not only one in a proof or an
+  example section, and its action names the expository answer (PD5); the advisory `commentary`
+  hint marks a formal passage that reads as a method's commentary, an instruction or a meta
+  remark. The turn machine accepts `CF_AUDIT_RULE=3` (strips with `--gate-config`, names each
+  part's gaps, the gap hunt, combined `examined_gaps` and `missed_gaps`, a gap verdict weighing
+  max(1, its statements)). No planner writes rule 3 yet; rules 1 and 2 render, validate, strip
+  and merge byte for byte as 3b29518 did (a test renders both pages with 3b29518's renderer).
 - **The prose floor: no paragraph of the body left out silently** (gate rule 8,
   `scripts/gate/verify_locate.py`; `references/locate-documents.md` §2; the smoke-4 audit).
   Both statements smoke 4's inventory lost were whole formula-free paragraphs that no passage and

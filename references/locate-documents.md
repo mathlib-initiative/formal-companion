@@ -14,7 +14,7 @@ planner side (`scripts/locate/`: §5's candidates, §6's sealed set, §9's run,
 rendered web sources · 8 universes, library indexes and `corpus.sqlite` · 9 a
 locate run on disk · 10 harvested rows and passage outcomes · 11 campaigns · 12 carry-over
 maps · 13 inventory audit records (13.9 the turn machine, 13.10 the harvest's `audit`
-block)
+block, 13.11 skips under rule 2, 13.12 gaps under rule 3)
 
 Every example is synthetic: a made-up article ("Widget lemma", page id 1001,
 revision 2002), made-up libraries `alpha` and `beta`, made-up declarations.
@@ -2848,7 +2848,7 @@ test vector. A consumer that
 ports the map (`docs/proposals/statement-cut.md` §8) runs the same cases; `tests/test_locate_carry.py`
 runs them against `locate.carry.map_page`.
 
-## 13. Inventory audit records (`cf-inventory-audit/1`, `cf-inventory-audit/2`)
+## 13. Inventory audit records (`cf-inventory-audit/1`, `cf-inventory-audit/2`, `cf-inventory-audit/3`)
 
 An **audited** inventory run reviews each inventory document in rounds, after the worker has
 committed it and the gate has passed it: an auditor (round 1) or a checker (round 2 on) judges
@@ -2860,7 +2860,8 @@ it applies. `cf plan-locate --preset locate-inventory --audit-rounds 2|3` plans 
 exactly as before. This section is the format the stage
 is built on and the three host tools that read and write it, under **audit rule 1**, which
 audits the passages; **audit rule 2** (§13.11, what a plan writes from its flip on) audits the
-skips too, and §13.1-13.10 hold under it but where §13.11 says otherwise.
+skips too, and §13.1-13.10 hold under it but where §13.11 says otherwise; **audit rule 3**
+(§13.12) audits the gaps too, and §13.1-13.11 hold under it but where §13.12 says otherwise.
 
 **The tools.** `scripts/gate/inventory_render.py`, `scripts/gate/inventory_edit.py` and
 `scripts/gate/inventory_audit.py` are standard library only and import no `cflib`; the planner
@@ -3439,3 +3440,99 @@ shows its skip, runs the skip hunt's skeptic calls, combines the parts' `examine
 sessions: a skip verdict weighs max(1, its statements, its `unheld`) and any other verdict 1, a
 session holds up to `AUDIT_REPAIR_VERDICTS_PER_SESSION` (40) of weight, and a heavier verdict has a
 session of its own.
+
+### 13.12 Gaps under rule 3 (`cf-inventory-audit/3`)
+
+**Audit rule 3** is rule 2 (§13.11) with the **gaps** audited too, and the smoke-4 audit's
+readings of the cut where a merge or a rendering reads them. The smoke-4 audit found two
+statements no record held: a formula-free paragraph in the middle of a long run of text no
+passage held, which the rendering's GAP line clipped to its first and last 200 characters, so no
+reviewer saw it; and a notation sentence that was on screen in every round, for which no audit
+record existed. The prose floor (gate rule 8, §2) now makes every paragraph of the body a
+passage's or a skip's; rule 3 judges what is left. Every file of a rule-3 run carries
+`cf-inventory-audit/3`, every tool runs with `--rule 3`, and a verdicts file names `audit/3`,
+whose decision table is `audit/2`'s, a gap verdict counting as any actionable verdict. Rules 1 and
+2 render, validate, strip and merge byte for byte as 3b29518 did.
+
+**Terms.** A block's **own text** is its `paragraphs.json` span less the spans of the blocks
+nested in it (of two entries of one span, a theorem box and its paragraph, the first in the
+table's order owns it; `inventory_audit.own_text`). A **gap** is a run of one block's own text,
+outside the back matter (a top heading of `AUDIT_BACK_MATTER`; the lead is the body), that no
+passage and no skip holds, its whitespace trimmed, of at least `AUDIT_GAP_MIN_WORDS` (8) words
+(`inventory_audit.gap_facts`): `{id, span, block, block_span, section, words, math, whole}`,
+`whole` when the run is all its block's own text. Its id is `r<k>-g<nnn>`, round k's numbering in
+span order. Under the prose floor a whole block is never a gap: the gaps are the runs inside a
+partly held block, a notation sentence after a set-up sentence that alone is a passage, a step
+between two passages of one paragraph.
+
+**The rendering** (`inventory_render.py --rule 3`). The layer no passage and no skip holds is
+drawn **block by block**: a gap is a line of its own, `GAP r1-g003 · [a, b] · p · 23 word(s) ·
+<section>: <text>`, in full to `AUDIT_GAP_BLOCK_MAX` (1,200) characters, its first and last
+`AUDIT_GAP_BLOCK_SIDE` (500) past that; a shorter run of a body block is `GAP [a, b] <block>:
+<text>`, in full; text no block of the body holds (a heading, the back matter) is a GAP line as
+rule 1 draws it. SKIP blocks are rule 2's. The header gains the gaps' legend and one line, `Gaps:
+N (r1-g001 to r1-g00N), W word(s): …` (or `Gaps: none.`); the passage HINTs gain `commentary`
+and the kind rule's reach (below). The index gains `gaps`, one row per gap `{id, span, part,
+words, block, section, whole}`, and each part the gaps it shows (a gap is the part's whose lines
+show it: the gap before a passage rides with it, as a skip does). `--show r1-g003` prints the gap
+whole with the layer around it. With `--previous` and `--previous-verdicts` the diff gains, after
+rule 2's SKIPS section, `GAPS: N before (W word(s)), M after (V word(s))` and one line per gap
+verdict of the last round: `GAP VERDICT r1-v004 on r1-g001 [a, b]: 15 word(s) held by no passage
+and no skip before, 0 now; 1 of its 1 statement(s) now start inside a passage.`
+
+**The auditor's file** gains a required key, `gaps`: one row for every gap its part shows,
+`{gap, verdict, rule, merge_with, reason, action, statements}`, the verdict `clean` or
+`gap_statements` (`AUDIT_GAP_VERDICT`) and no other, which no passage row and no skip row takes.
+A `gap_statements` row names its rule (7 for a notation sentence or context, 1, 2 or 6
+elsewhere), its reason and action, and what the gap holds: `statements` (at most
+`AUDIT_SKIP_STATEMENTS_MAX`, each `{at, until, passage_kind}` with `at` 3 to 12 words verbatim
+inside the gap) or `merge_with`, the kept passage whose sentence the gap's text finishes; a clean
+row gives rule 0 and nothing else. `validate --rule 3` holds the rows to the part's gaps (from
+`--render-index`, or the source's with `--gate-config`) and, with `--gate-config`, names a
+statement anchored outside its gap.
+
+**The skeptic.** `strip --rule 3 --gate-config G` reads the gaps on the layer and flags every
+`gap_statements` row as `{flag_id, item: "", gap, span, verdict, rule, merge_with, reason}`, its
+statements and action withheld, placed by where the gap starts. The skeptic's file gains
+`examined_gaps` (in round 1, **every** gap of its part no flag names) and `missed_gaps` (the
+auditor's row shape with `evidence`). A gap flag is upheld only as `gap_statements`, with evidence
+verbatim **inside the gap**; evidence from elsewhere refutes it, and no other flag is upheld as
+`gap_statements`.
+
+**The merge.** An upheld gap flag and an evidenced missed gap are a **gap verdict**: `{item: "",
+gap, gaps, span, start, verdict: "gap_statements", rule, merge_with, action, origin, statements,
+words, after, …}`, `after` the item of the last passage that starts before the gap (where an `add`
+of its statements goes, null for the first). A statement whose `at` is not inside the gap is
+dropped and counted. No mechanical rule raises a gap: the auditor judges every one and the
+skeptic hunts every one no flag names. Round 1's counts gain `gaps`, `gaps_judged`,
+`gaps_flagged`, `gaps_upheld`, `gaps_refuted`, `gap_missed_added`, `gap_missed_dropped`,
+`gap_statements` and `gap_statements_dropped`; a later round's `gaps`, `gap_carried`,
+`gap_missed_added`, `gap_missed_dropped`, `gap_statements` and `gap_statements_dropped`. A gap
+verdict sent back keeps its span and names the gaps of the new snapshot there (`gaps`, possibly
+none). Every rule-3 verdicts file carries the round's `gap_report`, `{gaps, words, whole,
+by_section: {"<section>": {gaps, words}}}`.
+
+**The kind rule under rule 3** reads **every** formal passage of kind `other`, not only one in a
+proof or an example section (a method's commentary in a "Computation" section escaped the section
+filter), and its fixed action is `AUDIT_KIND_RULE_ACTION_3`: rule 2's, and "scope it expository
+instead when it asserts nothing about mathematical objects (narration, commentary on a method, an
+instruction, set-up: PD5)". A `should_be_expository` verdict settles the passage, as any verdict of
+`KIND_SETTLED` does, and `kind_other_ok` exempts it. The receipt's kind counts
+(`kind_other_in_proof_or_example`) keep their meaning.
+
+**The `commentary` hint** (rule 3, advisory, never a verdict) marks a formal passage that reads
+as commentary on a method (an efficiency word of `AUDIT_COMMENTARY_EFFICIENCY` with no digit and
+no complexity term), an instruction (it starts with one of `AUDIT_COMMENTARY_STARTS`) or a meta
+remark (`AUDIT_COMMENTARY_PHRASES`): the reviewer judges whether it asserts anything (C6, PD5).
+
+**The repair** adds no operation. A gap's statements are `add` operations (`after` the verdict's
+`after`, `scope: formal_math`, the kind the verdict proposes, `prominence: supporting`), its
+`merge_with` a `set` of `until` on that passage, each citing the gap verdict; the gate validates
+the result as any. The checker gives a gap verdict a status as any (`applied` when the statements
+it named start inside passages and its span leaves no gap that holds a statement), reading the
+diff's GAP VERDICT line.
+
+**The turn machine** (`CF_AUDIT_RULE=3`) is rule 2's, with `--gate-config` on every strip, each
+part's gaps named in the call's block, a gap flag placed in the part that shows its gap, the gap
+hunt's skeptic call for a part with an unflagged gap in round 1, the parts' `examined_gaps` and
+`missed_gaps` combined, and a gap verdict weighing max(1, its statements) in a revision session.

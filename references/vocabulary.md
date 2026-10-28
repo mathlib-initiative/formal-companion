@@ -1025,8 +1025,8 @@ names one with `cf plan-locate --audit-rounds`, R one of `AUDIT_REVIEW_ROUNDS`, 
 
 | enum | values |
 |---|---|
-| `INVENTORY_AUDIT_RULES` | `1` · `2` — the audit rules the host tools (`--rule`, default 1), the turn machine (`CF_AUDIT_RULE`) and the harvest know: rule 1 audits the passages (inv-pilot-3's run), rule 2 the skips too (`references/locate-documents.md` §13.11); `INVENTORY_AUDIT_RULE` is the one a new audited plan writes, the decision table's version `audit/<rule>` in a verdicts file |
-| `INVENTORY_AUDIT_SCHEMAS` | `cf-inventory-audit/1` (rule 1) · `cf-inventory-audit/2` (rule 2) — the `schema` of every audit file of a run of that rule; `INVENTORY_AUDIT_SCHEMA` is rule 1's |
+| `INVENTORY_AUDIT_RULES` | `1` · `2` · `3` — the audit rules the host tools (`--rule`, default 1), the turn machine (`CF_AUDIT_RULE`) and the harvest know: rule 1 audits the passages (inv-pilot-3's run), rule 2 the skips too (`references/locate-documents.md` §13.11; inv-pilot-3b's and smoke 4's), rule 3 the gaps too, with the smoke-4 readings (§13.12); `INVENTORY_AUDIT_RULE` is the one a new audited plan writes, the decision table's version `audit/<rule>` in a verdicts file |
+| `INVENTORY_AUDIT_SCHEMAS` | `cf-inventory-audit/1` (rule 1) · `cf-inventory-audit/2` (rule 2) · `cf-inventory-audit/3` (rule 3) — the `schema` of every audit file of a run of that rule; `INVENTORY_AUDIT_SCHEMA` is rule 1's |
 | `AUDIT_VERDICTS` | `clean` · `over_cut` (on the passage that merges into its `merge_with`) · `under_cut` · `should_be_expository` · `should_be_non_math` · `should_be_formal` (an expository flag, once flagged) · `redundant` · `wrong_kind` · `wrong_prominence` · `statement_misstates` — what an auditor, a checker's new entry or a skeptic says of a passage; a merged verdict for a change the checker judged harmful is `revert` (`AUDIT_VERDICT_REVERT`) |
 | `AUDIT_ORIGINS` | `lead` · `theorem_box` · `statement_section` · `proof` · `example` · `list_item` · `application_or_extension` · `history` · `other` — where an audited passage sits |
 | `AUDIT_CHECK_STATUSES` | `applied` · `partial` · `missing` · `wrong` · `gate_refused_ok` · `gate_refused_doubtful` · `disputed` — what a checker says of a verdict the round before asked for; `AUDIT_CHECK_ACTIONABLE` (`partial`, `missing`, `wrong`, `gate_refused_doubtful`) go back to the worker |
@@ -1041,6 +1041,8 @@ names one with `cf plan-locate --audit-rounds`, R one of `AUDIT_REVIEW_ROUNDS`, 
 | `AUDIT_SKIP_OPS` | `unskip` — rule 2's operation beside `AUDIT_EDIT_OPS`: a skip shrunk, split or dropped (`keep`), never widened |
 | `AUDIT_SKIP_COLLATERAL` | `skip_edit` — rule 2's change beside `AUDIT_COLLATERAL_CHANGES`: the document's skips differ from what the cited operations make of the snapshot's |
 | `AUDIT_SKIP_HINTS` | `skip-rule` · `in-proof` · `in-example` · `mostly-skipped` · `partial` · `furniture` — the hints of a SKIP block of a rule-2 rendering |
+| `AUDIT_GAP_VERDICTS` | `clean` · `gap_statements` (`AUDIT_GAP_VERDICT`: the gap holds a definition, a theorem, an equation, a notation or a declarative statement no passage keeps, or the end of a kept passage's sentence) — rule 3: what an auditor or a skeptic says of a gap (a run of a block's own text of the body, outside the back matter, of at least `AUDIT_GAP_MIN_WORDS` words, that no passage and no skip holds, named `r<k>-g<nnn>`), the only verdicts a gap row takes; no passage and no skip takes `gap_statements`. The skeptic's file gains `examined_gaps` (in round 1 every gap of its part no flag names) and `missed_gaps`; every rule-3 verdicts file carries the round's `gap_report` (`{gaps, words, whole, by_section}`) |
+| the rendering's hints, rule 3 | `commentary` — advisory, never a verdict: a formal passage with an efficiency word (`AUDIT_COMMENTARY_EFFICIENCY`) and no digit and no complexity term (`AUDIT_COMMENTARY_COMPLEXITY`), one that starts as an instruction (`AUDIT_COMMENTARY_STARTS`: `compute` · `proceed` · `repeat` · `for each of them` · `to illustrate`) or one with a meta phrase (`AUDIT_COMMENTARY_PHRASES`: `follows from this proof` · `one additional fact` · `may be used for` · `need not be`), each matched case-folded as whole words; and `kind-rule` on every formal passage of kind `other`, the kind rule's reach under rule 3 |
 
 Bounds, also in `cflib.vocab`: `AUDIT_REVIEW_ROUNDS` (2 or 3, the rounds an audited plan may
 name), `AUDIT_THRESHOLD_MIN` and `AUDIT_THRESHOLD_SHARE` (T = max(5, ⌈0.03 · formal⌉): a middle
@@ -1066,6 +1068,16 @@ the skip) and `AUDIT_SKIP_UNTIL_WORDS` (12: its last words), `AUDIT_SKIP_RULE_RU
 the skip rule's verdict names) with `AUDIT_SKIP_RULE_ACTION` (its fixed action), and
 `AUDIT_SKIP_BLOCK_BYTES` (20,000 bytes of a SKIP block shown in full; past them each block is
 one clipped line, and `--show <skip id>` prints it whole).
+
+Rule 3's bounds (`references/locate-documents.md` §13.12): `AUDIT_GAP_MIN_WORDS` (8, the prose
+floor's `PROSE_FLOOR_MIN_WORDS`: the fewest words of a gap), `AUDIT_GAP_BLOCK_MAX` (1,200
+characters of a gap's block drawn in full) and `AUDIT_GAP_BLOCK_SIDE` (500: its first and last
+past that), and `AUDIT_KIND_RULE_ACTION_3` (the kind rule's fixed action under rule 3, which
+reads every formal `other` passage: rule 2's, and "scope it expository instead when it asserts
+nothing about mathematical objects", PD5). A gap verdict is judged and repaired with the
+statement rows of a skip verdict (`AUDIT_SKIP_STATEMENTS_MAX`, `AUDIT_SKIP_AT_WORDS`,
+`AUDIT_SKIP_UNTIL_WORDS`); the repair adds no operation, and a revision session weighs it max(1,
+its statements).
 
 **The turn machine's values** (`references/locate-documents.md` §13.9, the turns an audited
 run's bridge hands to `scripts/run/audit_turn.py`, which copies them; `agent_call.py` and
