@@ -63,7 +63,11 @@ a skeptic's also ``--gate-config``, :meth:`Turn.advised`), the state records
 the rule, a part showing an unflagged skip over math no passage holds gets the round-1 skip
 hunt's skeptic call, a skip flag goes to the part that shows its skip, the rendering's diff
 reads the last round's verdicts, and the revision's sessions are weighed (:meth:`Turn.sessions`).
-Under rule 1 every call, prompt and command line is the base commit's.
+Under ``CF_AUDIT_RULE=3`` (section 13.12, audit rule 3: the gaps too) the same, and the strip
+reads the gaps on the layer (``--gate-config``), a part showing an unflagged gap gets the
+round-1 gap hunt's skeptic call, a gap flag goes to the part that shows its gap, the skeptic's
+parts combine their ``examined_gaps`` and ``missed_gaps``, and a gap verdict weighs the more of
+1 and its statements.  Under rule 1 every call, prompt and command line is the base commit's.
 
 Every agent call goes through ``agent_call.py --step`` (its session slot, timeout and
 kept envelope; the envelope's name carries the step).  Standard library only, no
@@ -102,8 +106,8 @@ import review_record  # noqa: E402  (bin/'s sibling: the tamper guard, the unaud
 
 TURN_SCHEMA = "cf-audit-turn/1"
 #: the audit rules this machine runs (CF_AUDIT_RULE): rule 1 audits the passages, rule 2 the
-#: skips too (references/locate-documents.md section 13.11)
-AUDIT_RULES = (1, 2)
+#: skips too (references/locate-documents.md section 13.11), rule 3 the gaps too (13.12)
+AUDIT_RULES = (1, 2, 3)
 AUDIT_REVIEW_ROUNDS = (2, 3)
 AUDIT_STEPS = ("audit", "skeptic", "check", "revision")
 OUTPUT_RETRIES = 1
@@ -113,6 +117,7 @@ REVERT_ATTEMPTS = 3
 REPAIR_VERDICTS_PER_SESSION = 40
 SUMMARY_WORDS = 80
 SKIP_VERDICT = "skipped_statements"
+GAP_VERDICT = "gap_statements"
 
 EXIT_FAILED = 1
 EXIT_USAGE = 64
@@ -521,6 +526,11 @@ class Turn:
         """A host tool's arguments with the run's rule (none under rule 1)."""
         return [*args, *self.rule_args]
 
+    def gap_source(self) -> list:
+        """What the strip reads the gaps on under rule 3 (the gap flags' spans): the run's
+        gate.json; nothing under rules 1 and 2, whose strips are the base commit's."""
+        return ["--gate-config", self.gate_config] if self.rule >= 3 else []
+
     def discussion_tail(self) -> str:
         path = self.worktree.joinpath(*DISCUSSION)
         try:
@@ -803,6 +813,9 @@ class Turn:
         if self.rule >= 2 and isinstance(index_part.get("skips"), list):
             lines.append("- The skips this part shows: "
                          + (", ".join(index_part["skips"]) or "none") + ".")
+        if self.rule >= 3 and isinstance(index_part.get("gaps"), list):
+            lines.append("- The gaps this part shows: "
+                         + (", ".join(index_part["gaps"]) or "none") + ".")
         lines += [
             f"- Staged for you under {'/'.join(MIRROR)}/: " + ", ".join(inputs) + ".",
             f"- Write exactly one file: {self.m(out)}.",
@@ -903,7 +916,7 @@ class Turn:
         self.stage(audits)
         code, out, err = self.tool("inventory_audit.py", *self.ruled([
             "strip", "--round", 1, "--document", self.doc_rel, *audit_args,
-            "--out", self.m("r1.flags.json")]))
+            *self.gap_source(), "--out", self.m("r1.flags.json")]))
         if code in (1, 2):
             return self.failed(state, 1, "the audit parts do not hold together: "
                                          + "; ".join(invalid_lines(out, err)[:5]))
@@ -982,7 +995,7 @@ class Turn:
         self.stage(checks + support)
         code, out, err = self.tool("inventory_audit.py", *self.ruled([
             "strip", "--round", k, "--document", self.doc_rel, *check_args, *tail,
-            "--out", self.m(f"r{k}.flags.json")]))
+            *self.gap_source(), "--out", self.m(f"r{k}.flags.json")]))
         if code in (1, 2):
             return self.failed(state, k, "the check parts do not hold together: "
                                          + "; ".join(invalid_lines(out, err)[:5]))
@@ -1004,11 +1017,15 @@ class Turn:
         geometry = self.geometry(index)
         _items, firsts, _starts = geometry
         mine = {i: {"flags": [], "disputes": []} for i in range(1, len(parts) + 1)}
-        # rule 2: a skip is the part's that shows it (the index), its flag with it
+        # rule 2: a skip is the part's that shows it (the index), its flag with it; rule 3: a
+        # gap the same way
         owner = {row["id"]: row.get("part") or 1 for row in index.get("skips") or []}
+        gap_owner = {row["id"]: row.get("part") or 1 for row in index.get("gaps") or []}
         for flag in flags.get("flags") or []:
             if flag.get("skip"):
                 mine[owner.get(flag["skip"], 1)]["flags"].append(flag)
+            elif flag.get("gap"):
+                mine[gap_owner.get(flag["gap"], 1)]["flags"].append(flag)
             else:
                 mine[self.part_of(geometry, flag["item"])]["flags"].append(flag)
         asked = {v["id"]: v.get("start") for v in (previous or {}).get("verdicts") or []}
@@ -1025,6 +1042,11 @@ class Turn:
                 hunt = hunt or any(row["id"] not in skips and row.get("unheld_outside")
                                    for row in index.get("skips") or []
                                    if owner.get(row["id"]) == i)
+            if self.rule >= 3 and k == 1:
+                # the gap hunt: every unflagged gap of the part
+                gaps = {f["gap"] for f in held["flags"] if f.get("gap")}
+                hunt = hunt or any(row["id"] not in gaps for row in index.get("gaps") or []
+                                   if gap_owner.get(row["id"]) == i)
             if not held["flags"] and not held["disputes"] and not hunt:
                 continue
             own = f"r{k}.flags.part{i}.json"
@@ -1079,6 +1101,16 @@ class Turn:
                     if all(row.get("skip") != r.get("skip") for r in missed_skips):
                         missed_skips.append(row)
             combined.update(examined_skips=skips, missed_skips=missed_skips)
+        if self.rule >= 3:
+            gaps, missed_gaps = [], []
+            for p in parts:
+                for gid in p.get("examined_gaps") or []:
+                    if gid not in gaps:
+                        gaps.append(gid)
+                for row in p.get("missed_gaps") or []:
+                    if all(row.get("gap") != r.get("gap") for r in missed_gaps):
+                        missed_gaps.append(row)
+            combined.update(examined_gaps=gaps, missed_gaps=missed_gaps)
         self.write_auth(f"r{k}.skeptic.json", combined)
 
     # ------------------------------- worker ---------------------------- #
@@ -1134,8 +1166,9 @@ class Turn:
     def sessions(self, verdicts: list[dict]) -> list[list[str]]:
         """The revision's sessions, in verdict order: at most REPAIR_VERDICTS_PER_SESSION
         verdicts each (rule 1); under rule 2 at most that much weight, a skip verdict
-        weighing max(1, its statements, the math paragraphs under it no passage holds) and
-        any other 1, a heavier verdict a session of its own."""
+        weighing max(1, its statements, the math paragraphs under it no passage holds), a
+        gap verdict (rule 3) max(1, its statements), and any other 1, a heavier verdict a
+        session of its own."""
         ids = [v["id"] for v in verdicts]
         if self.rule < 2:
             return [ids[i:i + REPAIR_VERDICTS_PER_SESSION]
@@ -1146,6 +1179,8 @@ class Turn:
             weight = 1
             if v.get("verdict") == SKIP_VERDICT:
                 weight = max(1, len(v.get("statements") or []), int(v.get("unheld") or 0))
+            elif v.get("verdict") == GAP_VERDICT:
+                weight = max(1, len(v.get("statements") or []))
             if not out or load + weight > REPAIR_VERDICTS_PER_SESSION:
                 out.append([])
                 load = 0

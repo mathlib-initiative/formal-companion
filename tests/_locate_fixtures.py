@@ -739,3 +739,151 @@ def skip_body(*, proof: bool = True, display: bool = False, remark: bool = False
                                  rule=vocab.SPAN_END_CONTINUED)
     assert not problems, problems
     return doc
+
+
+# --------------------------------------------------------------------------
+# the gap audit's page (audit rule 3, references/locate-documents.md section 13.12) and
+# the prose floor's (gate rule 8): a made-up "Widget gaps", whose body holds formula-free
+# paragraphs, one of them a statement in words, and a notation sentence with plain-text
+# symbols, the two shapes the smoke-4 audit found no passage and no skip held
+# --------------------------------------------------------------------------
+
+GAP_TITLE = "Widget gaps"
+#: BB2's statement in words, in the middle of the three formula-free paragraphs of
+#: "Building blocks": past the first and last 200 characters of their gap together, where a
+#: GAP line of the first renderer clipped it away
+GAP_STATEMENT = "Every widget has a gadget, and the gadgets of a widget do not determine it."
+#: MOD1's notation sentence: it names a symbol the next paragraph's statement uses
+GAP_NOTATION = "We write N for the product of the counts c1, ..., ck of this section."
+GAP_BLOCKS = [
+    ("TITLE", None, [], GAP_TITLE),
+    ("LEAD", "p", [], "A widget is a finite graph of sprockets joined by gadgets."),
+    ("H_STATEMENT", None, [], "Statement"),
+    ("STMT", "p", ["Statement"], f"Every finite widget {skip_formula('W')} of order "
+                                 f"{skip_formula('n')} has at most {skip_formula('n')} edges."),
+    ("H_BLOCKS", None, [], "Building blocks"),
+    ("BB1", "p", ["Building blocks"],
+     "Widgets have long been assembled from smaller widgets, and the assembly is told in a "
+     "synthetic tradition of handbooks, lecture notes and survey articles that each describe "
+     "the same few constructions in their own words and with their own pictures, none of "
+     "them stating anything a library would record as a theorem or a definition."),
+    ("BB2", "p", ["Building blocks"], GAP_STATEMENT),
+    ("BB3", "p", ["Building blocks"],
+     "The surveys go on to compare the constructions with each other at some length, discuss "
+     "which of them a reader meets first in a course on widgets, and close with remarks on the "
+     "pictures each one draws, again in words that describe the subject and state nothing "
+     "about any particular widget or gadget."),
+    ("H_MODULI", None, [], "Moduli"),
+    ("MOD1", "p", ["Moduli"], "The sprocket counts c1, ..., ck are pairwise coprime "
+                              "throughout. " + GAP_NOTATION),
+    ("MOD2", "p", ["Moduli"], f"Then a widget of order {skip_formula('N')} has exactly one "
+                              f"gadget of each count."),
+    ("H_HISTORY", None, [], "History"),
+    ("HIST", "p", ["History"], "The widget bound was first stated in a synthetic letter that "
+                               "circulated among widget theorists."),
+    ("SHORT", "p", ["History"], "See the gadgets page."),
+    ("H_REFS", None, [], "References"),
+    ("REF1", "li", ["References"], "A. Author, Widgets and their gadgets, a synthetic book "
+                                   "of many pages."),
+]
+GAP_LAYER = "\n".join(text for _n, _b, _s, text in GAP_BLOCKS)
+
+
+def _page_spans(blocks, layer: str) -> dict[str, list[int]]:
+    out, cursor = {}, 0
+    for name, _block, _section, text in blocks:
+        a = layer.index(text, cursor)
+        out[name] = [a, a + len(text)]
+        cursor = a + len(text)
+    return out
+
+
+GAP_SPANS = _page_spans(GAP_BLOCKS, GAP_LAYER)
+
+
+def _page_formulas(blocks, spans: dict[str, list[int]]) -> list[dict]:
+    """The formulas of a page whose formulas are :func:`skip_formula`'s spelling."""
+    out = []
+    for name, _block, _section, text in blocks:
+        base, at = spans[name][0], 0
+        while True:
+            j = text.find("{\\displaystyle ", at)
+            if j < 0:
+                break
+            close = text.index("}", j)
+            tex = text[j + len("{\\displaystyle "):close]
+            out.append({"span": [base + j - len(tex), base + close + 1],
+                        "alttext": "{\\displaystyle " + tex + "}"})
+            at = close + 1
+    return out
+
+
+GAP_FORMULAS = _page_formulas(GAP_BLOCKS, GAP_SPANS)
+GAP_PARAGRAPHS = [{"span": GAP_SPANS[name], "section": list(section), "block": block,
+                   "formulas": text.count("{\\displaystyle "),
+                   "math": "{\\displaystyle " in text}
+                  for name, block, section, text in GAP_BLOCKS if block is not None]
+
+
+def gap_passage(name: str, kind: str, scope: str, *, prominence: str = "supporting",
+                until: str | None = None, words: int = 4, at: str | None = None) -> dict:
+    """A passage of the gap page the way a worker writes one (:func:`skip_passage`'s)."""
+    a = GAP_SPANS[name][0] if at is None else GAP_LAYER.index(at, GAP_SPANS[name][0])
+    exact = " ".join(GAP_LAYER[a:].split(" ")[:words])
+    section = next(s for n, _b, s, _t in GAP_BLOCKS if n == name)
+    row = {"item": "", "head_words": 0, "span": None,
+           "quote": {"exact": exact, "prefix": "", "suffix": ""},
+           "section": list(section), "fragment": section[0] if section else None,
+           "passage_kind": kind, "prominence": prominence if scope == "formal_math"
+           else "supporting", "scope": scope,
+           "statement": f"a synthetic restatement of the {name.lower()} passage",
+           "concept": None, "finder": "model"}
+    if until is not None:
+        row["until"] = until
+    return row
+
+
+def gap_span(*names: str, start: str | None = None, end: str | None = None) -> list[int]:
+    a, b = GAP_SPANS[names[0]][0], GAP_SPANS[names[-1]][1]
+    if start is not None:
+        a = GAP_LAYER.index(start, a)
+    if end is not None:
+        b = GAP_LAYER.index(end, a) + len(end)
+    return [a, b]
+
+
+def gap_body(*, blocks: str = "cover", notation: bool = False, history: str = "skip") -> dict:
+    """A gap document's body placed by ``passage_ids`` under span-end rule 3.
+
+    ``blocks``: the three paragraphs of "Building blocks" covered by passages (``cover``:
+    two expository, the statement formal), left out by one skip (``skip``) or by nothing
+    (``silent``, the shape the prose floor refuses).  ``notation``: MOD1's notation sentence
+    a passage of its own; else MOD1's first sentence alone is a passage (context, expository,
+    ended with ``until``), so the notation sentence is a run of the paragraph no passage and
+    no skip holds -- a gap of audit rule 3.  ``history``: the History paragraph left out by a
+    skip (``skip``), an expository passage (``cover``) or nothing (``silent``).  The short
+    paragraph after it and the references are never covered."""
+    rows = [gap_passage("LEAD", "definition", "formal_math", prominence="subject"),
+            gap_passage("STMT", "theorem", "formal_math", prominence="central")]
+    skips = [{"span": gap_span("REF1"), "reason": "references"}]
+    if blocks == "cover":
+        rows += [gap_passage("BB1", "other", "expository"),
+                 gap_passage("BB2", "theorem", "formal_math"),
+                 gap_passage("BB3", "other", "expository")]
+    elif blocks == "skip":
+        skips.append({"span": gap_span("BB1", "BB3"), "reason": "the history of the "
+                                                                 "constructions"})
+    rows.append(gap_passage("MOD1", "other", "expository",
+                            until=None if notation else "pairwise coprime throughout."))
+    if notation:
+        rows.append(gap_passage("MOD1", "notation", "formal_math", at=GAP_NOTATION))
+    rows.append(gap_passage("MOD2", "theorem", "formal_math"))
+    if history == "cover":
+        rows.append(gap_passage("HIST", "other", "expository"))
+    elif history == "skip":
+        skips.append({"span": gap_span("HIST"), "reason": "history"})
+    doc = {"passages": rows, "skips": sorted(skips, key=lambda s: s["span"]), "notes": ""}
+    problems = passage_ids.place(doc, GAP_LAYER, GAP_FORMULAS, GAP_PARAGRAPHS,
+                                 rule=vocab.SPAN_END_CONTINUED)
+    assert not problems, problems
+    return doc

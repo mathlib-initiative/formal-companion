@@ -569,9 +569,10 @@ class TestPlanInventory(Campaign):
             "tools_corpus_db", "sourceset", "sources", "candidates_dir", "blind", "inventory",
             "challenged_runs", "findings_dir", "tasks_dir", "log_dir", "orchestrator_db",
             "max_locations", "min_absence_queries", "judgment_rules", "span_end_rule",
-            "statement_cut_rule", "vendor", "candidates_sha256"})
+            "statement_cut_rule", "vendor", "candidates_sha256", "prose_floor_rule"})
         self.assertEqual(gate["schema"], "cf-gate-locate/1")
         self.assertEqual(gate["statement_cut_rule"], vocab.STATEMENT_CUT_RULE)
+        self.assertEqual(gate["prose_floor_rule"], vocab.PROSE_FLOOR_RULE)
         self.assertEqual(gate["judgment_rules"], vocab.JUDGMENT_RULES)
         self.assertEqual(gate["span_end_rule"], vocab.SPAN_END_RULE)
         self.assertEqual(gate["kinds"], ["PASSAGE", "UNRESOLVED"])

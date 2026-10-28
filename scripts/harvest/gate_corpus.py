@@ -567,9 +567,15 @@ def skipped_summary(stats: list[dict]) -> dict:
     a math paragraph, and nothing downstream reads ``skips``; so the receipt's
     gate block counts, in total and by source, the skips, the layer characters
     they cover, the math paragraphs covered by a skip and by no passage, and the
-    deterministic finders' passages dropped under a skip.
+    deterministic finders' passages dropped under a skip; and, when a document was gated
+    under the prose floor (``prose_floor_rule``, whose gate stats carry the count), the
+    other paragraphs of the body covered by a skip and by no passage (``prose_paragraphs``),
+    so a corpus gated without it is summed as it always was.
     """
     keys = ("skips", "chars", "math_paragraphs", "finder_passages")
+    if any(isinstance(row, dict) and isinstance(row.get("skipped"), dict)
+           and "prose_paragraphs" in row["skipped"] for row in stats):
+        keys += ("prose_paragraphs",)
     total = {k: 0 for k in keys}
     by_source: dict[str, dict] = {}
     for row in stats:
@@ -600,8 +606,11 @@ def render(result: dict, max_named: int = 12) -> str:
                      f"{str(code.get('sha256') or '')[:12]}")
     skipped = result.get("skipped") or {}
     if skipped.get("skips"):
+        # a corpus gated under the prose floor also counts the other paragraphs
+        prose = (f", {skipped['prose_paragraphs']} other paragraph(s)"
+                 if "prose_paragraphs" in skipped else "")
         lines.append(f"  skips: {skipped['skips']} cover {skipped['chars']} character(s), "
-                     f"{skipped['math_paragraphs']} math paragraph(s) and "
+                     f"{skipped['math_paragraphs']} math paragraph(s){prose} and "
                      f"{skipped['finder_passages']} finder passage(s) that no passage keeps")
     cut = result.get("cut") or {}
     if cut:

@@ -48,7 +48,8 @@ The operations (each field one of ``inventory_audit.EDIT_FIELDS``):
   -- the skip named by its id in the base's numbering (``r<k>-s<nnn>``, k the ops file's
   round) gives up its text but the pieces ``keep`` names (``[{span, reason?}]``, inside it,
   disjoint, in order): none drops it, one shrinks it, two split it.  No operation adds or
-  widens a skip.
+  widens a skip.  Rule 3 (section 13.12) adds no operation: a gap's statements are ``add``
+  operations and its ``merge_with`` a ``set`` of ``until``, as rule 2's are.
 
 A passage scoped other than ``formal_math`` by an operation that does not say
 otherwise becomes ``supporting`` and loses ``shape`` and ``conjuncts``, as the
@@ -347,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--verdicts", help="the round's verdicts file: every citation must be one")
     ap.add_argument("--write", action="store_true", help="write the document (default: dry run)")
     ap.add_argument("--rule", type=int, default=ia.DEFAULT_RULE,
-                    help="the audit rule the run names (2 adds unskip; default 1)")
+                    help="the audit rule the run names (2 and 3 add unskip; default 1)")
     args = ap.parse_args(argv)
     try:
         rule = ia.known_rule(args.rule)

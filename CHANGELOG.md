@@ -120,6 +120,56 @@ release has something to say.
   its worker's last contract; a mismatch is INCOMPLETE) and `reviewer_tampered`;
   `contracts/` is an expected artifact of a run whose `run.yaml` pins
   `bin/review_record.py`. A run planned before has none of them and harvests as it did.
+- **The receipt of a rule-3 audited run counts the gaps** (`scripts/harvest/audit_summary.py`,
+  `references/locate-documents.md` §13.10 and §13.12). When a verdicts file is `audit/3`, the
+  receipt's `audit` block gains `gaps`: round 1's gap reports summed (`before`), the reviewed
+  round's (`after`), each with its gaps and words by section, and each document's two whole; `cf
+  harvest` prints one line of it. A rule-3 run keeps rule 2's `skips` block. Reported, never
+  refusing; a rule-1 or rule-2 receipt has no such key and is what it was.
+- **The audit's prompts under rule 3** (`templates/prompts/locate-inventory-{audit-system,audit,
+  skeptic,check,revision}.md.tmpl`, `scripts/locate/prompts.py`; `references/locate-documents.md`
+  §13.12). Rule 3's text sits in `{{#if audit_gaps}}` blocks that render empty under rules 1 and
+  2: a rule-2 plan's prompts are 3b29518's byte for byte (a test plans both and compares). Under
+  rule 3 the rule card says what a gap is and the three readings of the cut the inventory prompt
+  states (C4's "need not", C6's commentary and instructions, C7's notation before context); the
+  auditor reads the GAP lines and the `commentary` hint, judges every gap in `gaps`, answers the
+  kind rule with `should_be_expository` when a formal `other` passage asserts nothing, and names
+  in an expository flag's action the statements it means; the skeptic hunts the gaps; the checker
+  reads the GAP VERDICT lines; the revision applies a gap verdict with `add` and `set`.
+- **Audit rule 3 in the host tools and the turn machine, dormant: the gaps judged**
+  (`scripts/gate/inventory_audit.py`, `inventory_render.py`, `inventory_edit.py`,
+  `scripts/run/audit_turn.py`; `references/locate-documents.md` §13.12; the smoke-4 audit). A gap
+  is a run of a block's own text of the body, outside the back matter, of eight words or more,
+  that no passage and no skip holds, named `r<k>-g<nnn>`. Under `--rule 3`
+  (`cf-inventory-audit/3`, `audit/3`, whose table is `audit/2`'s) the rendering draws the layer no
+  passage holds block by block, each gap a line of its own in full to 1,200 characters (the first
+  renderer clipped a whole gap to its first and last 200, which hid smoke 4's lost paragraph); the
+  auditor judges every gap once, `clean` or `gap_statements` with the statements it holds; the
+  skeptic hunts every gap no flag names and upholds a gap flag only with evidence inside the gap;
+  the merge turns it into a gap verdict the worker repairs with `add` and `set` (no new
+  operation); every verdicts file carries the round's `gap_report`; the diff gains GAPS and GAP
+  VERDICT lines. The kind rule reads every formal `other` passage, not only one in a proof or an
+  example section, and its action names the expository answer (PD5); the advisory `commentary`
+  hint marks a formal passage that reads as a method's commentary, an instruction or a meta
+  remark. The turn machine accepts `CF_AUDIT_RULE=3` (strips with `--gate-config`, names each
+  part's gaps, the gap hunt, combined `examined_gaps` and `missed_gaps`, a gap verdict weighing
+  max(1, its statements)). No planner writes rule 3 yet; rules 1 and 2 render, validate, strip
+  and merge byte for byte as 3b29518 did (a test renders both pages with 3b29518's renderer).
+- **The prose floor: no paragraph of the body left out silently** (gate rule 8,
+  `scripts/gate/verify_locate.py`; `references/locate-documents.md` §2; the smoke-4 audit).
+  Both statements smoke 4's inventory lost were whole formula-free paragraphs that no passage and
+  no skip held, and the coverage floor reads only math paragraphs, so nothing asked for a
+  record. An inventory whose `gate.json` names `prose_floor_rule` 1 (`cflib.vocab.PROSE_FLOOR_RULE`,
+  which `cf plan-locate` now writes into every inventory, and only an inventory) holds every other
+  `paragraphs.json` block outside the back matter with at least eight words of the layer to the
+  same floor: a passage or a skip covers it, History sections included, a short block and the
+  back matter exempt. The receipt's `skipped` block gains `prose_paragraphs` (summed only when a
+  gate counted them). The worker prompt says it in one sentence after the coverage floor's; it is
+  no cut rule, so `references/vocabulary.md` §1.11 and the bench labeler are unchanged. The
+  rendered worker prompt is 17,643 bytes with a real plan's paths, over the 17,500 ceiling, which
+  is now 17,700. A `gate.json` without the key, every inventory planned before it, is gated, re-gated
+  and summed as it was. The synthetic e2e worker leaves its formula-free paragraphs out with a
+  skip and its reason.
 - **The receipt of a rule-2 audited run counts the skips** (`scripts/harvest/audit_summary.py`,
   `references/locate-documents.md` §13.10 and §13.11). When a verdicts file is `audit/2`, the
   receipt's `audit` block gains `skips`: round 1's skip reports summed (`before`), the reviewed
@@ -259,6 +309,26 @@ release has something to say.
   instead of "do not re-litigate" (the faithfulness pipeline's revision is unchanged). A
   locate reviewer's git is `git diff`, `git show`, `git log` and `git status`, the audited
   reviewer's, never `Bash(git:*)`. A new plan is needed: the prompt and gate pins change.
+- **The flip of the gap audit: a new audited plan writes audit rule 3** (`cflib.vocab.INVENTORY_AUDIT_RULE`
+  is 3; `references/locate-documents.md` §13.12). `cf plan-locate --audit-rounds 2|3` now writes
+  `locate.audit.rule: 3` and `CF_AUDIT_RULE="3"` in both wrappers and renders the five audit
+  prompts with rule 3's blocks; an inventory planned under rule 1 or 2 (inv-pilot-3, inv-pilot-3b,
+  smoke 4) keeps its rule on the host, at re-harvest and at re-gate, and a re-plan of one is
+  refused as before. Under rule 3 the kind rule reads every formal `other` passage: the synthetic
+  e2e's widget page gains that verdict in round 1 (three actionable, three applied).
+- **The inventory prompt says three readings of the cut** (`templates/prompts/locate-inventory.md.tmpl`;
+  the smoke-4 audit). Five of the seven narration pieces smoke 4 kept formal were a method's
+  commentary or an instruction of a computation, one was a "need not" clause cut from the
+  condition that replaces it, and a notation sentence was read as set-up and left in no passage.
+  A bullet after the narration bullet says that commentary on a method (which may be used, which
+  is faster) and an instruction ("proceed by adding 6 = 2 × 3", a number written as a product
+  naming a step) are narration, unless a bound or a complexity class is stated; a paragraph after
+  PD9 says that a sentence naming a symbol later statements use is a `notation` passage, with the
+  context sentence before it in its paragraph, while an example's objects are context, and that a
+  "need not" clause and the weaker condition are one statement. They are the prompt's own words,
+  not edits of the shared cut rules, so `references/vocabulary.md` §1.11, the bench labeler and its
+  gold are unchanged. The rendered prompt is 18,865 bytes with a real plan's paths; the ceiling is
+  18,900. Every example is synthetic.
 - **Review fixes to the skip audit (audit rule 2)**, before any run names it
   (`references/locate-documents.md` §13.11). *The diff's SKIP VERDICT line counts
   `paragraphs.json` entries* (two entries of one span, a theorem box and its paragraph, are two,

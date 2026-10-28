@@ -10,8 +10,8 @@ reads with no unfilled slot of the plan's or the turn's, the rule card's C1 to C
 against docs/proposals/statement-cut.md section 3.4, every JSON shape the prompts
 show against the schema ``inventory_audit.py`` holds the files to, and an unaudited
 plan equal to the base commit's (99fbad4) apart from its commit, the staged files
-whose source changed since and the inventory prompt's kind sentence.  Every page,
-library and document is made up.
+whose source changed since, the inventory prompt's kind and prose-floor sentences, its
+commentary bullet and two readings, and the gate.json files' prose floor.  Every page, library and document is made up.
 """
 from __future__ import annotations
 
@@ -92,6 +92,35 @@ def admitted(command: str, tools: str) -> bool:
 
 def json_blocks(text: str) -> list[str]:
     return re.findall(r"```json\n(.*?)\n```", text, re.DOTALL)
+
+
+#: the coverage floor's sentence of the inventory prompt, which the prose floor's follows
+FLOOR = b"that floor is checked mechanically."
+#: the prose floor's line of an inventory's gate.json (gate rule 8, ``prose_floor_rule``)
+PROSE_FLOOR_LINE = b'  "prose_floor_rule": %d,\n' % vocab.PROSE_FLOOR_RULE
+
+
+#: where the inventory prompt's commentary bullet and its two readings go: after the
+#: narration bullet and after PD9
+NARRATION_END = b"and otherwise leave it out.\n"
+PD9_END = b"otherwise X is no passage and no clause.\n"
+
+
+def with_prose_floor(worker: bytes) -> bytes:
+    """A worker prompt rendered before the smoke-4 fixes, with what they add and nothing
+    else: the prose floor's sentence after the floor's, the commentary bullet after the
+    narration bullet, and the two readings after PD9 (test_locate_statement_cut)."""
+    for mark in (FLOOR, NARRATION_END, PD9_END):
+        assert worker.count(mark) == 1, mark
+    return (worker.replace(FLOOR, FLOOR + b" " + TS.PROSE_FLOOR_SENTENCE.encode("utf-8"))
+            .replace(NARRATION_END, NARRATION_END + TS.COMMENTARY_BULLET.encode("utf-8") + b"\n")
+            .replace(PD9_END, PD9_END + b"\n" + TS.READINGS.encode("utf-8") + b"\n"))
+
+
+def without_prose_floor(gate: bytes) -> bytes:
+    """An inventory's gate.json planned now, less its ``prose_floor_rule`` line (once)."""
+    assert gate.count(PROSE_FLOOR_LINE) == 1, gate[:400]
+    return gate.replace(PROSE_FLOOR_LINE, b"")
 
 
 class Audited(Campaign):
@@ -211,7 +240,7 @@ class TestTheFlag(Audited):
         self.assertEqual(snapshot("inv-a"), before)
         # a run planned under the other audit rule (before the skip audit's flip, or after
         # it) keeps it: a re-plan with the same rounds is refused, and says both rules
-        other = 3 - vocab.INVENTORY_AUDIT_RULE
+        other = 2 if vocab.INVENTORY_AUDIT_RULE == 1 else 1
         with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", other):
             code, out, err = self.plan("inv-r", "--audit-rounds", "3")
             self.assertEqual(code, 0, out + err)
@@ -512,8 +541,14 @@ class TestThePrompts(Audited):
                         bad = []
                         ia._skip_verdict_rules(row, "row", {}, bad)
                         self.assertEqual(bad, [], row)
+                    for row in data.get("gaps") or []:
+                        bad = []
+                        ia._skip_verdict_rules(row, "row", {}, bad, what="gap")
+                        self.assertEqual(bad, [], row)
                     self.assertEqual("skips" in data, kind == "audit" and rule >= 2)
                     self.assertEqual("examined_skips" in data, kind == "skeptic" and rule >= 2)
+                    self.assertEqual("gaps" in data, kind == "audit" and rule >= 3)
+                    self.assertEqual("examined_gaps" in data, kind == "skeptic" and rule >= 3)
 
 
 class AtRule:
@@ -551,6 +586,18 @@ class TestThePromptsAtRule1(AtRule, TestThePrompts):
 
 class TestThePromptsAtRule2(AtRule, TestThePrompts):
     RULE = 2
+
+
+class TestTheFlagAtRule3(AtRule, TestTheFlag):
+    RULE = 3
+
+
+class TestTheWrappersAtRule3(AtRule, TestTheWrappers):
+    RULE = 3
+
+
+class TestThePromptsAtRule3(AtRule, TestThePrompts):
+    RULE = 3
 
 
 #: what a rule-2 plan's prompts say and a rule-1 plan's never do
@@ -598,6 +645,60 @@ class TestTheSkipPrompts(AtRule, Audited):
                           self.prompts()["reviewer.md"])
 
 
+#: what a rule-3 plan's prompts say and a rule-1 or rule-2 plan's never do
+GAP_WORDS = ("gap_statements", "examined_gaps", "missed_gaps", "'<gap id>'", "`commentary`",
+             "--rule 3", "Three readings of the cut", "**Gaps (audit rule")
+
+
+class TestTheGapPrompts(AtRule, Audited):
+    """Audit rule 3's prompts (references/locate-documents.md section 13.12): each says what
+    its call reads and writes of the gaps, the rule card says the three readings of the cut,
+    the auditor the kind rule's expository answer, and every command names the rule; a
+    rule-1 or rule-2 plan's say none of it."""
+
+    RULE = 3
+
+    def test_each_prompt_says_its_part_of_the_gaps(self):
+        prompts = self.prompts()
+        for name, needles in (
+                ("reviewer-system.md", ("**Gaps (audit rule 3).**", "`gap_statements`",
+                                        "'<gap id>' --rule 3 --document",
+                                        "**Three readings of the cut (audit rule 3)**",
+                                        "need not be finite", "to name a step",
+                                        "symbols and all", "(`r1-g001`)")),
+                ("reviewer.md", ('"gaps": [', "`commentary`", "7. **`gaps`: one row for EVERY "
+                                 "gap your part shows**",
+                                 "and `should_be_expository` (C6, PD5) when it asserts "
+                                 "nothing about mathematical objects",
+                                 "leave expository a step that only instructs (C6)",
+                                 "`kind-rule` marks every formal passage of kind `other`")),
+                ("reviewer-skeptic.md", ('"examined_gaps": ["r1-g001"]', "INSIDE the gap",
+                                         "`missed_gaps`", "EVERY gap of your part",
+                                         "a gap's flag `{flag_id, item: \"\", gap, span")),
+                ("reviewer-check.md", ("`GAPS` line", "`GAP VERDICT`")),
+                ("worker-revision.md", ("**A `gap_statements` verdict**", "`after`",
+                                        "inventory_edit.py --rule 3 --document",
+                                        "the more of 1 and its statements"))):
+            for needle in needles:
+                with self.subTest(prompt=name, needle=needle):
+                    self.assertIn(needle, prompts[name])
+        # the prompts' examples are the fixtures' widget ones, never an article's sentence
+        for text in prompts.values():
+            self.assertEqual(re.findall(r"#([0-9a-f]{8})\b", text.replace("0000c0de", "")
+                                        .replace("3fa91c07", "").replace("00c0ffee", "")
+                                        .replace("0badf00d", "")), [])
+
+    def test_rule_1_and_rule_2_plans_say_none_of_it(self):
+        for rule in (1, 2):
+            with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", rule):
+                code, out, err = self.plan(f"inv-r{rule}", "--audit-rounds", "3")
+            self.assertEqual(code, 0, out + err)
+            for name, text in self.prompts(f"inv-r{rule}").items():
+                for needle in GAP_WORDS:
+                    with self.subTest(rule=rule, prompt=name, needle=needle):
+                        self.assertNotIn(needle, text)
+
+
 def ir_hint_names() -> str:
     return (SCRIPTS / "gate" / "inventory_render.py").read_text(encoding="utf-8")
 
@@ -616,13 +717,17 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     files staged from a source this branch changed, ``audit_turn.py``, which
     every locate root's ``bin/`` stages since the turn machine, the worker
     prompt, which is the base commit's with the kind sentence
-    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and nothing else,
-    and the three gate.json files, which name statement-cut rule 3 where the base
-    commit's named 2 (the flip of the wide bound, docs/proposals/statement-cut.md
-    section 7) and nothing else; and smoke 4's reviewer fixes: the reviewer's rule card,
-    which gains check 1's git command and the reading of the gate's ownership line (its
-    challenge text renders empty in an inventory), and the reviewer's wrapper, whose git
-    is read-only by subcommand.  ``run.yaml`` differs only in its skill commit, those
+    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds, the prose floor's
+    (``PROSE_FLOOR_SENTENCE``) after the coverage floor's, the commentary bullet
+    (``COMMENTARY_BULLET``) after the narration bullet and the two readings (``READINGS``)
+    after PD9, and nothing else, and the three
+    gate.json files, which name statement-cut rule 3 where the base commit's named 2 (the
+    flip of the wide bound, docs/proposals/statement-cut.md section 7), judgment rules 4
+    for 3 (the flip of the smoke-4 audit's calls) and ``prose_floor_rule`` 1 (gate rule
+    8's prose floor) and nothing else; and smoke 4's reviewer fixes: the reviewer's rule
+    card, which gains check 1's git command and the reading of the gate's ownership line
+    (its challenge text renders empty in an inventory), and the reviewer's wrapper, whose
+    git is read-only by subcommand.  ``run.yaml`` differs only in its skill commit, those
     files' pins and the two prompts' shas.
     """
 
@@ -674,16 +779,18 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         allowed = {f"tend-root/{staged}" for staged, rel in sources.items()
                    if rel in self.changed}
         self.assertIn("tend-root/bin/audit_turn.py", allowed)
-        # the worker prompt gains the kind sentence after the kinds, and only that
+        # the worker prompt gains the kind sentence after the kinds and the prose floor's
+        # after the coverage floor's, and only those
         kinds = b"(`passage_kind`; `other` when it states something that is none of these)."
         worker = ("prompts/worker.md", "tend-root/prompts/worker.md")
         for name in worker:
             with self.subTest(prompt=name):
                 self.assertEqual(then[name].count(kinds), 1)
-                self.assertEqual(now[name], then[name].replace(
-                    kinds, kinds + b" " + TS.KIND_SENTENCE.encode("utf-8")))
+                self.assertEqual(now[name], with_prose_floor(then[name].replace(
+                    kinds, kinds + b" " + TS.KIND_SENTENCE.encode("utf-8"))))
         self.assertEqual(sorted(set(differ) & set(worker)), sorted(worker))
-        # the gate.json files name statement-cut rule 3 for 2, and only that
+        # the gate.json files name statement-cut rule 3 for 2 and the prose floor, and only
+        # that
         gates = ("gate.json", "gate.local.json", "tend-root/gate/gate.json")
         rule = b'"statement_cut_rule": '
         for name in gates:
@@ -691,8 +798,10 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                 was = rule + str(vocab.STATEMENT_CUT_CONTINUED).encode()
                 self.assertEqual(then[name].count(was), 1)
                 # and judgment rules 4 for 3, from the flip of the smoke-4 audit's calls
-                self.assertEqual(now[name], judged_now(then[name]).replace(
+                self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]).replace(
                     was, rule + str(vocab.STATEMENT_CUT_WIDE).encode()))
+                self.assertEqual(json.loads(now[name])["prose_floor_rule"],
+                                 vocab.PROSE_FLOOR_RULE)
                 self.assertEqual(json.loads(now[name])["statement_cut_rule"],
                                  vocab.STATEMENT_CUT_RULE)
         self.assertEqual(sorted(set(differ) & set(gates)), sorted(gates))
@@ -810,9 +919,13 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
     Under audit rule 1 every file of the run directory is byte for byte the base
     commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
     the files staged from a source this branch changed (the three audit tools,
-    ``bin/audit_turn.py``, and since smoke 4's reviewer fixes the gate, the bridge and
-    ``bin/review_record.py``); ``run.yaml`` differs only in its skill commit, those files'
-    pins and the five audit templates' shas.  Under rule 2 the five rendered audit
+    the files staged from a source this branch changed (the three audit tools,
+    ``bin/audit_turn.py``, the gate, and since smoke 4's reviewer fixes the bridge and
+    ``bin/review_record.py``), the worker prompt, which gains the prose floor's sentence,
+    the commentary bullet and the two readings, and the three gate.json files, which gain
+    ``prose_floor_rule`` and name judgment rules 4 for 3; ``run.yaml`` differs only in its
+    skill commit, those files' pins, the five audit templates' shas, the worker prompt's
+    two and the worker system template's.  Under rule 2 the five rendered audit
     prompts (in ``prompts/`` and the tend root's copy), the two wrappers' ``CF_AUDIT_RULE``,
     ``locate.audit.rule`` and ``config_shas.agents.audit.rule`` and the rendered prompts'
     shas differ too, and nothing else.  An unaudited plan stays the base commit's
@@ -864,10 +977,31 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
                 + (BRIDGE_SCRIPTS["agentbox-claude"][0],) if f"scripts/run/{name}" in self.changed}
         return out
 
-    def yaml_left(self, then_yaml: dict, now_yaml: dict) -> tuple[dict, dict]:
+    def floor_only(self, then: dict, now: dict, differ: set) -> set:
+        """``differ`` less the worker prompts and gate.json files, after holding each to the
+        base commit's with the prose floor's sentence or key added and judgment rules 4 for 3
+        (:func:`judged_now`), and nothing else."""
+        worker = {"prompts/worker.md", "tend-root/prompts/worker.md"}
+        gates = {"gate.json", "gate.local.json", "tend-root/gate/gate.json"}
+        for name in sorted(worker):
+            self.assertEqual(now[name], with_prose_floor(then[name]), name)
+        for name in sorted(gates):
+            self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]), name)
+        self.assertLessEqual(worker | gates, differ)
+        return differ - worker - gates
+
+    def yaml_left(self, then_yaml: dict, now_yaml: dict, now: dict) -> tuple[dict, dict]:
         """Both run.yaml files with what may differ popped: the time each was made (two
-        fresh plans), the commit, the staged files' pins, the audit templates' shas and
-        the worker system template's (:func:`pop_system_template`)."""
+        fresh plans), the commit, the staged files' pins, the audit templates' shas, the
+        worker prompt's two (its rendered prompt's and its template's) and the worker system
+        template's (:func:`pop_system_template`)."""
+        self.assertEqual(now_yaml["prompts"].pop("worker.md"),
+                         hashlib.sha256(now["prompts/worker.md"]).hexdigest())
+        then_yaml["prompts"].pop("worker.md")
+        template = "locate-inventory.md.tmpl"
+        self.assertEqual(now_yaml["locate"]["config_shas"]["prompts"].pop(template),
+                         hashing.sha256_file(SKILL / "templates" / "prompts" / template))
+        then_yaml["locate"]["config_shas"]["prompts"].pop(template)
         for doc in (then_yaml, now_yaml):
             doc.pop("created")
         pop_system_template(self, then_yaml, now_yaml)
@@ -880,23 +1014,26 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         return then_yaml, now_yaml
 
     def assertGatesJudgedNow(self, then: dict, now: dict) -> set[str]:
-        """The gate.json files differ from the base's by judgment rules 4 for 3 alone."""
+        """The gate.json files differ from the base's by judgment rules 4 for 3 alone, once
+        the prose floor's key is set aside (:meth:`floor_only` holds it)."""
         for name in GATES:
             with self.subTest(gate=name):
-                self.assertEqual(now[name], judged_now(then[name]))
+                self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]))
         return set(GATES)
 
     def test_rule_1_is_the_base_commits_plan(self):
         then, now, then_yaml, now_yaml = self.both(1)
         differ = {k for k in then.keys() | now.keys()
                   if k != "run.yaml" and then.get(k) != now.get(k)}
+        differ = self.floor_only(then, now, differ)
         differ -= self.assertGatesJudgedNow(then, now)
         self.assertEqual(differ, self.staged_changed())
         # the audit's four, and the gate's records module and gate, which status rule 3
-        # (R-BROAD) and judgment rules 4 changed after the base: staged into every plan,
-        # and binding no inventory document of rule 1; and smoke 4's reviewer fixes: the
-        # gate (a challenge's OK line), the bridge and the recorder whose tamper guard the
-        # turn machine shares (the audit's prompts and wrappers are untouched)
+        # (R-BROAD), judgment rules 4 and the prose floor changed after the base: staged
+        # into every plan, and binding no inventory document of rule 1; and smoke 4's
+        # reviewer fixes: the gate (a challenge's OK line), the bridge and the recorder
+        # whose tamper guard the turn machine shares (the audit's prompts and wrappers are
+        # untouched)
         self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
                           "tend-root/gate/inventory_render.py",
                           "tend-root/gate/inventory_edit.py",
@@ -910,13 +1047,14 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         moved = {f"tend-root/{k}" for k, v in now_yaml["locate"]["gate_files"].items()
                  if then_yaml["locate"]["gate_files"].get(k) != v}
         self.assertEqual(moved, differ | {"tend-root/gate/gate.json"})
-        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml)
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml, now)
         self.assertEqual(now_yaml, then_yaml)
 
     def test_rule_2_differs_in_the_rule_and_its_prompts_only(self):
         then, now, then_yaml, now_yaml = self.both(2)
         differ = {k for k in then.keys() | now.keys()
                   if k != "run.yaml" and then.get(k) != now.get(k)}
+        differ = self.floor_only(then, now, differ)
         prompts = {f"{d}{name}" for d in ("prompts/", "tend-root/prompts/")
                    for name in AUDIT_PROMPTS}
         wrappers = {"tend-root/bin/worker-agent.sh", "tend-root/bin/reviewer-agent.sh"}
@@ -934,8 +1072,89 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
             self.assertEqual(now_yaml["prompts"].pop(name),
                              hashlib.sha256(now[f"prompts/{name}"]).hexdigest())
             then_yaml["prompts"].pop(name)
-        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml)
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml, now)
         self.assertEqual(now_yaml, then_yaml)
+
+
+
+#: the commit the smoke-4 fixes branched from: an audited plan of rule 2 or 1 is its plan
+SMOKE4_BASE = "3b29518"
+
+
+class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
+    """3b29518's ``cf plan-locate --audit-rounds 3`` (audit rule 2, the rule smoke 4 ran) and
+    this one's at rule 2, as the same run: every file is byte for byte 3b29518's -- the five
+    rendered audit prompts included, whose rule-3 text sits in blocks that render empty at
+    rule 2 -- but the files staged from a source this branch changed, the worker prompt (the
+    smoke-4 sentences) and the three gate.json files (``prose_floor_rule``, and judgment
+    rules 4 for 3); ``run.yaml`` differs only in its skill commit, those files' pins, the
+    five audit templates' shas, the worker prompt's two and the worker system template's."""
+
+    BASE_COMMIT = SMOKE4_BASE
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.paths = F.campaign(self, self.root)
+        tar = subprocess.run(["git", "-C", str(SKILL), "archive", "--format=tar",
+                              self.BASE_COMMIT, "scripts", "templates", "vendor", "registry"],
+                             capture_output=True)
+        if tar.returncode != 0:
+            self.skipTest(f"this checkout does not hold commit {self.BASE_COMMIT}")
+        self.base = self.root.parent / "base-smoke4"
+        with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
+            archive.extractall(self.base, filter="data") if sys.version_info >= (3, 12) \
+                else archive.extractall(self.base)
+        changed = subprocess.run(["git", "-C", str(SKILL), "diff", "--name-only",
+                                  self.BASE_COMMIT, "--", "scripts", "vendor"],
+                                 capture_output=True, text=True)
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        self.changed = set(changed.stdout.split())
+
+    def both(self, rule: int) -> tuple[dict, dict, dict, dict]:
+        argv = ["--workspace", str(self.root), "plan-locate", "--preset", "locate-inventory",
+                "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-q",
+                "--audit-rounds", "3"]
+        old = subprocess.run([sys.executable, str(self.base / "scripts" / "cf.py"), *argv],
+                             capture_output=True, text=True, cwd=str(self.root.parent))
+        self.assertEqual(old.returncode, 0, old.stdout + old.stderr)
+        then, then_yaml = self.snapshot("inv-q"), read_yaml(self.paths.run_yaml("inv-q"))
+        shutil.move(self.paths.run_dir("inv-q"), self.root.parent / f"inv-q-smoke4-{rule}")
+        with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", rule):
+            code, out, err = ws(self.root, *argv[2:])
+        self.assertEqual(code, 0, out + err)
+        return then, self.snapshot("inv-q"), then_yaml, read_yaml(self.paths.run_yaml("inv-q"))
+
+    def floor_only(self, then: dict, now: dict, differ: set) -> set:
+        """``differ`` less the worker prompts and gate.json files, each 3b29518's with the
+        smoke-4 sentences or the prose floor's key added and judgment rules 4 for 3
+        (:func:`judged_now`), and nothing else."""
+        worker = {"prompts/worker.md", "tend-root/prompts/worker.md"}
+        gates = {"gate.json", "gate.local.json", "tend-root/gate/gate.json"}
+        for name in sorted(worker):
+            self.assertEqual(now[name], with_prose_floor(then[name]), name)
+        for name in sorted(gates):
+            self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]), name)
+        return differ - worker - gates
+
+    def test_rule_2_is_the_base_commits_plan(self):
+        then, now, then_yaml, now_yaml = self.both(2)
+        differ = {k for k in then.keys() | now.keys()
+                  if k != "run.yaml" and then.get(k) != now.get(k)}
+        differ = self.floor_only(then, now, differ)
+        self.assertEqual(differ, self.staged_changed())
+        for name in AUDIT_PROMPTS:
+            for d in ("prompts/", "tend-root/prompts/"):
+                self.assertEqual(now[f"{d}{name}"], then[f"{d}{name}"], f"{d}{name}")
+        self.assertEqual(now_yaml["locate"]["audit"], {"rule": 2, "review_rounds": 3})
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml, now)
+        self.assertEqual(now_yaml, then_yaml)
+
+    def test_rule_1_is_the_base_commits_plan(self):
+        self.skipTest("3b29518 plans audit rule 2: a rule-1 plan is f523584's, which "
+                      "TestAnAuditedPlanIsTheBaseCommits holds")
+
+    def test_rule_2_differs_in_the_rule_and_its_prompts_only(self):
+        self.skipTest("3b29518 plans rule 2 already; see test_rule_2_is_the_base_commits_plan")
 
 
 if __name__ == "__main__":

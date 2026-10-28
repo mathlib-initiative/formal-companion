@@ -1825,8 +1825,17 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 #: 1.9 KB first estimated.  The ceiling was 17,000 over placeholder paths.  The kind
 #: sentence (:data:`KIND_SENTENCE`, the inventory audit's kind rule of
 #: references/locate-documents.md section 13.7 said to the worker) adds 121 bytes: 17,054
-#: with placeholders, 17,373 with real paths, under the same ceiling
-WORKER_MD_MAX_BYTES = 17_500
+#: with placeholders, 17,373 with real paths, under the same ceiling.  The prose floor's
+#: sentence (:data:`PROSE_FLOOR_SENTENCE`, gate rule 8 under ``prose_floor_rule`` 1) adds
+#: 270: 17,324 with placeholders and 17,643 with real paths, over 17,500, so the ceiling
+#: is the next hundred that holds it -- the sentence is what the gate refuses, and a worker
+#: not told it would meet the refusal blind.  The smoke-4 audit's three readings of the cut
+#: (:data:`COMMENTARY_BULLET`, PD5 for commentary on a method and an instruction;
+#: :data:`READINGS`, a notation sentence before the context rule's reading and a "need not"
+#: clause kept with its condition) add 1,222: 18,546 with placeholders and 18,865 with real
+#: paths, so the ceiling is 18,900.  They are the prompt's own sentences, not edits of the
+#: shared cut rules, so the bench labeler and its gold stay as they are
+WORKER_MD_MAX_BYTES = 18_900
 
 #: the inventory prompt's one kind sentence, in "What a passage is" after the kinds: the
 #: kind rule the audit's merge applies mechanically to a formal ``other`` passage in a
@@ -1836,6 +1845,41 @@ WORKER_MD_MAX_BYTES = 17_500
 #: by the shared words, do not carry it
 KIND_SENTENCE = ("A step of a proof, a derivation or a worked example that asserts a fact or "
                  "an equation is kind `theorem`, never `other`.")
+
+#: the inventory prompt's prose-floor sentence, right after the coverage floor's: gate rule 8
+#: under ``prose_floor_rule`` 1 (references/locate-documents.md section 2) holds every other
+#: paragraph of eight words or more outside the back matter to the floor, History included.
+#: Not a cut rule: the vocabulary's section 1.11 and the labeler do not carry it
+#: the inventory prompt's bullet on commentary and instructions, after the narration bullet
+#: of "What a passage is" (the smoke-4 audit's PD5 reading: five of its seven narration
+#: pieces kept formal were a method's commentary or an instruction of a computation)
+COMMENTARY_BULLET = (
+    "- **Commentary on a method and an instruction are narration too** — which method may be "
+    "used, or that one is faster, slower or more practical than another, unless it gives a "
+    "bound or a complexity class a library could state (\"it runs in polynomial time\"); and "
+    "an instruction of a computation (\"now reduce each count modulo 7\", \"proceed by adding "
+    "6 = 2 × 3\"), where a number written as a product names a step and asserts nothing: the "
+    "facts the computation reaches are the passages.")
+#: the inventory prompt's two readings of the cut, a paragraph after PD9: a notation sentence
+#: is a notation passage before the context rule reads it as set-up (C7), and a "need not"
+#: clause stays with the condition that replaces it (C4)
+NOTATION_READING = (
+    "A sentence that names a symbol the article's statements go on to use (\"we write N for "
+    "the product of the counts\", \"let g denote the number of gadgets\") is a `notation` "
+    "passage even when those statements are in the next paragraph, and a context sentence "
+    "just before it, in its paragraph, opens it; one that fixes the objects of an example or "
+    "an illustration (\"to illustrate, let W have 6 nodes and g = 2\") is context, symbols "
+    "and all.")
+NEED_NOT_READING = (
+    "A clause that only says a condition is not needed (\"W need not be finite\", \"it is not "
+    "necessary that …\") and the clause that gives the weaker condition (\"it suffices that "
+    "…\") are one statement: never cut between them, at a \";\" or at a sentence break.")
+READINGS = ("Two readings of the rules above, said outright. " + NOTATION_READING + " "
+            + NEED_NOT_READING)
+PROSE_FLOOR_SENTENCE = ("So must every other paragraph of eight words or more outside the back "
+                        "matter (References, Notes, See also, External links and their like), "
+                        "History included: a passage holds it, `expository` when it states "
+                        "nothing, or a skip leaves it out with its reason, never silence.")
 
 
 class TestThePilotsPromptFixes(unittest.TestCase):
@@ -1958,6 +2002,46 @@ class TestThePilotsPromptFixes(unittest.TestCase):
                 "locate-inventory-audit-system.md.tmpl").read_text(encoding="utf-8")
         self.assertIn("step that asserts a fact or an equation is kind `theorem`", card)
         self.assertIn("that asserts a fact or an equation is kind `theorem`", KIND_SENTENCE)
+
+    def test_the_prose_floor_sentence(self):
+        """Once, right after the coverage floor's sentence, with the number of words the gate
+        counts; the shared cut rules and the labeler do not carry it."""
+        floor = ("Every paragraph of `paragraphs.json` marked `\"math\": true` must be covered "
+                 "by a passage span or a `skips` span: that floor is checked mechanically. ")
+        self.assertEqual(self.prompt.count(PROSE_FLOOR_SENTENCE), 1)
+        self.assertIn(floor + PROSE_FLOOR_SENTENCE + " A skip drops text", self.prompt)
+        self.assertIn("eight words or more", PROSE_FLOOR_SENTENCE)
+        self.assertEqual(vocab.PROSE_FLOOR_MIN_WORDS, 8)
+        for heading in ("References", "Notes", "See also", "External links"):
+            self.assertIn(heading.casefold(), vocab.AUDIT_BACK_MATTER)
+        for text, name in ((" ".join(cut_rule_lines()), "vocabulary"),
+                           (labeler_cut_rules(), "labeler"), (LABELER, "labeler file")):
+            with self.subTest(text=name):
+                self.assertNotIn("History included", text)
+                self.assertNotIn("never silence", text)
+
+    def test_the_three_readings(self):
+        """The commentary bullet right after the narration bullet, and the paragraph of the
+        two readings right after PD9, each once; the shared cut rules and the labeler carry
+        none of them, and the rule card's bullets are still the ten rules."""
+        what = self.prompt[self.prompt.index("## What a passage is\n"):
+                           self.prompt.index("## How to cut")]
+        self.assertEqual(self.prompt.count(COMMENTARY_BULLET), 1)
+        self.assertIn("and otherwise leave it out.\n" + COMMENTARY_BULLET + "\n- **Inside a "
+                      "proof", what)
+        self.assertEqual(self.prompt.count(READINGS), 1)
+        self.assertIn("no passage and no clause.\n\n" + READINGS + "\n\nFor each passage "
+                      "decide:", self.prompt)
+        cut = self.prompt[self.prompt.index("## How to cut"):
+                          self.prompt.index("For each passage decide")]
+        self.assertEqual(len(re.findall(r"(?m)^- \*\*", cut)), 10)
+        for text, name in ((" ".join(cut_rule_lines()), "vocabulary"),
+                           (labeler_cut_rules(), "labeler"), (LABELER, "labeler file")):
+            with self.subTest(text=name):
+                for needle in ("narration too", "names a step and asserts nothing",
+                               "go on to use", "symbols and all", "need not be",
+                               "it suffices that"):
+                    self.assertNotIn(needle, text)
 
     def test_the_prompts_size(self):
         run_id, host = realistic_host()

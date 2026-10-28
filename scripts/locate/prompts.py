@@ -34,7 +34,9 @@ one file it writes and its validator line.  An unaudited plan renders the four p
 always rendered, byte for byte.  Audit rule 2's text (section 13.11: the skips, the skip
 verdict, ``unskip``, ``--rule 2`` on the tools' command lines) sits in ``{{#if audit_skips}}``
 blocks that render empty under rule 1, so a rule-1 plan's prompts are the ones the base
-commit rendered.
+commit rendered; audit rule 3's (section 13.12: the gaps, the gap verdict, the three readings
+of the cut on the rule card, the kind rule's expository answer, the ``commentary`` hint) in
+``{{#if audit_gaps}}`` blocks that render empty under rules 1 and 2.
 
 Every invocation is rendered from the run's own host paths, and the renderer
 (``plan.render``) refuses a template with an unfilled slot.
@@ -182,12 +184,16 @@ def audit_context(host: Mapping[str, str], review_rounds: int) -> dict[str, Any]
 
     The audit rule is the one a new plan writes (``vocab.INVENTORY_AUDIT_RULE``); under rule
     2 ``audit_skips`` keeps the templates' skip blocks (section 13.11), which render empty
-    under rule 1, so a rule-1 plan's prompts are the base commit's byte for byte."""
+    under rule 1, so a rule-1 plan's prompts are the base commit's byte for byte; under rule 3
+    ``audit_gaps`` keeps the gap blocks too (section 13.12), which render empty under rules 1
+    and 2, so a rule-2 plan's prompts are 3b29518's."""
     from .tend_root import audit_commands
     cmd = audit_commands(host["gate_dir"])
     rule = vocab.INVENTORY_AUDIT_RULE
     skips = rule >= 2
     return {
+        "audit_gaps": rule >= 3,
+        "gap_verdict": vocab.AUDIT_GAP_VERDICT,
         "audited": True,
         "review_rounds": review_rounds,
         "audit_rule": rule,

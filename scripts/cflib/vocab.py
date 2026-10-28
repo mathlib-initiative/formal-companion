@@ -781,6 +781,19 @@ STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
 #: the key is gated without rule 10, as every run planned before it is, and one naming
 #: a version by that version (1, 2 or 3).
 STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE
+#: The prose floor (gate rule 8; the smoke-4 audit's gap fix, references/locate-documents.md
+#: sections 2 and 9): the version an inventory's gate.json names as ``prose_floor_rule``.
+#: Version 1 (``PROSE_FLOOR_FIRST``) holds every block of ``paragraphs.json`` that is no
+#: math paragraph, lies outside the back matter (``AUDIT_BACK_MATTER``, a top heading) and
+#: holds at least ``PROSE_FLOOR_MIN_WORDS`` words of the layer to the coverage floor a math
+#: paragraph is held to: a passage or a skip covers it, so a worker leaves no paragraph out
+#: silently and the skip audit judges every one it leaves out.  History sections are not
+#: exempt.  ``cf plan-locate`` writes it into every inventory's gate.json from the prose
+#: floor's flip on (not a locate or challenge run's: those documents carry no skip); a
+#: gate.json without the key is gated without it, as every inventory planned before it is
+PROSE_FLOOR_FIRST = 1
+PROSE_FLOOR_RULE = PROSE_FLOOR_FIRST
+PROSE_FLOOR_MIN_WORDS = 8
 #: The status rule (the proposal's section 2): the version of the derivation a locate
 #: run's outcomes are derived under, recorded in its ``run.yaml`` (``locate.status_rule``)
 #: and in the seal of its record set.  Version 1 (``STATUS_RULE_D1``) is decision D1 as
@@ -1019,15 +1032,18 @@ GATE_CALLERS = (GATE_CALLER_VALIDATION, GATE_CALLER_PRE_MERGE, GATE_CALLER_FINDI
 # audited inventory run's reviewer turn reads and writes.  ``gate/inventory_audit.py``,
 # which runs on the host with no cflib, keeps a copy of every value; a test pins it
 #: the audit rules the host tools, the turn machine and the harvest know: rule 1 audits the
-#: passages (inv-pilot-3's), rule 2 the skips too (section 13.11).  A plan writes
-#: INVENTORY_AUDIT_RULE into ``run.yaml`` ``locate.audit.rule`` and both wrappers'
-#: ``CF_AUDIT_RULE``, and every tool runs at the rule its run names (``--rule``)
-INVENTORY_AUDIT_RULES = (1, 2)
+#: passages (inv-pilot-3's), rule 2 the skips too (section 13.11), rule 3 the gaps too and
+#: the smoke-4 readings (section 13.12).  A plan writes INVENTORY_AUDIT_RULE into
+#: ``run.yaml`` ``locate.audit.rule`` and both wrappers' ``CF_AUDIT_RULE``, and every tool
+#: runs at the rule its run names (``--rule``)
+INVENTORY_AUDIT_RULES = (1, 2, 3)
 #: the decision table's version a new audited plan writes (``audit/<n>`` in every verdicts
-#: file): 2 from the flip of the skip audit, 1 before (inv-pilot-3's)
-INVENTORY_AUDIT_RULE = 2
+#: file): 3 from the flip of the gap audit (the smoke-4 fixes), 2 from the flip of the skip
+#: audit until then (inv-pilot-3b's and smoke 4's), 1 before (inv-pilot-3's)
+INVENTORY_AUDIT_RULE = 3
 #: the ``schema`` of every audit file of a rule's run
-INVENTORY_AUDIT_SCHEMAS = {1: "cf-inventory-audit/1", 2: "cf-inventory-audit/2"}
+INVENTORY_AUDIT_SCHEMAS = {1: "cf-inventory-audit/1", 2: "cf-inventory-audit/2",
+                           3: "cf-inventory-audit/3"}
 #: rule 1's schema, the one inv-pilot-3's files carry
 INVENTORY_AUDIT_SCHEMA = INVENTORY_AUDIT_SCHEMAS[1]
 #: the review rounds an audited plan may name
@@ -1125,6 +1141,38 @@ AUDIT_SKIP_RULE_ACTION = ("cut each definition, theorem, equation or declarative
 #: the bytes a skip block of the rendering shows in full before its remaining blocks are
 #: one clipped line each (``--show <skip id>`` prints it whole)
 AUDIT_SKIP_BLOCK_BYTES = 20_000
+#: --- audit rule 3, the gaps and the smoke-4 readings (references/locate-documents.md
+#: section 13.12).  A gap is a run of one block's own text of the body (its span less the
+#: blocks nested in it, outside the back matter) that no passage and no skip holds, of at
+#: least AUDIT_GAP_MIN_WORDS words; it is named ``r<k>-g<nnn>``, round k's numbering in span
+#: order, drawn in the rendering block by block, and judged once: ``clean`` or
+#: ``gap_statements`` (the statements it holds, which no passage keeps), the one verdict a gap
+#: row takes and no passage or skip does.  The repair adds no operation: ``add`` and ``set``
+AUDIT_GAP_VERDICT = "gap_statements"
+AUDIT_GAP_VERDICTS = (AUDIT_VERDICT_CLEAN, AUDIT_GAP_VERDICT)
+AUDIT_GAP_MIN_WORDS = 8
+#: a gap's block in the rendering: in full to AUDIT_GAP_BLOCK_MAX characters, its first and
+#: last AUDIT_GAP_BLOCK_SIDE past that (the first renderer showed 200 and 200 of a whole gap)
+AUDIT_GAP_BLOCK_MAX = 1200
+AUDIT_GAP_BLOCK_SIDE = 500
+#: rule 3's kind rule reads every formal passage of kind ``other``, not only one in a proof
+#: or an example section, and its fixed action names the expository answer (PD5)
+AUDIT_KIND_RULE_ACTION_3 = (
+    "set passage_kind to theorem when it asserts a fact or an equation, definition when it "
+    "defines; other only for a formal statement that is none of the kinds; scope it "
+    "expository instead when it asserts nothing about mathematical objects (narration, "
+    "commentary on a method, an instruction, set-up: PD5)")
+#: rule 3's advisory ``commentary`` hint on a formal passage (never a verdict): an efficiency
+#: word with no digit and no complexity term, an instructing start, or a meta phrase,
+#: case-folded, as whole words
+AUDIT_COMMENTARY_EFFICIENCY = ("faster", "slower", "quicker", "efficient", "efficiently",
+                               "efficiency", "inefficient", "practical", "impractical",
+                               "dramatically", "speeds up", "speed up")
+AUDIT_COMMENTARY_COMPLEXITY = ("polynomial", "exponential", "logarithmic", "linear time",
+                               "quadratic", "complexity", "o(")
+AUDIT_COMMENTARY_STARTS = ("compute", "proceed", "repeat", "for each of them", "to illustrate")
+AUDIT_COMMENTARY_PHRASES = ("follows from this proof", "one additional fact", "may be used for",
+                            "need not be")
 #: the turn machine (``run/audit_turn.py``, references/locate-documents.md section 13.9),
 #: which runs an audited task's turns when the wrappers export ``CF_AUDIT_RULE``; it
 #: keeps its own copy of these, and ``run/agent_call.py`` and ``run/watchdog.py`` copy
