@@ -67,6 +67,8 @@ LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: labels by change (/7: the smoke-4 audit's judgment rules 4 -- PD11, the maintainer's
 #: calls R-EQ, R-NAT, R-ASSOC, R-CHAIN, R-PD7, R-DEFFORM and the tables default, fix 6d
 #: and a hasPart's conjunct_relation of hasPart, references/vocabulary.md section 1.11;
+#: R-SPECIFIC of 2026-10-28 joined /7 unbumped: prompt words, no gate check, judgment
+#: rules 4 unchanged, and the file's sha moved, so no args emitted before it transcribe;
 #: /6: the statement cut's judgment rules 3 -- the cut rules in the
 #: inventory mode, a hasPart's conjunct_relation and the span's bundle in the label
 #: mode, PD9 reworded and the smoke-3 audit's prompt rules, docs/proposals/
