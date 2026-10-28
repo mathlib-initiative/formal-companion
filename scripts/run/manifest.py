@@ -50,7 +50,7 @@ BYPASS_ENV = "CF_ALLOW_SANDBOX_BYPASS"
 #: the only files of scripts/run/ that belong on the server
 BRIDGE_FILES = ("bridge-agentbox.sh", "bridge-claude-p.sh", "bridge-tend-agent.sh",
                 "normalize_result.py", "extract_final_json.py", "agent_call.py",
-                "attempt_cap.py", "watchdog.py", "audit_turn.py")
+                "attempt_cap.py", "watchdog.py", "audit_turn.py", "review_record.py")
 #: never ship build trees, git objects or editor droppings to the server.
 SOURCE_EXCLUDES = [".git", ".lake", "build", ".DS_Store", "__pycache__", "*.olean"]
 #: a tend worktree per ready task: 382 worktrees were 1.1 GB in 11 minutes.

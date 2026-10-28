@@ -11,7 +11,12 @@ locate run writes those four names from ``templates/prompts/locate-*.md.tmpl``:
   ``locate.md.tmpl`` or ``locate-challenge.md.tmpl``) with the document shape
   of references/locate-documents.md sections 2-4;
 * ``reviewer-system.md`` and ``reviewer.md`` -- in an unaudited run, form and gate
-  output only: judgment lives in the L5 challenge, not in the tend reviewer.
+  output only: judgment lives in the L5 challenge, not in the tend reviewer.  On a
+  challenge plan (``is_challenge``) the rule card says that the reviewer's approval is
+  final, that the gate counts the records the task owes (its refusals and its ``OK:``
+  line quoted, a test holding them to the gate's words) and the conditional rule of
+  references/locate-documents.md section 4: smoke 4's four reviewer rejections each asked
+  for a verdict on a conditional record.
 
 An **audited** inventory plan (``cf plan-locate --audit-rounds``, references/
 locate-documents.md section 13) judges the cut in the review instead, so its reviewer
@@ -269,6 +274,9 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         "per_task": per_task,
         "batch": vocab.CHALLENGE_BATCH_RECORDS,
         "is_inventory": preset.mode == vocab.LOCATE_INVENTORY,
+        # the challenge reviewer's rule card says the conditional rule and that its
+        # approval is final (references/locate-documents.md section 4)
+        "is_challenge": preset.mode == vocab.LOCATE_CHALLENGE,
         "gate_exits": gate_exits("worker"),
         "gate_exits_reviewer": gate_exits("reviewer"),
         "finish_sentence": finish_sentence(preset),

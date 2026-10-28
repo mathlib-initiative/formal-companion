@@ -19,7 +19,15 @@ three files the bench and ``cf campaign status`` read stayed on the host:
   references/locate-documents.md section 13.10), the turn machine's
   ``<tend root>/audit/`` (its ``*.json``: each task's state and round files),
   a directory, which ``harvest.audit_summary`` reads for the receipt's
-  ``audit`` block.
+  ``audit`` block;
+* for an unaudited locate run, the bridge's turn records
+  (``scripts/run/review_record.py``, references/locate-documents.md sections 9 and
+  10): ``<tend root>/contracts/`` (one ``*.json`` per agent call, a directory),
+  ``<tend root>/needs-review.jsonl`` (every review of a contribution its worker
+  marked ``needs_review``) and ``<tend root>/tamper.jsonl`` (every reviewer call
+  whose change the guard undid), which ``harvest.turn_records`` reads for the
+  receipt's ``needs_review``, ``worker_documents``, ``merged_not_worker`` and
+  ``reviewer_tampered``.
 
 They land in ``runs/<run>/host/`` (``WorkspacePaths.run_host_dir``), never under
 ``corpus/<run>/``, whose tree is the receipt's manifest.
@@ -30,7 +38,11 @@ lost the record of every gate call; a harvest that cannot bring it home is
 INCOMPLETE (the receipt names it in ``host_artifacts_missing``).  So is an
 audited run's ``audit/``: every task the host merged was reviewed by the turn
 machine, which writes its state there, and without it no document's audit is
-known.  The usage
+known.  So is ``contracts/`` for a run whose ``run.yaml`` pins the bridge's
+``bin/review_record.py`` (``locate.gate_files``): that bridge records every worker
+call there, and without it no merged document can be checked against its worker's
+commit.  The two ledgers are not: a run with no ``needs_review`` and no tampering
+writes neither.  The usage
 export and the canary scan are not: a shard run with no ``CF_TRANSCRIPT_DIRS``
 exports no usage at all, and a file the host does not have is recorded as
 absent, never an error.
@@ -65,6 +77,21 @@ CANARY = "canary.json"
 ENVELOPES = "envelopes"
 #: a directory: an audited run's ``<tend root>/audit/`` (``run/audit_turn.py``'s records)
 AUDIT = "audit"
+#: an unaudited locate run's turn records (``run/review_record.py``): the contracts (a
+#: directory), the needs_review ledger and the tamper ledger
+CONTRACTS = "contracts"
+NEEDS_REVIEW = "needs-review.jsonl"
+TAMPER = "tamper.jsonl"
+#: the staged helper whose pin in ``run.yaml`` ``locate.gate_files`` says the run's
+#: bridge records contracts
+RECORDER_PIN = "bin/review_record.py"
+
+
+def records_turns(data: dict) -> bool:
+    """Does this run's staged bridge keep turn records (``RECORDER_PIN`` in its pins)?"""
+    block = data.get("locate") if isinstance(data.get("locate"), dict) else {}
+    pins = block.get("gate_files") if isinstance(block.get("gate_files"), dict) else {}
+    return RECORDER_PIN in pins
 
 
 def host_tend_root(data: dict, log_dir: str = "") -> str:
@@ -136,6 +163,13 @@ def remote_files(workspace, run_id: str, data: dict) -> list[dict]:
     if tend_root and audit_summary.plan_of(data):
         out.append({"name": AUDIT, "remote": f"{tend_root}/audit", "dir": True,
                     "expected": True})
+    elif tend_root:
+        # an unaudited run's turn records; an audited run's turns are the turn machine's
+        out.append({"name": CONTRACTS, "remote": f"{tend_root}/{CONTRACTS}", "dir": True,
+                    "expected": records_turns(data)})
+        out.append({"name": NEEDS_REVIEW, "remote": f"{tend_root}/{NEEDS_REVIEW}",
+                    "expected": False})
+        out.append({"name": TAMPER, "remote": f"{tend_root}/{TAMPER}", "expected": False})
     return out
 
 
@@ -163,8 +197,8 @@ def rsync_argv(ssh_host: str, remote: str, local: Path, *, directory: bool = Fal
     """A plain copy of what the host was asked about first (:func:`exists_argv`).
 
     No ``--ignore-missing-args``: rsync 2.6.9, the one macOS ships, rejects it.
-    A directory (the envelopes, an audit's records) brings its ``*.json`` files and
-    nothing else.
+    A directory (the envelopes, an audit's records, the contracts) brings its ``*.json``
+    files and nothing else.
     """
     if directory:
         return ["rsync", "-a", "--no-links", "--prune-empty-dirs", "--include=*.json",
