@@ -385,6 +385,10 @@ DATA_ALLOWLIST: tuple[tuple[str, str], ...] = (
      "the hand-written D1 status parity table (118 cases of synthetic keys k1, k2, "
      "... and enum values, no source text), copied byte for byte by its consumer; "
      "it crossed the cap with P05 in review 4 and grows a case per rule"),
+    ("tests/data/locate/status-parity-3.json",
+     "the hand-written status rule 3 parity table (81 cases of synthetic keys k1, k2, "
+     "... and enum values, no source text): status rule 2's cases again with their "
+     "rule-2 expectation beside each, and R-BROAD's own, copied by its consumer"),
 )
 
 

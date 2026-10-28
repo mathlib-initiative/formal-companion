@@ -546,11 +546,16 @@ class TestTheVerdictFieldsOfRules3(unittest.TestCase):
                       got["problem"])
         # a value that is no conjunct relation is named as that, not as a stronger one
         got, problems = _challenge(_row(), {"b" * 64: {"action": "confirm",
-                                                       "conjunct_relation": "hasPart"}})
+                                                       "conjunct_relation": "relatedMatch"}})
         self.assertEqual(got["locations"][1]["conjunct_relation"], "broadMatch")
-        self.assertIn("the conjunct relation 'hasPart', which is none of broadMatch, "
-                      "closeMatch, exactMatch, narrowMatch", got["problem"])
+        self.assertIn("the conjunct relation 'relatedMatch', which is none of broadMatch, "
+                      "closeMatch, exactMatch, hasPart, narrowMatch", got["problem"])
         self.assertNotIn("stronger", got["problem"])
+        # judgment rules 4's hasPart (a part of its conjunct) is a weaker one, and kept
+        got, problems = _challenge(_row(), {"b" * 64: {"action": "confirm",
+                                                       "conjunct_relation": "hasPart"}})
+        self.assertEqual(got["locations"][1]["conjunct_relation"], "hasPart")
+        self.assertNotIn("tests", got["locations"][1])
 
     def test_a_close_match_parts_convention_is_kept(self):
         row = _row(coverage=None)
