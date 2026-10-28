@@ -240,7 +240,7 @@ class TestTheFlag(Audited):
         self.assertEqual(snapshot("inv-a"), before)
         # a run planned under the other audit rule (before the skip audit's flip, or after
         # it) keeps it: a re-plan with the same rounds is refused, and says both rules
-        other = 3 - vocab.INVENTORY_AUDIT_RULE
+        other = 2 if vocab.INVENTORY_AUDIT_RULE == 1 else 1
         with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", other):
             code, out, err = self.plan("inv-r", "--audit-rounds", "3")
             self.assertEqual(code, 0, out + err)
@@ -541,8 +541,14 @@ class TestThePrompts(Audited):
                         bad = []
                         ia._skip_verdict_rules(row, "row", {}, bad)
                         self.assertEqual(bad, [], row)
+                    for row in data.get("gaps") or []:
+                        bad = []
+                        ia._skip_verdict_rules(row, "row", {}, bad, what="gap")
+                        self.assertEqual(bad, [], row)
                     self.assertEqual("skips" in data, kind == "audit" and rule >= 2)
                     self.assertEqual("examined_skips" in data, kind == "skeptic" and rule >= 2)
+                    self.assertEqual("gaps" in data, kind == "audit" and rule >= 3)
+                    self.assertEqual("examined_gaps" in data, kind == "skeptic" and rule >= 3)
 
 
 class AtRule:
@@ -580,6 +586,18 @@ class TestThePromptsAtRule1(AtRule, TestThePrompts):
 
 class TestThePromptsAtRule2(AtRule, TestThePrompts):
     RULE = 2
+
+
+class TestTheFlagAtRule3(AtRule, TestTheFlag):
+    RULE = 3
+
+
+class TestTheWrappersAtRule3(AtRule, TestTheWrappers):
+    RULE = 3
+
+
+class TestThePromptsAtRule3(AtRule, TestThePrompts):
+    RULE = 3
 
 
 #: what a rule-2 plan's prompts say and a rule-1 plan's never do
@@ -625,6 +643,60 @@ class TestTheSkipPrompts(AtRule, Audited):
         for needle in ("skipped_statements", "--rule 2"):
             self.assertIn(needle, self.prompts()["worker-revision.md"] +
                           self.prompts()["reviewer.md"])
+
+
+#: what a rule-3 plan's prompts say and a rule-1 or rule-2 plan's never do
+GAP_WORDS = ("gap_statements", "examined_gaps", "missed_gaps", "'<gap id>'", "`commentary`",
+             "--rule 3", "Three readings of the cut", "**Gaps (audit rule")
+
+
+class TestTheGapPrompts(AtRule, Audited):
+    """Audit rule 3's prompts (references/locate-documents.md section 13.12): each says what
+    its call reads and writes of the gaps, the rule card says the three readings of the cut,
+    the auditor the kind rule's expository answer, and every command names the rule; a
+    rule-1 or rule-2 plan's say none of it."""
+
+    RULE = 3
+
+    def test_each_prompt_says_its_part_of_the_gaps(self):
+        prompts = self.prompts()
+        for name, needles in (
+                ("reviewer-system.md", ("**Gaps (audit rule 3).**", "`gap_statements`",
+                                        "'<gap id>' --rule 3 --document",
+                                        "**Three readings of the cut (audit rule 3)**",
+                                        "need not be finite", "to name a step",
+                                        "symbols and all", "(`r1-g001`)")),
+                ("reviewer.md", ('"gaps": [', "`commentary`", "7. **`gaps`: one row for EVERY "
+                                 "gap your part shows**",
+                                 "and `should_be_expository` (C6, PD5) when it asserts "
+                                 "nothing about mathematical objects",
+                                 "leave expository a step that only instructs (C6)",
+                                 "`kind-rule` marks every formal passage of kind `other`")),
+                ("reviewer-skeptic.md", ('"examined_gaps": ["r1-g001"]', "INSIDE the gap",
+                                         "`missed_gaps`", "EVERY gap of your part",
+                                         "a gap's flag `{flag_id, item: \"\", gap, span")),
+                ("reviewer-check.md", ("`GAPS` line", "`GAP VERDICT`")),
+                ("worker-revision.md", ("**A `gap_statements` verdict**", "`after`",
+                                        "inventory_edit.py --rule 3 --document",
+                                        "the more of 1 and its statements"))):
+            for needle in needles:
+                with self.subTest(prompt=name, needle=needle):
+                    self.assertIn(needle, prompts[name])
+        # the prompts' examples are the fixtures' widget ones, never an article's sentence
+        for text in prompts.values():
+            self.assertEqual(re.findall(r"#([0-9a-f]{8})\b", text.replace("0000c0de", "")
+                                        .replace("3fa91c07", "").replace("00c0ffee", "")
+                                        .replace("0badf00d", "")), [])
+
+    def test_rule_1_and_rule_2_plans_say_none_of_it(self):
+        for rule in (1, 2):
+            with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", rule):
+                code, out, err = self.plan(f"inv-r{rule}", "--audit-rounds", "3")
+            self.assertEqual(code, 0, out + err)
+            for name, text in self.prompts(f"inv-r{rule}").items():
+                for needle in GAP_WORDS:
+                    with self.subTest(rule=rule, prompt=name, needle=needle):
+                        self.assertNotIn(needle, text)
 
 
 def ir_hint_names() -> str:
@@ -915,6 +987,86 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
             then_yaml["prompts"].pop(name)
         then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml, now)
         self.assertEqual(now_yaml, then_yaml)
+
+
+
+#: the commit the smoke-4 fixes branched from: an audited plan of rule 2 or 1 is its plan
+SMOKE4_BASE = "3b29518"
+
+
+class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
+    """3b29518's ``cf plan-locate --audit-rounds 3`` (audit rule 2, the rule smoke 4 ran) and
+    this one's at rule 2, as the same run: every file is byte for byte 3b29518's -- the five
+    rendered audit prompts included, whose rule-3 text sits in blocks that render empty at
+    rule 2 -- but the files staged from a source this branch changed, the worker prompt (the
+    smoke-4 sentences) and the three gate.json files (``prose_floor_rule``); ``run.yaml``
+    differs only in its skill commit, those files' pins, the five audit templates' shas and
+    the worker prompt's two."""
+
+    BASE_COMMIT = SMOKE4_BASE
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.paths = F.campaign(self, self.root)
+        tar = subprocess.run(["git", "-C", str(SKILL), "archive", "--format=tar",
+                              self.BASE_COMMIT, "scripts", "templates", "vendor", "registry"],
+                             capture_output=True)
+        if tar.returncode != 0:
+            self.skipTest(f"this checkout does not hold commit {self.BASE_COMMIT}")
+        self.base = self.root.parent / "base-smoke4"
+        with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
+            archive.extractall(self.base, filter="data") if sys.version_info >= (3, 12) \
+                else archive.extractall(self.base)
+        changed = subprocess.run(["git", "-C", str(SKILL), "diff", "--name-only",
+                                  self.BASE_COMMIT, "--", "scripts", "vendor"],
+                                 capture_output=True, text=True)
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        self.changed = set(changed.stdout.split())
+
+    def both(self, rule: int) -> tuple[dict, dict, dict, dict]:
+        argv = ["--workspace", str(self.root), "plan-locate", "--preset", "locate-inventory",
+                "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-q",
+                "--audit-rounds", "3"]
+        old = subprocess.run([sys.executable, str(self.base / "scripts" / "cf.py"), *argv],
+                             capture_output=True, text=True, cwd=str(self.root.parent))
+        self.assertEqual(old.returncode, 0, old.stdout + old.stderr)
+        then, then_yaml = self.snapshot("inv-q"), read_yaml(self.paths.run_yaml("inv-q"))
+        shutil.move(self.paths.run_dir("inv-q"), self.root.parent / f"inv-q-smoke4-{rule}")
+        with mock.patch.object(vocab, "INVENTORY_AUDIT_RULE", rule):
+            code, out, err = ws(self.root, *argv[2:])
+        self.assertEqual(code, 0, out + err)
+        return then, self.snapshot("inv-q"), then_yaml, read_yaml(self.paths.run_yaml("inv-q"))
+
+    def floor_only(self, then: dict, now: dict, differ: set) -> set:
+        """``differ`` less the worker prompts and gate.json files, each 3b29518's with the
+        smoke-4 sentences or the prose floor's key added and nothing else."""
+        worker = {"prompts/worker.md", "tend-root/prompts/worker.md"}
+        gates = {"gate.json", "gate.local.json", "tend-root/gate/gate.json"}
+        for name in sorted(worker):
+            self.assertEqual(now[name], with_prose_floor(then[name]), name)
+        for name in sorted(gates):
+            self.assertEqual(without_prose_floor(now[name]), then[name], name)
+        return differ - worker - gates
+
+    def test_rule_2_is_the_base_commits_plan(self):
+        then, now, then_yaml, now_yaml = self.both(2)
+        differ = {k for k in then.keys() | now.keys()
+                  if k != "run.yaml" and then.get(k) != now.get(k)}
+        differ = self.floor_only(then, now, differ)
+        self.assertEqual(differ, self.staged_changed())
+        for name in AUDIT_PROMPTS:
+            for d in ("prompts/", "tend-root/prompts/"):
+                self.assertEqual(now[f"{d}{name}"], then[f"{d}{name}"], f"{d}{name}")
+        self.assertEqual(now_yaml["locate"]["audit"], {"rule": 2, "review_rounds": 3})
+        then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml, now)
+        self.assertEqual(now_yaml, then_yaml)
+
+    def test_rule_1_is_the_base_commits_plan(self):
+        self.skipTest("3b29518 plans audit rule 2: a rule-1 plan is f523584's, which "
+                      "TestAnAuditedPlanIsTheBaseCommits holds")
+
+    def test_rule_2_differs_in_the_rule_and_its_prompts_only(self):
+        self.skipTest("3b29518 plans rule 2 already; see test_rule_2_is_the_base_commits_plan")
 
 
 if __name__ == "__main__":

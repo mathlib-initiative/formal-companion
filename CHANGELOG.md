@@ -42,6 +42,16 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The audit's prompts under rule 3** (`templates/prompts/locate-inventory-{audit-system,audit,
+  skeptic,check,revision}.md.tmpl`, `scripts/locate/prompts.py`; `references/locate-documents.md`
+  §13.12). Rule 3's text sits in `{{#if audit_gaps}}` blocks that render empty under rules 1 and
+  2: a rule-2 plan's prompts are 3b29518's byte for byte (a test plans both and compares). Under
+  rule 3 the rule card says what a gap is and the three readings of the cut the inventory prompt
+  states (C4's "need not", C6's commentary and instructions, C7's notation before context); the
+  auditor reads the GAP lines and the `commentary` hint, judges every gap in `gaps`, answers the
+  kind rule with `should_be_expository` when a formal `other` passage asserts nothing, and names
+  in an expository flag's action the statements it means; the skeptic hunts the gaps; the checker
+  reads the GAP VERDICT lines; the revision applies a gap verdict with `add` and `set`.
 - **Audit rule 3 in the host tools and the turn machine, dormant: the gaps judged**
   (`scripts/gate/inventory_audit.py`, `inventory_render.py`, `inventory_edit.py`,
   `scripts/run/audit_turn.py`; `references/locate-documents.md` §13.12; the smoke-4 audit). A gap

@@ -2,7 +2,7 @@ You are the **skeptic** of round $CF_AUDIT_ROUND (of at most $CF_AUDIT_ROUNDS) f
 
 ## The data
 - Your part of the rendering, `.tend/audit/r$CF_AUDIT_ROUND.render.part<i>.md` ("This call" names it): every passage in span order, `[n] item · span · scope · kind · prominence · section`, then `TEXT` (the span exactly, a line break shown as `⏎`), `STATEMENT`, `SHAPE`, `HINT` and the `GAP` text no passage holds.
-- Your part's flags, `.tend/audit/r$CF_AUDIT_ROUND.flags.part<i>.json`: `flags`, each `{flag_id, item, verdict, rule, merge_with, reason}`{{#if audit_skips}} (a skip's flag `{flag_id, item: "", skip, span, verdict, rule, merge_with, reason}`, its skip a `SKIP` block of your part){{/if}}, and from round 2 `disputes`, each `{verdict_id, item, verdict, rule, action, worker_reason}`: a verdict of the last round the worker declined to apply, with its reason.
+- Your part's flags, `.tend/audit/r$CF_AUDIT_ROUND.flags.part<i>.json`: `flags`, each `{flag_id, item, verdict, rule, merge_with, reason}`{{#if audit_skips}} (a skip's flag `{flag_id, item: "", skip, span, verdict, rule, merge_with, reason}`, its skip a `SKIP` block of your part{{#if audit_gaps}}; a gap's flag `{flag_id, item: "", gap, span, verdict, rule, merge_with, reason}`, its gap a `GAP r1-g<nnn>` line of your part{{/if}}){{/if}}, and from round 2 `disputes`, each `{verdict_id, item, verdict, rule, action, worker_reason}`: a verdict of the last round the worker declined to apply, with its reason.
 
 ## What you write
 The file "This call" names, `.tend/audit/r$CF_AUDIT_ROUND.skeptic.part<i>.json`:
@@ -20,7 +20,8 @@ The file "This call" names, `.tend/audit/r$CF_AUDIT_ROUND.skeptic.part<i>.json`:
  "disputes": [],
  "examined": ["In-text #0badf00d", "In-text #00c0ffee"],
  "per_spec_formal_estimate": 40, "summary": "…"{{#if audit_skips}},
- "examined_skips": ["r1-s003"], "missed_skips": []{{/if}}}
+ "examined_skips": ["r1-s003"], "missed_skips": []{{/if}}{{#if audit_gaps}},
+ "examined_gaps": ["r1-g001"], "missed_gaps": []{{/if}}}
 ```
 
 1. **`verdicts`: one entry for EVERY flag.** Default to refuting: `upheld` is true only when the spec as written makes the cut, scope or kind wrong; when it permits the worker's choice (C6: each statement in a proof is its own passage; C4: a cut at an independent clause's connective; C10: a reason no neighbour states is a passage), it is false, and so it is when you are unsure. An upheld flag names a defect, never `clean`, and its rule; when the right category is another, give the corrected `verdict`. An upheld flag needs `evidence`: the words of the layer the rule turns on, verbatim, at most {{evidence_words}} words, copied from `TEXT` or the layer. The merge looks for them on the layer, and an upheld flag whose evidence is not there counts as refuted.
@@ -30,6 +31,10 @@ The file "This call" names, `.tend/audit/r$CF_AUDIT_ROUND.skeptic.part<i>.json`:
 
 {{#if audit_skips}}
 5. **The skips.** A skip's flag is upheld only as `{{skip_verdict}}`, and a passage's never so. Uphold it only when the skip hides a definition, a theorem, an equation or a declarative statement no kept passage states, or part of a kept passage's sentence; refute it when the skip holds narration only, furniture, or a statement a kept passage already states (C10). Its `evidence` is the words that state something INSIDE the skip, verbatim: the merge looks for them in the skip's own text, and evidence from elsewhere refutes the flag. In round 1, list in `examined_skips` EVERY skip of your part that no flag names and that holds a math paragraph no passage holds outside the lead and the back matter (its `SKIP` line counts them), and put in `missed_skips` those that hide statements, each in the auditor's row shape (`{"skip", "verdict": "{{skip_verdict}}", "rule", "merge_with", "reason", "action", "statements"}`) with its `evidence`. To read one whole: `{{passage_command}} '<skip id>' --rule {{audit_rule}} --document $CF_AUDIT_DOCUMENT`.
+
+{{/if}}
+{{#if audit_gaps}}
+6. **The gaps.** A gap's flag is upheld only as `{{gap_verdict}}`, and no other flag so. Uphold it only when the gap holds a definition, a theorem, an equation, a notation or a declarative statement no kept passage states, or the end of a kept passage's sentence; refute it when it holds narration, commentary on a method, an instruction or set-up only (C6, C7), or a statement a kept passage already states (C10). Its `evidence` is words INSIDE the gap, verbatim: evidence from elsewhere refutes the flag. In round 1, list in `examined_gaps` EVERY gap of your part that no flag names, and put in `missed_gaps` those that hold statements, each in the auditor's row shape (`{"gap", "verdict": "{{gap_verdict}}", "rule", "merge_with", "reason", "action", "statements"}`) with its `evidence`. To read one whole: `{{passage_command}} '<gap id>' --rule {{audit_rule}} --document $CF_AUDIT_DOCUMENT`.
 
 {{/if}}
 Then run the validator line below until it passes, and stop: no result file, no commit.
