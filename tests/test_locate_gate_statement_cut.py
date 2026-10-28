@@ -319,7 +319,7 @@ class TestTheVersionKeys(InventoryCase):
         self.assertEqual(vl.KNOWN_STATEMENT_CUT_RULE,
                          max(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_WIDE))
         self.assertEqual(vl.KNOWN_JUDGMENT_RULES,
-                         max(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT))
+                         max(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4))
         self.assertEqual(vl.KNOWN_SPAN_END_RULE,
                          max(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED))
         # the gate never knows a span-end rule the end it recomputes would refuse
@@ -1702,7 +1702,7 @@ class TestThePlanner(unittest.TestCase):
 
     def test_the_flip_writes_the_keys_and_refuses_the_old_flow(self):
         self.assertEqual((vocab.JUDGMENT_RULES, vocab.SPAN_END_RULE, vocab.STATEMENT_CUT_RULE),
-                         (vocab.RULES_STATEMENT_CUT, vocab.SPAN_END_CONTINUED,
+                         (vocab.RULES_SMOKE4, vocab.SPAN_END_CONTINUED,
                           vocab.STATEMENT_CUT_WIDE))
         code, out, err = self.plan("--preset", "locate", "--inventory-run", "inv-1",
                                    "--run-id", "loc-9")
@@ -1713,7 +1713,7 @@ class TestThePlanner(unittest.TestCase):
         self.assertEqual(code, 0, out + err)
         gate = read_json(self.paths.gate_json("inv-2"))
         self.assertEqual((gate["judgment_rules"], gate["span_end_rule"],
-                          gate["statement_cut_rule"]), (3, 3, 3))
+                          gate["statement_cut_rule"]), (4, 3, 3))
         self.assertEqual(read_json(self.paths.run_dir("inv-2") / "gate.local.json")
                          ["statement_cut_rule"], vocab.STATEMENT_CUT_WIDE)
         docs = F.inventory_documents(self.paths, "inv-2")
@@ -1734,7 +1734,9 @@ class TestThePlanner(unittest.TestCase):
                          vocab.STATUS_RULE)
         self.assertNotIn("status_rule", read_yaml(self.paths.run_yaml("chl-2"))["locate"])
         self.assertEqual(read_json(self.paths.gate_json("chl-2"))["judgment_rules"],
-                         vocab.RULES_STATEMENT_CUT)
+                         vocab.RULES_SMOKE4)
+        self.assertEqual(read_yaml(self.paths.run_yaml("loc-2"))["locate"]["status_rule"],
+                         vocab.STATUS_RULE_BROAD)
         self.assertEqual(read_yaml(self.paths.run_yaml("chl-2"))["locate"]
                          ["absence_sample_rate"], vocab.CHALLENGE_ABSENCE_SAMPLE_RATE)
         planned = read_json(self.paths.run_dir("loc-2") / "planned.json")

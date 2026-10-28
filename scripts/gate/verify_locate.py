@@ -366,18 +366,29 @@ STATEMENT_CUT_SPAN_END = {STATEMENT_CUT_FIRST: SPAN_END_STATEMENT_CUT,
                           STATEMENT_CUT_CONTINUED: SPAN_END_CONTINUED,
                           STATEMENT_CUT_WIDE: SPAN_END_CONTINUED}
 STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE
+#: Judgment rules 4 (cflib.vocab.RULES_SMOKE4: the smoke-4 audit's calls, references/
+#: vocabulary.md section 1.11): the statement cut's rule 9 with four more checks -- PD6's
+#: shape tripwire on an existence-and-uniqueness or iff bundle (a part that concludes with
+#: an iff, an equivalence, a unique existence or a bijection says in ``pd6`` which conjunct
+#: it does not state alone, and a confirm of its bundle in ``part_limits``), the reading a
+#: confirm credits a bundle's closeMatch part with (``part_conventions``), a part's
+#: ``conjunct_relation`` that may say ``hasPart`` (CONJUNCT_RELATIONS_PART), and the bridge
+#: of a challenge downgrade of a strong record to relatedMatch (``bridge`` or
+#: ``incomparable``).  Each binds a run only when its gate.json names 4
+RULES_SMOKE4 = 4
 #: the versions the planner writes (cflib.vocab.JUDGMENT_RULES, SPAN_END_RULE and
 #: STATEMENT_CUT_RULE: the statement cut's from its flip on, the continued cut's from
 #: the flip of inv-pilot-1's fixes on, the wide cut's from the flip of the wide bound
-#: on): a gate.json names the version its run was planned
+#: on, and judgment rules 4 from the flip of the smoke-4 audit's calls on): a gate.json
+#: names the version its run was planned
 #: under as ``judgment_rules`` and ``span_end_rule``, and one without ``span_end_rule``
 #: (a run planned before it, whose inventories ``passage_ids.py`` wrote without
 #: ``until``) is gated without the end check
-JUDGMENT_RULES = RULES_STATEMENT_CUT
+JUDGMENT_RULES = RULES_SMOKE4
 SPAN_END_RULE = SPAN_END_CONTINUED
 #: the highest version of each rule this gate can hold a run to: a gate.json naming a
 #: higher one was planned by a newer planner than this gate directory (exit 3)
-KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_STATEMENT_CUT)
+KNOWN_JUDGMENT_RULES = max(JUDGMENT_RULES, RULES_SMOKE4)
 KNOWN_SPAN_END_RULE = max(SPAN_END_RULE, SPAN_END_CONTINUED)
 KNOWN_STATEMENT_CUT_RULE = max(STATEMENT_CUT_RULE, STATEMENT_CUT_WIDE)
 #: a compound statement's conjuncts (cflib.vocab's statement-cut block, inlined)
@@ -388,7 +399,15 @@ MAX_CONJUNCTS = 5
 SHAPE_CONJUNCT_COUNTS = {"existence_uniqueness": 2}
 SIMPLE_STATEMENT_CLAUSE = "c1"
 CONJUNCT_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch", "narrowMatch"})
+#: judgment rules 4's: a part may say it states only part of its conjuncts
+#: (cflib.vocab.CONJUNCT_RELATIONS_PART)
+CONJUNCT_RELATIONS_PART = CONJUNCT_RELATIONS | {HAS_PART}
 BUNDLE_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch"})
+#: PD6's shape tripwire under judgment rules 4 (cflib.vocab.PD6_SHAPES,
+#: PD6_CONCLUSION_MARKS): the shapes whose every conjunct one declaration can state as a
+#: characterisation, and what such a declaration's conclusion holds
+PD6_SHAPES = frozenset({"existence_uniqueness", "iff"})
+PD6_CONCLUSION_MARKS = ("↔", "≃", "∃!", "Bijective")
 TWO_WAY_TEST_KEYS = ("r2", "r3")
 CUT_FLAGS = frozenset({"not_a_statement", "several_statements"})
 #: the naturals-for-integers tripwire's words (fix 2b; cflib.vocab.NAT_FOR_INT_INTEGER_WORDS,
@@ -2112,6 +2131,17 @@ def binder_groups(signature: Any) -> list[str]:
     ``,`` outside every bracket before the next arrow (an ``∃``'s body).  A bracket
     in a statement (``a ≡ b [MOD n]``) is at no binder position.
     """
+    return _telescope(signature)[0]
+
+
+def _telescope(signature: Any) -> tuple[list[str], str]:
+    """A signature's binder groups (:func:`binder_groups`) and its conclusion.
+
+    The conclusion is what is left where the scan stops: the segment after the last
+    binder and the last hypothesis's arrow (``f = n.factorization ↔ …`` of ``∀ {n : ℕ}
+    {f : ℕ →₀ ℕ}, n ≠ 0 → (f = n.factorization ↔ …)``), with an ``∃``'s body in it;
+    empty when the text ends inside the binders or holds an unbalanced bracket.
+    """
     text = str(signature or "")
     groups: list[str] = []
     i = _skip_space(text, 0)
@@ -2124,7 +2154,7 @@ def binder_groups(signature: Any) -> list[str]:
                 if text[i] in BINDER_BRACKETS:
                     end = _scan_group(text, i)
                     if end < 0:
-                        return groups
+                        return groups, ""
                     groups.append(text[i:end + 1])
                     i = _skip_space(text, end + 1)
                 elif text[i] == ",":
@@ -2133,12 +2163,12 @@ def binder_groups(signature: Any) -> list[str]:
                 elif text[i] in DEPTH_BRACKETS:
                     end = _scan_group(text, i)
                     if end < 0:
-                        return groups
+                        return groups, ""
                     i = _skip_space(text, end + 1)
                 else:
                     i += 1                      # a bare binder name, or ∀ x ∈ s,
             else:
-                return groups
+                return groups, ""
             continue
         arrow = _next_arrow(text, i)
         if arrow is None:
@@ -2147,7 +2177,26 @@ def binder_groups(signature: Any) -> list[str]:
         if segment and segment[0] in BINDER_BRACKETS and _scan_group(segment, 0) == len(segment) - 1:
             groups.append(segment)
         i = _skip_space(text, arrow[0] + arrow[1])
-    return groups
+    return groups, text[i:].strip()
+
+
+def conclusion(signature: Any) -> str:
+    """A signature's conclusion as the index prints it (:func:`_telescope`), or ''."""
+    return _telescope(signature)[1]
+
+
+def pd6_mark(cfg: GateConfig, ctx: Context, location: dict) -> str | None:
+    """Judgment rules 4: the mark of PD6's shape tripwire in a declaration's conclusion.
+
+    The first of ``PD6_CONCLUSION_MARKS`` (an iff, any ``≃`` equivalence, a unique
+    existence, a bijection) in the conclusion of the signature ``corpus.sqlite``
+    records for the location's declaration, or None -- also when it records none.
+    """
+    library, name = location.get("library"), location.get("declaration")
+    if not (isinstance(library, str) and isinstance(name, str) and library in cfg.libraries):
+        return None
+    tail = conclusion(ctx.signature(library, name))
+    return next((mark for mark in PD6_CONCLUSION_MARKS if mark in tail), None)
 
 
 def instance_binders(signature: Any) -> list[str]:
@@ -2212,6 +2261,10 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
     when that relation is strong, since a bundle takes its weakest part's
     relation (status rule 2).  The gap check stays the location's own: a part
     states some conjuncts and not the rest by definition.
+
+    Under judgment rules 4 a part's ``conjunct_relation`` may be ``hasPart``
+    (:func:`conjunct_relations`), and a ``pd6`` line -- a bundle part's answer to
+    PD6's shape tripwire (:func:`check_pd6_shape`) -- belongs to a ``hasPart`` only.
     """
     relation = location.get("relation")
     known = relation if _one_of(relation, LOCATE_RELATIONS) else None
@@ -2223,7 +2276,13 @@ def check_judgment(cfg: GateConfig, ctx: Context, problems: Problems, where: str
     cut = cfg.judgment_rules >= RULES_STATEMENT_CUT
     check_step(problems, where, known, location.get("step"), source, passage_kind=passage_kind)
     held_to = (check_conjunct_relation(problems, where, known, location.get("conjunct_relation"),
-                                       row) if cut else known)
+                                       row, rules=cfg.judgment_rules) if cut else known)
+    if cfg.judgment_rules >= RULES_SMOKE4 and location.get("pd6") is not None:
+        if known != HAS_PART:
+            problems.add(9, where, "pd6 belongs to a hasPart, a part of a bundle: what the part "
+                                   "does not state of the passage on its own; drop it")
+        else:
+            check_line_field(problems, where, "pd6", location.get("pd6"), source)
     label = held_label(known, held_to)
     check_convention(problems, where, held_to, location.get("convention"),
                      rules=cfg.judgment_rules)
@@ -2522,20 +2581,29 @@ def check_tests(problems: Problems, where: str, tests: Any, source: Any, *,
             problems.add(9, where, f"tests.{key} is one line of your own: the test, as you ran it")
 
 
+def conjunct_relations(rules: int) -> frozenset:
+    """The ``conjunct_relation`` values of a run's judgment rules: 4 add ``hasPart``."""
+    return CONJUNCT_RELATIONS_PART if rules >= RULES_SMOKE4 else CONJUNCT_RELATIONS
+
+
 def check_conjunct_relation(problems: Problems, where: str, relation: str, value: Any,
-                            row: dict | None) -> str:
+                            row: dict | None, *, rules: int = RULES_STATEMENT_CUT) -> str:
     """J2: a ``hasPart`` of a compound statement gives its ``conjunct_relation``; nothing else does.
 
     Returns the relation the location's ``convention`` is held to: a part's
     ``conjunct_relation`` (a ``closeMatch`` part names its convention), else the
-    location's own relation.
+    location's own relation.  Under judgment rules 4 a part that states only some of
+    what its conjuncts say gives ``hasPart`` (:func:`conjunct_relations`): it owes the
+    ``step`` every ``hasPart`` owes and no ``tests``, and no bundle stands on it.
     """
     if relation == HAS_PART and _is_compound(row):
-        if not _one_of(value, CONJUNCT_RELATIONS):
+        allowed = conjunct_relations(rules)
+        if not _one_of(value, allowed):
             problems.add(9, where, f"a hasPart of a compound statement says what it bears to "
                                    f"the conjunct(s) it names: conjunct_relation, one of "
-                                   f"{', '.join(sorted(CONJUNCT_RELATIONS))}, judged against "
-                                   f"those conjuncts by R1-R3 and PD1-PD10")
+                                   f"{', '.join(sorted(allowed))}, judged against "
+                                   f"those conjuncts by R1-R3 and "
+                                   f"PD1-PD{11 if rules >= RULES_SMOKE4 else 10}")
             return relation
         return value
     if value is not None:
@@ -2675,11 +2743,49 @@ def check_bundle(problems: Problems, where: str, coverage: dict, locations: list
             problems.add(9, at, f"part {rank} bears {loc.get('conjunct_relation')!r} to its "
                                 f"conjuncts; a bundle's part states them strongly "
                                 f"({', '.join(sorted(BUNDLE_RELATIONS))}): a special case of a "
-                                f"conjunct leaves it unstated, and the passage is partial")
+                                f"conjunct, or a part of one, leaves it unstated, and the "
+                                f"passage is partial")
     missing = [c for c in ids if c not in seen]
     if missing:
         problems.add(9, at, f"no part states {', '.join(missing)}: a bundle's parts together "
                             f"state every conjunct")
+
+
+#: what a PD6 shape refusal asks of the part (locate) and of a confirm (challenge)
+PD6_SHAPE_ASK = ("which conjunct it does not state on its own, and why (a characterisation "
+                 "f = w ↔ P f of the passage's witness states existence at f := w and "
+                 "uniqueness, so it states both)")
+
+
+def check_pd6_shape(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
+                    coverage: dict, locations: list[dict], row: dict | None,
+                    source: Any) -> None:
+    """Judgment rules 4: PD6's shape tripwire on an existence-and-uniqueness or iff bundle.
+
+    The smoke-4 audit: both of a run's PD6 misses were an iff characterisation of the
+    passage's witness entered as the uniqueness part, which the clause check cannot
+    see, since the part's ``clauses`` name one conjunct.  On a passage of a shape in
+    ``PD6_SHAPES``, a part whose declaration's conclusion holds one of
+    ``PD6_CONCLUSION_MARKS`` (:func:`pd6_mark`) may state every conjunct alone, so it
+    says in ``pd6``, one line, which conjunct it does not state on its own and why;
+    without it the part is refused as PD6's whole part.  A tripwire, not a parser: a
+    part whose iff is about something else answers it in one line.
+    """
+    if (row or {}).get("shape") not in PD6_SHAPES or not isinstance(coverage.get("parts"), list):
+        return
+    by_rank = {_rank_of(loc): loc for loc in locations if _rank_of(loc) is not None}
+    for rank in coverage["parts"]:
+        loc = by_rank.get(rank) if isinstance(rank, int) else None
+        if loc is None or loc.get("relation") != HAS_PART:
+            continue                       # rule 1 names it
+        mark = pd6_mark(cfg, ctx, loc)
+        if mark is None or not _blank(loc.get("pd6")):
+            continue                       # a given pd6 is checked with the location
+        problems.add(9, f"{where}: coverage",
+                     f"part {rank} ({loc.get('library')}:{loc.get('declaration')}) concludes "
+                     f"with {mark!r} on a statement of shape {row['shape']}, so it may state every "
+                     f"conjunct alone: {WHOLE_PART}. Give it pd6: <one line>, "
+                     f"{PD6_SHAPE_ASK}, or give it its own relation and drop the bundle")
 
 
 def unclaimed_bundle(locations: list[dict], ids: list[str]) -> list[int] | None:
@@ -2737,6 +2843,8 @@ def judge_cut_passage(cfg: GateConfig, ctx: Context, problems: Problems, where: 
     coverage = p.get("coverage") if isinstance(p.get("coverage"), dict) else None
     if outcome == "located" and coverage is not None:
         check_bundle(problems, where, coverage, locations, ids, row)
+        if cfg.judgment_rules >= RULES_SMOKE4:
+            check_pd6_shape(cfg, ctx, problems, where, coverage, locations, row, source)
     elif outcome == "located" and _is_compound(row) and "coverage" not in p:
         ranks = unclaimed_bundle(locations, ids)
         if ranks:
@@ -3625,7 +3733,10 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
                passage_kind=rec.get("passage_kind"), required=not keeps_step)
     held_to = result
     if cut:
-        held_to = _judge_verdict_conjunct_relation(problems, where, v, rec, result, action)
+        held_to = _judge_verdict_conjunct_relation(problems, where, v, rec, result, action,
+                                                   rules=cfg.judgment_rules)
+    if cfg.judgment_rules >= RULES_SMOKE4:
+        check_bridge(cfg, ctx, problems, where, v, rec, result, action, source)
     label = held_label(result, held_to)
     own = v.get("convention")
     if held_to == CLOSE_MATCH and action == "confirm" and not _nonempty_str(own):
@@ -3662,16 +3773,84 @@ def _judge_location_verdict(cfg: GateConfig, ctx: Context, problems: Problems, w
             problems.add(9, where, _instantiation_problem(rec, binders, challenger=True))
 
 
+def held_record(rec: dict) -> str | None:
+    """The relation a challenge record is held to: its own, or a part's ``conjunct_relation``."""
+    relation = rec.get("relation")
+    if relation == HAS_PART and _one_of(rec.get("conjunct_relation"), CONJUNCT_RELATIONS_PART):
+        return rec["conjunct_relation"]
+    return relation if _one_of(relation, LOCATE_RELATIONS) else None
+
+
+def check_bridge(cfg: GateConfig, ctx: Context, problems: Problems, where: str, v: dict,
+                 rec: dict, result: Any, action: Any, source: Any) -> None:
+    """Judgment rules 4: a challenge downgrade of a strong record to relatedMatch names why.
+
+    The smoke-4 audit: a third of one run's downgrades from broadMatch to relatedMatch
+    were wrong, most of them an encoding or plain arithmetic taken for a PD8 bridge.
+    A downgrade to ``relatedMatch`` of a record held to a strong relation (its own, or
+    a part's ``conjunct_relation``: :func:`held_record`) gives exactly one of
+    ``bridge``, ``{library, declaration, why}`` -- the named lemma the connection
+    needs, in ``corpus.sqlite`` at that library (rule 3), and why in one line -- or
+    ``incomparable``, one line saying why the two settings neither contain one another
+    (R5's other ground).  A lemma that only links two definitions of one notion is
+    PD10's encoding and no bridge, so the record keeps its relation.  Neither field
+    belongs to any other verdict.
+    """
+    bridge, apart = v.get("bridge"), v.get("incomparable")
+    downgrade = action == "downgrade" and result == RELATED_MATCH \
+        and held_record(rec) in STRONG_RELATIONS
+    if not downgrade:
+        if bridge is not None or apart is not None:
+            problems.add(9, where, "bridge and incomparable belong to a downgrade of a strong "
+                                   "record to relatedMatch: drop them")
+        return
+    if (bridge is None) == (apart is None):
+        problems.add(9, where, "a downgrade of a strong record to relatedMatch says why, by "
+                               "exactly one of bridge: {library, declaration, why} (the named "
+                               "lemma the connection needs, PD8) or incomparable: <one line> "
+                               "(two settings neither containing the other, R5). A lemma that "
+                               "only links two definitions of one notion is no bridge but an "
+                               "encoding (PD10): then the record keeps its relation")
+        return
+    if apart is not None:
+        if not check_line_field(problems, where, "incomparable", apart, source) and _blank(apart):
+            problems.add(9, where, "incomparable is one line of your own: why the two settings "
+                                   "neither contain one another")
+        return
+    if not isinstance(bridge, dict) or set(bridge) != {"library", "declaration", "why"}:
+        problems.add(9, where, "bridge is {library, declaration, why}, nothing else")
+        return
+    library, declaration = bridge["library"], bridge["declaration"]
+    if not _one_of(library, cfg.libraries):
+        problems.add(3, where, f"bridge names library {library!r}, which is not in universe "
+                               f"{cfg.universe_id}")
+    elif not _nonempty_str(declaration):
+        problems.add(9, where, "bridge names its declaration, the lemma the connection needs")
+    elif not ctx.exists(library, declaration):
+        problems.add(3, where, f"bridge {library}:{declaration} is not in corpus.sqlite (a "
+                               f"phantom declaration)")
+    elif declaration == rec.get("declaration") and library == rec.get("library"):
+        problems.add(9, where, "bridge names the record's own declaration: name the other "
+                               "lemma the connection needs")
+    if not check_line_field(problems, where, "bridge.why", bridge["why"], source) \
+            and _blank(bridge["why"]):
+        problems.add(9, where, "bridge.why is one line of your own: what the lemma adds that "
+                               "decidable arithmetic does not close")
+
+
 def _judge_verdict_conjunct_relation(problems: Problems, where: str, v: dict, rec: dict,
-                                     result: str, action: Any) -> str:
+                                     result: str, action: Any, *,
+                                     rules: int = RULES_STATEMENT_CUT) -> str:
     """Rules 3: a location verdict's ``conjunct_relation``, never stronger than the record's.
 
     Only a verdict that leaves a ``hasPart`` of a compound statement may give one
-    (one of ``CONJUNCT_RELATIONS``), and a challenge never raises a relation, so
+    (one of ``CONJUNCT_RELATIONS``, and under judgment rules 4 ``hasPart`` too:
+    :func:`conjunct_relations`), and a challenge never raises a relation, so
     it is no stronger (``RELATION_STRENGTH``) than the record's own.  Returns the
     relation the verdict's convention is held to: the part's relation, the
     verdict's or -- a confirm that gives none -- the record's.
     """
+    allowed = conjunct_relations(rules)
     given = v.get("conjunct_relation")
     if result != HAS_PART or not _is_compound(rec):
         if given is not None:
@@ -3680,13 +3859,13 @@ def _judge_verdict_conjunct_relation(problems: Problems, where: str, v: dict, re
         return result
     if given is None:
         own = rec.get("conjunct_relation") if action == "confirm" else None
-        return own if _one_of(own, CONJUNCT_RELATIONS) else result
-    if not _one_of(given, CONJUNCT_RELATIONS):
+        return own if _one_of(own, CONJUNCT_RELATIONS_PART) else result
+    if not _one_of(given, allowed):
         problems.add(9, where, f"conjunct_relation is one of "
-                               f"{', '.join(sorted(CONJUNCT_RELATIONS))}")
+                               f"{', '.join(sorted(allowed))}")
         return result
     own = rec.get("conjunct_relation")
-    if _one_of(own, CONJUNCT_RELATIONS) and RELATION_STRENGTH[given] < RELATION_STRENGTH[own]:
+    if _one_of(own, CONJUNCT_RELATIONS_PART) and RELATION_STRENGTH[given] < RELATION_STRENGTH[own]:
         problems.add(9, where, f"conjunct_relation {given} is stronger than the record's {own}: "
                                f"a challenge never raises a relation; keep {own} or name a "
                                f"weaker one")
@@ -3735,13 +3914,88 @@ def _judge_bundle_confirm(problems: Problems, where: str, v: dict, rec: dict,
                                    f"less leaves its conjunct unstated, so refute the claim")
             continue
         own = part.get("conjunct_relation")
-        if not _one_of(own, CONJUNCT_RELATIONS):
+        if not _one_of(own, CONJUNCT_RELATIONS_PART):
             raise GateBroken(f"challenge record coverage of {rec.get('item')} of {source_id} "
                              f"has a part {key[:12]} with no conjunct_relation, so no "
                              f"part_relations of it can be checked")
         if RELATION_STRENGTH[value] < RELATION_STRENGTH[own]:
             problems.add(9, where, f"part_relations[{key[:12]}] {value} is stronger than the "
                                    f"part's own {own}: a challenge never raises a relation")
+
+
+def _keyed_lines(problems: Problems, where: str, field: str, given: Any, want: list[str],
+                 keys: list[str], source: Any, *, ask: str) -> None:
+    """A confirm's ``{<part's location_key>: <one line>}`` field: exactly the parts ``want``."""
+    if not isinstance(given, dict):
+        given = {}
+    for key in sorted(set(given) - set(keys)):
+        problems.add(9, where, f"{field} names {key[:12]!r}, which is no part of the claim")
+    for key in keys:
+        if key not in want:
+            if key in given:
+                problems.add(9, where, f"{field} gives part {key[:12]} a line it does not owe: "
+                                       f"drop it")
+            continue
+        if key not in given or _blank(given[key]):
+            problems.add(9, where, f"{field}[{key[:12]}] is owed: {ask}")
+        else:
+            check_line_field(problems, where, f"{field}[{key[:12]}]", given[key], source)
+
+
+def _judge_bundle_readings(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
+                           v: dict, rec: dict, source: Any) -> None:
+    """Judgment rules 4 on a bundle confirm: the readings it credits the parts with.
+
+    Fix 6d's mechanical half, beside PD6's shape tripwire (:func:`check_pd6_shape`).
+    ``part_conventions``, ``{<part's location_key>: <convention>}``: the R1 convention
+    (``CLOSE_MATCH_CONVENTIONS``) by which the confirm reads each part its
+    ``part_relations`` credits with ``closeMatch``, for those parts and no other, so the
+    reading the confirm credits a part with is on the record when it asks whether
+    another part states every conjunct.  ``part_limits``, ``{<part's location_key>:
+    <one line>}``: on a passage of a shape in ``PD6_SHAPES``, for each part whose
+    declaration concludes with an iff, an equivalence, a unique existence or a
+    bijection (:func:`pd6_mark`) and no other, which conjunct it does not state on its
+    own, and why -- else the claim stands on PD6's whole part, and is refuted.
+    """
+    parts = _part_keys(rec)
+    keys = [key for key, _part in parts]
+    relations = v.get("part_relations") if isinstance(v.get("part_relations"), dict) else {}
+    readings = v.get("part_conventions")
+    credited = [key for key in keys if relations.get(key) == CLOSE_MATCH]
+    if readings is not None and not isinstance(readings, dict):
+        problems.add(9, where, "part_conventions is {<part's location_key>: <convention>}")
+        readings = {}
+    readings = readings or {}
+    for key in sorted(set(readings) - set(keys)):
+        problems.add(9, where, f"part_conventions names {key[:12]!r}, which is no part of the "
+                               f"claim")
+    for key in keys:
+        if key not in credited:
+            if key in readings:
+                problems.add(9, where, f"part_conventions belongs to a part your part_relations "
+                                       f"credit with closeMatch; part {key[:12]} is none: drop "
+                                       f"it")
+        elif not _one_of(readings.get(key), CLOSE_MATCH_CONVENTIONS):
+            problems.add(9, where, f"part_relations credit part {key[:12]} with closeMatch: "
+                                   f"part_conventions[{key[:12]}] names the R1 convention you "
+                                   f"read it by, one of "
+                                   f"{', '.join(sorted(CLOSE_MATCH_CONVENTIONS))}, and you read "
+                                   f"every other part by the same readings when you ask whether "
+                                   f"one alone states every conjunct (Fix 6d)")
+    if rec.get("shape") not in PD6_SHAPES:
+        if v.get("part_limits") is not None:
+            problems.add(9, where, f"part_limits belongs to a bundle of a statement of shape "
+                                   f"{' or '.join(sorted(PD6_SHAPES))}: drop it")
+        return
+    tripped = [key for key, part in parts if pd6_mark(cfg, ctx, part) is not None]
+    if v.get("part_limits") is not None and not isinstance(v.get("part_limits"), dict):
+        problems.add(9, where, "part_limits is {<part's location_key>: <one line>}")
+        return
+    _keyed_lines(problems, where, "part_limits", v.get("part_limits"), tripped, keys, source,
+                 ask=f"the part concludes with an iff, an equivalence, a unique existence or a "
+                     f"bijection on a statement of shape {rec.get('shape')}, so say "
+                     f"{PD6_SHAPE_ASK}; "
+                     f"if it states every conjunct, {WHOLE_PART}, and the claim is refuted")
 
 
 def _judge_bundle_refute(problems: Problems, where: str, v: dict, rec: dict,
@@ -3872,7 +4126,9 @@ def check_verdict(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
     (``claims[<item>]``), a refute and an uphold as much as a confirm; then each
     kind of verdict is held to what it says: :func:`_judge_location_verdict`,
     :func:`_judge_coverage_confirm`, :func:`_judge_uphold`.  Its free texts are
-    held to rule 1's cap in every spelling of the source.
+    held to rule 1's cap in every spelling of the source.  Under judgment rules 4 a
+    downgrade's ``bridge`` (:func:`check_bridge`) and a bundle confirm's readings and
+    limits (:func:`_judge_bundle_readings`) too.
     """
     target, action, item = v.get("target"), v.get("action"), v.get("item")
     cut = cfg.judgment_rules >= RULES_STATEMENT_CUT
@@ -3886,6 +4142,8 @@ def check_verdict(cfg: GateConfig, ctx: Context, problems: Problems, where: str,
         _judge_location_verdict(cfg, ctx, problems, where, v, rec, ids, source)
     elif target == "coverage" and action == "confirm" and cut:
         _judge_bundle_confirm(problems, where, v, rec, source.source_id if source else "")
+        if cfg.judgment_rules >= RULES_SMOKE4:
+            _judge_bundle_readings(cfg, ctx, problems, where, v, rec, source)
     elif target == "coverage" and action == "refute" and cut:
         _judge_bundle_refute(problems, where, v, rec, ids, source)
     elif target == "coverage" and action == "confirm":

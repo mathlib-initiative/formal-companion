@@ -570,6 +570,26 @@ inventory owns the clause list, and everything above is checked against it:
   `CUT_FLAGS` (`not_a_statement`, `several_statements`): what a worker who cannot
   re-cut a passage says of its cut. It is refused on any other outcome.
 
+**Under judgment rules 4** (`RULES_SMOKE4`, the smoke-4 audit's calls,
+`references/vocabulary.md` §1.11), which bind a run whose `gate.json` names
+`judgment_rules: 4`, everything above holds, and two checks more:
+
+- **A part that states part of its conjunct.** `conjunct_relation` may be `hasPart`
+  too (`CONJUNCT_RELATIONS_PART`): the part states only some of what the conjuncts it
+  names say. It owes the `step` every `hasPart` owes and no `tests` or
+  `instantiation`, names no `convention`, and no bundle stands on it (it is no one of
+  `BUNDLE_RELATIONS`), so fix 4a does not count it either.
+- **PD6's shape tripwire.** On a compound statement of shape `existence_uniqueness`
+  or `iff` (`PD6_SHAPES`), a bundle part whose declaration's conclusion — the
+  segment of its signature after its binders and hypotheses,
+  `verify_locate.conclusion` — holds `↔`, any `≃`, `∃!` or `Bijective`
+  (`PD6_CONCLUSION_MARKS`) writes `pd6`, one line saying which conjunct it does not
+  state on its own and why: a characterisation f = w ↔ P f of the passage's witness
+  states existence at f := w and uniqueness, so it is one location, no part (PD6).
+  Without it the bundle is refused; a declaration with no recorded signature is not
+  held. `pd6` on a location that is no `hasPart` is refused, and a given one is a
+  one-line judgment field.
+
 ## 4. Challenge document (`mode: locate-challenge`)
 
 ```json
@@ -710,6 +730,20 @@ list. Then:
   with its `tests`, the tripwire and the generality words.
 - An `uphold` of an absence or an unresolved outcome gives `special_case` beside
   its queries (fix 5b), as an absence's receipt does.
+- **Under judgment rules 4** (`references/vocabulary.md` §1.11): a verdict's
+  `conjunct_relation` may be `hasPart` (§3); a **downgrade to `relatedMatch`** of a
+  record held to a strong relation (its own, or a part's `conjunct_relation`) gives
+  exactly one of `bridge: {library, declaration, why}` — the named lemma the
+  connection needs (PD8), in `corpus.sqlite` at that library (rule 3) and not the
+  record's own declaration, with a one-line `why` — or `incomparable: <one line>`
+  (R5's two settings, neither containing the other), and no other verdict carries
+  either; a coverage **confirm** gives `part_conventions: {<part's location_key>:
+  <convention>}`, the R1 convention (`CLOSE_MATCH_CONVENTIONS`) by which it reads each
+  part its `part_relations` credit with `closeMatch`, for those parts and no other
+  (fix 6d's mechanical half), and, on a statement of shape `existence_uniqueness` or
+  `iff`, `part_limits: {<part's location_key>: <one line>}` for each part whose
+  declaration concludes with one of `PD6_CONCLUSION_MARKS` and no other: which
+  conjunct it does not state on its own, and why (PD6's shape tripwire, §3).
 - **Fills (anomalies A1, A2).** A document whose verdicts leave a `located`
   passage with no location whose relation counts — its judged location records (a
   confirm keeps the relation, a downgrade leaves the one it names, a refute
@@ -899,8 +933,8 @@ before them.
 
 **The record set of status rule 2** (`cf-locate-recordset/2`;
 `docs/proposals/statement-cut.md` §2.4). A locate run whose `run.yaml` names
-`locate.status_rule: 2` — from the statement cut's flip on, exactly the runs of
-judgment rules 3 — exports `/2`; every other run exports `cf-locate-recordset/1`
+`locate.status_rule: 2` — from the statement cut's flip to the flip of the smoke-4
+audit's calls, exactly the runs of judgment rules 3 — exports `/2`; every other run exports `cf-locate-recordset/1`
 byte for byte as below. `/2` is `/1` with these differences, and no other:
 
 - `SEAL.json` carries `/1`'s keys and one more, `status_rule` (`2`), the version of
@@ -929,6 +963,14 @@ byte for byte as below. `/2` is `/1` with these differences, and no other:
   same claim: a survived bundle is one more location of its own relation, not one
   more `exactMatch`, so a definition, construction or notation passage whose bundle
   is `broadMatch` is `partial` (`references/vocabulary.md` §1.11).
+
+**Status rule 3** (`locate.status_rule: 3`, R-BROAD; `references/vocabulary.md` §1.11)
+exports `/2` too, with one difference: the seal's `status_rule` is `3`, and the status every
+record carries is `derive_status(…, status_rule=3)`, under which a `broadMatch` formalizes a
+theorem passage whether its declaration is proved or data, and a definition passage when it is
+a definition. The record shapes are `/2`'s, so a consumer reads the seal's `status_rule` to know
+which derivation its statuses came from (`tests/data/locate/status-parity-3.json` holds rule
+3's cases, `status-parity-2.json` rule 2's).
 
 A target directory may hold a `/1` or a `/2` set: a re-export replaces either. The
 self-evidencing format the decision log once planned as `/2` takes the next number,
@@ -1832,7 +1874,11 @@ like a faithfulness run:
   version 2, written since the maintainer's PD5–PD9 (2026-10-20), adds PD6's
   whole part and PD7's junk value (§3, §4), so a run that names 1 is gated, also
   by the checkout's gate, without them; version 3, written from the statement
-  cut's flip on, is that proposal's (below). The bench holds its gold to the same
+  cut's flip on, is that proposal's (below); version 4, written from the flip of
+  the smoke-4 audit's calls on, is theirs (§3 and §4, "Under judgment rules 4";
+  `references/vocabulary.md` §1.11), which the gate knew before the planner wrote
+  it, and the planner writes status rule 3 beside it in a locate run's `run.yaml`
+  (`cflib.vocab.status_rule_of_judgment`). The bench holds its gold to the same
   version (`references/locate-bench.md` §8). A version above the gate's own, or a
   value that is not a non-negative integer, is exit 3.
 
@@ -1954,8 +2000,9 @@ like a faithfulness run:
   frozen inventory's `statement`, and a compound statement's `conjuncts` and
   `shape`; into a challenge task's record the same three and `conditional`
   (anomaly A3: a prominence sample's other records, judged only beside an overturn
-  of their passage); writes `locate.status_rule` (`STATUS_RULE`, 2) into a locate
-  run's `run.yaml`, exactly when its `judgment_rules` is 3; and refuses `--preset
+  of their passage); writes `locate.status_rule` (`STATUS_RULE`: 2 when its
+  `judgment_rules` is 3, and 3 from the flip of the smoke-4 audit's calls, when they are
+  4; `cflib.vocab.status_rule_of_judgment`) into a locate run's `run.yaml`; and refuses `--preset
   locate` over an inventory run whose gate.json names no `statement_cut_rule`
   (inventory the sources again) and `--preset locate-challenge` of a locate run
   judged under `judgment_rules` below 3, whose documents carry their own claim
@@ -2537,7 +2584,14 @@ them — `conjunct_relation` off one no longer `hasPart`; a `convention` stays o
 `hasPart` whose `conjunct_relation` is `closeMatch`); a coverage confirm's
 `part_relations` sit beside the claim as `coverage_part_relations`; a refute's
 `unstated` and `part_reasons` on `coverage_refuted`; and an uphold's `special_case`
-in `challenge_receipt`. A verdict on a record its challenge plan marked
+in `challenge_receipt`. Judgment rules 4's fields ride the same way where a document
+wrote them, on a run of status rule 2 or 3: a part's `pd6` (`CUT_LOCATION_FIELDS`)
+while it is a `hasPart`; a downgrade's `bridge` or `incomparable` on the
+`relatedMatch` location it leaves (`outcomes.BRIDGE_FIELDS`); a verdict's
+`conjunct_relation` of `hasPart` (`vocab.CONJUNCT_RELATIONS_PART`), which lapses a
+bundle standing on that part; and a coverage confirm's `part_conventions` and
+`part_limits` beside the claim as `coverage_part_conventions` and
+`coverage_part_limits`. A verdict on a record its challenge plan marked
 `conditional: "prominence"` (its `challenge-plan.json` row; `references/vocabulary.md`
 §1.11) counts only when the same challenge run overturned
 that passage's prominence to `subject` or `central`; otherwise it is named in the
@@ -2545,7 +2599,9 @@ problems and ignored, as a verdict on any record the plan did not require is.
 
 **Status rule 2** (`run.yaml` `locate.status_rule: 2`, which `cf plan-locate`
 writes from the statement cut's flip on; a run.yaml without it is status rule 1,
-and one naming any other value is refused): every row also carries the passage's
+status rule 3 is the same rows with R-BROAD's statuses — `derive_status(…,
+status_rule=3)`, references/vocabulary.md §1.11 — and one naming any other value is
+refused): every row also carries the passage's
 `statement`, `conjuncts` and `shape` from the frozen inventory (where it has them);
 its `coverage` carries `relation`, the bundle's (its weakest part's: the weaker of
 each part's `conjunct_relation` and a confirm's `part_relations` entry for it, a

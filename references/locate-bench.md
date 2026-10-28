@@ -235,9 +235,12 @@ has no status.
 Gold of a labeler that labels by the statement cut's judgment rules (`locate-label/6`, which
 `bench.gold.LABELER_RULES` maps to `cflib.vocab.RULES_STATEMENT_CUT`, 3;
 `docs/proposals/statement-cut.md` §2.3 and §6.2) is
-derived as a run of those rules is, under status rule 2 (`bench.gold.gold_status_rule`). A
+derived as a run of those rules is, under status rule 2 (`bench.gold.gold_status_rule`), and
+gold of `locate-label/7`, which labels by the smoke-4 audit's judgment rules 4, under status rule
+3 (R-BROAD, `cflib.vocab.status_rule_of_judgment`). A
 `hasPart` declaration keeps the `conjunct_relation` the labeler gave it (one of
-`CONJUNCT_RELATIONS`, or none for a span that states one claim; any other value drops the
+`CONJUNCT_RELATIONS`, and `hasPart` too under `/7`, or none for a span that states one claim;
+any other value drops the
 declaration with the reason), and no other relation carries one. A declaration is kept once,
 since status rule 2 keys a span's locations by `library:declaration`: listed again with the same
 relation (and `conjunct_relation`) the repeat is dropped and the first kept, and listed with
@@ -298,7 +301,7 @@ service, and every hit counts only once found in the pinned checkout.
 
 **Frozen.** The args stamp `labeler: {version, workflow_sha256, skill_commit}` (the checkout
 they were emitted from) and a `digest` over themselves;
-the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/6`: the rules R1–R7 and PD1–PD10 of `references/vocabulary.md` §1.11 under the statement cut's judgment rules 3 — the cut rules in the inventory mode, a `hasPart`'s `conjunct_relation` and the span's bundle in the label mode, PD9 reworded and the smoke-3 audit's prompt rules; /3 added R1–R7 and PD1–PD3, /4 added PD4, /5 added PD5–PD10 and replaced R1's junk values with PD7's test, /6 the statement cut at its flip; PD10 and PD7's test for "trivial" joined /5 without a bump, for the reason §1.11 gives, and inv-pilot-1's cut-rule words for proofs, worked examples, context, the subject and the paragraph that finishes a sentence after its display joined /6 the same way, `scripts/bench/gold.py` says why). The
+the result echoes `args_digest` and the workflow's own `LABELER_VERSION` (`locate-label/7`: the rules R1–R7 and PD1–PD11 of `references/vocabulary.md` §1.11 under the smoke-4 audit's judgment rules 4 — the statement cut's rules 3 and, beside them, the maintainer's calls of 2026-10-27 and 2026-10-28 (PD11, R-EQ, R-NAT, R-ASSOC, R-CHAIN, R-PD7, R-DEFFORM, R-TABLE), fix 6d and a `hasPart` part's `conjunct_relation` of `hasPart`; /3 added R1–R7 and PD1–PD3, /4 added PD4, /5 added PD5–PD10 and replaced R1's junk values with PD7's test, /6 the statement cut at its flip, /7 the smoke-4 audit's calls at theirs; PD10 and PD7's test for "trivial" joined /5 without a bump, for the reason §1.11 gives, and inv-pilot-1's cut-rule words for proofs, worked examples, context, the subject and the paragraph that finishes a sentence after its display joined /6 the same way, `scripts/bench/gold.py` says why). The
 transcriber refuses a result for other args, from another labeler version, or when the workflow
 file's sha changed since emission, and refuses a label for a task the args never named or
 labelled twice (the workflow also forces each answer's `task_id` to its task's). An unlabelled
@@ -331,7 +334,7 @@ a run's.
            "P": {"ablation_sha256": "<hex>", "corpus_sha256": "<hex>",
                  "removed_declarations": 812, "modules": 14}},
  "seen": ["g3-…"], "h": {"found": 15, "total": 17, "h": 0.88, "tag_blind": true},
- "labeler": {"version": "locate-label/6", "skill_commit": {"label": "<40 hex>"},
+ "labeler": {"version": "locate-label/7", "skill_commit": {"label": "<40 hex>"},
              "workflow_sha256": {"label": "<hex>"}, "prompt_sha256": {"label": "<hex>"}},
  "canary_sha256": "<hex>", "created": "…", "manifest_sha256": "<hex>"}
 ```
@@ -483,14 +486,15 @@ challenges.
 **The rules gold is labelled by.** A policy change to the judgment rules relabels the gold
 (`references/vocabulary.md` §1.11), and the score holds the two together: the gold manifest's
 `labeler.version` labels by the judgment rules `bench.gold.LABELER_RULES` names
-(`locate-label/3` and `/4`: 1; `/5`: 2; `/6`: 3; any other: 0), and every run of the score -- its
+(`locate-label/3` and `/4`: 1; `/5`: 2; `/6`: 3; `/7`: 4; any other: 0), and every run of the score -- its
 inventory, the locate run and each challenge -- is judged under the `judgment_rules` its
 `runs/<run>/gate.json` names (0 when it names none). From `cflib.vocab.RULES_PD5_PD9` (2) on,
 on either side, they must be one version: gold of `locate-label/4` never scores a run planned
 under PD5–PD9, nor gold of `locate-label/5` a run planned before them (a locate run of rules 2
 over an inventory of rules 1 included, since PD5 changed what an inventory makes a passage) or
 after the statement cut's flip (rules 3), and gold of `locate-label/6` scores only runs planned
-from the flip on.
+from the flip on, until the flip of the smoke-4 audit's calls (rules 4): from then gold of
+`locate-label/7` scores only runs planned from that flip on, and gold of `/6` only runs of rules 3.
 Below it -- rules 0 and 1, labelers up to `/4` -- runs and gold were compared whatever their
 rules before the check, and still are. A challenge whose plan required nothing of the scored run
 judged nothing of it and is not held, harvested or not (one that also challenged another locate

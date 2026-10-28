@@ -57,7 +57,9 @@ no cflib, as ``verify_findings`` restates ``finding_id``), and a coverage claim
 rides as a **bundle**, ``{complete, parts, challenge, relation, conjuncts: [{id,
 text, part}], bundle_key}`` (:func:`bundle_ext`).  The three builders take those
 as keywords, so every call of status rule 1 -- the gate's preview among them --
-builds the records it always did.
+builds the records it always did.  A passage of a run of status rule 3
+(``STATUS_RULE_BROAD``, R-BROAD) is built exactly so: only the status its outcome
+row carries was derived differently.
 
 The quote is capped (:func:`cap_quote`): at most ``QUOTE_WORDS`` words of
 ``exact`` from the passage start, at most ``CONTEXT_CHARS`` characters of
@@ -123,11 +125,14 @@ _QID = re.compile(r"Q[1-9][0-9]*\Z")
 #: article's QID
 SUBJECT = "subject"
 _SPACE = re.compile(r"\s")
-#: ``cflib.vocab.STATUS_RULE_D1`` / ``STATUS_RULE_BUNDLE``: the derivation a run's outcomes
-#: were derived under, which picks the record set's shapes (``cf-locate-recordset/1`` or
-#: ``/2``)
+#: ``cflib.vocab.STATUS_RULE_D1`` / ``STATUS_RULE_BUNDLE`` / ``STATUS_RULE_BROAD``: the
+#: derivation a run's outcomes were derived under, which picks the record set's shapes
+#: (``cf-locate-recordset/1`` for 1, ``/2`` for 2 and 3: status rule 3 changes the statuses
+#: a record carries, never its shape)
 STATUS_RULE_D1 = 1
 STATUS_RULE_BUNDLE = 2
+STATUS_RULE_BROAD = 3
+STATUS_RULES = (STATUS_RULE_D1, STATUS_RULE_BUNDLE, STATUS_RULE_BROAD)
 #: ``cflib.vocab.COVERAGE_RECORD_KEYS_BUNDLE`` and ``BUNDLE_RELATIONS``: a bundle as a record
 #: of status rule 2 carries it, and the relations it may have (its weakest part's)
 COVERAGE_KEYS_BUNDLE = COVERAGE_KEYS | {"relation", "conjuncts", "bundle_key"}
@@ -406,12 +411,13 @@ def coverage_ext(claim: Mapping[str, Any], *, status_rule: int = STATUS_RULE_D1)
     passage's status from this same projection (``cflib.vocab.derive_status``), so
     the status a record carries is the one its claim gives.  Under status rule 2 the
     projection also carries the bundle's ``relation`` (its weakest part's, which the
-    outcomes computed): the one more key the derivation reads.  The exported bundle,
-    which adds the ``conjuncts`` and the ``bundle_key``, is :func:`bundle_ext`.
+    outcomes computed): the one more key the derivation reads, under status rule 3
+    too.  The exported bundle, which adds the ``conjuncts`` and the ``bundle_key``, is
+    :func:`bundle_ext`.
     """
     out = {"complete": True, "parts": [str(k) for k in claim["parts"]],
            "challenge": str(claim.get("challenge"))}
-    if status_rule == STATUS_RULE_BUNDLE:
+    if status_rule >= STATUS_RULE_BUNDLE:
         out["relation"] = claim.get("relation")
     return out
 
@@ -476,11 +482,11 @@ def coverage_problem(passage: Mapping[str, Any], *,
     distinct parts, each the ``location_key`` of one of the passage's ``hasPart``
     locations, and carries its challenge value (hard rule 5), one of
     ``CHALLENGES``: a refuted claim is removed, never exported as ``refuted``.
-    Under status rule 2 it is a bundle and carries its ``relation`` too, one of
+    Under status rules 2 and 3 it is a bundle and carries its ``relation`` too, one of
     ``BUNDLE_RELATIONS``.
     """
     claim = passage.get("coverage")
-    if claim and status_rule == STATUS_RULE_BUNDLE and isinstance(claim, Mapping) \
+    if claim and status_rule >= STATUS_RULE_BUNDLE and isinstance(claim, Mapping) \
             and claim.get("relation") not in BUNDLE_RELATIONS:
         return (f"{passage.get('item')}: the bundle's relation {claim.get('relation')!r} is not "
                 f"one of {', '.join(sorted(BUNDLE_RELATIONS))}")
@@ -798,12 +804,14 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
     """Every record of one passage outcome, and the receipt sidecars they reference
     (``(sha256, text)``); a location note that carries the source past the cap is refused.
 
-    ``status_rule`` is the run's (``cf-locate-recordset/1`` for 1, ``/2`` for 2):
-    under status rule 2 every record carries the ``passage_key``, a location record
-    its ``pair_key``, and a coverage claim rides as its bundle (:func:`bundle_ext`),
-    each conjunct's text held to the quote cap a note is.
+    ``status_rule`` is the run's (``cf-locate-recordset/1`` for 1, ``/2`` for 2 and 3):
+    under status rules 2 and 3 every record carries the ``passage_key``, a location
+    record its ``pair_key``, and a coverage claim rides as its bundle
+    (:func:`bundle_ext`), each conjunct's text held to the quote cap a note is.  The
+    status every record carries is the passage row's, derived by the outcomes under
+    the run's rule, so status rule 3 builds the shapes status rule 2 does.
     """
-    if type(status_rule) is not int or status_rule not in (STATUS_RULE_D1, STATUS_RULE_BUNDLE):
+    if type(status_rule) is not int or status_rule not in STATUS_RULES:
         raise RecordError(f"status rule {status_rule!r} names no record-set format")
     start, end = passage_span(passage)
     if end > len(layer):
@@ -832,7 +840,7 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
     pk: str | None = None
     pairs: dict[str, str] = {}
     bundle = None
-    if status_rule == STATUS_RULE_BUNDLE:
+    if status_rule >= STATUS_RULE_BUNDLE:
         for loc in locations:
             if loc["library"] not in libs:
                 raise RecordError(f"{passage['item']}: library {loc['library']} is not in the "

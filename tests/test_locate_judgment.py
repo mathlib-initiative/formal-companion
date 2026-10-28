@@ -260,10 +260,11 @@ class TestTheClaimList(JudgedLocate):
         self.assertOk(self.run_body(body))
 
     def test_a_gate_json_naming_newer_rules_cannot_run(self):
-        # the gate knows the statement cut's rules 3 before the planner writes them
-        # (docs/proposals/statement-cut.md section 7: the flip)
+        # the gate knew the statement cut's rules 3 before the planner wrote them
+        # (docs/proposals/statement-cut.md section 7: the flip), and knows the smoke-4
+        # audit's rules 4 so
         self.assertEqual(vl.KNOWN_JUDGMENT_RULES,
-                         max(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT))
+                         max(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4))
         for value, needle in ((vl.KNOWN_JUDGMENT_RULES + 1, "this gate knows"),
                               ("1", "not a version number"), (-1, "not a version number")):
             self.fx.gate["judgment_rules"] = value
@@ -814,9 +815,10 @@ class TestTheRulesOfPD5ToPD9(JudgedLocate):
         return body
 
     def test_the_version_is_cflibs(self):
-        # a run planned now names rules 3 (the statement cut's flip); these tests gate the
-        # documents of a run planned under rules 2, which the gate still holds to them
-        self.assertEqual((vocab.JUDGMENT_RULES, vocab.RULES_PD5_PD9), (3, 2))
+        # a run planned now names rules 4 (the flip of the smoke-4 audit's calls); these
+        # tests gate the documents of a run planned under rules 2, which the gate still
+        # holds to them
+        self.assertEqual((vocab.JUDGMENT_RULES, vocab.RULES_PD5_PD9), (4, 2))
         self.assertEqual(vl.RULES_PD5_PD9, vocab.RULES_PD5_PD9)
         self.assertEqual(self.fx.gate_cfg().judgment_rules, 2)
 
@@ -1516,15 +1518,16 @@ def json_example(prompt: str) -> dict:
 
 
 class TestThePrompts(unittest.TestCase):
-    """The locate prompts as a plan made now renders them: judgment rules 3, from the
-    statement cut's flip on (:class:`TestThePromptsAreTheFlipsOnly`)."""
+    """The locate prompts as a plan made now renders them: judgment rules 4, from the flip
+    of the smoke-4 audit's calls on, which keep the statement cut's text of judgment rules
+    3 and add theirs (:class:`TestThePromptsAreTheFlipsOnly`, :class:`TestTheSmoke4Rules`)."""
 
     @classmethod
     def setUpClass(cls):
         cls.rendered = render_locate_prompts()
 
-    def test_a_plan_made_now_is_of_rules_3(self):
-        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
+    def test_a_plan_made_now_is_of_rules_4(self):
+        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4)
 
     def worker(self, mode=vocab.LOCATE) -> str:
         return self.rendered[mode]["worker.md"]
@@ -1720,13 +1723,13 @@ class TestThePrompts(unittest.TestCase):
         start = text.index("**How a relation is judged: rules R1\u2013R7**")
         block = text[start:text.index("**The derived status**", start)]
         return {m.group(1): "- **%s** \u2014 %s" % (m.group(1), " ".join(m.group(2).split()))
-                for m in re.finditer(r"^- \*\*(R[1-7]|PD(?:10|[1-9])|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
+                for m in re.finditer(r"^- \*\*(R[1-7]|PD(?:1[01]|[1-9])|FM7)\*\* \u2014 (.*?)(?=^\S|\Z)",
                                      block, re.M | re.S)}
 
     def test_the_rules_and_the_policy_defaults_are_the_vocabularys_word_for_word(self):
         lines = self.rule_lines()
         self.assertEqual(sorted(lines), sorted([f"R{i}" for i in range(1, 8)]
-                                               + [f"PD{i}" for i in range(1, 11)] + ["FM7"]))
+                                               + [f"PD{i}" for i in range(1, 12)] + ["FM7"]))
         for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
             worker = " ".join(self.worker(mode).split())
             for name, line in lines.items():
@@ -1748,12 +1751,14 @@ class TestThePrompts(unittest.TestCase):
             with self.subTest(rule=name):
                 self.assertIn(line, rules)
         self.assertIn(f"const LABELER_VERSION = '{gold_mod.LABELER_VERSION}'", text)
-        # the statement cut's flip bumped the labeler to /6, which labels by rules 3
-        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/6")
+        # the statement cut's flip bumped the labeler to /6, which labels by rules 3, and the
+        # flip of the smoke-4 audit's calls to /7, which labels by rules 4
+        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/7")
         self.assertEqual(gold_mod.LABELER_RULES[gold_mod.LABELER_VERSION], vocab.JUDGMENT_RULES)
         self.assertEqual(gold_mod.labeler_rules("locate-label/4"), 1)
         self.assertEqual(gold_mod.labeler_rules("locate-label/5"), 2)
         self.assertEqual(gold_mod.labeler_rules("locate-label/6"), vocab.RULES_STATEMENT_CUT)
+        self.assertEqual(gold_mod.labeler_rules("locate-label/7"), vocab.RULES_SMOKE4)
         self.assertEqual(gold_mod.labeler_rules(None), 0)
         # PD7: the labeler's closeMatch line lists no junk value either
         self.assertNotIn("junk_value", text)
@@ -2253,7 +2258,7 @@ class TestThePromptsAreTheFlipsOnly(unittest.TestCase):
         # fixes on, and asks for no end past the loose bound, which statement-cut rule 3
         # (from the flip of the wide bound) contains; the audit's rule card says the wide
         # bound (locate.prompts.gate_bound)
-        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_STATEMENT_CUT)
+        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4)
         self.assertEqual(vocab.SPAN_END_RULE, vocab.SPAN_END_CONTINUED)
         self.assertEqual(vocab.STATEMENT_CUT_RULE, vocab.STATEMENT_CUT_WIDE)
         from locate import plan as lplan
@@ -2284,6 +2289,107 @@ class TestThePromptsAreTheFlipsOnly(unittest.TestCase):
                     with self.subTest(mode=mode, prompt=name, needle=needle[:30]):
                         self.assertNotIn(needle, text)
                 self.assertNotRegex(text, r"\{\{")
+
+
+class TestTheSmoke4Rules(unittest.TestCase):
+    """Judgment rules 4: the maintainer's calls of 2026-10-27 and 2026-10-28 (references/
+    vocabulary.md section 1.11, "The smoke-4 audit's rules") in every file that carries the
+    rules, word for word, and the fields their mechanical halves ask for in the prompts."""
+
+    NAMES = ["Fix 6d", "Fix 6e", "R-ASSOC", "R-CHAIN", "R-DEFFORM", "R-EQ", "R-NAT", "R-PD7",
+             "R-TABLE"]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rendered = render_locate_prompts()
+
+    def worker(self, mode=vocab.LOCATE) -> str:
+        return " ".join(self.rendered[mode]["worker.md"].split())
+
+    @staticmethod
+    def labeler_rules() -> str:
+        text = (HERE.parent / "workflows" / "locate-label.workflow.js").read_text(encoding="utf-8")
+        return " ".join(text[text.index("const RULES = `"):text.index("const huntTools")]
+                        .replace("\\`", "`").split())
+
+    @staticmethod
+    def call_lines() -> dict[str, str]:
+        text = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        start = text.index("**The smoke-4 audit's rules**")
+        block = text[start:text.index("**The failure modes**", start)]
+        return {m.group(1): "- **%s** \u2014 %s" % (m.group(1), " ".join(m.group(2).split()))
+                for m in re.finditer(r"^- \*\*(R-[A-Z0-9]+|Fix 6[de])\*\* \u2014 (.*?)(?=^\S|\Z)",
+                                     block, re.M | re.S)}
+
+    def test_the_calls_are_word_for_word_in_both_prompts_and_the_labeler(self):
+        lines = self.call_lines()
+        self.assertEqual(sorted(lines), self.NAMES)
+        labeler = self.labeler_rules()
+        for name, line in sorted(lines.items()):
+            challenge_only = name == "Fix 6e"
+            with self.subTest(rule=name, mode="challenge"):
+                self.assertIn(line, self.worker(vocab.LOCATE_CHALLENGE))
+            with self.subTest(rule=name, mode="locate"):
+                if challenge_only:
+                    self.assertNotIn("**Fix 6e**", self.worker())
+                else:
+                    self.assertIn(line, self.worker())
+            with self.subTest(rule=name, mode="labeler"):
+                if challenge_only:
+                    self.assertNotIn("**Fix 6e**", labeler)
+                else:
+                    self.assertIn(line, labeler)
+
+    def test_what_each_call_says(self):
+        lines, rules = self.call_lines(), TestThePrompts.rule_lines()
+        self.assertIn("structure the passage asserts", lines["R-EQ"])
+        self.assertIn("With more structure than the passage asserts it is `broadMatch`",
+                      lines["R-EQ"])
+        self.assertIn("never PD2's special case", lines["R-NAT"])
+        self.assertIn("one notion in two encodings (PD10)", lines["R-ASSOC"])
+        self.assertIn("asserts a = c", lines["R-CHAIN"])
+        self.assertIn("tempered distributions with a general codomain F", lines["R-PD7"])
+        self.assertIn("which derives `partial` there", lines["R-DEFFORM"])
+        self.assertIn("its inventory `statement` gives it", lines["R-TABLE"])
+        self.assertIn("says in `pd6`", lines["Fix 6d"])
+        self.assertIn("as `bridge` (PD8)", lines["Fix 6e"])
+        # PD11, and the contradiction it settles in Fix 2a's r3 test
+        self.assertIn("`[Nontrivial R]` excludes the zero ring", rules["PD11"])
+        self.assertIn("does not narrow", rules["PD11"])
+        fixes = TestThePrompts.fix_lines()
+        self.assertIn("no extra instance argument that excludes a case with real content: PD11",
+                      fixes["2a"])
+        self.assertNotIn("no extra instance argument)", fixes["2a"])
+        self.assertIn("R-DEFFORM's `closeMatch`", fixes["3a"])
+        self.assertIn("(R-NAT)", rules["PD2"])
+        self.assertIn("judge its structure by R-EQ", rules["FM7"])
+        vocabulary = (HERE.parent / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        self.assertIn("**PD11 in the record of the call** (2026-10-27)", vocabulary)
+
+    def test_the_prompts_ask_for_the_fields_of_rules_4(self):
+        worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)
+        system = " ".join(self.rendered[vocab.LOCATE]["worker-system.md"].split())
+        for needle in ("or `hasPart` when the declaration states only some of what those "
+                       "conjuncts say", "writes `pd6`**", "a bundle part may carry `pd6`",
+                       "asserts a = c, its middle term a step and no clause"):
+            with self.subTest(prompt="locate", needle=needle[:30]):
+                self.assertIn(needle, worker)
+        for needle in ('"bridge": {"library": "<id>"', '"part_conventions": {"<another\'s>": '
+                       '"encoding"}', "give `part_limits`", "**A downgrade of a strong record "
+                       "to `relatedMatch`**", "(`hasPart` when the part states only some of "
+                       "what its conjuncts say)", "its `bridge` or `incomparable`"):
+            with self.subTest(prompt="challenge", needle=needle[:30]):
+                self.assertIn(needle, challenger)
+        for needle in ("without its `pd6` line", "without its `part_conventions`",
+                       "without exactly one of its `bridge`"):
+            with self.subTest(prompt="system", needle=needle[:30]):
+                self.assertIn(needle, system)
+
+    def test_the_labeler_gives_a_part_a_has_part_relation(self):
+        text = (HERE.parent / "workflows" / "locate-label.workflow.js").read_text(encoding="utf-8")
+        relations = re.search(r"const CONJUNCT_RELATIONS = \[(.*?)\]", text).group(1)
+        self.assertEqual(set(re.findall(r"'(\w+)'", relations)), vocab.CONJUNCT_RELATIONS_PART)
+        self.assertIn("or hasPart when it states only some of what they say", " ".join(text.split()))
 
 
 if __name__ == "__main__":

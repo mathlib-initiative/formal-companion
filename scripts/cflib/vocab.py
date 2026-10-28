@@ -565,8 +565,18 @@ RULES_PD5_PD9 = 2
 #: sections 1, 2 and 5): a passage's clause ids are the inventory's conjunct ids (or
 #: ``SIMPLE_STATEMENT_CLAUSE`` for a simple statement) and no document writes its own
 #: claim list; a coverage claim is a bundle; and the smoke-3 audit's failure-mode gate
-#: rules bind.  ``JUDGMENT_RULES`` is this from the proposal's flip on.
+#: rules bind.  ``JUDGMENT_RULES`` was this from the proposal's flip on.
 RULES_STATEMENT_CUT = 3
+#: The first judgment rules version of the smoke-4 audit's calls (gate rule 9;
+#: references/vocabulary.md section 1.11): the maintainer's PD11 of 2026-10-27 and his
+#: rules of 2026-10-28 -- R-EQ, R-NAT, R-ASSOC, R-CHAIN, R-PD7, R-DEFFORM and the tables
+#: default -- in the prompts and the labeler, and four gate checks that bind only a run
+#: whose gate.json names it: PD6's shape tripwire on an existence-and-uniqueness or iff
+#: bundle, the reading a challenger credits a bundle's closeMatch part with, a part's
+#: ``conjunct_relation`` that may say ``hasPart``, and the bridge of a challenge
+#: downgrade to ``relatedMatch``.  A run of these rules is derived under status rule 3
+#: (:func:`status_rule_of_judgment`).
+RULES_SMOKE4 = 4
 #: The judgment rules (gate rule 9; references/vocabulary.md section 1.11, rules
 #: R1-R7 and the policy defaults, and references/locate-documents.md sections 3
 #: and 4): the version a run's ``gate.json`` names as ``judgment_rules``.  ``cf
@@ -579,8 +589,10 @@ RULES_STATEMENT_CUT = 3
 #: parts alone names every claim of the passage is refused (PD6), and a junk value
 #: is no ``closeMatch`` convention (PD7: ``CONVENTION_JUNK_VALUE`` leaves
 #: ``CLOSE_MATCH_CONVENTIONS``); version 3 (``RULES_STATEMENT_CUT``) is the statement
-#: cut's, written from its flip on (docs/proposals/statement-cut.md section 7).
-JUDGMENT_RULES = RULES_STATEMENT_CUT
+#: cut's, written from its flip on (docs/proposals/statement-cut.md section 7) to the flip
+#: of the smoke-4 audit's calls; version 4 (``RULES_SMOKE4``) is theirs, written from that
+#: flip on, beside status rule 3 in a locate run's run.yaml.
+JUDGMENT_RULES = RULES_SMOKE4
 #: The first span-end rule version of the statement cut (gate rule 2's end check; the
 #: proposal's section 3): a passage that gives no ``until`` ends at the earlier of its
 #: extent (its block, and the displays its last sentence introduces) and the next
@@ -686,10 +698,11 @@ CLOSE_MATCH_GENERALITY_PHRASES = ("stronger", "strengthen*", "weaker", "weaken*"
 #: manifest shows them to the challenger; none is exported (the record set's format
 #: is unchanged, references/locate-documents.md section 6).  ``conjunct_relation``
 #: and ``tests`` are judgment rules 3's (``RULES_STATEMENT_CUT``, the statement cut
-#: below); a document of an earlier version carries neither, so its rows are the ones
-#: they always were
+#: below), and ``pd6`` judgment rules 4's (``RULES_SMOKE4``: a bundle part's answer to
+#: PD6's shape tripwire, ``PD6_SHAPES``); a document of an earlier version carries none
+#: of them, so its rows are the ones they always were
 JUDGMENT_LOCATION_FIELDS = ("clauses", "instantiation", "step", "convention",
-                            "conjunct_relation", "tests")
+                            "conjunct_relation", "tests", "pd6")
 #: the longest one-line field a judgment rule asks of a location (``instantiation``,
 #: ``step``), and the fewest words with a letter in it: "n/a", "-" or "none" is
 #: no instantiation and no step
@@ -775,12 +788,49 @@ STATEMENT_CUT_RULE = STATEMENT_CUT_WIDE
 #: location.  Version 2 (``STATUS_RULE_BUNDLE``) is the maintainer's answer of
 #: 2026-10-21 to question 9: a survived bundle acts as one location of its weakest
 #: part's relation, and a passage the challenge leaves with no counting location and no
-#: absence is owed a hunt.  A run.yaml without the key is version 1, and
-#: :func:`derive_status` defaults to it; ``cf plan-locate`` writes ``STATUS_RULE`` from
-#: the flip on.
+#: absence is owed a hunt.  Version 3 (``STATUS_RULE_BROAD``) is the maintainer's call
+#: R-BROAD of 2026-10-28 (references/vocabulary.md section 1.11): a ``broadMatch``
+#: formalizes the passage whether the declaration is a proved theorem, a definition or
+#: an equivalence -- on a theorem or conjecture passage a ``broadMatch`` to data
+#: formalizes it as an exact or close match to data does, and on a definition passage a
+#: ``broadMatch`` to a definition (a broader bundle's stand-in among them) formalizes it
+#: -- and everything else is version 2, its bundles and its owed hunt included.  A
+#: run.yaml without the key is version 1, and :func:`derive_status` defaults to it;
+#: ``cf plan-locate`` writes ``STATUS_RULE`` from the flip on.
 STATUS_RULE_D1 = 1
 STATUS_RULE_BUNDLE = 2
-STATUS_RULE = STATUS_RULE_BUNDLE
+STATUS_RULE_BROAD = 3
+#: every status rule this code derives by, oldest first
+STATUS_RULES = (STATUS_RULE_D1, STATUS_RULE_BUNDLE, STATUS_RULE_BROAD)
+#: what ``cf plan-locate`` writes now: ``status_rule_of_judgment(JUDGMENT_RULES)``, 2 from the
+#: statement cut's flip and 3 from the flip of the smoke-4 audit's calls
+STATUS_RULE = STATUS_RULE_BROAD
+
+
+def status_rule_of_judgment(rules: int) -> int:
+    """The status rule a run judged under judgment rules ``rules`` is derived under.
+
+    ``STATUS_RULE_BROAD`` from the smoke-4 audit's rules on (``RULES_SMOKE4``),
+    ``STATUS_RULE_BUNDLE`` for the statement cut's (``RULES_STATEMENT_CUT``), and
+    ``STATUS_RULE_D1`` before them: what ``cf plan-locate`` writes into a locate run's
+    ``run.yaml`` beside the ``judgment_rules`` it writes into its gate.json, and what the
+    bench derives a labeler version's gold under (``bench.gold.gold_status_rule``).
+    """
+    if rules >= RULES_SMOKE4:
+        return STATUS_RULE_BROAD
+    if rules >= RULES_STATEMENT_CUT:
+        return STATUS_RULE_BUNDLE
+    return STATUS_RULE_D1
+
+
+def reads_bundles(status_rule: int) -> bool:
+    """Whether a run of ``status_rule`` reads its coverage claim as a bundle (2 and on).
+
+    Status rule 3 changes only the rows of :func:`derive_status`: its bundles, its
+    outcome rows, its challenge records and its record set (``cf-locate-recordset/2``,
+    the seal naming 3) are status rule 2's.
+    """
+    return status_rule >= STATUS_RULE_BUNDLE
 #: The closed list of compound shapes (the maintainer's answer of 2026-10-21 to question
 #: 2): one statement whose conclusion is a conjunction the text does not separate.
 #: Anything else that holds two results is two statements, and the inventory cuts it.
@@ -814,6 +864,26 @@ SIMPLE_STATEMENT_CLAUSE = "c1"
 #: (its ``conjunct_relation``, judged by R1-R3 and PD1-PD10 against the conjunct, not the
 #: passage): the relations that state a conjunct, or a special case of it
 CONJUNCT_RELATIONS = frozenset({EXACT_MATCH, CLOSE_MATCH, BROAD_MATCH, NARROW_MATCH})
+#: the conjunct relations under judgment rules 4 (``RULES_SMOKE4``): ``hasPart`` too, for a
+#: part that states only some of what its conjuncts say -- it owes a ``step`` and no
+#: ``tests``, and no bundle stands on it (it is no one of ``BUNDLE_RELATIONS``)
+CONJUNCT_RELATIONS_PART = CONJUNCT_RELATIONS | {HAS_PART}
+
+
+def conjunct_relations(rules: int) -> frozenset:
+    """The ``conjunct_relation`` values a document of judgment rules ``rules`` may give."""
+    return CONJUNCT_RELATIONS_PART if rules >= RULES_SMOKE4 else CONJUNCT_RELATIONS
+
+
+#: PD6's shape tripwire (gate rule 9 under judgment rules 4): on a compound statement of
+#: one of these shapes, a bundle part whose declaration concludes with one of these marks
+#: -- an iff, any ``≃`` equivalence, a unique existence, a bijection -- may state every
+#: conjunct alone (a characterisation f = w ↔ P f of the passage's witness states
+#: existence at f := w and uniqueness), so it writes ``pd6``, one line saying which
+#: conjunct it does not state on its own and why, and a challenger's confirm of its
+#: bundle gives the same in ``part_limits``
+PD6_SHAPES = frozenset({SHAPE_EXISTENCE_UNIQUENESS, SHAPE_IFF})
+PD6_CONCLUSION_MARKS = ("↔", "≃", "∃!", "Bijective")
 #: the relations a bundle may have: its weakest part's (question 9), and every part of a
 #: bundle states its conjuncts strongly, so a bundle's relation is a strong one
 BUNDLE_RELATIONS = STRONG_RELATIONS
@@ -1385,8 +1455,13 @@ _COVERAGE_FINISHED = ((PROOF_PROVED, False), (PROOF_DEFINITION, False))
 _COVERAGE_UNFINISHED = ((PROOF_STATEMENT_ONLY, False), (PROOF_STATEMENT_ONLY, False))
 
 
-def _theorem_row(relation: str, proof_status: str, statement: bool) -> str:
-    """One location of a theorem or conjecture passage, by the section 2.6 table."""
+def _theorem_row(relation: str, proof_status: str, statement: bool, *,
+                 status_rule: int = STATUS_RULE_D1) -> str:
+    """One location of a theorem or conjecture passage, by the section 2.6 table.
+
+    Under status rule 3 (R-BROAD) a ``broadMatch`` to data formalizes it too: the
+    relation alone, never the declaration's kind, decides between the strong three.
+    """
     if relation in _PART:
         return STATUS_PARTIAL
     # exactMatch, closeMatch, broadMatch
@@ -1400,15 +1475,26 @@ def _theorem_row(relation: str, proof_status: str, statement: bool) -> str:
     # an equivalence, isomorphism, bijection or structure-valued construction that
     # states the theorem -- two quotient rings shown isomorphic, as a RingEquiv -- and
     # formalizes it (the maintainer's decision D1); the table's "broadMatch to a
-    # definition" stays partial
-    if relation in _STATES:
+    # definition" stays partial under status rules 1 and 2, and formalizes it under 3
+    # (R-BROAD: a broadMatch formalizes whatever the declaration is)
+    if relation in _STATES or status_rule >= STATUS_RULE_BROAD:
         return STATUS_FORMALIZED
     return STATUS_PARTIAL
 
 
-def _definition_row(relation: str, proof_status: str) -> str:
-    """One location of a definition passage, by the section 2.6 table."""
-    if relation in _PART or relation == BROAD_MATCH:
+def _definition_row(relation: str, proof_status: str, *,
+                    status_rule: int = STATUS_RULE_D1) -> str:
+    """One location of a definition passage, by the section 2.6 table.
+
+    Under status rule 3 (R-BROAD) a ``broadMatch`` to a ``definition`` formalizes it,
+    as an exact or close match does; a ``broadMatch`` to anything else stays
+    ``partial``, as under status rules 1 and 2.
+    """
+    if relation in _PART:
+        return STATUS_PARTIAL
+    if relation == BROAD_MATCH:
+        if status_rule >= STATUS_RULE_BROAD and proof_status == PROOF_DEFINITION:
+            return STATUS_FORMALIZED
         return STATUS_PARTIAL
     # exactMatch, closeMatch
     if proof_status == PROOF_DEFINITION:
@@ -1440,22 +1526,22 @@ def _coverage_parts(coverage, by_key: dict, *,
     challenge value and is no record's claim: its holder passes none, since it
     upgrades nothing.  Every part must be one of the passage's locations, and a
     ``hasPart`` one: a claim naming anything else says nothing a record can carry.
-    Under status rule 2 the claim is a bundle (:func:`_bundle_fields`): its keys lie
-    within ``COVERAGE_RECORD_KEYS_BUNDLE`` and it carries its ``relation``.
+    Under status rules 2 and 3 the claim is a bundle (:func:`_bundle_fields`): its
+    keys lie within ``COVERAGE_RECORD_KEYS_BUNDLE`` and it carries its ``relation``.
     """
     if isinstance(coverage, (list, tuple, set, str, bytes)):
         raise CfError(f"a passage's coverage claim is one {{complete, parts, challenge}} "
                       f"object, not a {type(coverage).__name__}",
                       hint="a passage carries at most one claim")
-    allowed = COVERAGE_RECORD_KEYS_BUNDLE if status_rule == STATUS_RULE_BUNDLE \
-        else COVERAGE_RECORD_KEYS
+    bundled = reads_bundles(status_rule)
+    allowed = COVERAGE_RECORD_KEYS_BUNDLE if bundled else COVERAGE_RECORD_KEYS
     if isinstance(coverage, dict):
         extra = sorted(set(coverage) - allowed)
-        if extra and status_rule == STATUS_RULE_BUNDLE:
+        if extra and bundled:
             raise CfError(f"a bundle is {{complete, parts, challenge, relation, conjuncts, "
                           f"bundle_key}}; unexpected {', '.join(map(str, extra))}",
-                          hint="a record of status rule 2 carries its claim's six keys and no "
-                               "others (references/locate-documents.md section 6)")
+                          hint=f"a record of status rule {status_rule} carries its claim's six "
+                               "keys and no others (references/locate-documents.md section 6)")
         if extra:
             raise CfError(f"a coverage claim is {{complete, parts, challenge}}; unexpected "
                           f"{', '.join(map(str, extra))}",
@@ -1492,7 +1578,7 @@ def _coverage_parts(coverage, by_key: dict, *,
                                "to be challenged again")
         out.append((str(_field(location, "proof_status") or ""),
                     bool(_field(location, "statement", False))))
-    if status_rule == STATUS_RULE_BUNDLE:
+    if bundled:
         _bundle_fields(coverage, list(parts))
     return out
 
@@ -1577,7 +1663,8 @@ def _coverage_location(parts: list[tuple[str, bool]]) -> tuple[tuple[str, bool],
 
 
 def _location_status(passage_kind: str, relation: str, theorem_reads: tuple[str, bool],
-                     definition_reads: tuple[str, bool]) -> str:
+                     definition_reads: tuple[str, bool], *,
+                     status_rule: int = STATUS_RULE_D1) -> str:
     """One location's status: its passage kind's row, or the better of both rows.
 
     ``theorem_reads`` and ``definition_reads`` are the ``(proof_status,
@@ -1586,9 +1673,9 @@ def _location_status(passage_kind: str, relation: str, theorem_reads: tuple[str,
     """
     rows = []
     if passage_kind in THEOREM_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
-        rows.append(_theorem_row(relation, *theorem_reads))
+        rows.append(_theorem_row(relation, *theorem_reads, status_rule=status_rule))
     if passage_kind in DEFINITION_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
-        rows.append(_definition_row(relation, definition_reads[0]))
+        rows.append(_definition_row(relation, definition_reads[0], status_rule=status_rule))
     return min(rows, key=_STATUS_RANK.__getitem__)
 
 
@@ -1678,13 +1765,23 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
     construction or notation passage is ``partial``, as one broader location is
     (PD1).  Everything else is status rule 1; the cases are
     ``tests/data/locate/status-parity-2.json``.
+
+    Status rule 3 (``STATUS_RULE_BROAD``, the maintainer's call R-BROAD of
+    2026-10-28) is status rule 2 with one change to the rows: a ``broadMatch``
+    formalizes a theorem or conjecture passage whether its declaration is a proved
+    theorem or data (an equivalence, a definition without the statement flag), and a
+    definition, construction or notation passage when its declaration is a
+    ``definition`` -- so a finished bundle of broader parts formalizes either.  A
+    ``broadMatch`` to an unfinished declaration, or to a proved theorem on a
+    definition passage, is what status rule 2 makes it; the cases are
+    ``tests/data/locate/status-parity-3.json``.
     """
-    if type(status_rule) is not int or status_rule not in (STATUS_RULE_D1,
-                                                            STATUS_RULE_BUNDLE):
+    if type(status_rule) is not int or status_rule not in STATUS_RULES:
         raise CfError(f"status rule {status_rule!r} is not one this code derives by",
-                      hint=f"status rules {STATUS_RULE_D1} (decision D1) and "
-                           f"{STATUS_RULE_BUNDLE} (the bundle's relation) are defined; a "
-                           "run.yaml without locate.status_rule is 1")
+                      hint=f"status rules {STATUS_RULE_D1} (decision D1), "
+                           f"{STATUS_RULE_BUNDLE} (the bundle's relation) and "
+                           f"{STATUS_RULE_BROAD} (a broadMatch formalizes, R-BROAD) are "
+                           "defined; a run.yaml without locate.status_rule is 1")
     check(passage_kind, PASSAGE_KINDS, "passage kind")
     best: str | None = None
     counted: list[str] = []
@@ -1716,7 +1813,7 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
         if relation == RELATED_MATCH:
             continue
         status = _location_status(passage_kind, relation, (proof_status, statement),
-                                  (proof_status, statement))
+                                  (proof_status, statement), status_rule=status_rule)
         counted.append(relation)
         if best is None or _STATUS_RANK[status] < _STATUS_RANK[best]:
             best = status
@@ -1727,11 +1824,12 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
     if coverage is not None:
         parts = _coverage_parts(coverage, by_key, status_rule=status_rule)
         if _field(coverage, "challenge") == CHALLENGE_SURVIVED:
-            # status rule 1: one more exactMatch (decision D1); status rule 2: one more
-            # location of the bundle's own relation, its weakest part's
-            relation = (str(_field(coverage, "relation")) if status_rule == STATUS_RULE_BUNDLE
+            # status rule 1: one more exactMatch (decision D1); status rules 2 and 3: one
+            # more location of the bundle's own relation, its weakest part's
+            relation = (str(_field(coverage, "relation")) if reads_bundles(status_rule)
                         else EXACT_MATCH)
-            status = _location_status(passage_kind, relation, *_coverage_location(parts))
+            status = _location_status(passage_kind, relation, *_coverage_location(parts),
+                                      status_rule=status_rule)
             if best is None or _STATUS_RANK[status] < _STATUS_RANK[best]:
                 best = status
     if best is not None:

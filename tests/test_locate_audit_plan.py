@@ -687,7 +687,8 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
             with self.subTest(gate=name):
                 was = rule + str(vocab.STATEMENT_CUT_CONTINUED).encode()
                 self.assertEqual(then[name].count(was), 1)
-                self.assertEqual(now[name], then[name].replace(
+                # and judgment rules 4 for 3, from the flip of the smoke-4 audit's calls
+                self.assertEqual(now[name], judged_now(then[name]).replace(
                     was, rule + str(vocab.STATEMENT_CUT_WIDE).encode()))
                 self.assertEqual(json.loads(now[name])["statement_cut_rule"],
                                  vocab.STATEMENT_CUT_RULE)
@@ -728,6 +729,7 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         for block in (then_yaml["locate"], now_yaml["locate"]):
             block.pop("gate_files")
             block["config_shas"].pop("gate_files")
+        pop_system_template(self, then_yaml, now_yaml)
         self.assertEqual(now_yaml, then_yaml)
 
 
@@ -737,6 +739,33 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
 
 #: the base commit the skip audit branched from
 SKIP_BASE = "f523584"
+#: a plan's three gate.json files
+GATES = ("gate.json", "gate.local.json", "tend-root/gate/gate.json")
+
+
+def pop_system_template(case: unittest.TestCase, then_yaml: dict, now_yaml: dict) -> None:
+    """Pop the worker system template's sha from both run.yaml files, checked first.
+
+    Judgment rules 4 grew the template's gate list for locate and challenge documents, a
+    block an inventory never renders: the plan's rendered ``worker-system.md`` is the
+    base's byte for byte (the snapshot compares it), and only the template's own sha in
+    ``config_shas.prompts`` moved, to the checkout's file.
+    """
+    name = "locate-worker-system.md.tmpl"
+    case.assertEqual(now_yaml["locate"]["config_shas"]["prompts"].pop(name),
+                     hashing.sha256_file(SKILL / "templates" / "prompts" / name))
+    then_yaml["locate"]["config_shas"]["prompts"].pop(name)
+
+
+def judged_now(gate: bytes) -> bytes:
+    """A base commit's gate.json as a plan made now writes it: judgment rules 4 for 3.
+
+    The flip of the smoke-4 audit's calls moved ``vocab.JUDGMENT_RULES`` to 4 in every
+    mode, an inventory's among them; nothing else of an inventory plan moved with it.
+    """
+    was = b'"judgment_rules": ' + str(vocab.RULES_STATEMENT_CUT).encode()
+    assert gate.count(was) == 1, gate[:200]
+    return gate.replace(was, b'"judgment_rules": ' + str(vocab.JUDGMENT_RULES).encode())
 #: the audit's prompts, as a plan renders them (and its tend root copies them)
 AUDIT_PROMPTS = ("reviewer-system.md", "reviewer.md", "reviewer-check.md", "reviewer-skeptic.md",
                  "worker-revision.md")
@@ -803,9 +832,11 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
 
     def yaml_left(self, then_yaml: dict, now_yaml: dict) -> tuple[dict, dict]:
         """Both run.yaml files with what may differ popped: the time each was made (two
-        fresh plans), the commit, the staged files' pins and the audit templates' shas."""
+        fresh plans), the commit, the staged files' pins, the audit templates' shas and
+        the worker system template's (:func:`pop_system_template`)."""
         for doc in (then_yaml, now_yaml):
             doc.pop("created")
+        pop_system_template(self, then_yaml, now_yaml)
         for block in (then_yaml["locate"], now_yaml["locate"]):
             block.pop("skill_commit")
             block.pop("gate_files")
@@ -814,20 +845,33 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
                 block["config_shas"]["prompts"].pop(name)
         return then_yaml, now_yaml
 
+    def assertGatesJudgedNow(self, then: dict, now: dict) -> set[str]:
+        """The gate.json files differ from the base's by judgment rules 4 for 3 alone."""
+        for name in GATES:
+            with self.subTest(gate=name):
+                self.assertEqual(now[name], judged_now(then[name]))
+        return set(GATES)
+
     def test_rule_1_is_the_base_commits_plan(self):
         then, now, then_yaml, now_yaml = self.both(1)
         differ = {k for k in then.keys() | now.keys()
                   if k != "run.yaml" and then.get(k) != now.get(k)}
+        differ -= self.assertGatesJudgedNow(then, now)
         self.assertEqual(differ, self.staged_changed())
+        # the audit's four, and the gate's records module and gate, which status rule 3
+        # (R-BROAD) and judgment rules 4 changed after the base: staged into every plan,
+        # and binding no inventory document of rule 1
         self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
                           "tend-root/gate/inventory_render.py",
-                          "tend-root/gate/inventory_edit.py"}, differ)
+                          "tend-root/gate/inventory_edit.py",
+                          "tend-root/gate/locate_records.py",
+                          "tend-root/gate/verify_locate.py"}, differ)
         for name in AUDIT_PROMPTS:
             self.assertEqual(now[f"prompts/{name}"], then[f"prompts/{name}"], name)
         self.assertEqual(now_yaml["locate"]["audit"], {"rule": 1, "review_rounds": 3})
         moved = {f"tend-root/{k}" for k, v in now_yaml["locate"]["gate_files"].items()
                  if then_yaml["locate"]["gate_files"].get(k) != v}
-        self.assertEqual(moved, differ)
+        self.assertEqual(moved, differ | {"tend-root/gate/gate.json"})
         then_yaml, now_yaml = self.yaml_left(then_yaml, now_yaml)
         self.assertEqual(now_yaml, then_yaml)
 
@@ -838,6 +882,7 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         prompts = {f"{d}{name}" for d in ("prompts/", "tend-root/prompts/")
                    for name in AUDIT_PROMPTS}
         wrappers = {"tend-root/bin/worker-agent.sh", "tend-root/bin/reviewer-agent.sh"}
+        differ -= self.assertGatesJudgedNow(then, now)
         self.assertEqual(differ, self.staged_changed() | prompts | wrappers)
         for name in wrappers:
             self.assertEqual(now[name], then[name].replace(b'export CF_AUDIT_RULE="1"',

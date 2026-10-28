@@ -42,6 +42,67 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **Judgment rules 4, the flip: the smoke-4 audit's calls in the rules and the prompts**
+  (`references/vocabulary.md` §1.11; `templates/prompts/locate.md.tmpl`,
+  `locate-challenge.md.tmpl`, `locate-worker-system.md.tmpl`,
+  `workflows/locate-label.workflow.js`). `vocab.JUDGMENT_RULES` is `RULES_SMOKE4` (4) and
+  `STATUS_RULE` is `STATUS_RULE_BROAD` (3), so a run planned now names judgment rules 4 in its
+  gate.json and, for a locate run, status rule 3 in its run.yaml; a run planned before keeps its
+  versions and prompts and is gated, tallied and exported as before. The rules, word for word in
+  vocabulary.md, both locate prompts and the labeler: **PD11** (an instance argument that
+  excludes only a trivial case, `[Nontrivial R]` and the zero ring, does not narrow), with Fix
+  2a's r3 test amended to match ("no extra instance argument that excludes a case with real
+  content"); **R-EQ** (an equivalence is judged by the structure the passage asserts: more is
+  `broadMatch`, less `narrowMatch` or `hasPart`, the inverse no extra structure); **R-NAT**
+  (natural-number moduli for integer ones are an encoding, and PD2 says so); **R-ASSOC**
+  (`Associated` against equality in ℕ is PD10); **R-CHAIN** (the inventory's chain rule, a = b = c
+  asserts a = c, carried into locate and the challenge); **R-PD7** (a larger input domain with
+  content is `broadMatch`); **R-DEFFORM** (a theorem stating a defined object's formula on a
+  definition passage is `closeMatch`, so partial there, with Fix 3a amended to leave it);
+  **R-TABLE** (the default taken: the inventory statement sets a table's domain); **Fix 6d**
+  (PD6 judged with the readings the parts are credited with, a characterisation is one location,
+  quantifier order, a `hasPart` part); and, in the challenge prompt only, **Fix 6e** (a
+  downgrade's bridge, a confirm's `part_conventions` and `part_limits`). FM7 applies R-BROAD and
+  judges an equivalence by R-EQ. The prompts ask for the rules-4 fields (`pd6`, `bridge` or
+  `incomparable`, `part_conventions`, `part_limits`, a `hasPart` conjunct relation), and the
+  system prompt's gate list names their refusals. The labeler is `locate-label/7`, which
+  `bench.gold.LABELER_RULES` maps to 4 and whose gold is derived under status rule 3; its label
+  schema admits a `hasPart` conjunct relation, so gold of `/6` scores only runs of rules 3 and
+  the bench's gold is relabelled before a run planned now is scored. No inventory prompt changed
+  (it carries the chain rule already), so no byte ceiling moved.
+- **Judgment rules 4, the gate's checks** (`scripts/gate/verify_locate.py`,
+  `cflib.vocab.RULES_SMOKE4`; `references/locate-documents.md` §3, §4 and §10,
+  `references/vocabulary.md` §1.11). The gate knows judgment rules 4 before the planner
+  writes them (`KNOWN_JUDGMENT_RULES` 4), and each check binds only a gate.json naming 4: a
+  part's `conjunct_relation` may say `hasPart` (`CONJUNCT_RELATIONS_PART`), owing a `step`
+  and no `tests`, and no bundle stands on it; **PD6's shape tripwire** on an
+  `existence_uniqueness` or `iff` bundle, where a part whose declaration concludes with `↔`,
+  `≃`, `∃!` or `Bijective` (`verify_locate.conclusion`, read off the signature) writes
+  `pd6`, and a confirm of the bundle `part_limits`, saying which conjunct it does not state
+  alone; a coverage confirm's `part_conventions` for each part its `part_relations` credit
+  with `closeMatch` (fix 6d's mechanical half); and a challenge downgrade of a strong record
+  to `relatedMatch` giving exactly one of `bridge: {library, declaration, why}` (a lemma of
+  the corpus, rule 3) or `incomparable`. The outcomes keep `pd6`, `bridge`, `incomparable`,
+  `coverage_part_conventions` and `coverage_part_limits` where a document wrote them, on a
+  run of status rule 2 or 3, and a verdict's `hasPart` conjunct relation lapses the bundle
+  standing on that part, by name. The smoke-4 audit's measure: both of run A's PD6 misses
+  were an iff characterisation entered as a part, and 4 of its 12 broadMatch-to-relatedMatch
+  downgrades took an encoding for a bridge.
+- **Status rule 3, R-BROAD** (`cflib.vocab.STATUS_RULE_BROAD`; `references/vocabulary.md`
+  §1.11, the maintainer's call of 2026-10-28). `derive_status(…, status_rule=3)` gives
+  `formalized` for a `broadMatch` to a proved theorem or to data (a definition without the
+  statement flag, an equivalence) on a theorem, conjecture, example or other passage, and to a
+  definition on a definition, construction or notation passage (a finished `broadMatch` bundle's
+  stand-in among them); everything else is status rule 2. The status rule a run of judgment rules
+  `r` is derived under is `vocab.status_rule_of_judgment(r)` (3 from judgment rules 4, 2 for 3,
+  1 before), which `cf plan-locate` writes as `locate.status_rule` and the bench derives a
+  labeler's gold by; this change writes no new value yet (judgment rules are still 3). The
+  outcomes, the challenge plan, the records and the export read status rule 3 as status rule 2
+  (`vocab.reads_bundles`), and a run of it exports `cf-locate-recordset/2` with the seal's
+  `status_rule` 3, so a consumer that reads that key derives by the rule it names. New
+  hand-written table `tests/data/locate/status-parity-3.json` (`cf-locate-status-parity/3`, 81
+  cases: status rule 2's again with their rule-2 expectation beside each, and 23 of R-BROAD's
+  own); the `/1` and `/2` tables are unchanged.
 - **The receipt of a rule-2 audited run counts the skips** (`scripts/harvest/audit_summary.py`,
   `references/locate-documents.md` §13.10 and §13.11). When a verdicts file is `audit/2`, the
   receipt's `audit` block gains `skips`: round 1's skip reports summed (`before`), the reviewed

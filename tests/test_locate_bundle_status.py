@@ -148,7 +148,7 @@ class TestTheStatusRuleArgument(unittest.TestCase):
     PARTS = [loc("a", "hasPart", "definition"), loc("b", "hasPart", "definition")]
 
     def test_only_the_defined_rules(self):
-        for bad in (0, 3, True, "2", None, 2.0):
+        for bad in (0, 4, True, "2", None, 2.0):
             with self.subTest(status_rule=bad):
                 with self.assertRaises(CfError):
                     vocab.derive_status("theorem", [], False, None, status_rule=bad)
@@ -217,8 +217,10 @@ class TestTheKeysAreRestatedInLockstep(unittest.TestCase):
                          (vocab.STATUS_RULE_D1, vocab.STATUS_RULE_BUNDLE))
         self.assertEqual(records.COVERAGE_KEYS_BUNDLE, vocab.COVERAGE_RECORD_KEYS_BUNDLE)
         self.assertEqual(records.BUNDLE_RELATIONS, vocab.BUNDLE_RELATIONS)
+        # status rule 3 (R-BROAD) derives other statuses into /2's shapes
         self.assertEqual(export_mod.SEAL_SCHEMAS, {1: "cf-locate-recordset/1",
-                                                   2: "cf-locate-recordset/2"})
+                                                   2: "cf-locate-recordset/2",
+                                                   3: "cf-locate-recordset/2"})
         self.assertEqual(export_mod.SEAL_KEYS_BUNDLE, export_mod.SEAL_KEYS + ("status_rule",))
 
 
@@ -551,7 +553,7 @@ class TestAStatusRuleTheCheckoutDoesNotKnow(Campaign):
 
     def test_is_refused_by_name(self):
         self.locate()
-        for bad in (3, True, "2"):
+        for bad in (4, True, "2"):
             with self.subTest(status_rule=bad):
                 set_status_rule(self.paths, "loc-1", bad)
                 with self.assertRaisesRegex(CfError, "status rule"):
