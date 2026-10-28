@@ -1066,6 +1066,53 @@ proposal's flip (a plan of rules 3 renders it): "a stated reason ("it holds beca
 its own only when X is a declarative mathematical statement that no neighbouring passage already
 states; otherwise X is no passage and no clause."
 
+**Two calls on the cut** (the maintainer's notes of 2026-10-28, on an annotated page of the
+smoke-4 run), which the inventory prompt states in a paragraph of its own after its two readings
+of the rules, and the audit's rule card under audit rule 3, beside the lines above rather than in
+them:
+
+- **R-SPLIT** — independent facts are separate passages. A compound statement's conjuncts, which
+  no cut separates, are the clauses of one statement: the existence and uniqueness of one object,
+  the directions or conditions of one equivalence, the cases of one law or definition, or
+  conclusions that make one result together. Facts that each stand as a result of their own are
+  separate statements even about one subject, under one hypothesis or in one sentence, so they
+  are cut, one passage per fact, where the clause, sentence, list item or display that states
+  each begins, each `statement` carrying the hypotheses they share; the Inside-a-sentence line's
+  "conjuncts about one subject" are such clauses only. One formula that holds several facts is
+  the exception the passage model forces: a passage is one span of the layer that starts at a
+  word, and the layer spells a formula as its whole rendered text and then its whole TeX, so no
+  span holds one row of it. It stays one passage of shape `equations`, a conjunct per fact, and
+  each conjunct is linked by its own part, which the export carries (a bundle's parts are its
+  links). The audit flags a compound passage of independent facts that is not one formula as
+  `under_cut` (rule 8).
+- **R-INSTANCE** — a sentence that names several structures having one property is cut per
+  structure, one passage at the words that name each (the one place a passage is less than a
+  clause), each `statement` saying that structure has the property, and the general notion, with
+  what the sentence says defines it, is a `definition` passage of its own. Each structure's
+  passage is then linked to its own instance and the notion's to its definition, which the
+  locate rules already give (R-SPECIFIC among the smoke-4 audit's rules above, and PD1 or
+  Fix 4b for a definition stated in more generality). The audit flags such a sentence kept whole as `under_cut` (rule 2), and its
+  per-structure passages are no `over_cut`.
+
+The record of the call: a display of the exponents of a prime in a product, a greatest common
+divisor and a least common multiple was one `equations` passage with three parts
+(`Nat.factorization_mul`, `Nat.factorization_gcd`, `Nat.factorization_lcm`), which the maintainer
+read as three links; and a sentence naming unique factorization domains with principal ideal
+domains, Euclidean domains and polynomial rings over a field among them was one passage, which he
+read as `UniqueFactorizationMonoid` for the notion (a generalisation of its definition) and each
+structure's own instance of it. The display is one formula, so it stays one passage under R-SPLIT
+and keeps its three parts.
+
+They are the prompt's own sentences, not edits of the lines above, so the labeler's cut and its
+gold stay as they are, as they did for the smoke-4 readings. R-INSTANCE could not be gold's: its
+passages are often shorter than four whole layer words, the join's floor (`references/
+locate-bench.md` §8), below which a gold quote anchors at article level only. A gold compound
+passage that a run cuts by R-SPLIT still joins the run's piece it shares the most words with, one
+to one, so `inventory_recall` and the status metrics read it, and the run's other pieces join
+nothing. Neither call adds a gate check: whether two facts are independent is judgment, which the
+audit holds, and the gate's mechanical part of the cut (`conjuncts` 2–5, a shape of the closed
+list, `existence_uniqueness` with exactly two) is unchanged, as are the shapes.
+
 **Challenge verdicts** (`CHALLENGE_VERDICTS`, the proposal's §5): every record leaves a workspace with one.
 
 | value | meaning |

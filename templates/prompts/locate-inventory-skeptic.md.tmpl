@@ -12,8 +12,14 @@ The file "This call" names, `.tend/audit/r$CF_AUDIT_ROUND.skeptic.part<i>.json`:
  "verdicts": [
    {"flag_id": "r1-f001", "upheld": true, "verdict": "over_cut", "rule": 1,
     "evidence": "<the words of the layer the rule turns on, verbatim>", "reason": "…"},
+{{#unless audit_gaps}}
    {"flag_id": "r1-f002", "upheld": false, "verdict": "under_cut", "rule": 4, "evidence": "",
     "reason": "one subject, two conjuncts: C4 forbids the cut"}],
+{{/unless}}
+{{#if audit_gaps}}
+   {"flag_id": "r1-f002", "upheld": false, "verdict": "under_cut", "rule": 8, "evidence": "",
+    "reason": "existence and uniqueness of one object: C8 keeps them one"}],
+{{/if}}
  "missed": [
    {"n": 30, "item": "In-text #0badf00d", "verdict": "should_be_expository", "rule": 6, "merge_with": "",
     "evidence": "<verbatim from the layer>", "reason": "…", "action": "scope expository"}],
