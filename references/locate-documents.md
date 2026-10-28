@@ -2655,11 +2655,11 @@ is every answered passage with no status — the worker's and those a challenge
 left without a location that counts.
 
 **Under judgment rules 3** (the statement cut, `docs/proposals/statement-cut.md`
-§1.3–§1.5 and §5), on a run of status rule 2 only — whose challenges are judged
-under rules 3 — and only where a document wrote them; a run of status rule 1
+§1.3–§1.5 and §5), on a run of status rule 2 or 3 only — whose challenges are judged
+under rules 3 or 4 — and only where a document wrote them; a run of status rule 1
 yields the rows it always did, whatever keys its documents carry: a location keeps
-its `conjunct_relation` and `tests` (`outcomes.CUT_LOCATION_FIELDS`, the last two of
-`JUDGMENT_LOCATION_FIELDS`); a confirm's or applied downgrade's own `tests` replace
+its `conjunct_relation` and `tests` (`outcomes.CUT_LOCATION_FIELDS`, with judgment rules
+4's `pd6` below the last three of `JUDGMENT_LOCATION_FIELDS`); a confirm's or applied downgrade's own `tests` replace
 the worker's, and its `conjunct_relation` the location's when it is one of
 `CONJUNCT_RELATIONS` and not stronger (another is a `problem` and the location's is
 kept); a location left with a relation that does not take a field loses it
@@ -2683,7 +2683,8 @@ that passage's prominence to `subject` or `central`; otherwise it is named in th
 problems and ignored, as a verdict on any record the plan did not require is.
 
 **Status rule 2** (`run.yaml` `locate.status_rule: 2`, which `cf plan-locate`
-writes from the statement cut's flip on; a run.yaml without it is status rule 1,
+wrote from the statement cut's flip to the flip of the smoke-4 audit's calls, and 3 since;
+a run.yaml without it is status rule 1,
 status rule 3 is the same rows with R-BROAD's statuses — `derive_status(…,
 status_rule=3)`, references/vocabulary.md §1.11 — and one naming any other value is
 refused): every row also carries the passage's
