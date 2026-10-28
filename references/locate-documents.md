@@ -561,7 +561,9 @@ inventory owns the clause list, and everything above is checked against it:
   (`verify_locate.numeric_binders`: `(n : ℕ)`, `{m k : ℤ}` …, as `binder_groups`
   reads the telescope) is `ℕ`, the strong relation is refused unless its `note`
   names `ℕ` or the naturals (`NAT_FOR_INT_NATURAL_WORDS`; a statement over ℕ for
-  one over ℤ is `narrowMatch`, R3); a declaration with no recorded signature, or
+  one over ℤ is `narrowMatch`, R3, and under judgment rules 4 the refusal adds that
+  natural-number moduli for integer ones are R-NAT's encoding, which the same note
+  answers); a declaration with no recorded signature, or
   no number-typed binder, is not held to it. An exact or close note is held to
   `CLOSE_MATCH_GENERALITY_PHRASES_STATEMENT_CUT`, the list above with "table",
   "for all primes", "every point" and "differentiable at". `tests` on another

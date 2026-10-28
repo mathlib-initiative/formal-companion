@@ -87,7 +87,9 @@ release has something to say.
   run of status rule 2 or 3, and a verdict's `hasPart` conjunct relation lapses the bundle
   standing on that part, by name. The smoke-4 audit's measure: both of run A's PD6 misses
   were an iff characterisation entered as a part, and 4 of its 12 broadMatch-to-relatedMatch
-  downgrades took an encoding for a bridge.
+  downgrades took an encoding for a bridge. Under judgment rules 4 the ℕ-for-ℤ tripwire's
+  refusal also says that natural-number moduli for integer ones are R-NAT's encoding, which
+  the same note answers; under rules 3 its words are unchanged.
 - **Status rule 3, R-BROAD** (`cflib.vocab.STATUS_RULE_BROAD`; `references/vocabulary.md`
   §1.11, the maintainer's call of 2026-10-28). `derive_status(…, status_rule=3)` gives
   `formalized` for a `broadMatch` to a proved theorem or to data (a definition without the
