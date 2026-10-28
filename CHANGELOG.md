@@ -300,6 +300,24 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **R-SPECIFIC: a passage stated for specific objects is linked first to the declaration
+  stated for them** (`references/vocabulary.md` §1.11, the smoke-4 audit's rules;
+  `templates/prompts/locate.md.tmpl`, `locate-challenge.md.tmpl`,
+  `workflows/locate-label.workflow.js`; the maintainer's notes of 2026-10-28). The smoke-4 run
+  linked passages stated for the integers to `UniqueFactorizationMonoid` lemmas, in bundles
+  too, where `Nat` lemmas state them. The rule, word for word in both locate prompts and the
+  labeler after R-TABLE: search for the declaration stated for the passage's own objects, record
+  it and rank it first; a general theorem that holds of them keeps its relation (R6) and is
+  recorded below it, or alone when the library states none; a bundle's parts are the specific
+  declarations where they exist; for one structure of a family the specific declaration is its
+  instance of the property, and the general notion is linked to its definition (R-INSTANCE's
+  links). The locate worker's search step and its ranking line say it; the challenger hunts for
+  the specific declaration and, since a challenge cannot add a location to a located passage,
+  reports a general card where one exists as a recall miss in the last sentence of its verdict's
+  witness (`R-SPECIFIC miss: <library> <declaration>.`, never the first sentence, which may stand
+  in for a note) and in its summary, until the owed redesign of the hunt records it. No gate
+  check (general against specific is no fact a name gives), so `JUDGMENT_RULES` stays 4 and the
+  labeler `locate-label/7`; its file sha moved, so args emitted before this transcribe no more.
 - **Two calls on the cut: independent facts are separate passages, and a sentence naming
   several structures is cut per structure** (`templates/prompts/locate-inventory.md.tmpl`,
   `locate-inventory-audit-system.md.tmpl`, `locate-inventory-audit.md.tmpl`,

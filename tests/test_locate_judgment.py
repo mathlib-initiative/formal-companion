@@ -2302,7 +2302,7 @@ class TestTheSmoke4Rules(unittest.TestCase):
     rules, word for word, and the fields their mechanical halves ask for in the prompts."""
 
     NAMES = ["Fix 6d", "Fix 6e", "R-ASSOC", "R-CHAIN", "R-DEFFORM", "R-EQ", "R-NAT", "R-PD7",
-             "R-TABLE"]
+             "R-SPECIFIC", "R-TABLE"]
 
     @classmethod
     def setUpClass(cls):
@@ -2356,6 +2356,19 @@ class TestTheSmoke4Rules(unittest.TestCase):
         self.assertIn("tempered distributions with a general codomain F", lines["R-PD7"])
         self.assertIn("which derives `partial` there", lines["R-DEFFORM"])
         self.assertIn("its inventory `statement` gives it", lines["R-TABLE"])
+        # R-SPECIFIC orders the cards and picks a bundle's parts, never a relation (R6)
+        self.assertIn("is linked to the declaration stated for those objects: search for it, "
+                      "record it and rank it first", lines["R-SPECIFIC"])
+        self.assertIn("keeps its relation (R6), and is recorded below a specific one, or alone "
+                      "only when the library states none", lines["R-SPECIFIC"])
+        self.assertIn("a bundle's parts are the specific declarations where they exist",
+                      lines["R-SPECIFIC"])
+        self.assertIn("its instance of the property", lines["R-SPECIFIC"])
+        self.assertIn("a passage on the general notion is linked to its definition",
+                      lines["R-SPECIFIC"])
+        self.assertIn("R6", rules)
+        self.assertIn("what else the universe holds never changes a record's relation",
+                      rules["R6"])
         self.assertIn("says in `pd6`", lines["Fix 6d"])
         self.assertIn("as `bridge` (PD8)", lines["Fix 6e"])
         # PD11, and the contradiction it settles in Fix 2a's r3 test
@@ -2398,6 +2411,48 @@ class TestTheSmoke4Rules(unittest.TestCase):
                       "case adds none, PD11)", texts["challenge"])
         self.assertIn("Two words the flip left behind contradicted these rules", vocabulary)
         self.assertIn("They kept the labeler at `locate-label/7`", vocabulary)
+
+    def test_r_specific_in_the_search_the_ranks_and_the_challenge(self):
+        """R-SPECIFIC's halves outside its rule line: the locate worker searches for the
+        specific declaration first and ranks it first; the challenger hunts for it and,
+        since a challenge cannot add a location to a located passage, reports a general card
+        where a specific one exists as a recall miss, in a marked last sentence of the
+        verdict's witness (never the first, which may stand in for a note)."""
+        worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)
+        for needle in ("the objects it is about and the declaration stated for those very "
+                       "objects, before any general theorem that holds of them (R-SPECIFIC "
+                       "below)",
+                       "best first (a declaration stated for the passage's own objects before "
+                       "a general one: R-SPECIFIC)."):
+            with self.subTest(prompt="locate", needle=needle[:30]):
+                self.assertIn(needle, worker)
+        for needle in ("**A general declaration where a specific one exists** (R-SPECIFIC "
+                       "below): judge the record by its own relation, which another "
+                       "declaration never changes (R6)",
+                       "it is a recall miss you cannot repair (a challenge only lowers",
+                       "in the last sentence of your verdict's witness on the general record, "
+                       "`R-SPECIFIC miss: <library> <declaration>.` (never its first, which "
+                       "may stand in for a note), and name each such miss in your summary.",
+                       "the objects the statement is about and the declaration stated for "
+                       "them (R-SPECIFIC below)"):
+            with self.subTest(prompt="challenge", needle=needle[:30]):
+                self.assertIn(needle, challenger)
+        # the rule line sits after R-TABLE and before Fix 6d, in every file that carries it
+        labeler = self.labeler_rules()
+        for name, text in (("locate", worker), ("challenge", challenger), ("labeler", labeler)):
+            with self.subTest(text=name):
+                self.assertLess(text.index("**R-TABLE**"), text.index("**R-SPECIFIC**"))
+                self.assertLess(text.index("**R-SPECIFIC**"), text.index("**Fix 6d**"))
+        # no gate check: the labeler stays at /7 and the judgment rules at 4
+        from bench import gold as gold_mod
+        self.assertEqual(gold_mod.LABELER_VERSION, "locate-label/7")
+        self.assertEqual(vocab.JUDGMENT_RULES, vocab.RULES_SMOKE4)
+        vocabulary = " ".join((HERE.parent / "references" / "vocabulary.md")
+                              .read_text(encoding="utf-8").split())
+        self.assertIn("It kept the labeler at `locate-label/7` for the reason the calls above "
+                      "did", vocabulary)
+        self.assertIn("the last sentence of the witness of its verdict on that card is "
+                      "`R-SPECIFIC miss:`", vocabulary)
 
     def test_the_prompts_ask_for_the_fields_of_rules_4(self):
         worker, challenger = self.worker(), self.worker(vocab.LOCATE_CHALLENGE)

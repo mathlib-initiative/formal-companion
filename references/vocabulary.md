@@ -615,6 +615,15 @@ R-BROAD, is status rule 3 (below): no prompt carries it, since it changes no rel
   `statement` gives it: a statement of the table's cases makes a declaration of the general law a
   `broadMatch` (R2's all primes for a finite table), and a statement of the general law makes it
   an `exactMatch` or `closeMatch`.
+- **R-SPECIFIC** — a passage stated for specific objects (the integers, ℕ, one named ring, one
+  structure of a family) is linked to the declaration stated for those objects: search for it,
+  record it and rank it first. A general theorem that holds of them by instantiation
+  (`UniqueFactorizationMonoid.exists_prime_factors` at ℕ) keeps its relation (R6), and is
+  recorded below a specific one, or alone only when the library states none; a bundle's parts
+  are the specific declarations where they exist. For one structure of a family the specific
+  declaration is its instance of the property (`PrincipalIdealRing.to_uniqueFactorizationMonoid`
+  for principal ideal domains), and a passage on the general notion is linked to its definition
+  (`UniqueFactorizationMonoid`, a `broadMatch` of unique factorization domains: PD1).
 - **Fix 6d** — judge PD6 with the readings you credit the parts with: a fact you read as an
   encoding so that one part states its conjunct is an encoding too when you ask whether another
   part states every conjunct. A characterisation f = w ↔ P f of the passage's witness states
@@ -653,6 +662,21 @@ whatever case it excludes, adds one only when the case has real content (PD11). 
 labeler at `locate-label/7`: they add no gate check and leave `JUDGMENT_RULES` at 4, the reason
 PD10 and PD7's test kept it at `/5`, and the labeler's file sha moved with them, so the transcriber
 refuses a result of args emitted from the earlier text.
+
+**R-SPECIFIC** (the maintainer's notes of 2026-10-28, beside R-SPLIT and R-INSTANCE, "Two calls
+on the cut" below) orders the cards and chooses a bundle's parts; it never changes a relation (R6):
+the general theorem's `broadMatch` stands, and only its rank, its place in a bundle and whether it
+is the passage's best card move. The challenger, which cannot add a location to a located passage
+(a challenge only lowers, and an overturn or a fill replaces only an absence or nothing), reports a
+general card where the library states a specific declaration as a recall miss: the last sentence
+of the witness of its verdict on that card is `R-SPECIFIC miss:` with the library and the
+declaration (never the first, which may stand in for a note), and its summary names each one,
+until the owed record of the hunt is designed. Its record of the call: the
+smoke-4 run linked passages stated for the integers to `UniqueFactorizationMonoid` lemmas, in
+bundles too, where `Nat` lemmas state them, and he read the `Nat` lemmas as the links. It kept the
+labeler at `locate-label/7` for the reason the calls above did (no gate check, `JUDGMENT_RULES`
+still 4), and the labeler's file sha moved with it: whether a declaration is general or stated for
+the passage's objects is no fact a gate can read off a name.
 
 **PD11 in the record of the call** (2026-10-27): "[Nontrivial R] excludes only the zero ring, a
 trivial case, so it does not narrow" — so `Matrix.charpoly_fin_two` is an `exactMatch` and
@@ -1106,7 +1130,7 @@ and keeps its three parts.
 They are the prompt's own sentences, not edits of the lines above, so the labeler's cut and its
 gold stay as they are, as they did for the smoke-4 readings. R-INSTANCE could not be gold's: its
 passages are often shorter than four whole layer words, the join's floor (`references/
-locate-bench.md` §8), below which a gold quote anchors at article level only. A gold compound
+locate-bench.md` §4 and §8), below which a gold quote anchors at article level only. A gold compound
 passage that a run cuts by R-SPLIT still joins the run's piece it shares the most words with, one
 to one, so `inventory_recall` and the status metrics read it, and the run's other pieces join
 nothing. Neither call adds a gate check: whether two facts are independent is judgment, which the
