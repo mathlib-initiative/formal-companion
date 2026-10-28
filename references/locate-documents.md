@@ -833,12 +833,17 @@ list. Then:
   export's quote cap (`EXPORT_QUOTE_WORDS`), checked against the source's layer
   — a witness that opens by quoting the passage lends its next sentence — where
   a sentence ends at `.`, `!` or `?` before a space but not after an
-  abbreviation (`i.e.`, `e.g.`, `cf.` …). When every sentence quotes past the
-  cap the first is taken, and the export would refuse the passage by name, so
-  the gate refuses the verdict (rule 1): it computes the same note with the
-  export's own `locate_records.downgrade_note` and checks it with
-  `check_note`. A downgrade to another relation exports no note, and its
-  `note` is not capped.
+  abbreviation (`i.e.`, `e.g.`, `cf.` …). A sentence that carries the R-SPECIFIC
+  recall-miss mark (`R-SPECIFIC miss:`, `locate_records.is_specific_miss`;
+  `references/vocabulary.md` §1.11) is never taken, wherever it sits. When every
+  sentence left quotes past the cap the first of them is taken, and the export
+  would refuse the passage by name, so the gate refuses the verdict (rule 1): it
+  computes the same note with the export's own `locate_records.downgrade_note`
+  and checks it with `check_note`; a witness of recall misses only lends no note,
+  which the gate refuses too. A downgrade to another relation exports no note,
+  and its `note` is not capped. The miss itself is free text, in the witness and
+  the challenger's summary, which no outcome, tally or export reads (its record
+  is the owed redesign's).
 - A challenge task's records are its task manifest's, and each gets exactly one
   verdict (rule 1); overturn locations are checked like a locate document's.
   A verdict names its record by string `item` (and string `location_key` for a
@@ -1125,7 +1130,8 @@ What every record carries beyond §2.7's example:
   optional and renders `line N`.
 - A `closeMatch` always carries a non-empty `note`, a downgraded one too: a
   challenge downgrade to `closeMatch` takes the verdict's `note`, else the first
-  sentence of its witness the quote cap admits (§4); a `closeMatch` with no note
+  sentence of its witness the quote cap admits that is no R-SPECIFIC recall miss
+  (§4); a `closeMatch` with no note
   is refused.
 - An absence keeps one lean end per repository the universe searched, at its
   commit, each **minimal**: `{"type": "lean", "uri": <repo>, "version": <40-hex

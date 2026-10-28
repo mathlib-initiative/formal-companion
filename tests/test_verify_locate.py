@@ -1600,6 +1600,17 @@ class TestRuleOneAppliesTheExportsFreeTextCap(GateTestCase):
         self.assertOk(run(note="0 is a natural number here", witness=f"It reads: {quoted}"))
         # a downgrade to another relation exports no note: only what the export writes
         self.assertOk(run(relation="narrowMatch", note=VERBATIM, witness=own))
+        # an R-SPECIFIC recall miss is never the note: a witness of misses only lends none,
+        # which the export would refuse, so the gate refuses it; beside a sentence of the
+        # challenger's own words, that sentence is the note
+        miss = "R-SPECIFIC miss: beta Beta.CyclicWidget.instSprocketed."
+        self.assertRule(run(witness=miss), 1, "a downgrade to closeMatch exports its note, else "
+                                              "a sentence of its witness that is no "
+                                              "'R-SPECIFIC miss:' recall miss")
+        self.assertOk(run(witness=f"{own.capitalize()} {miss}"))
+        self.assertOk(run(witness=f"{miss} {own.capitalize()}"))
+        self.assertOk(run(note="0 is a natural number here", witness=miss))
+        self.assertOk(run(relation="narrowMatch", witness=miss))
         # the gate's note is the outcomes' note: one definition, in the staged module
         from locate import outcomes, records  # noqa: PLC0415
         self.assertIs(outcomes.downgrade_note, records.downgrade_note)

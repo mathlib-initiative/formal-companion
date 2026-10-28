@@ -720,6 +720,36 @@ class TestTheDowngradeNote(unittest.TestCase):
         self.assertEqual(outcomes.downgrade_note({"note": "0-indexed", "witness": self.QUOTING},
                                                  self.LAYER), "0-indexed")
 
+    def test_an_r_specific_miss_is_never_the_note(self):
+        """The challenger reports a general card where a specific declaration exists in the
+        last sentence of its witness (R-SPECIFIC, references/vocabulary.md section 1.11):
+        that sentence names a declaration the passage lacks, never the convention a
+        downgraded closeMatch differs by, so the note picker passes it over wherever it sits,
+        in any case, and the note is empty when the witness says nothing else."""
+        miss = "R-SPECIFIC miss: alpha CyclicWidget.instSprocketed."
+        self.assertTrue(records.is_specific_miss(miss))
+        self.assertTrue(records.is_specific_miss("Also r-specific MISS: alpha W.x."))
+        self.assertFalse(records.is_specific_miss("It indexes from 0."))
+        for witness in (f"{miss} It indexes from 0.", f"It indexes from 0. {miss}",
+                        f"{self.QUOTING} {miss} It indexes from 0."):
+            with self.subTest(witness=witness[:30]):
+                self.assertEqual(outcomes.downgrade_note({"witness": witness}, self.LAYER),
+                                 "It indexes from 0.")
+        # without a layer the first sentence that is no miss, as before for the rest
+        self.assertEqual(outcomes.downgrade_note({"witness": f"{miss} It indexes from 0."}),
+                         "It indexes from 0.")
+        # every other sentence quotes past the cap: the first of those, which the export
+        # refuses by name, and never the miss
+        self.assertEqual(outcomes.downgrade_note({"witness": f"{miss} {self.QUOTING}"},
+                                                 self.LAYER), self.QUOTING)
+        # a witness of misses only lends no note (the gate refuses the verdict)
+        self.assertEqual(outcomes.downgrade_note({"witness": miss}, self.LAYER), "")
+        self.assertEqual(outcomes.downgrade_note({"witness": f"{miss} {miss}"}), "")
+        # the challenger's own note stands
+        self.assertEqual(outcomes.downgrade_note({"note": "0-indexed", "witness": miss}),
+                         "0-indexed")
+        self.assertIs(outcomes.downgrade_note, records.downgrade_note)
+
 
 class TestTheBudget(_Exported):
 

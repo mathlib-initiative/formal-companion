@@ -4281,9 +4281,16 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                 # the note the outcomes give the downgraded location (locate/outcomes.py
                 # takes the location's own note first; a location record of a challenge
                 # manifest carries none, so this is checked for every such downgrade)
+                note = lr.downgrade_note(v, source.layer)
+                if not note and _nonempty_str(v.get("witness")):
+                    # every sentence of the witness is an R-SPECIFIC recall miss, which is
+                    # never a note: the export would refuse a closeMatch with none
+                    problems.add(1, where, "a downgrade to closeMatch exports its note, else "
+                                           "a sentence of its witness that is no "
+                                           f"{lr.SPECIFIC_MISS_MARK!r} recall miss, as the "
+                                           "location's note: this one has neither")
                 try:
-                    lr.check_note(str(v.get("item")), lr.downgrade_note(v, source.layer),
-                                  source.layer)
+                    lr.check_note(str(v.get("item")), note, source.layer)
                 except lr.RecordError as exc:
                     problems.add(1, where, _own_words(exc, where, str(v.get("item")))
                                  + " (a downgrade to closeMatch exports its note, else a "
