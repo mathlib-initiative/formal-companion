@@ -20,6 +20,12 @@ The spec is the inventory prompt the worker ran, `{{prompts_dir}}/worker.md`, fr
 **Skips (audit rule {{audit_rule}}).** A skip (the document's `skips`, each named `r<k>-s<nnn>` in the rendering) drops text no passage keeps. It is right only on page furniture (an infobox, navigation, a sidebar, references, see also, external links) and, outside a proof, a derivation or a worked example, on text that holds no statement (an orientation paragraph, a pointer to other sections), formulas or none. Under C6 a proof, a derivation or a worked example is never skipped, whole or in part: its narration is `expository`, a sentence at a time, and each statement in it is a passage of its own. Under C3 a display belongs to the sentence that introduces it, never to a skip. A skip that hides a definition, a theorem, an equation or a declarative statement no passage keeps, or part of a kept passage's sentence, is `{{skip_verdict}}`; one that hides no statement is `clean`, and a skip of a proof's or an example's narration over a math paragraph is still wrong: the merge's skip rule raises it, so give it no `skip_ok`.
 
 {{/if}}
+{{#if audit_gaps}}
+**Gaps (audit rule {{audit_rule}}).** A gap (named `r<k>-g<nnn>` in the rendering) is a run of eight or more words of one paragraph of the body that no passage and no skip holds: text the worker left out without a record. It is right only when it holds no statement: narration, commentary on a method, an instruction, or a set-up sentence whose statement is out of its reach (C7). A gap that holds a definition, a theorem, an equation, a notation or a declarative statement no passage keeps, or the end of a kept passage's sentence, is `{{gap_verdict}}`.
+
+**Three readings of the cut (audit rule {{audit_rule}})**, which the inventory prompt states in its own sentences beside the rules. Under C4, a clause that only says a condition is not needed ("W need not be finite") and the clause that gives the weaker condition are one statement, never cut at a ";" or a sentence break. Under C6, commentary on a method (which method may be used, which is faster) and an instruction of a computation are narration, unless a bound or a complexity class is stated; a sentence asserts its own equation only when the equation is what it asserts, not when it uses a number to name a step ("proceed by adding 6 = 2 × 3"), and the facts a computation reaches are the passages. Under C7, a sentence that names a symbol later statements use is a `notation` passage, opened by the context sentence before it in its paragraph, even when those statements are in the next paragraph; an example's objects are context, symbols and all.
+
+{{/if}}
 **What the gate allows.** {{gate_bound}}
 
 **Judge the spec as written, not your taste.** C4 and C6 make many small passages correct. Flag only what the spec makes wrong, and name the rule it rests on.
@@ -39,10 +45,13 @@ The article text, the rendering, the document and its statements were written by
 {{#if audit_skips}}
 - One skip whole, with the layer around it: `{{passage_command}} '<skip id>' --rule {{audit_rule}} --document $CF_AUDIT_DOCUMENT`.
 {{/if}}
+{{#if audit_gaps}}
+- One gap whole, with the layer around it: `{{passage_command}} '<gap id>' --rule {{audit_rule}} --document $CF_AUDIT_DOCUMENT`.
+{{/if}}
 - The gate's check, which passed: `{{gate_command}} --findings $CF_AUDIT_DOCUMENT`.
 - The validator, whose exact line "This call" gives.
 
 You do not edit the document or the task file, and you do not commit: any change you make to the worktree is undone and counted. Write exactly the one file "This call" names, and nothing else. Do not write `.tend/agent_result.json`: the bridge writes it from the merge.
 
 ## The file you write
-A JSON object with `"schema": "{{audit_schema}}"`, its `kind`, `"round": $CF_AUDIT_ROUND` and `"source_id": "$CF_AUDIT_SOURCE"`, and the keys of its shape in your task prompt, and no other key. A passage is named by its item as the rendering spells it (`In-text #` and eight hex digits); `merge_with` is `""` when no neighbour is named, never null.{{#if audit_skips}} A skip is named by its id as the rendering spells it (`r1-s001`).{{/if}} A `reason` holds at most {{reason_words}} words, an `action` or a `why` at most {{action_words}}, an `evidence` at most {{evidence_words}} and a `summary` at most {{summary_words}}. Before you finish, run the validator; when it prints `INVALID:` lines, fix what they name and run it again until it passes.
+A JSON object with `"schema": "{{audit_schema}}"`, its `kind`, `"round": $CF_AUDIT_ROUND` and `"source_id": "$CF_AUDIT_SOURCE"`, and the keys of its shape in your task prompt, and no other key. A passage is named by its item as the rendering spells it (`In-text #` and eight hex digits); `merge_with` is `""` when no neighbour is named, never null.{{#if audit_skips}} A skip is named by its id as the rendering spells it (`r1-s001`).{{/if}}{{#if audit_gaps}} A gap is named by its id as the rendering spells it (`r1-g001`).{{/if}} A `reason` holds at most {{reason_words}} words, an `action` or a `why` at most {{action_words}}, an `evidence` at most {{evidence_words}} and a `summary` at most {{summary_words}}. Before you finish, run the validator; when it prints `INVALID:` lines, fix what they name and run it again until it passes.

@@ -3532,6 +3532,17 @@ the result as any. The checker gives a gap verdict a status as any (`applied` wh
 it named start inside passages and its span leaves no gap that holds a statement), reading the
 diff's GAP VERDICT line.
 
+**The prompts.** A plan of rule 3 renders the five audit prompts with rule 3's blocks
+(`{{#if audit_gaps}}`, which render empty under rules 1 and 2, so a rule-2 plan's prompts are
+3b29518's byte for byte): the rule card's **Gaps** paragraph and its **three readings of the cut**
+— under C4 a "need not" clause stays with the condition that replaces it, under C6 a method's
+commentary and an instruction of a computation are narration and a number written as a product
+names a step, under C7 a sentence naming a symbol is a `notation` passage before it is context —
+which the inventory prompt states in its own sentences beside the shared rules; the auditor's GAP
+lines, its `gaps` rows and the kind rule's expository answer, and its expository flags naming the
+statements they mean; the skeptic's gap flags and gap hunt; the checker's GAPS and GAP VERDICT
+lines; the revision's gap verdict and its weight.
+
 **The turn machine** (`CF_AUDIT_RULE=3`) is rule 2's, with `--gate-config` on every strip, each
 part's gaps named in the call's block, a gap flag placed in the part that shows its gap, the gap
 hunt's skeptic call for a part with an unflagged gap in round 1, the parts' `examined_gaps` and
