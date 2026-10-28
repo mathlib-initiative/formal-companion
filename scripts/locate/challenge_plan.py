@@ -133,7 +133,7 @@ def _record(row: dict, target: str, *, run_id: str, location: dict | None = None
            "section": row.get("section"), "quote": row.get("quote")}
     if row.get("claims") is not None:
         rec["claims"] = row["claims"]
-    if status_rule == vocab.STATUS_RULE_BUNDLE:
+    if vocab.reads_bundles(status_rule):
         rec.update({key: row[key] for key in _STATEMENT_KEYS if row.get(key) is not None})
     if location is not None:
         rec.update({"location_key": location["location_key"], "library": location["library"],
@@ -207,12 +207,12 @@ def classify(rows: Iterable[dict], *, run_id: str,
     """Every record of one run's outcomes, each with its rule and stratum.
 
     ``status_rule`` is the locate run's (``outcomes.build``'s ``status_rule``): only
-    under status rule 2 does a record copy the passage's ``statement``,
+    under status rules 2 and 3 does a record copy the passage's ``statement``,
     ``conjuncts`` and ``shape`` and a coverage record's part its ``clauses`` and
     ``conjunct_relation`` (the statement cut's section 1.2), so the records of a
     run of status rule 1 are the ones they always were.
     """
-    bundle = status_rule == vocab.STATUS_RULE_BUNDLE
+    bundle = vocab.reads_bundles(status_rule)
     out: list[dict] = []
     for row in rows:
         if row.get("missing"):

@@ -625,7 +625,7 @@ def _gold_status(passage_kind: str, declarations: list[dict], *, bundle: dict | 
     """``(derived status, related)`` of a gold passage from its re-checked declarations.
 
     ``status_rule`` is the one the gold's labeler labels under (:func:`gold_status_rule`).
-    A ``bundle`` (:func:`gold_bundle`, status rule 2 only) is the labeler's judgment,
+    A ``bundle`` (:func:`gold_bundle`, status rules 2 and 3) is the labeler's judgment,
     so it stands as a survived coverage claim does in a run: one more location of
     its weakest part's relation (``vocab.derive_status``; docs/proposals/
     statement-cut.md section 2.3).
@@ -637,9 +637,9 @@ def _gold_status(passage_kind: str, declarations: list[dict], *, bundle: dict | 
         return vocab.STATUS_NOT_FORMALIZED, related
     if bundle is None:
         return vocab.derive_status(kind, counting, absent=False, status_rule=status_rule), related
-    if status_rule != vocab.STATUS_RULE_BUNDLE:
-        raise CfError(f"a gold bundle is status rule {vocab.STATUS_RULE_BUNDLE}'s, not "
-                      f"{status_rule}'s")
+    if not vocab.reads_bundles(status_rule):
+        raise CfError(f"a gold bundle is status rule {vocab.STATUS_RULE_BUNDLE}'s (or a later "
+                      f"rule's), not {status_rule}'s")
     claim = {"complete": True, "challenge": vocab.CHALLENGE_SURVIVED,
              "parts": [_part_key(p) for p in bundle["parts"]], "relation": bundle["relation"]}
     located = [dict(d, location_key=_part_key(d)) for d in counting]
@@ -785,13 +785,15 @@ def labeler_rules(version: Any) -> int:
 def gold_status_rule(version: Any) -> int:
     """The status rule a labeler version's gold statuses are derived under.
 
-    ``STATUS_RULE_BUNDLE`` from the statement cut's judgment rules on
-    (``RULES_STATEMENT_CUT``), as a locate run's ``status_rule`` is 2 exactly when its
-    ``judgment_rules`` is 3 (docs/proposals/statement-cut.md section 2.2), so a score
-    compares statuses derived alike; ``STATUS_RULE_D1`` for every earlier labeler.
+    ``vocab.status_rule_of_judgment(rules)`` of the judgment rules it labels by:
+    ``STATUS_RULE_BUNDLE`` for the statement cut's judgment rules 3
+    (``RULES_STATEMENT_CUT``) and ``STATUS_RULE_BROAD`` from judgment rules 4 on, as a
+    locate run's ``status_rule`` is 2 exactly when its ``judgment_rules`` is 3 and 3
+    exactly when they are 4 (docs/proposals/statement-cut.md section 2.2, references/
+    vocabulary.md section 1.11), so a score compares statuses derived alike;
+    ``STATUS_RULE_D1`` for every earlier labeler.
     """
-    return (vocab.STATUS_RULE_BUNDLE if labeler_rules(version) >= vocab.RULES_STATEMENT_CUT
-            else vocab.STATUS_RULE_D1)
+    return vocab.status_rule_of_judgment(labeler_rules(version))
 
 
 def provenance(args: dict) -> dict:
@@ -863,7 +865,7 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
     # the statement cut's gold (judgment rules 3): a hasPart's conjunct_relation, the
     # labeler's bundle and the statuses of status rule 2 (gold_status_rule)
     status_rule = gold_status_rule(stamp["labeler_version"])
-    cut = status_rule == vocab.STATUS_RULE_BUNDLE
+    cut = vocab.reads_bundles(status_rule)
     summary: dict[str, Any] = {"mode": mode, "labels": len(by_task), "unlabeled": unlabeled}
     if mode == "anchor":
         entries = {e["entry_id"]: e for e in read_json(layout.g1_resolved).get("entries") or []}
