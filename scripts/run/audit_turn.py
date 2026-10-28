@@ -34,9 +34,11 @@ fresh call with the revision prompt.  What this file adds to tend's loop:
   ``.tend/`` loses nothing.
 * **Reuse.**  A step whose output validated for the round's document sha is not run
   again, so a turn tend retries after a timeout or a 409 pays only for what is left.
-* **The tamper guard.**  Around every reviewer call: a changed HEAD, a changed
-  tracked file or a new untracked file outside ``.tend/`` is undone with ``git reset
-  --hard <head>`` and ``git clean -fd -e .tend``, and counted.
+* **The tamper guard.**  Around every reviewer call: a changed HEAD or branch, a
+  changed tracked file or a new untracked file outside ``.tend/`` is undone (the branch
+  checked out at the head again, ``git reset --hard <head>`` and ``git clean -fd -e
+  .tend``) and counted (``review_record.fingerprint`` and ``restore``, the guard the
+  unaudited locate bridge runs too).
 * **audit_failed.**  A step still invalid after its one retry, round files the
   merge refuses, or a rendering or collateral that fails on its input (any exit but
   0 or 3), end the round as ``merge --audit-failed``: approve, counted.
@@ -92,6 +94,7 @@ if _HERE not in sys.path:
 
 import attempt_cap  # noqa: E402  (bin/'s sibling: the counter, the git boundary, the state path)
 import normalize_result  # noqa: E402  (bin/'s sibling: the one shape of a contract)
+import review_record  # noqa: E402  (bin/'s sibling: the tamper guard, the unaudited bridge's too)
 
 # --------------------------------------------------------------------------- #
 # COPIED from cflib.vocab (no cflib on the host); tests/test_audit_turn.py pins them
@@ -446,18 +449,14 @@ class Turn:
         return got.stdout.strip() if got.returncode == 0 else ""
 
     def fingerprint(self) -> tuple:
-        diff = self.git("diff", "--binary", "HEAD")
-        others = self.git("ls-files", "--others", "--exclude-standard", "-z")
-        untracked = sorted(p for p in others.stdout.split("\0")
-                           if p and not p.startswith(MIRROR[0] + "/"))
-        return self.head(), sha256_bytes(diff.stdout.encode("utf-8", "replace")), tuple(untracked)
+        return review_record.fingerprint(self.worktree, keep=MIRROR[0])
 
     def guard(self, state: dict, before: tuple) -> None:
-        """The tamper guard: undo whatever a reviewer call changed outside ``.tend/``."""
+        """The tamper guard: undo whatever a reviewer call changed outside ``.tend/``
+        (``review_record``'s, which the unaudited locate bridge runs too)."""
         if self.fingerprint() == before:
             return
-        self.git("reset", "-q", "--hard", before[0])
-        self.git("clean", "-q", "-fd", "-e", MIRROR[0])
+        review_record.restore(self.worktree, before[0], keep=MIRROR[0], on=before[3])
         state["counts"]["reviewer_tampered"] += 1
         state["events"].append({"event": "reviewer_tampered", "round": state["round"],
                                 "at": stamp()})

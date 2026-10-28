@@ -1105,7 +1105,12 @@ class TestTheStagedRootDrivesTheBridge(Campaign):
         reviewer = self.tools("reviewer")
         self.assertIn(entry, reviewer)
         self.assertNotIn(f"Bash({program}:*)", reviewer)
-        self.assertEqual(reviewer[:4], ["Read", "Glob", "Grep", "Bash(git:*)"])
+        # read-only git by subcommand, as the audited reviewer's (smoke 4: Bash(git:*)
+        # admitted checkout and commit, and tend merges the worktree's HEAD)
+        self.assertEqual(reviewer[:7], ["Read", "Glob", "Grep", "Bash(git diff:*)",
+                                        "Bash(git show:*)", "Bash(git log:*)",
+                                        "Bash(git status:*)"])
+        self.assertNotIn("Bash(git:*)", reviewer)
         self.assertFalse([t for t in reviewer if t in ("Edit", "Write", "Bash(python3:*)")])
         self.assertFalse([t for t in reviewer if "corpus_" in t or "passage_ids" in t])
         # every gate invocation either reviewer prompt renders is under that entry

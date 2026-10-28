@@ -103,6 +103,23 @@ release has something to say.
   hand-written table `tests/data/locate/status-parity-3.json` (`cf-locate-status-parity/3`, 81
   cases: status rule 2's again with their rule-2 expectation beside each, and 23 of R-BROAD's
   own); the `/1` and `/2` tables are unchanged.
+- **An unaudited locate run keeps its turn records, and the harvest reads them**
+  (`scripts/run/review_record.py`, `scripts/harvest/turn_records.py`;
+  `references/locate-documents.md` §9 and §10). Smoke 4 found a worker's `needs_review`
+  written by the bridge and read by nothing (tend 0.1.0 merges it like `completed`, and the
+  result file dies with the worktree), and a reviewer that edited the document it reviewed
+  with nothing between it and tend's merge of the worktree's HEAD. The bridge now writes
+  each call's normalised contract, with HEAD and the git blob of each of the task's
+  documents, to `<tend-root>/contracts/` (`cf-turn-contract/1`); a reviewer whose worker
+  said `needs_review` gets the worker's summary in its prompt and the review goes to
+  `needs-review.jsonl`; and the turn machine's tamper guard runs around every unaudited
+  reviewer call, putting the worker's commit and branch back, keeping the verdict and
+  writing `tamper.jsonl`. `cf harvest` fetches all three and the receipt carries
+  `needs_review` (listed and warned about, never refusing: a `needs_review` merges as
+  before), `worker_documents` and `merged_not_worker` (each merged document's blob against
+  its worker's last contract; a mismatch is INCOMPLETE) and `reviewer_tampered`;
+  `contracts/` is an expected artifact of a run whose `run.yaml` pins
+  `bin/review_record.py`. A run planned before has none of them and harvests as it did.
 - **The receipt of a rule-2 audited run counts the skips** (`scripts/harvest/audit_summary.py`,
   `references/locate-documents.md` §13.10 and §13.11). When a verdicts file is `audit/2`, the
   receipt's `audit` block gains `skips`: round 1's skip reports summed (`before`), the reviewed
@@ -226,6 +243,22 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **The challenge reviewer and worker, after smoke 4's four rejections**
+  (`templates/prompts/locate-reviewer-system.md.tmpl`, `locate-challenge.md.tmpl`,
+  `scripts/gate/verify_locate.py`, both bridges, `scripts/locate/tend_root.py`). Every
+  reviewer rejection in smoke 4 asked for a verdict on a conditional record, under a rule
+  card older than the conditional rule, and three of the four read the gate's ownership line
+  as "coverage not checked"; the two workers who complied overturned a prominence to do it,
+  both wrongly. The challenge card now says its approval is final, that the gate counts the
+  owed records itself (its refusals quoted, a test holding them to the gate's words) and the
+  conditional rule; every locate card reads the ownership line as the change set's and names
+  `git diff --name-only <target>...HEAD`. A challenge's `OK:` line says `each of the <n>
+  record(s) the task owes has one verdict` and the conditional records it did not owe. The
+  challenge worker never overturns a prominence to meet a request, and on a locate run the
+  revision preamble lets a worker decline feedback its rules forbid and finish `needs_review`
+  instead of "do not re-litigate" (the faithfulness pipeline's revision is unchanged). A
+  locate reviewer's git is `git diff`, `git show`, `git log` and `git status`, the audited
+  reviewer's, never `Bash(git:*)`. A new plan is needed: the prompt and gate pins change.
 - **Review fixes to the skip audit (audit rule 2)**, before any run names it
   (`references/locate-documents.md` §13.11). *The diff's SKIP VERDICT line counts
   `paragraphs.json` entries* (two entries of one span, a theorem box and its paragraph, are two,

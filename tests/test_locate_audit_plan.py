@@ -619,8 +619,11 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and nothing else,
     and the three gate.json files, which name statement-cut rule 3 where the base
     commit's named 2 (the flip of the wide bound, docs/proposals/statement-cut.md
-    section 7) and nothing else; ``run.yaml`` differs only in its skill commit, those
-    files' pins and the worker prompt's two shas.
+    section 7) and nothing else; and smoke 4's reviewer fixes: the reviewer's rule card,
+    which gains check 1's git command and the reading of the gate's ownership line (its
+    challenge text renders empty in an inventory), and the reviewer's wrapper, whose git
+    is read-only by subcommand.  ``run.yaml`` differs only in its skill commit, those
+    files' pins and the two prompts' shas.
     """
 
     def setUp(self):
@@ -693,7 +696,29 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                 self.assertEqual(json.loads(now[name])["statement_cut_rule"],
                                  vocab.STATEMENT_CUT_RULE)
         self.assertEqual(sorted(set(differ) & set(gates)), sorted(gates))
-        differ = [k for k in differ if k not in worker + gates]
+        # the reviewer's card gains two sentences, and only those
+        reviewer = ("prompts/reviewer-system.md", "tend-root/prompts/reviewer-system.md")
+        added = (" Read the change set with `git diff --name-only main...HEAD`.",
+                 " The gate's last line, `ownership: not checked (no --changed-files: \u2026)`, "
+                 "is about the change set, which check 1 has you read with git, not about the "
+                 "manifest's passages or records: never add `--changed-files` to the command "
+                 "(beside `--findings` the gate refuses it, exit 3).")
+        for name in reviewer:
+            with self.subTest(prompt=name):
+                text = now[name].decode("utf-8")
+                for sentence in added:
+                    self.assertEqual(text.count(sentence), 1, sentence)
+                    text = text.replace(sentence, "")
+                self.assertEqual(text, then[name].decode("utf-8"))
+        self.assertEqual(sorted(set(differ) & set(reviewer)), sorted(reviewer))
+        # the reviewer's wrapper: read-only git by subcommand for Bash(git:*), and only that
+        wrapper = "tend-root/bin/reviewer-agent.sh"
+        self.assertEqual(then[wrapper].count(b"Bash(git:*)"), 1)
+        self.assertEqual(now[wrapper], then[wrapper].replace(
+            b"Bash(git:*)", b"Bash(git diff:*),Bash(git show:*),Bash(git log:*),"
+                            b"Bash(git status:*)"))
+        allowed.add(wrapper)
+        differ = [k for k in differ if k not in worker + gates + reviewer]
         self.assertLessEqual(set(differ), allowed)
         self.assertNotIn("tend-root/bin/audit_turn.py", then)
         # the branch's gate and bridge changes are seen, and nothing of the audit's gate
@@ -703,7 +728,7 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         self.assertFalse([n for n in now if "inventory_" in n])
         # what a run is launched with and told is untouched
         for name in sorted(then):
-            if name in worker + gates:
+            if name in worker + gates + reviewer + (wrapper,):
                 continue
             if name.startswith(("prompts/", "tend-root/prompts/", "tasks/")) or name in (
                     "gate.json", "gate.local.json", "tend-root/config.yaml",
@@ -723,6 +748,14 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                          hashlib.sha256(now["prompts/worker.md"]).hexdigest())
         then_yaml["prompts"].pop("worker.md")
         template = "locate-inventory.md.tmpl"
+        self.assertEqual(now_yaml["locate"]["config_shas"]["prompts"].pop(template),
+                         hashing.sha256_file(SKILL / "templates" / "prompts" / template))
+        then_yaml["locate"]["config_shas"]["prompts"].pop(template)
+        # and the reviewer card's, likewise
+        self.assertEqual(now_yaml["prompts"].pop("reviewer-system.md"),
+                         hashlib.sha256(now["prompts/reviewer-system.md"]).hexdigest())
+        then_yaml["prompts"].pop("reviewer-system.md")
+        template = "locate-reviewer-system.md.tmpl"
         self.assertEqual(now_yaml["locate"]["config_shas"]["prompts"].pop(template),
                          hashing.sha256_file(SKILL / "templates" / "prompts" / template))
         then_yaml["locate"]["config_shas"]["prompts"].pop(template)
@@ -776,8 +809,9 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
 
     Under audit rule 1 every file of the run directory is byte for byte the base
     commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
-    the files staged from a source this branch changed (the three audit tools and
-    ``bin/audit_turn.py``); ``run.yaml`` differs only in its skill commit, those files'
+    the files staged from a source this branch changed (the three audit tools,
+    ``bin/audit_turn.py``, and since smoke 4's reviewer fixes the gate, the bridge and
+    ``bin/review_record.py``); ``run.yaml`` differs only in its skill commit, those files'
     pins and the five audit templates' shas.  Under rule 2 the five rendered audit
     prompts (in ``prompts/`` and the tend root's copy), the two wrappers' ``CF_AUDIT_RULE``,
     ``locate.audit.rule`` and ``config_shas.agents.audit.rule`` and the rendered prompts'
@@ -860,12 +894,16 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         self.assertEqual(differ, self.staged_changed())
         # the audit's four, and the gate's records module and gate, which status rule 3
         # (R-BROAD) and judgment rules 4 changed after the base: staged into every plan,
-        # and binding no inventory document of rule 1
+        # and binding no inventory document of rule 1; and smoke 4's reviewer fixes: the
+        # gate (a challenge's OK line), the bridge and the recorder whose tamper guard the
+        # turn machine shares (the audit's prompts and wrappers are untouched)
         self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
                           "tend-root/gate/inventory_render.py",
                           "tend-root/gate/inventory_edit.py",
                           "tend-root/gate/locate_records.py",
-                          "tend-root/gate/verify_locate.py"}, differ)
+                          "tend-root/gate/verify_locate.py",
+                          "tend-root/bin/bridge-agentbox.sh",
+                          "tend-root/bin/review_record.py"}, differ)
         for name in AUDIT_PROMPTS:
             self.assertEqual(now[f"prompts/{name}"], then[f"prompts/{name}"], name)
         self.assertEqual(now_yaml["locate"]["audit"], {"rule": 1, "review_rounds": 3})

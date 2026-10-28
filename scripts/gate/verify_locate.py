@@ -4328,6 +4328,8 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
         unowed = check_conditional(problems, name, verdicts, records)
         check_fills(cfg, ctx, problems, name, doc, verdicts, records, source, source_id)
     owed = [k for k in records if k not in judged and k not in unowed]
+    # what the OK line says a reviewer need not count again (:func:`coverage_line`)
+    stats.update(records_owed=len(records) - len(unowed), conditional_not_owed=len(unowed))
     if owed:
         problems.add(1, name, f"{len(owed)} record(s) of this task have no verdict "
                               f"({', '.join(str(k[0]) + ' ' + str(k[1]) for k in owed[:3])})")
@@ -5225,6 +5227,24 @@ def check_command_line(args: argparse.Namespace, here: pathlib.Path = HERE) -> N
                                f"gate: a gate directory runs with its own gate.json only")
 
 
+def coverage_line(cfg: GateConfig, stats: list[dict]) -> str:
+    """What a challenge's OK line adds: the gate counted the task's records itself.
+
+    A reviewer that read only the ownership line took "not checked" to mean coverage
+    was not checked, and asked for a verdict on a conditional record the gate had
+    rightly left unowed (smoke 4's four rejections); the reviewer's rule card quotes
+    these words.  '' for any other mode, or a task whose documents are all unresolved.
+    """
+    rows = [s for s in stats if isinstance(s, dict) and "records_owed" in s]
+    if cfg.mode != LOCATE_CHALLENGE or not rows:
+        return ""
+    owed = sum(int(s["records_owed"]) for s in rows)
+    unowed = sum(int(s.get("conditional_not_owed") or 0) for s in rows)
+    return (f"; each of the {owed} record(s) the task owes has one verdict"
+            + (f", and {unowed} conditional record(s) are not owed (no prominence overturn "
+               f"to subject or central)" if unowed else ""))
+
+
 def _main(argv: list[str] | None = None) -> int:
     ap = _Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
                  allow_abbrev=False)
@@ -5305,7 +5325,8 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"OK: {result['documents']} locate document(s) validated against gate "
               f"{cfg.preset} ({cfg.mode}); every quote matched the pinned layer once and every "
               f"declaration is in the frozen universe {cfg.universe_id or '(none: inventory)'}"
-              + (f"; {unresolved} unresolved" if unresolved else ""))
+              + (f"; {unresolved} unresolved" if unresolved else "")
+              + coverage_line(cfg, result["stats"]))
     # The LAST line says which ownership rule judged the contribution.
     if result["ownership"]:
         print(f"  changed files: {result['ownership']}")
