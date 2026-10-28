@@ -10,8 +10,8 @@ reads with no unfilled slot of the plan's or the turn's, the rule card's C1 to C
 against docs/proposals/statement-cut.md section 3.4, every JSON shape the prompts
 show against the schema ``inventory_audit.py`` holds the files to, and an unaudited
 plan equal to the base commit's (99fbad4) apart from its commit, the staged files
-whose source changed since, the inventory prompt's kind and prose-floor sentences and
-the gate.json files' prose floor.  Every page, library and document is made up.
+whose source changed since, the inventory prompt's kind and prose-floor sentences, its
+commentary bullet and two readings, and the gate.json files' prose floor.  Every page, library and document is made up.
 """
 from __future__ import annotations
 
@@ -100,10 +100,21 @@ FLOOR = b"that floor is checked mechanically."
 PROSE_FLOOR_LINE = b'  "prose_floor_rule": %d,\n' % vocab.PROSE_FLOOR_RULE
 
 
+#: where the inventory prompt's commentary bullet and its two readings go: after the
+#: narration bullet and after PD9
+NARRATION_END = b"and otherwise leave it out.\n"
+PD9_END = b"otherwise X is no passage and no clause.\n"
+
+
 def with_prose_floor(worker: bytes) -> bytes:
-    """A worker prompt rendered before the prose floor, with its sentence after the floor's."""
-    assert worker.count(FLOOR) == 1
-    return worker.replace(FLOOR, FLOOR + b" " + TS.PROSE_FLOOR_SENTENCE.encode("utf-8"))
+    """A worker prompt rendered before the smoke-4 fixes, with what they add and nothing
+    else: the prose floor's sentence after the floor's, the commentary bullet after the
+    narration bullet, and the two readings after PD9 (test_locate_statement_cut)."""
+    for mark in (FLOOR, NARRATION_END, PD9_END):
+        assert worker.count(mark) == 1, mark
+    return (worker.replace(FLOOR, FLOOR + b" " + TS.PROSE_FLOOR_SENTENCE.encode("utf-8"))
+            .replace(NARRATION_END, NARRATION_END + TS.COMMENTARY_BULLET.encode("utf-8") + b"\n")
+            .replace(PD9_END, PD9_END + b"\n" + TS.READINGS.encode("utf-8") + b"\n"))
 
 
 def without_prose_floor(gate: bytes) -> bytes:
@@ -634,8 +645,10 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     files staged from a source this branch changed, ``audit_turn.py``, which
     every locate root's ``bin/`` stages since the turn machine, the worker
     prompt, which is the base commit's with the kind sentence
-    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds and the prose floor's
-    (``PROSE_FLOOR_SENTENCE``) after the coverage floor's and nothing else, and the three
+    (``test_locate_statement_cut.KIND_SENTENCE``) after the kinds, the prose floor's
+    (``PROSE_FLOOR_SENTENCE``) after the coverage floor's, the commentary bullet
+    (``COMMENTARY_BULLET``) after the narration bullet and the two readings (``READINGS``)
+    after PD9, and nothing else, and the three
     gate.json files, which name statement-cut rule 3 where the base commit's named 2 (the
     flip of the wide bound, docs/proposals/statement-cut.md section 7) and
     ``prose_floor_rule`` 1 (gate rule 8's prose floor) and nothing else; ``run.yaml``
@@ -772,7 +785,8 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
     commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
     the files staged from a source this branch changed (the three audit tools,
     ``bin/audit_turn.py`` and the gate), the worker prompt, which gains the prose floor's
-    sentence, and the three gate.json files, which gain ``prose_floor_rule``; ``run.yaml``
+    sentence, the commentary bullet and the two readings, and the three gate.json files,
+    which gain ``prose_floor_rule``; ``run.yaml``
     differs only in its skill commit, those files' pins, the five audit templates' shas
     and the worker prompt's two.  Under rule 2 the five rendered audit
     prompts (in ``prompts/`` and the tend root's copy), the two wrappers' ``CF_AUDIT_RULE``,
