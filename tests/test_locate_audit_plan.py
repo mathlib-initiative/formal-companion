@@ -109,12 +109,14 @@ PD9_END = b"otherwise X is no passage and no clause.\n"
 def with_prose_floor(worker: bytes) -> bytes:
     """A worker prompt rendered before the smoke-4 fixes, with what they add and nothing
     else: the prose floor's sentence after the floor's, the commentary bullet after the
-    narration bullet, and the two readings after PD9 (test_locate_statement_cut)."""
+    narration bullet, and the two readings after PD9, then the maintainer's two calls on
+    the cut of 2026-10-28 after the readings (test_locate_statement_cut)."""
     for mark in (FLOOR, NARRATION_END, PD9_END):
         assert worker.count(mark) == 1, mark
     return (worker.replace(FLOOR, FLOOR + b" " + TS.PROSE_FLOOR_SENTENCE.encode("utf-8"))
             .replace(NARRATION_END, NARRATION_END + TS.COMMENTARY_BULLET.encode("utf-8") + b"\n")
-            .replace(PD9_END, PD9_END + b"\n" + TS.READINGS.encode("utf-8") + b"\n"))
+            .replace(PD9_END, PD9_END + b"\n" + TS.READINGS.encode("utf-8") + b"\n\n"
+                     + TS.CUT_CALLS.encode("utf-8") + b"\n"))
 
 
 def without_prose_floor(gate: bytes) -> bytes:
@@ -647,7 +649,9 @@ class TestTheSkipPrompts(AtRule, Audited):
 
 #: what a rule-3 plan's prompts say and a rule-1 or rule-2 plan's never do
 GAP_WORDS = ("gap_statements", "examined_gaps", "missed_gaps", "'<gap id>'", "`commentary`",
-             "--rule 3", "Three readings of the cut", "**Gaps (audit rule")
+             "--rule 3", "Three readings of the cut", "**Gaps (audit rule",
+             "Two calls of the maintainer on the cut", "C8 keeps them one",
+             "independent facts and no one formula")
 
 
 class TestTheGapPrompts(AtRule, Audited):
@@ -665,14 +669,28 @@ class TestTheGapPrompts(AtRule, Audited):
                                         "'<gap id>' --rule 3 --document",
                                         "**Three readings of the cut (audit rule 3)**",
                                         "need not be finite", "to name a step",
-                                        "symbols and all", "(`r1-g001`)")),
+                                        "symbols and all", "(`r1-g001`)",
+                                        "**Two calls of the maintainer on the cut (audit rule "
+                                        "3)**", "C4's conjuncts about one subject are those "
+                                        "only", "is `under_cut` (rule 8), unless they are one "
+                                        "formula, which no passage can cut",
+                                        "such a sentence kept as one passage is `under_cut` "
+                                        "(rule 2), and its per-structure passages are never "
+                                        "`over_cut`")),
                 ("reviewer.md", ('"gaps": [', "`commentary`", "7. **`gaps`: one row for EVERY "
                                  "gap your part shows**",
                                  "and `should_be_expository` (C6, PD5) when it asserts "
                                  "nothing about mathematical objects",
                                  "leave expository a step that only instructs (C6)",
-                                 "`kind-rule` marks every formal passage of kind `other`")),
+                                 "`kind-rule` marks every formal passage of kind `other`",
+                                 "`under_cut` when it holds two results (a compound passage "
+                                 "whose conjuncts are independent facts and no one formula "
+                                 "among them, rule 8, and a sentence naming several structures "
+                                 "with one property kept as one passage, rule 2")),
                 ("reviewer-skeptic.md", ('"examined_gaps": ["r1-g001"]', "INSIDE the gap",
+                                         '"rule": 8, "evidence": ""',
+                                         "existence and uniqueness of one object: C8 keeps "
+                                         "them one",
                                          "`missed_gaps`", "EVERY gap of your part",
                                          "a gap's flag `{flag_id, item: \"\", gap, span")),
                 ("reviewer-check.md", ("`GAPS` line", "`GAP VERDICT`")),
@@ -682,6 +700,9 @@ class TestTheGapPrompts(AtRule, Audited):
             for needle in needles:
                 with self.subTest(prompt=name, needle=needle):
                     self.assertIn(needle, prompts[name])
+        # R-SPLIT: two facts about one subject are no longer the skeptic's example of a cut
+        # C4 forbids (rule 1 and 2 plans keep it, byte for byte)
+        self.assertNotIn("C4 forbids the cut", prompts["reviewer-skeptic.md"])
         # the prompts' examples are the fixtures' widget ones, never an article's sentence
         for text in prompts.values():
             self.assertEqual(re.findall(r"#([0-9a-f]{8})\b", text.replace("0000c0de", "")

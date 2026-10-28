@@ -300,6 +300,29 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **Two calls on the cut: independent facts are separate passages, and a sentence naming
+  several structures is cut per structure** (`templates/prompts/locate-inventory.md.tmpl`,
+  `locate-inventory-audit-system.md.tmpl`, `locate-inventory-audit.md.tmpl`,
+  `locate-inventory-skeptic.md.tmpl`; `references/vocabulary.md` §1.11, "Two calls on the
+  cut"; the maintainer's notes of 2026-10-28). **R-SPLIT**: a compound statement's conjuncts
+  are the clauses of one statement (the existence and uniqueness of one object, the directions
+  or conditions of one equivalence, the cases of one law or definition, conclusions that make
+  one result together), and facts that each stand as a result of their own are cut, one passage
+  per fact, even about one subject, under one hypothesis or in one sentence, each `statement`
+  carrying the hypotheses they share. One formula that holds several stays one `equations`
+  passage, a conjunct and a part per fact: a passage is one span of the layer, which spells a
+  formula as its whole rendered text and then its whole TeX, so no span holds one row of it.
+  **R-INSTANCE**: a sentence that names several structures having one property is cut per
+  structure, at the words that name each, and the general notion with its definition is a
+  `definition` passage of its own. The inventory prompt says both in a paragraph after its two
+  readings, outside the shared cut rules, so the bench labeler and its gold are unchanged
+  (R-INSTANCE's passages are often under the bench join's four-word floor, and a gold compound
+  passage still joins one of the run's pieces); under audit rule 3 the rule card states both
+  beside C1, C2, C4 and C8, the auditor's `under_cut` names them, and the skeptic's example of
+  a refuted flag is existence and uniqueness (C8) in place of two conjuncts about one subject
+  (C4), while rule-1 and rule-2 plans render byte for byte as before. No gate check: whether two
+  facts are independent is judgment. The rendered worker prompt is 20,266 bytes with a real
+  plan's paths, so `WORKER_MD_MAX_BYTES` is 20,300. Every example is synthetic.
 - **The challenge reviewer and worker, after smoke 4's four rejections**
   (`templates/prompts/locate-reviewer-system.md.tmpl`, `locate-challenge.md.tmpl`,
   `scripts/gate/verify_locate.py`, both bridges, `scripts/locate/tend_root.py`). Every
