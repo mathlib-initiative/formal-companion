@@ -76,7 +76,8 @@ from . import presets as locate_presets
 
 PROMPT_FILES = ("worker-system.md", "worker.md", "reviewer-system.md", "reviewer.md")
 #: what an audited inventory plan renders each reviewer prompt and the revision from
-#: (references/locate-documents.md section 13.9); its worker prompts are the unaudited ones
+#: (references/locate-documents.md section 13.9); its worker prompts are the unaudited ones'
+#: templates, whose ``cut_calls`` blocks only audit rule 3 renders (section 13.12)
 AUDIT_TEMPLATES = {"reviewer-system.md": "locate-inventory-audit-system.md.tmpl",
                    "reviewer.md": "locate-inventory-audit.md.tmpl",
                    "reviewer-check.md": "locate-inventory-check.md.tmpl",
