@@ -507,13 +507,21 @@ class TestTheVerdictFieldsOfRules3(unittest.TestCase):
         self.assertNotIn("tests", got["locations"][0])
         got, _ = _challenge(_row(coverage=None), {"a" * 64: {"action": "downgrade",
                                                               "relation": "relatedMatch"}})
-        # by key, not by rank: a downgrade moves its card below every card it is now weaker
-        # than (R-SPECIFIC's strength half, outcomes._renumbered), so the relatedMatch is last
+        # by key, not by rank: this row is a run of judgment rules 3, whose ranks are its
+        # worker's "best first", so the downgraded card keeps the place it had
         downgraded = next(l for l in got["locations"] if l["location_key"] == "a" * 64)
-        self.assertEqual((downgraded["relation"], downgraded["rank"]),
-                         ("relatedMatch", len(got["locations"])))
+        self.assertEqual((downgraded["relation"], downgraded["rank"]), ("relatedMatch", 1))
         self.assertNotIn("conjunct_relation", downgraded)
         self.assertNotIn("step", downgraded)
+        # R-SPECIFIC's strength half is judgment rules 4's (vocab.ranks_by_strength,
+        # outcomes._renumbered): under those rules the same downgrade moves its card below
+        # every card it is now weaker than, so the relatedMatch ranks last
+        got, _ = _challenge(_row(coverage=None), {"a" * 64: {"action": "downgrade",
+                                                             "relation": "relatedMatch"}},
+                            status_rule=3)
+        moved = next(l for l in got["locations"] if l["location_key"] == "a" * 64)
+        self.assertEqual((moved["relation"], moved["rank"]),
+                         ("relatedMatch", len(got["locations"])))
 
     def test_a_strong_part_keeps_its_tests(self):
         """A part whose conjunct_relation is strong is held as a strong location (the gate's

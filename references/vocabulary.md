@@ -681,7 +681,13 @@ by strength again (`locate.outcomes._renumbered`), so a downgrade moves its card
 it is now weaker than and rank 1 is the strongest card left; among cards of equal strength the
 worker's order stands, since no record says which declaration is stated for the passage's own
 objects and nothing downstream may re-decide it — the challenger reports a general card ranked
-above a specific one as a recall miss instead. A bundle that states the whole passage is a whole-passage card
+above a specific one as a recall miss instead. Like the rest of R-SPECIFIC that re-rank is
+**judgment rules 4's**, so it binds a run derived under status rule 3 and no older one
+(`vocab.ranks_by_strength`): a run judged under judgment rules 1, 2 or 3 was asked only for its
+cards "best first", so its ranks are its worker's judgement, and a re-tally or a re-export of it
+keeps them — a re-gate, a re-tally and a re-export judge an older run by the version it ran under
+(`docs/design/stage_map.md`). The half that binds every run is the renumbering itself: a refuted
+card leaves no gap in the exported ranks. A bundle that states the whole passage is a whole-passage card
 at its bundle relation (its weakest part's, which a run's outcomes compute and a survived bundle
 counts at): its parts rank together at that strength, so a bundle of specific `exactMatch` parts
 ranks above a general `broadMatch`, and a general `exactMatch` above a bundle of `closeMatch`

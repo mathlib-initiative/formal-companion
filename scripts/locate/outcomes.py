@@ -970,7 +970,7 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                         loc["note"] = downgrade_note(verdict, layer_of(sid) if layer_of else None)
                     _judged_fields(loc, verdict, row, problems, status_rule=status_rule)
         kept.append(loc)
-    row["locations"] = _renumbered(kept)
+    row["locations"] = _renumbered(kept, status_rule=status_rule)
     confirmed: list[dict] = []
     if row.get("coverage") is not None:
         confirmed = _apply_coverage(row, planned, verdicts, problems, status_rule=status_rule)
@@ -1448,12 +1448,14 @@ witness_sentences = records.witness_sentences
 downgrade_note = records.downgrade_note
 
 
-def _renumbered(locations: list[dict]) -> list[dict]:
-    """The locations by relation strength, then rank, ranked 1..n again.
+def _renumbered(locations: list[dict], *,
+                status_rule: int = vocab.STATUS_RULE_D1) -> list[dict]:
+    """The locations by relation strength (status rule 3), then rank, ranked 1..n again.
 
     A refuted location leaves the passage, and the ones after it move up: the
     export's ranks are the order a reader sees, never a gap where a refuted
     declaration stood (field defect X4: two passages exported ranks [1, 3]).
+    That half binds every run.
 
     R-SPECIFIC ranks by relation strength first (``RELATION_STRENGTH``,
     references/vocabulary.md section 1.11), so a downgrade moves its card below
@@ -1464,9 +1466,16 @@ def _renumbered(locations: list[dict]) -> list[dict]:
     own objects is nowhere in a record, so nothing here can re-apply the
     specificity half of the rule, and the challenger reports a general card
     ranked above a specific one as a recall miss instead.
+
+    That half is **judgment rules 4's** (``vocab.ranks_by_strength``), so it binds
+    a run derived under status rule 3 and no older one: a run judged under
+    judgment rules 1, 2 or 3 ranked "best first" by its worker's own judgement,
+    nothing asked it for strength, and a re-tally or a re-export judges an older
+    run by the version it ran under (`docs/design/stage_map.md`).
     """
-    ordered = sorted(locations, key=lambda l: (RELATION_STRENGTH.get(l.get("relation"), 9),
-                                               l.get("rank") or 99, l["library"],
+    strength = (lambda l: RELATION_STRENGTH.get(l.get("relation"), 9)) \
+        if vocab.ranks_by_strength(status_rule) else (lambda l: 0)
+    ordered = sorted(locations, key=lambda l: (strength(l), l.get("rank") or 99, l["library"],
                                                l["declaration"]))
     for rank, loc in enumerate(ordered, 1):
         loc["rank"] = rank

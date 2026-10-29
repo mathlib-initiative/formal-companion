@@ -1500,21 +1500,137 @@ class TestTheOutcomesKeepWhatFitsTheRelation(unittest.TestCase):
         self.assertEqual(ranked[1][:2], ("Widget.exists_spanning_gadget", "broadMatch"))
         self.assertEqual([rank for _d, _rel, rank in ranked], list(range(1, len(ranked) + 1)))
 
+    #: three cards whose strength order is not their worker's order: the ``closeMatch``
+    #: the worker ranked last is the strongest, and the two above it are equal in nothing
+    #: but being weaker
+    OUT_OF_STRENGTH_ORDER = [{"location_key": "k1", "library": "zeta", "declaration": "Z.second",
+                              "relation": "hasPart", "rank": 1},
+                             {"location_key": "k2", "library": "alpha", "declaration": "A.first",
+                              "relation": "narrowMatch", "rank": 2},
+                             {"location_key": "k3", "library": "alpha", "declaration": "A.strong",
+                              "relation": "closeMatch", "rank": 3}]
+
     def test_cards_of_equal_strength_keep_the_workers_order(self):
         """The stable half of the same sort: among cards of one strength the worker's order
         stands, whatever their library and declaration sort as -- no record says which
         declaration is stated for the passage's own objects, so nothing downstream can
         re-apply R-SPECIFIC's specificity half (the challenger reports a general card above
         a specific one as a recall miss instead)."""
-        locations = [{"location_key": "k1", "library": "zeta", "declaration": "Z.second",
-                      "relation": "hasPart", "rank": 1},
-                     {"location_key": "k2", "library": "alpha", "declaration": "A.first",
-                      "relation": "narrowMatch", "rank": 2},
-                     {"location_key": "k3", "library": "alpha", "declaration": "A.strong",
-                      "relation": "closeMatch", "rank": 3}]
-        ranked = outcomes._renumbered(locations)
+        ranked = outcomes._renumbered(copy.deepcopy(self.OUT_OF_STRENGTH_ORDER),
+                                      status_rule=vocab.STATUS_RULE_BROAD)
         self.assertEqual([l["declaration"] for l in ranked], ["A.strong", "Z.second", "A.first"])
         self.assertEqual([l["rank"] for l in ranked], [1, 2, 3])
+
+    def test_an_older_runs_cards_keep_the_order_they_had(self):
+        """R-SPECIFIC is judgment rules 4's, so the strength half binds a run derived under
+        status rule 3 and no older one (``vocab.ranks_by_strength``): a run judged under
+        judgment rules 1, 2 or 3 was told only to rank "best first", so its order is its
+        worker's judgement and a re-tally keeps it -- `docs/design/stage_map.md`'s rule that
+        a re-tally and a re-export judge an older run by the version it ran under."""
+        for status_rule in (vocab.STATUS_RULE_D1, vocab.STATUS_RULE_BUNDLE):
+            with self.subTest(status_rule=status_rule):
+                ranked = outcomes._renumbered(copy.deepcopy(self.OUT_OF_STRENGTH_ORDER),
+                                              status_rule=status_rule)
+                self.assertEqual([l["declaration"] for l in ranked],
+                                 ["Z.second", "A.first", "A.strong"])
+                self.assertEqual([l["rank"] for l in ranked], [1, 2, 3])
+        # and the half that binds every run still does: a refuted card's gap closes up
+        ranked = outcomes._renumbered([dict(loc, rank=loc["rank"] + 1)
+                                       for loc in self.OUT_OF_STRENGTH_ORDER],
+                                      status_rule=vocab.STATUS_RULE_D1)
+        self.assertEqual([l["rank"] for l in ranked], [1, 2, 3])
+
+
+def renumbered_at_89011f2(locations: list[dict], **_version) -> list[dict]:
+    """``locate.outcomes._renumbered`` as ``master`` 89011f2 wrote it, body for body.
+
+    The version before R-SPECIFIC's strength half: the locations in their worker's rank
+    order, ranked 1..n again so a refuted card leaves no gap.  A run judged under
+    judgment rules 1, 2 or 3 is still derived by exactly this, which is what
+    :class:`TestTheRankAfterAChallengeIsTheRunsOwnVersion` checks; it takes (and
+    ignores) the version keyword the caller now passes.
+    """
+    ordered = sorted(locations, key=lambda l: (l.get("rank") or 99, l["library"],
+                                               l["declaration"]))
+    for rank, loc in enumerate(ordered, 1):
+        loc["rank"] = rank
+    return ordered
+
+
+class TestTheRankAfterAChallengeIsTheRunsOwnVersion(unittest.TestCase):
+    """A re-tally of a run judged under judgment rules 3 is the tally it always was.
+
+    R-SPECIFIC joined judgment rules 4 (references/vocabulary.md section 1.11), and
+    `docs/design/stage_map.md` holds that a re-gate, a re-tally and a re-export judge an
+    older run by the version it ran under, so the strength half of the rank binds a run
+    derived under status rule 3 only (``vocab.ranks_by_strength``).  The run here is one
+    of the statement cut's rules, planned as the planner planned it then
+    (``F.before_the_wide``), whose challenge downgrades the card its worker ranked first.
+    """
+
+    def setUp(self):
+        from unittest import mock
+
+        self.mock = mock
+        self.root = scratch(self)
+        with F.before_the_wide():
+            self.paths = F.campaign(self, self.root)
+            F.plan_locate(self, self.root, run_id="loc-1")
+            docs = F.locate_documents(self.paths, "loc-1")
+            for doc in docs.values():
+                for p in doc["passages"]:
+                    names = [l["declaration"] for l in p["locations"]]
+                    if "Beta.Widget.gadget_of_finite" in names:
+                        # the worker's rank 2 is the stronger card, so the strength sort
+                        # would move it and this run's own rules do not
+                        p["locations"][1].update(relation="closeMatch", convention="notation",
+                                                 note="the gadget is written as a finite set")
+            F.write_harvest(self.paths, "loc-1", docs)
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                                "--sourceset", F.SS, "--universe", F.U, "--challenge-of",
+                                "loc-1", "--run-id", "chl-1")
+            self.assertEqual(code, 0, out + err)
+
+            def verdict(rec):
+                v = F.default_verdict(rec)
+                if rec.get("declaration") == "Widget.exists_spanning_gadget":
+                    v.update(action="downgrade", relation="broadMatch")
+                return v
+
+            F.write_harvest(self.paths, "chl-1",
+                            F.challenge_documents(self.paths, "chl-1", verdict=verdict))
+
+    def tally(self) -> tuple[bytes, bytes]:
+        """``cf tally --locate``'s two written artifacts, as bytes."""
+        code, out, err = ws(self.root, "tally", "--locate", "--run", "loc-1",
+                            "--challenge-run", "chl-1")
+        self.assertEqual(code, 0, out + err)
+        return (self.paths.locate_tally_json("loc-1").read_bytes(),
+                self.paths.locate_outcomes_jsonl("loc-1").read_bytes())
+
+    def test_the_run_is_one_of_judgment_rules_3(self):
+        from cflib.yamlio import read_yaml
+
+        run = read_yaml(self.paths.run_yaml("loc-1"))
+        self.assertEqual(run["locate"]["status_rule"], vocab.STATUS_RULE_BUNDLE)
+        self.assertFalse(vocab.ranks_by_strength(run["locate"]["status_rule"]))
+
+    def test_a_rules_3_retally_is_byte_identical_to_89011f2(self):
+        now = self.tally()
+        with self.mock.patch.object(outcomes, "_renumbered", renumbered_at_89011f2):
+            before = self.tally()
+        self.assertEqual(now, before)
+        # and the comparison says something: the downgraded card is still where its worker
+        # ranked it, above a card it is now weaker than, which the strength half would move
+        rows = [json.loads(line) for line in now[1].decode("utf-8").splitlines() if line.strip()]
+        downgraded = [r for r in rows
+                      if any(l["declaration"] == "Widget.exists_spanning_gadget"
+                             and l["relation"] == "broadMatch" for l in r["locations"])]
+        self.assertTrue(downgraded, f"no downgraded card in {len(rows)} outcome row(s)")
+        for row in downgraded:
+            ranked = [(l["declaration"], l["relation"], l["rank"]) for l in row["locations"]]
+            self.assertEqual(ranked[0][:2], ("Widget.exists_spanning_gadget", "broadMatch"))
+            self.assertIn("closeMatch", [rel for _d, rel, _r in ranked[1:]])
 
 
 # --------------------------------------------------------------------------- #

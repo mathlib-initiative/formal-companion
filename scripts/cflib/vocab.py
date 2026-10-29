@@ -807,7 +807,9 @@ PROSE_FLOOR_MIN_WORDS = 8
 #: an equivalence -- on a theorem or conjecture passage a ``broadMatch`` to data
 #: formalizes it as an exact or close match to data does, and on a definition passage a
 #: ``broadMatch`` to a definition (a broader bundle's stand-in among them) formalizes it
-#: -- and everything else is version 2, its bundles and its owed hunt included.  A
+#: -- and the rank R-SPECIFIC gives a challenge's surviving cards
+#: (:func:`ranks_by_strength`, ``locate.outcomes._renumbered``), and everything else is
+#: version 2, its bundles and its owed hunt included.  A
 #: run.yaml without the key is version 1, and :func:`derive_status` defaults to it;
 #: ``cf plan-locate`` writes ``STATUS_RULE`` from the flip on.
 STATUS_RULE_D1 = 1
@@ -839,11 +841,27 @@ def status_rule_of_judgment(rules: int) -> int:
 def reads_bundles(status_rule: int) -> bool:
     """Whether a run of ``status_rule`` reads its coverage claim as a bundle (2 and on).
 
-    Status rule 3 changes only the rows of :func:`derive_status`: its bundles, its
-    outcome rows, its challenge records and its record set (``cf-locate-recordset/2``,
-    the seal naming 3) are status rule 2's.
+    Status rule 3 changes the rows of :func:`derive_status` -- its bundles, its
+    outcome rows, its challenge records and its record set
+    (``cf-locate-recordset/2``, the seal naming 3) are status rule 2's -- and one
+    derivation beside them, the rank of a challenge's surviving cards
+    (:func:`ranks_by_strength`).
     """
     return status_rule >= STATUS_RULE_BUNDLE
+
+
+def ranks_by_strength(status_rule: int) -> bool:
+    """Whether a run of ``status_rule`` re-ranks a challenge's surviving cards by strength.
+
+    R-SPECIFIC is the maintainer's rule of 2026-10-28 and joined judgment rules 4
+    (``RULES_SMOKE4``, derived under ``STATUS_RULE_BROAD``; references/vocabulary.md
+    section 1.11), so the rank half of it binds a run of those rules and no older one:
+    a challenge run judged under judgment rules 1, 2 or 3 was never told to rank its
+    cards by strength -- its order is its worker's judgement of "best first" -- and a
+    re-gate, a re-tally and a re-export judge an older run by the version it ran under
+    (`docs/design/stage_map.md`).  ``locate.outcomes._renumbered`` is the one caller.
+    """
+    return status_rule >= STATUS_RULE_BROAD
 #: The closed list of compound shapes (the maintainer's answer of 2026-10-21 to question
 #: 2): one statement whose conclusion is a conjunction the text does not separate.
 #: Anything else that holds two results is two statements, and the inventory cuts it.
