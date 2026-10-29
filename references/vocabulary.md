@@ -676,7 +676,12 @@ is the passage's best card move. **The rank** is by relation strength first (`RE
 `exactMatch`, `closeMatch`, `broadMatch`, then `narrowMatch` and `hasPart`), and among cards of
 equal strength the declaration stated for the passage's own objects ranks first, so a specific
 `hasPart` or `narrowMatch` never outranks a general card that states the whole passage, and the
-passage's best card is its strongest. A bundle that states the whole passage is a whole-passage card
+passage's best card is its strongest. **After a challenge** the outcomes rank the surviving cards
+by strength again (`locate.outcomes._renumbered`), so a downgrade moves its card below every card
+it is now weaker than and rank 1 is the strongest card left; among cards of equal strength the
+worker's order stands, since no record says which declaration is stated for the passage's own
+objects and nothing downstream may re-decide it — the challenger reports a general card ranked
+above a specific one as a recall miss instead. A bundle that states the whole passage is a whole-passage card
 at its bundle relation (its weakest part's, which a run's outcomes compute and a survived bundle
 counts at): its parts rank together at that strength, so a bundle of specific `exactMatch` parts
 ranks above a general `broadMatch`, and a general `exactMatch` above a bundle of `closeMatch`
@@ -1073,7 +1078,7 @@ proposal says which).
 | versions | `RULES_STATEMENT_CUT` (3: `judgment_rules` of the cut), `RULES_SMOKE4` (4: `judgment_rules` of the smoke-4 audit's calls, which the gate knows before the planner writes it), `SPAN_END_STATEMENT_CUT` (2: `span_end_rule` of the cut), `SPAN_END_CONTINUED` (3: the continued cut's `span_end_rule`), `STATEMENT_CUT_FIRST` (1: the cut's first `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_RULE` (3, `STATEMENT_CUT_WIDE`, from the flip of the wide bound; 2, `STATEMENT_CUT_CONTINUED`, from the flip of inv-pilot-1's fixes; 1 before it: `statement_cut_rule`, gate rule 10), `STATEMENT_CUT_CONTINUED` (2: the continued cut's `statement_cut_rule`: rule 10 (b) holds an end to the loose continued bound, (h) refuses two or more `formal_math` passages of a source marked `prominence: subject`, and the receipt counts more), `STATEMENT_CUT_WIDE` (3: the wide cut's `statement_cut_rule`, inv-pilot-2's repairs: version 2 with rule 10 (b) holding an end to the **wide** bound and the receipt's `widened`, `wide_starts` and `wide_unheld`; the planner writes it from the flip of the wide bound, which the gate knew before), `STATEMENT_CUT_SPAN_END` (`{1: 2, 2: 3, 3: 3}`: the one `span_end_rule` each `statement_cut_rule` reads; any other pair, and `span_end_rule` 3 without a `statement_cut_rule`, is a broken gate.json, exit 3; the planner writes 3 and 3 from the flip of the wide bound, 3 and 2 from the flip of inv-pilot-1's fixes, 2 and 1 before it), `STATUS_RULE` (`status_rule` in a locate run's `run.yaml` and in its record set's seal: 1 is `STATUS_RULE_D1`, the derivation of a run.yaml without the key and `derive_status`'s default; 2 is `STATUS_RULE_BUNDLE`; 3 is `STATUS_RULE_BROAD`, R-BROAD; `STATUS_RULES` lists the three, `status_rule_of_judgment` gives a run's from its `judgment_rules`, and `reads_bundles` is true of 2 and 3) |
 | `COMPOUND_SHAPES` | `existence_uniqueness` · `iff` · `cases` · `conclusions` · `equations` (the closed list; `COMPOUND_SHAPE_ORDER` is the maintainer's order). A compound statement has `MIN_CONJUNCTS`–`MAX_CONJUNCTS` (2–5) conjuncts `c1` … `cN`, `existence_uniqueness` exactly 2 (`SHAPE_CONJUNCT_COUNTS`); a simple statement has none, and its one clause id is `SIMPLE_STATEMENT_CLAUSE` (`c1`) |
 | an inventory passage's `conjuncts` and `shape` | written by the inventory on a compound `formal_math` passage only, both or neither: `conjuncts` a list of `{id, text}` (ids `c1` … `cN` in order, each text one line of at most `MAX_CLAIM_CHARS` characters in the worker's own words, never more than `EXPORT_QUOTE_WORDS` consecutive words of the source, alone or read one after the other, as `verify_locate.check_claims` holds a claim list), `shape` one of `COMPOUND_SHAPES`; a simple statement has neither key, and its `statement` (required, as before) carries the hypotheses and objects the tight span leaves to its neighbours (`references/locate-documents.md` §2). `passage_ids.py` writes both back as it found them |
-| `CUT_CONNECTIVES` | `;` · `since` · `because` · `so` · `hence` · `then` · `moreover` · `, and` (with a new subject after it): where the inventory cuts inside a sentence, never between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject (under audit rule 3, between the clauses of one statement: R-SPLIT, "Two calls on the cut" below). A prompt rule (the cut rules below); no gate parses a sentence. The end rule's version 2 restates the list (`locate_text.CUT_CONNECTIVES`) to leave the one before the next passage out of both passages |
+| `CUT_CONNECTIVES` | `;` · `since` · `because` · `so` · `hence` · `then` · `moreover` · `, and` (with a new subject after it): where the inventory cuts inside a sentence, never between a hypothesis and its conclusion, inside an iff, or between conjuncts about one subject (under audit rule 3, between the clauses of one statement or the conclusions one hypothesis governs, with a pronoun for the same object counting as a subject of its own and a bare `and` or a `but` cutting nothing: R-SPLIT, "Two calls on the cut" below). A prompt rule (the cut rules below); no gate parses a sentence. The end rule's version 2 restates the list (`locate_text.CUT_CONNECTIVES`) to leave the one before the next passage out of both passages |
 | the end, `span_end_rule` 2 | an inventory passage with no `until` ends at the earlier of its **extent** and the next passage's start, never before its quote's end (`locate_text.passage_end(…, rule=2, next_start=…, formulas=…)`; version 1 ends it at its paragraph's end; version 3, `SPAN_END_CONTINUED`, ends it the same way at its **continued extent**, the extent with the paragraph that finishes a sentence after its display: `locate_text.Blocks.continuation`, the proposal's §3.1). When the next start is the earlier, the **separator** before it — whitespace, one connective of `CUT_CONNECTIVES` and a comma or semicolon, outside every formula (`locate_text.Blocks.separator_start`) — is in neither passage, so a statement's span, and its `passage_key`, is the one an `until` at its last word gives, whether or not its neighbour is a passage. The extent (`locate_text.Blocks.extent`, the proposal's §3.1, over `paragraphs.json` and `formulas.json`) is the end of the start's outermost block when that is a theorem box (or shares its span with one), else of that block followed by the **display blocks** its last sentence introduces (a block whose last character — a trailing formula read as its alttext's last character after TeX spacing, a `\right.` null delimiter, a `\\` line break, an `\end{…}` closer and closing braces, and closing brackets and quotes after a full stop read through to it — is no `.`, `!` or `?`, a formula's `!` being a factorial and no stop (`locate_text.FORMULA_STOPS`); a display block holds a formula and no letter outside its formulas, and a list item `li` is never one a sentence introduces) — with, for a compound statement, the rest of its run of `li` or `dd` items first. So two passages of one paragraph never nest, and a passage leaves its block only inside a theorem box, into the displays its sentence introduces, or over the items of one list (gate rule 10's bound). The outermost block is the bound: inside a `blockquote`, a `dd` or an `li` that holds other blocks, a passage no later start ends runs to the container's end unless its `until` ends it sooner (the inventory prompt says to give one there), a compound statement that starts in a nested item runs over its parent's run of items, and two lists with nothing between them are one run (`paragraphs.json` does not say where a list ends). Under `statement_cut_rule` 2 gate rule 10's bound is the **loose** continued bound (`locate_text.Blocks.runs_on`, the maintainer's reading K1): a block's last sentence that runs on (no full stop; never a list item's or a theorem box's) runs on over any `dd` or display blocks that leave it open into a plain paragraph that continues it, so a display the gate cannot see (a `texhtml` formula, a `dd` of text, a footnote mark after it) keeps its sentence's words too. It admits only a longer `until`; no default end reads it. Under `statement_cut_rule` 3 the bound is the **wide** one (`locate_text.Blocks.runs_on(…, wide=True)`, the proposal's §3.1): the loose bound read across footnote marks between two blocks (`locate_text.FOOTNOTE_MARK`: `[12]`, `[a]`, `[nb 3]`, `[note 3]`), and ended by a `dd` or a paragraph that finishes the sentence, by its first word or, after a block that ends with a word, by a formula that opens it and a lower-case word after (`Blocks.finishes`, `Blocks.opens_with_formula`); never shorter than the loose bound, and read by no end rule either |
 | a passage's units | `locate_text.units`: its sentences (a `.`, `!` or `?` — or a formula whose alttext ends with a `.` or `?`, a formula's `!` being a factorial — before whitespace or a block's start and an upper-case letter or a formula, not after one of `ABBREVIATIONS`, `locate_records._ABBREVIATIONS`' list) and its displays (the `math` blocks inside it); the harvest receipt counts both, and refuses nothing on them |
 | a part's `conjunct_relation` | `CONJUNCT_RELATIONS`: `exactMatch` · `closeMatch` · `broadMatch` · `narrowMatch`, judged against the conjunct, and under judgment rules 4 `hasPart` too (`CONJUNCT_RELATIONS_PART`: the part states only some of what its conjuncts say); a bundle's relation is one of `BUNDLE_RELATIONS` (the strong ones), its weakest part's |
@@ -1128,13 +1133,24 @@ or rule-2 plan's say none of them and keep the lines above word for word, so a r
 or rule-2 run's worker cuts by the rules its reviewers judge. The two calls make one cut rule:
 
 - **R-SPLIT** — independent facts are separate passages. Facts that each stand as a result of
-  their own are independent, even about one subject or under one hypothesis; the clauses of one
+  their own are independent, even about one subject; the clauses of one
   statement are not: the existence and uniqueness of one object, the directions or conditions of
   one equivalence, the cases of one law or definition in one sentence, display or list.
   Independent facts in separate sentences, independent clauses, list items or formulas of a
   display are separate passages, one per fact, each `statement` carrying the hypotheses they
   share: "the series converges, and its sum is s" is two independent clauses, so two passages, as
-  the Inside-a-sentence line's connective `, and` with a subject of its own after it cuts it.
+  the Inside-a-sentence line's connective `, and` with a subject of its own after it cuts it. That
+  connective is the comma's: a bare `and`, which `locate_text.cut_points` counts as none, and a
+  `but`, which is in no cut list, cut nothing, so the facts they join stay one passage with a
+  conjunct each.
+  **The hypothesis rule wins over the split**, which the call's words ("even … under one
+  hypothesis") contradicted until 2026-10-29: no cut falls between a hypothesis and its
+  conclusions, however many it governs (the Inside-a-sentence line's NEVER, the Context line's
+  "never cut from its hypothesis" and the worker's check of a supposition), so facts that share
+  one hypothesis or supposition their sentence states once stay one passage, shape `conclusions`,
+  with a conjunct and a part per fact, as facts that share one clause or one formula do. Facts in
+  separate sentences each carry the hypotheses they share in their own `statement`, and are
+  separate passages.
   Independent facts that share one clause ("a widget is round and red") or one formula stay one
   passage, shape `conclusions` or `equations`, a conjunct per fact, each linked by a part of its
   own, which the export carries (a bundle's parts are its links): no cut falls inside a clause or
@@ -1150,7 +1166,12 @@ or rule-2 run's worker cuts by the rules its reviewers judge. The two calls make
   clause), each `statement` saying that structure has the property, however short its words, and
   the general notion, with what the sentence says defines it, is a `definition` passage of its
   own. Such a piece is no single word of the term-link line (PD5's), and its `statement` says
-  what the sentence says of its structure, so it is never `statement_misstates` for that. Each
+  what the sentence says of its structure, so it is never `statement_misstates` for that. The
+  pieces of one sentence never share their span text, which gate rule 10 (g) refuses (two
+  passages with one span text have one `passage_key`): where a sentence names one structure
+  twice, the earlier piece ends with an `until` that takes in the comma or the word after it, the
+  neighbouring word that tells the two apart. The gate is unchanged, and the worker carries the
+  rule. Each
   structure's passage is then linked to its own instance and the notion's to its definition,
   which the locate rules give (R-SPECIFIC among the smoke-4 audit's rules above, and PD1 or Fix 4b
   for a definition stated in more generality).
@@ -1160,15 +1181,20 @@ single-word line exempts an R-INSTANCE piece; Units adds one formula of a displa
 that name one structure; Displays cuts a display of independent formulas and keeps one formula,
 or the formulas of one statement, one `equations` passage; Inside a sentence never cuts between
 the clauses of one statement (for "conjuncts about one subject") or inside a clause but by
-R-INSTANCE, and cuts at `, and` when a clause with a subject of its own follows, a pronoun for the
-same object too; Conjuncts reads `conclusions` as independent facts one clause states and
-`equations` as one formula's equations or one statement's; and the worker's check says the same
+R-INSTANCE, never between a hypothesis and its conclusions however many it governs, and cuts at
+`, and` when a clause with a subject of its own follows, a pronoun for the same object too, a
+bare `and` or a `but` never; Conjuncts reads `conclusions` as independent facts one clause or one
+hypothesis states and `equations` as one formula's equations or one statement's; the `until` line
+takes in the word that tells two R-INSTANCE pieces apart; and the worker's check says the same
 and gains a bullet for both calls. A paragraph after the two readings says the calls whole. The
-rule card states them beside C1, C2, C3, C4 and C8: a compound passage of independent facts
-that are not one clause or one formula is `under_cut` (rule 8), a cut inside a clause but
-R-INSTANCE's is `over_cut` (rule 4), a sentence naming several structures kept whole is
+rule card states them **in** C2, C3, C4 and C8, in the words the worker's prompt uses — C3 with
+the formula exception (a formula with no space before it cannot start a passage) — and its
+rule-3 block says only what they make of a verdict: a compound passage of independent facts
+that are not one clause, one formula or one hypothesis is `under_cut` (rule 8), a cut inside a
+clause but R-INSTANCE's is `over_cut` (rule 4), a sentence naming several structures kept whole is
 `under_cut` (rule 2), and its per-structure passages are never `over_cut`, never wrong for being
-one word, and never `statement_misstates` for saying the sentence's property of their structure;
+one word, never `statement_misstates` for saying the sentence's property of their structure, and
+never wrong for the `until` that tells two of them apart;
 the auditor's `under_cut` and `statement_misstates` glosses repeat it, and the skeptic's example
 of a refuted flag is existence and uniqueness of one object (C8) where rules 1 and 2 keep two
 conjuncts about one subject (C4).

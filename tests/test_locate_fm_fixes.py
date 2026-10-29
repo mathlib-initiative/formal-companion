@@ -507,8 +507,13 @@ class TestTheVerdictFieldsOfRules3(unittest.TestCase):
         self.assertNotIn("tests", got["locations"][0])
         got, _ = _challenge(_row(coverage=None), {"a" * 64: {"action": "downgrade",
                                                               "relation": "relatedMatch"}})
-        self.assertNotIn("conjunct_relation", got["locations"][0])
-        self.assertNotIn("step", got["locations"][0])
+        # by key, not by rank: a downgrade moves its card below every card it is now weaker
+        # than (R-SPECIFIC's strength half, outcomes._renumbered), so the relatedMatch is last
+        downgraded = next(l for l in got["locations"] if l["location_key"] == "a" * 64)
+        self.assertEqual((downgraded["relation"], downgraded["rank"]),
+                         ("relatedMatch", len(got["locations"])))
+        self.assertNotIn("conjunct_relation", downgraded)
+        self.assertNotIn("step", downgraded)
 
     def test_a_strong_part_keeps_its_tests(self):
         """A part whose conjunct_relation is strong is held as a strong location (the gate's

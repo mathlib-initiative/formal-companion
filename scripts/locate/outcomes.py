@@ -1449,13 +1449,24 @@ downgrade_note = records.downgrade_note
 
 
 def _renumbered(locations: list[dict]) -> list[dict]:
-    """The locations in rank order, ranked 1..n again.
+    """The locations by relation strength, then rank, ranked 1..n again.
 
     A refuted location leaves the passage, and the ones after it move up: the
     export's ranks are the order a reader sees, never a gap where a refuted
     declaration stood (field defect X4: two passages exported ranks [1, 3]).
+
+    R-SPECIFIC ranks by relation strength first (``RELATION_STRENGTH``,
+    references/vocabulary.md section 1.11), so a downgrade moves its card below
+    every card it is now weaker than: rank 1 after a challenge is the passage's
+    strongest surviving card, never the ``closeMatch`` an ``exactMatch`` was
+    downgraded into above one that survived.  **Among cards of equal strength
+    the worker's order stands**: which declaration is stated for the passage's
+    own objects is nowhere in a record, so nothing here can re-apply the
+    specificity half of the rule, and the challenger reports a general card
+    ranked above a specific one as a recall miss instead.
     """
-    ordered = sorted(locations, key=lambda l: (l.get("rank") or 99, l["library"],
+    ordered = sorted(locations, key=lambda l: (RELATION_STRENGTH.get(l.get("relation"), 9),
+                                               l.get("rank") or 99, l["library"],
                                                l["declaration"]))
     for rank, loc in enumerate(ordered, 1):
         loc["rank"] = rank

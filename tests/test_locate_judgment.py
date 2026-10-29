@@ -1480,6 +1480,42 @@ class TestTheOutcomesKeepWhatFitsTheRelation(unittest.TestCase):
         self.assertEqual(outcomes.outcome_row(covered)["coverage_challenge_clauses"],
                          part_clauses)
 
+    def test_a_downgrade_moves_its_card_below_the_cards_it_is_now_weaker_than(self):
+        """R-SPECIFIC ranks by relation strength first (references/vocabulary.md section
+        1.11), and ``outcomes._renumbered`` applies that half again after a challenge: a
+        downgraded ``exactMatch`` ranks below the ``closeMatch`` beside it, so rank 1 is the
+        strongest card left, never the card a downgrade weakened."""
+        def verdict(rec):
+            v = F.default_verdict(rec)
+            if rec.get("declaration") == "Widget.exists_spanning_gadget":
+                v.update(action="downgrade", relation="broadMatch")
+            return v
+
+        built = self.challenge(verdict)
+        row = next(r for r in built["outcomes"]
+                   if any(l["declaration"] == "Beta.Widget.gadget_of_finite"
+                          for l in r["locations"]))
+        ranked = [(l["declaration"], l["relation"], l["rank"]) for l in row["locations"]]
+        self.assertEqual(ranked[0][:2], ("Beta.Widget.gadget_of_finite", "closeMatch"))
+        self.assertEqual(ranked[1][:2], ("Widget.exists_spanning_gadget", "broadMatch"))
+        self.assertEqual([rank for _d, _rel, rank in ranked], list(range(1, len(ranked) + 1)))
+
+    def test_cards_of_equal_strength_keep_the_workers_order(self):
+        """The stable half of the same sort: among cards of one strength the worker's order
+        stands, whatever their library and declaration sort as -- no record says which
+        declaration is stated for the passage's own objects, so nothing downstream can
+        re-apply R-SPECIFIC's specificity half (the challenger reports a general card above
+        a specific one as a recall miss instead)."""
+        locations = [{"location_key": "k1", "library": "zeta", "declaration": "Z.second",
+                      "relation": "hasPart", "rank": 1},
+                     {"location_key": "k2", "library": "alpha", "declaration": "A.first",
+                      "relation": "narrowMatch", "rank": 2},
+                     {"location_key": "k3", "library": "alpha", "declaration": "A.strong",
+                      "relation": "closeMatch", "rank": 3}]
+        ranked = outcomes._renumbered(locations)
+        self.assertEqual([l["declaration"] for l in ranked], ["A.strong", "Z.second", "A.first"])
+        self.assertEqual([l["rank"] for l in ranked], [1, 2, 3])
+
 
 # --------------------------------------------------------------------------- #
 # the prompts say each rule the gate holds

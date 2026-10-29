@@ -300,6 +300,39 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **The two calls on the cut, finished: the hypothesis rule wins, a bare "and" cuts nothing, the
+  R-INSTANCE pieces have their own text, and the rule card states the calls itself**
+  (`templates/prompts/locate-inventory.md.tmpl`, `locate-inventory-audit-system.md.tmpl`,
+  `locate-inventory-audit.md.tmpl`; `references/vocabulary.md` §1.11,
+  `references/locate-documents.md` §13.12, `docs/design/stage_map.md`;
+  `scripts/locate/outcomes.py`). A review of the calls of 2026-10-28 left five things open, and
+  each is settled with the smallest change that makes the code, the prompts and the docs agree.
+  **The hypothesis rule wins over R-SPLIT.** The call said facts are independent "even about one
+  subject or under one hypothesis", where the same prompt said never to cut between a hypothesis
+  and its conclusion, the Context rule said a statement is never cut from its hypothesis and the
+  worker's check said never after a supposition. Those three stand: facts that share one
+  hypothesis or supposition their sentence states once are one passage of shape `conclusions`,
+  with a conjunct and a part per fact, as facts that share one clause or one formula are, and
+  the `, and` example is no longer a hypothesis and its conclusion ("W has a spanning gadget, and
+  it is sprocketed" is two). **A bare `and` or a `but` cuts nothing**: the cut list's connective
+  is the comma's (`locate_text.cut_points` counts a bare `and` as none, and no list holds `but`),
+  so the facts they join are one passage with a conjunct each. **Two R-INSTANCE pieces never
+  share their span text**, which gate rule 10 (g) refuses because two passages with one span text
+  have one `passage_key`: where a sentence names one structure twice, the earlier piece ends with
+  an `until` that takes in the comma or the word after it, the neighbouring word that tells the
+  two apart. The gate is unchanged. **The rule card states the calls in C2, C3, C4 and C8**
+  themselves, in the worker prompt's words — C3 with the formula exception, that a formula with
+  no space before it cannot start a passage — and its rule-3 block now says only what the calls
+  make of a verdict. **The rank after a challenge** is by relation strength again
+  (`outcomes._renumbered`), so a downgrade moves its card below every card it is now weaker than
+  and rank 1 is the strongest card left; among cards of equal strength the worker's order stands,
+  since no record says which declaration is stated for the passage's own objects and nothing
+  downstream may re-decide it — the challenger reports a general card above a specific one as a
+  recall miss instead. All of it is audit rule 3's: an unaudited plan's prompts and a rule-1 or
+  rule-2 plan's are byte for byte what they were, and the bench labeler and its gold are
+  unchanged. No gate check is added or changed. The rendered rule-3 worker prompt is 22,184 bytes
+  with a real plan's paths (`WORKER_MD_RULE3_MAX_BYTES` 22,250), the unaudited one 18,886 as
+  before. Every example is synthetic.
 - **R-SPECIFIC: a passage stated for specific objects is linked to the declaration stated for
   them, ranked first among cards of equal strength** (`references/vocabulary.md` §1.11, the
   smoke-4 audit's rules; `templates/prompts/locate.md.tmpl`, `locate-challenge.md.tmpl`,
