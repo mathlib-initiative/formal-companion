@@ -328,7 +328,12 @@ release has something to say.
   and rank 1 is the strongest card left; among cards of equal strength the worker's order stands,
   since no record says which declaration is stated for the passage's own objects and nothing
   downstream may re-decide it — the challenger reports a general card above a specific one as a
-  recall miss instead. All of it is audit rule 3's: an unaudited plan's prompts and a rule-1 or
+  recall miss instead. Like the rest of R-SPECIFIC that re-rank is **judgment rules 4's**: it
+  binds a run derived under status rule 3 and no older one (`vocab.ranks_by_strength`), so a
+  re-tally or a re-export of a run judged under judgment rules 1, 2 or 3 — which was asked only
+  for its cards "best first" — keeps the ranks its worker gave, as
+  `docs/design/stage_map.md`'s rule that an older run is judged by the version it ran under
+  requires; the renumbering that leaves a refuted card no gap still binds every run. All of it is audit rule 3's: an unaudited plan's prompts and a rule-1 or
   rule-2 plan's are byte for byte what they were, and the bench labeler and its gold are
   unchanged. No gate check is added or changed. The rendered rule-3 worker prompt is 22,184 bytes
   with a real plan's paths (`WORKER_MD_RULE3_MAX_BYTES` 22,250), the unaudited one 18,886 as
