@@ -1852,11 +1852,14 @@ class TestTheCutRulesAreOneText(unittest.TestCase):
 WORKER_MD_MAX_BYTES = 18_900
 #: the same ceiling for the worker prompt of a plan audited under audit rule 3, which says
 #: the maintainer's two calls on the cut of 2026-10-28 (R-SPLIT and R-INSTANCE: the edits of
-#: :data:`CUT_CALL_EDITS` and the paragraph :data:`CUT_CALLS`): 21,125 bytes with placeholders
-#: and 21,444 with real paths, so 21,500.  The calls change what the worker cuts, so the
+#: :data:`CUT_CALL_EDITS` and the paragraph :data:`CUT_CALLS`): 21,865 bytes with placeholders
+#: and 22,184 with real paths, so 22,250.  The calls change what the worker cuts, so the
 #: worker must read them; no other sentence was shortened to pay for them, since each of
-#: those is a rule a test or the audit's rule card holds word for word
-WORKER_MD_RULE3_MAX_BYTES = 21_500
+#: those is a rule a test or the audit's rule card holds word for word.  The 2026-10-29
+#: resolutions added 740 bytes: the hypothesis rule over R-SPLIT (A), the bare ``and`` and
+#: ``but`` (C), and the R-INSTANCE pieces' distinct span text with the ``until`` that gives
+#: it (B)
+WORKER_MD_RULE3_MAX_BYTES = 22_250
 
 #: the inventory prompt's one kind sentence, in "What a passage is" after the kinds: the
 #: kind rule the audit's merge applies mechanically to a formal ``other`` passage in a
@@ -1905,15 +1908,18 @@ READINGS = ("Two readings of the rules above, said outright. " + NOTATION_READIN
 #: inside a clause or a formula but R-INSTANCE's
 SPLIT_CALL = (
     "**Independent facts are separate passages.** Facts that each stand as a result of their "
-    "own are independent, even about one subject or under one hypothesis; the clauses of one "
+    "own are independent, even about one subject; the clauses of one "
     "statement are not: the existence and uniqueness of one object, the directions or "
     "conditions of one equivalence, the cases of one law or definition in one sentence, display "
     "or list. Independent facts in separate sentences, independent clauses, list items or "
     "formulas of a display are separate passages, one per fact, each `statement` carrying the "
     "hypotheses they share (\"the series converges, and its sum is s\" is two). Independent "
-    "facts that share one clause (\"a widget is round and red\") or one formula stay one "
+    "facts that share one clause (\"a widget is round and red\"), one formula, or one hypothesis "
+    "or supposition their sentence states once (\"if W is finite, then W has a spanning "
+    "gadget, and it is sprocketed\") stay one "
     "passage, shape `conclusions` or `equations`, a conjunct per fact, each linked by a part "
-    "of its own: no cut falls inside a clause or a formula, but R-INSTANCE's.")
+    "of its own: no cut falls inside a clause or a formula, or between a hypothesis and its "
+    "conclusions, but R-INSTANCE's.")
 #: the maintainer's R-INSTANCE of 2026-10-28: a sentence naming several structures with one
 #: property is cut per structure, each linked to its own instance downstream (R-SPECIFIC),
 #: and the general notion with its definition is a passage of its own
@@ -1923,7 +1929,9 @@ INSTANCE_CALL = (
     "(\"finite widgets, cyclic widgets and widgets over a field are sprocketed\" is three), "
     "each `statement` saying that structure has the property, however short its words; the "
     "general notion, with what the sentence says defines it, is a `definition` passage of its "
-    "own.")
+    "own. No two of the pieces have the same words: where a sentence names one structure twice, "
+    "the earlier piece ends with an `until` that takes in the comma or the word after it, since "
+    "two passages with one span text are refused.")
 CUT_CALLS = ("Two calls of the maintainer on what one statement is (R-SPLIT, R-INSTANCE), "
              "which the rules above say in their places. " + SPLIT_CALL + " " + INSTANCE_CALL)
 #: the shared cut rules' words a plan audited under audit rule 3 renders in their places
@@ -1956,22 +1964,29 @@ CUT_CALL_EDITS = (
     ("(\", and\" only when a new subject follows). Never cut between a hypothesis and its "
      "conclusion, inside an iff, or between conjuncts about one subject.",
      "(\", and\" only when a clause with a subject of its own follows, a pronoun for the same "
-     "object too: \"W is finite, and it is abelian\" is two). Never cut between a hypothesis "
-     "and its conclusion, inside an iff, between the clauses of one statement (R-SPLIT, "
-     "below), or inside a clause, but by R-INSTANCE (below)."),
+     "object too: \"W has a spanning gadget, and it is sprocketed\" is two; a bare \"and\" or a "
+     "\"but\" is no connective of the list, so the facts one of them joins stay one passage, a "
+     "conjunct each). Never cut between a hypothesis "
+     "and its conclusions, however many it governs, inside an iff, between the clauses of one "
+     "statement (R-SPLIT, below), or inside a clause, but by R-INSTANCE (below)."),
     ("`conclusions` (several conclusions about one subject under one hypothesis) and "
      "`equations` (one display holding several equations)",
-     "`conclusions` (independent facts that one clause states: R-SPLIT) and `equations` (one "
-     "formula holding several equations, or the equations of one statement: Displays)"),
+     "`conclusions` (independent facts that one clause, or one hypothesis, states: R-SPLIT) and "
+     "`equations` (one formula holding several equations, or the equations of one statement: "
+     "Displays)"),
+    ("where the tool's end stops before them.",
+     "where the tool's end stops before them, or to take in the word that tells two pieces of "
+     "one sentence apart (R-INSTANCE, above)."),
     ("inside an iff, between conjuncts about one subject (one passage, with `conjuncts`), or",
-     "inside an iff, between the clauses of one statement or inside a clause, but by "
-     "R-INSTANCE (one passage, with `conjuncts`), or"),
+     "inside an iff, between the clauses of one statement, between the conclusions one "
+     "hypothesis governs or inside a clause, but by R-INSTANCE (one passage, with `conjuncts`), "
+     "or"),
 )
 #: the worker's check of the cut under audit rule 3: one bullet more, after the first
 CUT_CHECK = ("- A compound passage holds the clauses of one statement, or independent facts "
-             "that one clause or one formula states (R-SPLIT): cut any other independent facts "
-             "it holds, and cut per structure a sentence that names several structures having "
-             "one property (R-INSTANCE).")
+             "that one clause, one formula or one hypothesis states (R-SPLIT): cut any other "
+             "independent facts it holds, and cut per structure a sentence that names several "
+             "structures having one property (R-INSTANCE), no two pieces sharing their words.")
 #: where the paragraph and the check's bullet go: after the readings, after the check's first
 READINGS_END = "at a \";\" or at a sentence break.\n\n"
 CHECK_FIRST_END = "\"so that\" and a \";\" inside a formula are no connectives.\n"
@@ -2241,15 +2256,16 @@ class TestTheCutCalls(unittest.TestCase):
         self.assertIn("between the clauses of one statement (R-SPLIT, below), or inside a "
                       "clause, but by R-INSTANCE (below)", inside)
         self.assertIn("(\", and\" only when a clause with a subject of its own follows", inside)
-        self.assertIn("`conclusions` (independent facts that one clause states: R-SPLIT)",
-                      self.rule("Conjuncts."))
-        self.assertIn("between the clauses of one statement or inside a clause, but by "
-                      "R-INSTANCE (one passage, with `conjuncts`)", self.flat)
+        self.assertIn("`conclusions` (independent facts that one clause, or one hypothesis, "
+                      "states: R-SPLIT)", self.rule("Conjuncts."))
+        self.assertIn("between the clauses of one statement, between the conclusions one "
+                      "hypothesis governs or inside a clause, but by R-INSTANCE (one passage, "
+                      "with `conjuncts`)", self.flat)
         self.assertIn("or, by the two calls below, one formula of a display or the words that "
                       "name one structure.", self.rule("Units."))
         # R-SPLIT: what is independent, what is cut, and what stays one passage
         for needle in ("Facts that each stand as a result of their own are independent, even "
-                       "about one subject or under one hypothesis",
+                       "about one subject;",
                        "the existence and uniqueness of one object",
                        "the directions or conditions of one equivalence",
                        "the cases of one law or definition in one sentence, display or list",
@@ -2257,18 +2273,82 @@ class TestTheCutCalls(unittest.TestCase):
                        "or formulas of a display are separate passages, one per fact",
                        "each `statement` carrying the hypotheses they share",
                        "(\"the series converges, and its sum is s\" is two)",
-                       "Independent facts that share one clause (\"a widget is round and red\") "
-                       "or one formula stay one passage, shape `conclusions` or `equations`, a "
+                       "Independent facts that share one clause (\"a widget is round and red\"), "
+                       "one formula, or one hypothesis or supposition their sentence states once",
+                       "stay one passage, shape `conclusions` or `equations`, a "
                        "conjunct per fact, each linked by a part of its own",
-                       "no cut falls inside a clause or a formula, but R-INSTANCE's"):
+                       "no cut falls inside a clause or a formula, or between a hypothesis and "
+                       "its conclusions, but R-INSTANCE's"):
             with self.subTest(needle=needle[:40]):
                 self.assertIn(needle, SPLIT_CALL)
         # the series example is two independent clauses joined by ", and" with a subject of
         # its own after it: the connective rule cuts it, and the paragraph says it is two
         self.assertIn(", and", vocab.CUT_CONNECTIVES)
         self.assertIn("the series converges, and its sum is s", SPLIT_CALL)
-        self.assertIn("\"W is finite, and it is abelian\" is two", inside)
+        self.assertIn("\"W has a spanning gadget, and it is sprocketed\" is two", inside)
         self.assertIn("conclusions", vocab.COMPOUND_SHAPE_ORDER)
+
+    def test_the_hypothesis_rule_wins_over_the_split(self):
+        """Resolution A of 2026-10-29: R-SPLIT said "even … under one hypothesis" where the
+        same prompt said never to cut between a hypothesis and its conclusion, Context said
+        never to cut a statement from its hypothesis and the worker's check said never after a
+        supposition.  The hypothesis rule wins: facts that share one hypothesis or supposition
+        are one passage with a conjunct (and a part) per fact, as facts that share one clause
+        or one formula are, and the ", and" example is no longer a hypothesis and its
+        conclusion."""
+        # gone from rule 3's prompt and from the call: the shared rules' `conclusions` gloss
+        # keeps the words, since an unaudited plan's prompt is byte for byte the one it was
+        for text in ("under one hypothesis", "W is finite, and it is abelian"):
+            with self.subTest(gone=text):
+                self.assertNotIn(text, self.flat)
+                self.assertNotIn(text, SPLIT_CALL)
+        self.assertIn("about one subject under one hypothesis", self.lines["Conjuncts."])
+        # the three rules the call used to contradict are all still there
+        for needle in ("Never cut between a hypothesis and its conclusions, however many it "
+                       "governs",
+                       "since a statement is never cut from its hypothesis",
+                       "Never cut after a supposition"):
+            with self.subTest(needle=needle[:40]):
+                self.assertIn(needle, self.flat)
+        # and the one passage the shared hypothesis makes is a compound one, a conjunct a fact
+        self.assertIn("one hypothesis or supposition their sentence states once", SPLIT_CALL)
+        self.assertIn("a conjunct per fact, each linked by a part of its own", SPLIT_CALL)
+        self.assertIn("independent facts that one clause, one formula or one hypothesis states "
+                      "(R-SPLIT)", CUT_CHECK)
+        self.assertIn("`conclusions` (independent facts that one clause, or one hypothesis, "
+                      "states: R-SPLIT)", self.rule("Conjuncts."))
+        block = " ".join(VOCABULARY_MD[VOCABULARY_MD.index("**Two calls on the cut**"):].split())
+        self.assertIn("**The hypothesis rule wins over the split**", block)
+        self.assertIn("with a conjunct and a part per fact, as facts that share one clause or "
+                      "one formula do", block)
+
+    def test_a_bare_and_or_but_cuts_nothing(self):
+        """Resolution C: the cut list's connective is `, and`, the comma's -- a bare "and",
+        which ``locate_text.cut_points`` counts as none, and a "but", which no cut list holds,
+        cut nothing, so the facts they join are one passage with a conjunct each."""
+        inside = self.rule("Inside a sentence.")
+        self.assertIn("a bare \"and\" or a \"but\" is no connective of the list, so the facts "
+                      "one of them joins stay one passage, a conjunct each", inside)
+        self.assertNotIn("but", [c.lstrip(",; ") for c in vocab.CUT_CONNECTIVES])
+        self.assertIn("a bare \"and\" is none", lt.Blocks.cut_points.__doc__)
+        block = " ".join(VOCABULARY_MD[VOCABULARY_MD.index("**Two calls on the cut**"):].split())
+        self.assertIn("a bare `and`, which `locate_text.cut_points` counts as none, and a "
+                      "`but`, which is in no cut list, cut nothing", block)
+
+    def test_two_pieces_of_one_sentence_never_share_their_text(self):
+        """Resolution B: gate rule 10 (g) refuses two passages with one span text, which two
+        R-INSTANCE pieces of a sentence that names one structure twice would have.  The worker
+        carries the rule -- the gate is unchanged -- and the ``until`` line says how."""
+        self.assertIn("No two of the pieces have the same words: where a sentence names one "
+                      "structure twice, the earlier piece ends with an `until` that takes in "
+                      "the comma or the word after it, since two passages with one span text "
+                      "are refused.", INSTANCE_CALL)
+        self.assertIn("or to take in the word that tells two pieces of one sentence apart "
+                      "(R-INSTANCE, above)", self.flat)
+        self.assertIn("no two pieces sharing their words", CUT_CHECK)
+        # the gate's words for the refusal the rule avoids, and no gate change for it
+        gate = (SKILL / "scripts" / "gate" / "verify_locate.py").read_text(encoding="utf-8")
+        self.assertIn("two passages with one span text", gate)
 
     def test_displays(self):
         """Finding 4: a display whose separate formulas each state an independent fact is cut

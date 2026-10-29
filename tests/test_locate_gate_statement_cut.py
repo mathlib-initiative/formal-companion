@@ -1809,5 +1809,79 @@ class TestThePlanner(unittest.TestCase):
         self.assertEqual(after["conditional"], "prominence")
 
 
+# --------------------------------------------------------------------------- #
+# R-INSTANCE's pieces and rule 10 (g) (references/vocabulary.md section 1.11)
+# --------------------------------------------------------------------------- #
+
+#: a layer whose one math paragraph names one structure twice, which is where
+#: R-INSTANCE's per-structure pieces meet rule 10 (g): cut at the words that name each
+#: structure, two of the four pieces have the same span text, and two passages with one
+#: span text have one ``passage_key``.  The resolution of 2026-10-29 is the worker's --
+#: the earlier piece ends with an ``until`` that takes in the comma, the neighbouring
+#: word that tells the two apart -- and the gate is unchanged
+TWICE = "Every one of widgets, widgets, gadgets and sprockets is sprocketed."
+TWICE_LAYER = "\n".join([TITLE, TWICE, HISTORY])
+TWICE_SPAN = [TWICE_LAYER.index(TWICE), TWICE_LAYER.index(TWICE) + len(TWICE)]
+TWICE_HISTORY = [TWICE_LAYER.index(HISTORY), len(TWICE_LAYER)]
+TWICE_PARAGRAPHS = [
+    {"span": [0, len(TITLE)], "section": [], "block": "p", "formulas": 0, "math": False},
+    {"span": TWICE_SPAN, "section": [], "block": "p", "formulas": 0, "math": True},
+    {"span": TWICE_HISTORY, "section": ["History"], "block": "p", "formulas": 0, "math": False},
+]
+#: where each piece starts, and the words that name its structure: "widgets" twice
+TWICE_WORDS = ["widgets", "widgets", "gadgets", "sprockets"]
+TWICE_STARTS = [TWICE_LAYER.index("widgets,"),
+                TWICE_LAYER.index("widgets,", TWICE_LAYER.index("widgets,") + 1),
+                TWICE_LAYER.index("gadgets"),
+                TWICE_LAYER.index("sprockets")]
+
+
+class TestRInstancePiecesHaveTheirOwnText(InventoryCase):
+    """A sentence that names one structure twice, cut per structure by R-INSTANCE."""
+
+    LAYER = TWICE_LAYER
+    FORMULAS = []
+    PARAGRAPHS = TWICE_PARAGRAPHS
+
+    def setUp(self):
+        super().setUp()
+        # every piece is the model's: this page carries no deterministic finder
+        self.fx.manifest(self.TASK, {
+            "source_id": G.SID, "source_sha": G.HTML_SHA, "layer_sha256": self.fx.layer_sha,
+            "renderer": "web-html/1", "finders": []})
+
+    def body(self, until: str | None = None) -> dict:
+        """The four pieces, each ended by the rule ``passage_ids.py`` writes; with
+        ``until`` the first piece takes in the comma after it."""
+        ids = head_ids(TWICE_STARTS, TWICE_LAYER, [])
+        rows = []
+        for i, (start, exact) in enumerate(zip(TWICE_STARTS, TWICE_WORDS)):
+            end = lt.passage_end(TWICE_LAYER, TWICE_PARAGRAPHS, start, exact,
+                                 until if i == 0 else None, rule=3,
+                                 next_start=(TWICE_STARTS[i + 1] if i + 1 < len(TWICE_STARTS)
+                                             else None),
+                                 formulas=[])
+            rows.append(passage(f"piece {i + 1}", [start, end], "theorem", "supporting",
+                                "formal_math", until if i == 0 else None, {}, ids, TWICE_LAYER))
+        return {"passages": rows,
+                "skips": [{"span": TWICE_HISTORY, "reason": "history"}], "notes": ""}
+
+    def test_the_pieces_are_the_structures_the_sentence_names(self):
+        rows = self.body()["passages"]
+        self.assertEqual([TWICE_LAYER[p["span"][0]:p["span"][1]] for p in rows],
+                         ["widgets", "widgets", "gadgets and", "sprockets is sprocketed."])
+
+    def test_two_pieces_of_one_structure_share_one_passage_key(self):
+        result = self.gate(self.body(), CUT_3)
+        self.assertRule(result, 10, "has the same text as")
+        self.assertRule(result, 10, "two passages with one span text")
+
+    def test_the_until_that_tells_them_apart_passes(self):
+        body = self.body(until="widgets,")
+        self.assertEqual(TWICE_LAYER[body["passages"][0]["span"][0]:
+                                     body["passages"][0]["span"][1]], "widgets,")
+        self.assertOk(self.gate(body, CUT_3))
+
+
 if __name__ == "__main__":
     unittest.main()

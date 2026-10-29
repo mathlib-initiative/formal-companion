@@ -3690,16 +3690,19 @@ names a step, under C7 a sentence naming a symbol is a `notation` passage scoped
 before it is context —
 which the inventory prompt states in its own sentences beside the shared rules, and, from the
 maintainer's notes of 2026-10-28, its **two calls on the cut** (`references/vocabulary.md` §1.11,
-"Two calls on the cut"), which make one cut rule: under C1, C4 and C8 (R-SPLIT) facts that each
-stand as a result of their own are independent, C4's NEVER keeps together the clauses of one
-statement and not every pair of conjuncts about one subject, a compound passage of independent
-facts that are not one clause or one formula is `under_cut`, rule 8, independent facts one clause
-or one formula states are one passage with a conjunct per fact, and a cut inside a clause but
-R-INSTANCE's is `over_cut`, rule 4; under C3 a display whose separate formulas each state an
-independent fact is cut before each formula after the first; and under C2 and C4 (R-INSTANCE) a
+"Two calls on the cut"), which make one cut rule and which C2, C3, C4 and C8 themselves state in
+the worker prompt's words (C3 with the formula exception: a formula with no space before it
+cannot start a passage), leaving the rule-3 block what they make of a verdict: a compound passage
+of independent facts that are not one clause, one formula or one hypothesis is `under_cut`,
+rule 8, while facts one clause, one formula or one hypothesis states are one passage with a
+conjunct and a part per fact — the hypothesis rule wins over the split, so no cut falls between a
+hypothesis and the conclusions it governs — and a cut inside a clause but
+R-INSTANCE's is `over_cut`, rule 4; and (R-INSTANCE) a
 sentence naming several structures with one property kept as one passage is `under_cut`, rule 2,
-its per-structure passages never `over_cut`, never wrong for being one word and never
-`statement_misstates` for saying the sentence's property of their structure, which the auditor's
+its per-structure passages never `over_cut`, never wrong for being one word, never
+`statement_misstates` for saying the sentence's property of their structure and never wrong for
+the `until` that tells two of them apart (two passages with one span text are refused by rule
+10 (g), and the gate is unchanged), which the auditor's
 `under_cut` and `statement_misstates` glosses repeat and the skeptic's example of a refuted flag
 follows (existence and uniqueness of one object, C8, where rules 1 and 2 keep their example of
 two conjuncts about one subject); the auditor's GAP

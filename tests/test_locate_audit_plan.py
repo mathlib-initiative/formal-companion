@@ -349,6 +349,16 @@ class TestTheWrappers(Audited):
 # the prompts
 # --------------------------------------------------------------------------- #
 
+#: ``(rule, section 3.4's clause) -> what a rule-3 card says in its place``: the
+#: maintainer's two calls on the cut of 2026-10-28 are stated by C2, C3, C4 and C8
+#: themselves (references/vocabulary.md section 1.11, "Two calls on the cut"), so a
+#: rule-3 card replaces the clause the calls overruled; every other clause of
+#: :data:`TestThePrompts.KEY_CLAUSES` is word for word the proposal's at every rule
+CALLS_REPLACED = {
+    (4, "between conjuncts about one subject"): "between the clauses of one statement",
+}
+
+
 class TestThePrompts(Audited):
 
     def test_the_seven_the_turn_machine_reads_with_no_unfilled_slot(self):
@@ -428,7 +438,7 @@ class TestThePrompts(Audited):
             "over the items of one list of a compound statement"),
         3: ("its end-to-end equation", "shape `equations`"),
         4: ("between a hypothesis and its conclusion", "inside an iff",
-            "between conjuncts about one subject"),
+            "between conjuncts about one subject"),      # rule 3: :data:`CALLS_REPLACED`
         5: ("one passage per item", "a display inside a list item belongs to that item"),
         6: ("judged a sentence at a time", "never a conjunct of the example"),
         7: ("no `formal_math` passage of its own", "is a `notation` passage",
@@ -444,12 +454,17 @@ class TestThePrompts(Audited):
         system = self.prompts()["reviewer-system.md"]
         section = " ".join(section_34().split())
         cards = dict(re.findall(r"(?m)^- \*\*C(\d+) [^*]+?\*\* (.*)$", system))
+        rule = getattr(self, "RULE", vocab.INVENTORY_AUDIT_RULE)
         for n, clauses in self.KEY_CLAUSES.items():
             card = cards[str(n)]
             for clause in clauses:
                 with self.subTest(rule=n, clause=clause):
-                    self.assertIn(clause.lower(), card.lower())
+                    # section 3.4's words, always: the card of a rule-3 plan says the ones
+                    # the maintainer's two calls replaced in the call's words instead
                     self.assertIn(clause.lower(), section.lower())
+                    said = (CALLS_REPLACED[(n, clause)] if rule >= 3
+                            and (n, clause) in CALLS_REPLACED else clause)
+                    self.assertIn(said.lower(), card.lower())
         # the verdict that rests on rule 7's last sentence names it
         self.assertRegex(self.prompts()["reviewer.md"],
                          r"`statement_misstates` when [^;]*read on its own \(C7\)")
@@ -658,7 +673,8 @@ class TestTheSkipPrompts(AtRule, Audited):
 GAP_WORDS = ("gap_statements", "examined_gaps", "missed_gaps", "'<gap id>'", "`commentary`",
              "--rule 3", "Three readings of the cut", "**Gaps (audit rule",
              "Two calls of the maintainer on the cut", "C8 keeps them one", "R-SPLIT",
-             "R-INSTANCE", "not one clause or one formula")
+             "R-INSTANCE", "not one clause, one formula or one hypothesis",
+             "a bare \"and\" or a \"but\"")
 
 
 class TestTheGapPrompts(AtRule, Audited):
@@ -678,24 +694,39 @@ class TestTheGapPrompts(AtRule, Audited):
                                         "need not be finite", "to name a step",
                                         "symbols and all", "(`r1-g001`)",
                                         "**Two calls of the maintainer on the cut (audit rule "
-                                        "3)**", "C4's NEVER keeps together the clauses of one "
-                                        "statement", "not every pair of conjuncts about one "
-                                        "subject", "and its \", and\" cuts before a clause "
-                                        "with a subject of its own, a pronoun for the same "
-                                        "object too", "so a compound passage that holds them is "
-                                        "`under_cut` (rule 8)", "Independent facts that one "
-                                        "clause or one formula states are one passage, a "
-                                        "conjunct per fact: never `under_cut`, and a cut inside "
-                                        "a clause is `over_cut` (rule 4), but R-INSTANCE's",
-                                        "Under C3, a display whose separate formulas each state "
-                                        "an independent fact is cut before each formula after "
-                                        "the first",
-                                        "such a sentence kept as one passage is `under_cut` "
-                                        "(rule 2), and its per-structure passages are never "
+                                        "3)**",
+                                        # the calls are C2, C3, C4 and C8 themselves now
+                                        "which C2, C3, C4 and C8 above state as the inventory "
+                                        "prompt the worker ran says them",
+                                        "a bare \"and\" or a \"but\" is no connective of the "
+                                        "list, and the facts it joins stay one passage, a "
+                                        "conjunct each",
+                                        "NEVER cut between a hypothesis and its conclusions, "
+                                        "however many it governs",
+                                        "between the clauses of one statement (the existence "
+                                        "and uniqueness of one object",
+                                        "or inside a clause, but by R-INSTANCE.",
+                                        "A formula is never cut, and a passage starts at one "
+                                        "only where a space stands before it",
+                                        "one with no space before it starts none and the "
+                                        "display stays whole",
+                                        "`conclusions` for independent facts that one clause "
+                                        "or one hypothesis states",
+                                        # and the block says only what they make of a verdict
+                                        "is `under_cut` (rule 8), while one whose conjuncts are "
+                                        "the clauses of one statement, or independent facts "
+                                        "that one clause, one formula or one hypothesis "
+                                        "states, is never `under_cut`",
+                                        "a cut inside a clause is `over_cut` (rule 4), but "
+                                        "R-INSTANCE's",
+                                        "kept as one passage is `under_cut` "
+                                        "(rule 2), while its per-structure passages are never "
                                         "`over_cut`, never wrong for being one word (the "
-                                        "prompt's single-word line, PD5's), and never "
+                                        "prompt's single-word line, PD5's), never "
                                         "`statement_misstates` for saying the sentence's "
-                                        "property of their structure")),
+                                        "property of their structure, and never wrong for an "
+                                        "`until` that takes in the word which tells two of "
+                                        "them apart")),
                 ("reviewer.md", ('"gaps": [', "`commentary`", "7. **`gaps`: one row for EVERY "
                                  "gap your part shows**",
                                  "and `should_be_expository` (C6, PD5) when it asserts "
@@ -704,9 +735,10 @@ class TestTheGapPrompts(AtRule, Audited):
                                  "`kind-rule` marks every formal passage of kind `other`",
                                  "`under_cut` when it holds two results the spec cuts apart "
                                  "(the rule card's two calls: a compound passage whose "
-                                 "conjuncts are independent facts and not one clause or one "
-                                 "formula, rule 8, and a sentence naming several structures "
-                                 "with one property kept as one passage, rule 2)",
+                                 "conjuncts are independent facts and not one clause, one "
+                                 "formula or one hypothesis, rule 8, and a sentence naming "
+                                 "several structures with one property kept as one passage, "
+                                 "rule 2)",
                                  "(C7), never for an R-INSTANCE piece's saying the sentence's "
                                  "property of its structure;")),
                 ("worker.md", (TS.CUT_CALLS, TS.CUT_CHECK)),

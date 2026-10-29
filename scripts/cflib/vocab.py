@@ -852,7 +852,11 @@ def reads_bundles(status_rule: int) -> bool:
 #: definition, in one sentence, one display or one list; ``conclusions`` -- several
 #: conclusions about one subject under one hypothesis; ``equations`` -- one display
 #: that holds several equations (an equation chain is no compound: it is one statement,
-#: its end-to-end equation).
+#: its end-to-end equation).  Under the maintainer's two calls on the cut, which only an
+#: inventory audited at rule 3 renders (references/vocabulary.md section 1.11), the last
+#: two shapes are read a little wider: ``conclusions`` holds the independent facts that
+#: one clause or one hypothesis states, and ``equations`` the several equations of one
+#: formula or the formulas of one statement.  The list and its sizes are unchanged.
 SHAPE_EXISTENCE_UNIQUENESS = "existence_uniqueness"
 SHAPE_IFF = "iff"
 SHAPE_CASES = "cases"
