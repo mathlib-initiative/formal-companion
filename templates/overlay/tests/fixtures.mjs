@@ -15,7 +15,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BUNDLE_SCHEMA, NAMESPACE, sha256Hex } from "../runtime/viewer/viewer-core.js";
+import { BUNDLE_SCHEMA, NAMESPACE, itemFolder, sha256Hex } from "../runtime/viewer/viewer-core.js";
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const VIEWER_DIR = path.resolve(HERE, "../runtime/viewer");
@@ -222,6 +222,72 @@ export function makeSections(sha256) {
   };
 }
 
+/** A Lean end of a proof step: `lines` of `decl`, with `text` as its snippet when given. */
+function stepEnd(decl, lines, text, { ext = {}, truncated = false } = {}) {
+  return lean({
+    decl,
+    ext: { destination: { resolution: "exact" },
+           ...(text ? { snippet: { line: lines[0], text, ...(truncated ? { truncated } : {}) } } : {}), ...ext },
+    location: { declaration: decl, lines, module: "Notes.Box" },
+    role: "key",
+  });
+}
+
+/**
+ * A proof in an item folder: the folder `9/theorem-9.1` holds the theorem and
+ * its four steps, two on page 9 and two on page 10, whose ids spell nothing a
+ * viewer could parse. Page 9 also holds an item with no proof, and page 11 a
+ * checked absence that is not a step.
+ */
+export function makeProofSections(sha256) {
+  const theorem = link(
+    [region(sha256, { page: 9, rect: [0.1, 0.1, 0.8, 0.1], title: "Theorem 9.1 (Doubling)" })],
+    lean({ decl: "Notes.Box.double", ext: { destination: { resolution: "exact" },
+                                            snippet: { line: 18, text: "theorem double (b : Box) : 2 * b = b + b" } },
+           role: "key" }),
+    { extra: { kind: "theorem", status: "formalized" }, item: "thm" },
+  );
+  const step = (id, page, y, title, relation, object, extra = {}) => ({
+    extensions: { [NAMESPACE]: { provenance: { confirmed_by_human: false, method: "audit" } } },
+    id,
+    kind: "proof_step",
+    object,
+    relation,
+    status: relation === "noMatch" ? "not_formalized" : relation === "relatedMatch" ? "partial" : "formalized",
+    subject: [region(sha256, { page, rect: [0.1, y, 0.8, 0.05], title: `${id}: ${title}` })],
+    ...extra,
+  });
+  const steps = [
+    step("a", 9, 0.3, "Unfold the product", "exactMatch", [stepEnd("Notes.Box.double", [20, 21], "intro b\nsimp")]),
+    step("b", 9, 0.4, "Collect the two terms", "closeMatch", [
+      stepEnd("Notes.Box.double", [22, 23], "rw [two_mul]\nring"),
+      stepEnd("Notes.Box.double", [25, 25], "exact h"),
+      stepEnd("Notes.Box.double", [27, 40], "calc _ = _ := by\n  simp", { truncated: true }),
+    ], { note: "`ring` closes what the book does by hand." }),
+    step("c", 10, 0.1, "Bound each side", "relatedMatch", [
+      stepEnd("Notes.Box.double", [41, 41], "have := h"),
+      stepEnd("Notes.Box.bound", [7, 7], "theorem bound", {
+        ext: { declaration: { id: "Notes.Box.bound", kind: "theorem", sorry: "exercise" } },
+      }),
+    ]),
+    step("d", 10, 0.2, "The sum is finite", "noMatch", [
+      { location: { declaration: "Notes.Box.double", module: "Notes.Box" }, type: "lean", uri: REPOSITORY },
+      { location: { lines: [50, 52], module: "Notes.Set" }, type: "lean", uri: REPOSITORY },
+    ], { note: "Lean takes finiteness from an instance." }),
+  ];
+  const plain = link(
+    [region(sha256, { page: 9, rect: [0.1, 0.8, 0.8, 0.1], title: "Remark 9.2" })],
+    lean({ decl: "Notes.Box.remark", ext: { destination: { resolution: "exact" } }, role: "key" }),
+    { extra: { kind: "remark", status: "formalized" }, item: "remark" },
+  );
+  const absent = {
+    id: "item:gap", kind: "example", object: [{ location: { module: "Notes.Box" }, type: "lean", uri: REPOSITORY }],
+    relation: "noMatch", status: "not_formalized",
+    subject: [region(sha256, { page: 11, rect: [0.1, 0.1, 0.8, 0.1], title: "Example 11.1" })],
+  };
+  return { 9: [plain], "9/theorem-9.1": [theorem, ...steps], 11: [absent] };
+}
+
 /** `[{path, annotation}]`: `annotations/<section>/<nn>.json`, one per record, in file order. */
 export function annotationFiles(sections) {
   return Object.entries(sections).flatMap(([section, records]) => records.map((annotation, index) => (
@@ -250,8 +316,8 @@ export async function makeGenerated(sections, text = bundleText(sections)) {
 
 /** What `loadAnnotations` hands `buildIndex`: each record with the URL of its own file. */
 export function fileInputs(sections) {
-  return annotationFiles(sections).map(({ annotation, path }) => ({ path, records: [annotation],
-                                                                   url: `${ORIGIN}/${path}` }));
+  return annotationFiles(sections).map(({ annotation, path }) => ({ folder: itemFolder(path, "annotations"), path,
+                                                                   records: [annotation], url: `${ORIGIN}/${path}` }));
 }
 
 // --- verso.json ---------------------------------------------------------------
