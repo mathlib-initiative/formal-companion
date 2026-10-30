@@ -100,9 +100,11 @@ keyboard focus or the PDF is not verified), the keys line (the toolbar buttons
 name their shortcuts), the key and related counts and the name filter, a key
 card's kind and badges, a related row's role and kind words, the review footer
 and the ledger cluster, and the "Formalized" word. A word that qualifies the
-links (support only, partial, ...), where a link goes ("module page", "no
-page"), the notice, the pagers and the faithfulness verdicts with their "machine
-verdicts, unreviewed" caveat stay. `source_id` names the PDF the overlay shows:
+links (support only, partial, a proof step's "Close match", "Related" or "No
+match", ...), where a link goes ("module page", "no page"), the notice, the
+pagers and the faithfulness verdicts with their "machine verdicts, unreviewed"
+caveat stay. A relation says what a link claims, so it is no metadata about the
+link: only `exactMatch`, the claim a link makes by being there, goes unmarked. `source_id` names the PDF the overlay shows:
 the `source_id` in the overlay extension of its records' PDF ends (section 7).
 `scripts/overlay/config.py`, `runtime/schema/overlay-config-v1.schema.json` and
 `runtime/tools/check_generated.py` carry the same rules and patterns, held
@@ -169,6 +171,29 @@ From the records alone it builds:
   scroll has already hidden it. Otherwise, and with no `verso.json`, the
   plain statement stays;
 - an item with no card says so, and names its ledger clusters;
+- proof steps: a record of `kind: proof_step` is a step, and its item is the
+  one other item with records in its item folder. Section 7 says what a
+  producer writes. A page's row of that item lists the steps on the page under
+  it, one line each: the step's number in its proof, its title less the id it
+  repeats, its relation, and its region's mark; if the item's own region is on
+  another page, the row comes with the steps and opens that page. An item's
+  panel lists all its steps under "Proof", each with its page when that is not
+  this one, and a row opens its step on its page. Within a proof the stepper
+  walks the steps, turning the page, and the panel's head leads back to the
+  item. A step's box is drawn with no fill, so the page's items stand out. A
+  step's panel shows, in place of the coverage word, its relation (`exactMatch`
+  "Exact match", `closeMatch` "Close match", `relatedMatch` "Related",
+  `broadMatch` "Broader", `narrowMatch` "Narrower", `hasPart` "In part",
+  `noMatch` "No match", any other token as written, with what it claims as its
+  title), its `note` with backticked code set as code, and one card per
+  declaration in the record's order, with every range of it the record names:
+  the end's snippet with its `location.lines` in a gutter, or the line numbers
+  alone with no snippet, and how far a snippet with `truncated` runs. A step
+  whose record is `noMatch` has no card: it says it was checked and lists the
+  record's object ends, the Lean the absence is scoped to, by declaration else
+  by module, with their lines; a declaration links only where a card of the same
+  proof names it. A record of any other kind prints no relation and keeps this
+  section's cards;
 - the regions on a page are in reading order (top, then left), whatever
   order the files came in; with nothing selected the panel lists the page's
   items in that order, with how many a key declaration states, and a page
@@ -358,6 +383,18 @@ Windows device name (`con`, `nul`, ...), `_defaults.json`, and every name
 that equals another one in its folder ignoring case instead ends in `-` and
 the first 10 hex digits of the sha256 of the full unsanitized key, truncated
 to fit.
+
+A producer of proof steps (this exporter writes none) gives each step one
+record with `kind: proof_step`, a file in the item's folder beside at least one
+record of the item, of any other kind; the folder holds no other item's records.
+Its file names sort, numbers as numbers, in the order of the proof. Its `id` is
+any id of its own: the viewer never parses one. A `title` that starts with
+`<id>: ` shows what follows it. `relation` says what its lines claim; `note` is
+optional. Each object end's `location` names `lines: [first, last]` of a
+`declaration` or `module`, with the extension's `snippet` of those lines, and
+one end per range. A `noMatch` step's object ends name the Lean it was checked
+against, with no snippet. A step that breaks the folder rule stays an item of its
+own, with its lines and relation, never guessed onto an item.
 
 `scripts/overlay/defaults.py` writes the files with Literature Links folder
 defaults: `annotations/_defaults.json` holds what all records share and an
