@@ -31,11 +31,14 @@ import {
   endRegion,
   firstKeyCard,
   hoverText,
+  itemFolder,
   labelParts,
   leanTokens,
+  linesText,
   locatorTail,
   locatorText,
   modulePage,
+  pageRows,
   pageSummary,
   pageSummaryText,
   paginateCards,
@@ -59,6 +62,9 @@ import {
   splitCards,
   siteRootFor,
   splitName,
+  stepCards,
+  stepParts,
+  stepRelation,
   targetHref,
   verdictDisplay,
   verdictFooter,
@@ -73,6 +79,7 @@ import {
   OTHER_SOURCE_ID,
   PDF_BYTES,
   PDF_ROUTE,
+  REPOSITORY,
   SOURCE_ID,
   VERSO_TARGET,
   VIEWER_DIR,
@@ -84,6 +91,7 @@ import {
   fileInputs,
   linkRecord,
   makeGenerated,
+  makeProofSections,
   makeSections,
   makeVerso,
 } from "./fixtures.mjs";
@@ -841,4 +849,157 @@ test("verso: a token links only a page of this site", () => {
                            "%2e%2e/other/x.html", "Notes/../../other/x.html"]) {
     assert.equal(siteHref(elsewhere, project, ORIGIN), null, elsewhere);
   }
+});
+
+// --- proof steps --------------------------------------------------------------
+
+const PROOF = makeProofSections(PDF_SHA256);
+
+function proofIndex(sections = PROOF, options = { pageOrigin: ORIGIN, siteUrl: `${ORIGIN}/` }) {
+  return buildIndex(fileInputs(sections), readConfig(makeConfig()), options);
+}
+
+test("steps: a step belongs to the one other item with records in its folder, whatever its id spells", () => {
+  const { items } = proofIndex();
+  assert.deepEqual(items.get("thm").steps, ["a", "b", "c", "d"]);
+  assert.deepEqual(["a", "b", "c", "d"].map((id) => items.get(id).stepOf), Array(4).fill("thm"));
+  assert.equal(items.get("thm").stepOf, null);
+  assert.deepEqual(items.get("remark").steps, []);
+});
+
+test("steps: a proof's steps are in the natural order of their file names", () => {
+  const [theorem, first] = PROOF["9/theorem-9.1"];
+  const file = (name, record) => ({ folder: "9/t", path: `annotations/9/t/${name}.json`, records: [record],
+                                    url: `${ORIGIN}/annotations/9/t/${name}.json` });
+  const { items } = buildIndex([
+    file("step-10", { ...first, id: "ten" }), file("key", theorem), file("step-9", { ...first, id: "nine" }),
+  ], readConfig(makeConfig()));
+  assert.deepEqual(items.get("thm").steps, ["nine", "ten"]);
+});
+
+test("steps: a step with no one item in its folder stays an item of its own, never guessed onto one", () => {
+  const [theorem, first] = PROOF["9/theorem-9.1"];
+  const other = { ...theorem, id: "other" };
+  const loose = buildIndex(fileInputs({ 9: [theorem, first] }), readConfig(makeConfig()));
+  const alone = buildIndex(fileInputs({ "9/t": [first] }), readConfig(makeConfig()));
+  const shared = buildIndex(fileInputs({ "9/t": [theorem, other, first] }), readConfig(makeConfig()));
+  for (const { items } of [loose, alone, shared]) {
+    assert.equal(items.get("a").stepOf, null);
+    assert.deepEqual(items.get("thm")?.steps ?? [], []);
+  }
+  // Its lines and its relation are still a step's.
+  assert.deepEqual(stepCards(loose.items.get("a"))[0].ranges[0].lines, [20, 21]);
+  assert.equal(stepRelation(loose.items.get("a")).word, "Exact match");
+  assert.deepEqual(stepParts(loose.items.get("a"), loose.items),
+                   { number: null, of: null, text: "", title: "a: Unfold the product" });
+});
+
+test("steps: a record of no other kind is touched: no folder, no step, the same cards in the same order", () => {
+  const sections = makeSections(PDF_SHA256);
+  const { items, pages } = buildIndex(fileInputs(sections), readConfig(makeConfig()));
+  for (const item of items.values()) {
+    assert.equal(item.stepOf, null);
+    assert.deepEqual(item.steps, []);
+    assert.deepEqual(item.checked, []);
+  }
+  assert.deepEqual(pageRows(pages.get(2), items).map((row) => [row.item.id, row.region.id, row.steps]),
+                   [["item:theorem-1.1", "loc:0001", []], ["item:remark-4.1", "loc:0004", []]]);
+});
+
+test("steps: a step's ranges are grouped by declaration in the record's order, with their lines", () => {
+  const { items } = proofIndex();
+  const [only] = stepCards(items.get("b"));
+  assert.equal(stepCards(items.get("b")).length, 1, "three ranges of one declaration are one card");
+  assert.deepEqual(only.ranges.map((range) => range.lines), [[22, 23], [25, 25], [27, 40]]);
+  assert.deepEqual(only.ranges.map((range) => range.snippet.line), [22, 25, 27]);
+  assert.equal(only.ranges[2].snippet.truncated, true);
+  assert.equal(only.ranges[0].snippet.truncated, undefined);
+  assert.deepEqual(stepCards(items.get("c")).map((entry) => entry.fullName), ["Notes.Box.double", "Notes.Box.bound"]);
+});
+
+test("steps: two anonymous examples with one name and different pages stay two cards", () => {
+  const example = (lines, fragment) => ({
+    extensions: { [NAMESPACE]: { declaration: { anonymous: true, id: "example", kind: "example" },
+                                 destination: { href: `Notes/Box/index.html#${fragment}`, resolution: "exact" },
+                                 snippet: { line: lines[0], text: "example" } } },
+    location: { lines, module: "Notes.Box" }, role: "key", type: "lean", uri: REPOSITORY,
+  });
+  const [theorem, first] = PROOF["9/theorem-9.1"];
+  const { items } = buildIndex(fileInputs({ "9/t": [theorem, { ...first, object: [example([3, 3], "x"), example([9, 9], "y")] }] }),
+                               readConfig(makeConfig()), { pageOrigin: ORIGIN, siteUrl: `${ORIGIN}/` });
+  assert.deepEqual(stepCards(items.get("a")).map((entry) => entry.ranges[0].lines), [[3, 3], [9, 9]]);
+});
+
+test("steps: a checked absence's ends say where it looked; they are not cards, and link only through a card", () => {
+  const { items } = proofIndex();
+  const step = items.get("d");
+  assert.deepEqual(step.cards, []);
+  assert.deepEqual(step.checked.map(({ fullName, href, lines, module, name }) => ({ fullName, href, lines, module, name })), [
+    { fullName: "Notes.Box.double", href: items.get("thm").cards[0].href, lines: null, module: "Notes.Box",
+      name: "Box.double" },
+    { fullName: "", href: null, lines: [50, 52], module: "Notes.Set", name: "Notes.Set" },
+  ]);
+  assert.ok(step.checked[0].href, "the theorem's card links that declaration");
+  assert.equal(firstKeyCard(step), null);
+  // A checked absence that is not a step keeps no ends at all.
+  assert.deepEqual(items.get("item:gap").checked, []);
+  assert.deepEqual(items.get("item:gap").cards, []);
+});
+
+test("steps: a step reads as its number, its proof's length and its label less its id", () => {
+  const { items } = proofIndex();
+  assert.deepEqual(stepParts(items.get("c"), items),
+                   { number: 3, of: 4, text: "Bound each side", title: "Step 3" });
+  // A label that does not repeat the id is kept whole.
+  items.get("c").label = "Bound each side";
+  assert.equal(stepParts(items.get("c"), items).text, "Bound each side");
+  items.get("c").label = "c";
+  assert.equal(stepParts(items.get("c"), items).text, "");
+});
+
+test("steps: the relation is printed; a minimal overlay leaves only an exact match unmarked", () => {
+  const word = (relations, options) => stepRelation({ relations }, options).word;
+  assert.equal(word(["exactMatch"]), "Exact match");
+  assert.equal(word(["closeMatch"]), "Close match");
+  assert.equal(word(["relatedMatch"]), "Related");
+  assert.equal(word(["noMatch"]), "No match");
+  assert.equal(word(["exactMatch"], { minimal: true }), "");
+  assert.equal(word(["closeMatch"], { minimal: true }), "Close match");
+  assert.equal(word(["relatedMatch"], { minimal: true }), "Related");
+  assert.equal(word(["noMatch"], { minimal: true }), "No match");
+  // Literature Links' relation is free text: an unknown token prints as written.
+  assert.equal(word(["seeAlsoMatch"]), "seeAlsoMatch");
+  assert.equal(word([]), "");
+  assert.equal(word(["exactMatch", "closeMatch"], { minimal: true }), "Close match");
+  assert.ok(stepRelation({ relations: ["closeMatch"] }).title);
+  assert.equal(stepRelation({ relations: ["seeAlsoMatch"] }).title, "");
+});
+
+test("steps: a page's rows nest each step under its item, in the proof's order", () => {
+  const { items, pages } = proofIndex();
+  const shape = (page) => pageRows(pages.get(page), items).map((row) => [row.item.id, Boolean(row.region),
+                                                                         row.steps.map((step) => step.item.id)]);
+  assert.deepEqual(shape(9), [["thm", true, ["a", "b"]], ["remark", true, []]]);
+  // The theorem's own region is on page 9: on page 10 it comes with its steps, with no region.
+  assert.deepEqual(shape(10), [["thm", false, ["c", "d"]]]);
+  assert.deepEqual(items.get("thm").place, { page: 9, regionId: pages.get(9)[0].id });
+  assert.equal(items.get("c").place.page, 10);
+});
+
+test("steps: a page's count line adds its steps, and says nothing new on a page with none", () => {
+  const items = [{ cards: [{ role: "key" }] }, { cards: [] }];
+  assert.equal(pageSummaryText(items), "2 passages · 1 with a key declaration");
+  assert.equal(pageSummaryText(items, 0), "2 passages · 1 with a key declaration");
+  assert.equal(pageSummaryText(items, 1), "2 passages · 1 with a key declaration · 1 proof step");
+  assert.equal(pageSummaryText([], 2), "2 proof steps");
+  assert.equal(pageSummaryText([], 0), "No highlighted passages on this page.");
+});
+
+test("steps: line ranges read one way, and an item folder is the file's <section>/<item>", () => {
+  assert.equal(linesText([7, 7]), "Line 7");
+  assert.equal(linesText([7, 9]), "Lines 7–9");
+  assert.equal(linesText(null), "");
+  assert.equal(itemFolder("annotations/3E/3.101/proof-step-01.json", "annotations"), "3E/3.101");
+  assert.equal(itemFolder("annotations/3E/3.90__key__x.json", "annotations"), null);
+  assert.equal(itemFolder("a/b/3E/3.101/x.json", "a/b"), "3E/3.101");
 });
