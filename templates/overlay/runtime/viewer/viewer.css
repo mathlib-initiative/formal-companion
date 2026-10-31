@@ -37,8 +37,9 @@
   --region-fill-hover: rgba(240, 170, 40, 0.20);
   --region-quiet: rgba(105, 101, 93, 0.70);
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --serif: ui-serif, "New York", "Iowan Old Style", Palatino, Georgia, serif;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  /* system-ui last, for a glyph the rest lack: Firefox on macOS finds U+2096 no other way. */
+  --serif: ui-serif, "New York", "Iowan Old Style", Palatino, Georgia, serif, system-ui;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace, system-ui;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -130,6 +131,22 @@
 
 [hidden] {
   display: none !important;
+}
+
+sub,
+sup {
+  position: relative;
+  font-size: 0.7em;
+  line-height: 0;
+  vertical-align: baseline;
+}
+
+sub {
+  bottom: -0.25em;
+}
+
+sup {
+  top: -0.45em;
 }
 
 html {
@@ -1168,6 +1185,12 @@ kbd {
   font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.note-toggle {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
 }
 
 .coverage-note {

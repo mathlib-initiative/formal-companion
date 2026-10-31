@@ -55,6 +55,7 @@ import {
   regionCoverage,
   regionVerdict,
   reviewFooter,
+  scriptRuns,
   sha256Hex,
   sharedRole,
   siteHref,
@@ -305,7 +306,8 @@ export async function bootstrapViewer({
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
-      "item-head", "step-parent", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
+      "item-head", "step-parent", "item-label", "item-locator", "target-summary", "note-toggle", "coverage-note",
+      "verdict-notes",
       "key-section", "key-head", "key-count", "key-note", "key-list", "key-more",
       "step-section", "step-count", "step-list",
       "related-section", "related-heading", "related-count", "related-list", "filter-empty", "target-filter",
@@ -320,6 +322,7 @@ export async function bootstrapViewer({
     faithfulness: false,
     index: null,
     keysAll: false,
+    noteOpen: false,
     pageOrigin: "",
     pdfDocument: null,
     region: null,
@@ -353,6 +356,21 @@ export async function bootstrapViewer({
       node.textContent = value;
     }
     return node;
+  }
+
+  /** Sets a node to a title's text, its script characters as `<sub>` and `<sup>`. */
+  function setTitleText(node, value) {
+    const runs = scriptRuns(value);
+    if (runs.some(([kind]) => kind !== "text")) {
+      node.replaceChildren(...runs.map(([kind, run]) => (kind === "text" ? run : make(kind, "", run))));
+    } else {
+      node.textContent = value;
+    }
+    return node;
+  }
+
+  function makeTitle(tag, className, value) {
+    return setTitleText(make(tag, className), value);
   }
 
   function showError(error) {
@@ -842,7 +860,7 @@ export async function bootstrapViewer({
     const regionId = here?.id ?? step.place.regionId;
     row.dataset.regionId = regionId;
     row.append(make("span", `swatch mini ${regionCoverage(step)}`), make("span", "step-number", String(parts.number)),
-               make("span", "step-text", parts.text));
+               makeTitle("span", "step-text", parts.text));
     if (relation.word) {
       const word = make("span", "step-relation", relation.word);
       word.title = relation.title;
@@ -888,7 +906,7 @@ export async function bootstrapViewer({
       mark.title = coverageWord(item.coverage) || "No key declaration";
       row.append(mark);
       const cell = make("span", "index-label");
-      const label = make("span", "index-title", labelParts(item.label).title);
+      const label = makeTitle("span", "index-title", labelParts(item.label).title);
       label.title = item.label;
       cell.append(label);
       const verdict = state.faithfulness ? regionVerdict([item]) : null;
@@ -972,7 +990,7 @@ export async function bootstrapViewer({
     }
     for (const itemId of items) {
       const item = state.index.items.get(itemId);
-      const button = make("button", "item-choice", labelParts(item.label).title);
+      const button = makeTitle("button", "item-choice", labelParts(item.label).title);
       button.type = "button";
       button.title = item.label;
       button.dataset.itemId = itemId;
@@ -1054,11 +1072,11 @@ export async function bootstrapViewer({
     const parts = stepParts(item, state.index.items);
     const owner = state.index.items.get(item.stepOf);
     ui["step-parent"].hidden = !owner;
-    ui["step-parent"].textContent = owner ? `Proof of ${labelParts(owner.label).title}` : "";
+    setTitleText(ui["step-parent"], owner ? `Proof of ${labelParts(owner.label).title}` : "");
     ui["step-parent"].title = owner?.label ?? "";
-    ui["item-label"].replaceChildren(make("span", "item-title", parts.title));
+    ui["item-label"].replaceChildren(makeTitle("span", "item-title", parts.title));
     if (parts.text) {
-      ui["item-label"].append(make("span", "item-subtitle", parts.text));
+      ui["item-label"].append(makeTitle("span", "item-subtitle", parts.text));
     }
   }
 
@@ -1068,6 +1086,19 @@ export async function bootstrapViewer({
       ? make("code", "", value) : value)));
   }
 
+  /**
+   * A minimal overlay keeps a record's note behind one control, closed until
+   * asked for and then open from record to record; a full one shows it.
+   */
+  function renderNote(item) {
+    const note = Boolean(item?.coverageNote);
+    const behind = note && state.config.minimal;
+    ui["note-toggle"].hidden = !behind;
+    ui["note-toggle"].textContent = state.noteOpen ? "Less detail" : "More detail";
+    ui["note-toggle"].setAttribute("aria-expanded", String(state.noteOpen));
+    ui["coverage-note"].hidden = !note || (behind && !state.noteOpen);
+  }
+
   function renderHead(item) {
     const step = isStep(item);
     if (step) {
@@ -1075,9 +1106,9 @@ export async function bootstrapViewer({
     } else {
       const parts = labelParts(item.label);
       ui["step-parent"].hidden = true;
-      ui["item-label"].replaceChildren(make("span", "item-title", parts.title));
+      ui["item-label"].replaceChildren(makeTitle("span", "item-title", parts.title));
       if (parts.subtitle) {
-        ui["item-label"].append(make("span", "item-subtitle", parts.subtitle));
+        ui["item-label"].append(makeTitle("span", "item-subtitle", parts.subtitle));
       }
     }
     // A minimal overlay lets the cards say "formalized"; a word that qualifies them stays.
@@ -1091,14 +1122,14 @@ export async function bootstrapViewer({
     ui["target-summary"].title = step ? relation.title : coverageSummary(item.coverage);
     ui["target-summary"].hidden = !word;
     const tail = locatorTail(item.label, item.locator);
-    ui["item-locator"].textContent = tail;
+    setTitleText(ui["item-locator"], tail);
     ui["item-locator"].title = item.locator;
     ui["item-locator"].hidden = !tail;
-    ui["coverage-note"].hidden = !item.coverageNote;
     ui["coverage-note"].textContent = step ? "" : item.coverageNote;
     if (step) {
       ui["coverage-note"].replaceChildren(...noteNodes(item.coverageNote));
     }
+    renderNote(item);
   }
 
   function renderVerdictNotes(item) {
@@ -1408,7 +1439,7 @@ export async function bootstrapViewer({
     const item = state.index.items.get(preferredItemId(region, state.index.items));
     const peek = ui["region-peek"];
     const step = isStep(item) && item.stepOf ? stepParts(item, state.index.items) : null;
-    peek.replaceChildren(make("span", "peek-label", step ? step.title : labelParts(item.label).title));
+    peek.replaceChildren(makeTitle("span", "peek-label", step ? step.title : labelParts(item.label).title));
     const lead = firstKeyCard(item);
     // A step's ends may be many ranges of one declaration: "+N" counts the declarations.
     const count = isStep(item) ? stepCards(item).length : item.cards.length;
@@ -1703,6 +1734,10 @@ export async function bootstrapViewer({
   ui["rotate-right"].addEventListener("click", () => rotate(90));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
   ui["back-to-page"].addEventListener("click", backToPage);
+  ui["note-toggle"].addEventListener("click", () => {
+    state.noteOpen = !state.noteOpen;
+    renderNote(state.selected);
+  });
   ui["step-parent"].addEventListener("click", async () => {
     await openItem(state.selected?.stepOf);
     focusQuietly(ui["item-label"]);
