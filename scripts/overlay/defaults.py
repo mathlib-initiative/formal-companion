@@ -2,7 +2,7 @@
 
 :func:`files` puts what records share in `_defaults.json` files and writes
 each record as the patch over the defaults above it; it names no member.  A
-side's ends share an end template (Literature Links 2.0, "Folder defaults"):
+side's ends share an end template (Literature Links 1.0, "Folder defaults"):
 the members the ends of its commonest document share, when that document
 holds a strict majority of the side's ends.  An end of that document is
 written as the patch over the template, or whole, with its own ``uri``, when

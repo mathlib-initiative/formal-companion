@@ -3,7 +3,7 @@
 New code, implementing section 7 of the overlay contract (`docs/overlay.md`).
 The exporters resolve a companion's curation into one annotation document
 (`vendor/formal_companion_annotations`); the overlay reads Literature Links
-2.0 (`vendor/literature_links`), one annotation per file, one folder per book
+1.0 (`vendor/literature_links`), one annotation per file, one folder per book
 section.  :func:`convert` is the whole mapping:
 
 * one record per (item, linked declaration), for every link role the viewer

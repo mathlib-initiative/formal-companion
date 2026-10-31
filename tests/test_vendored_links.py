@@ -107,7 +107,7 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
                                  ([], ["SHAPE"]))
 
     def test_an_end_template_fills_the_ends_that_name_no_document(self):
-        """The overlay's folder defaults rely on 2.0 end templates."""
+        """The overlay's folder defaults rely on 1.0 end templates."""
         template = {"subject": {"type": "pdf", "uri": "https://example.invalid/b.pdf", "sha256": "0" * 64}}
         record = {"subject": [{"location": {"page": 1}}, {"type": "pdf", "uri": "c.pdf"}], "object": []}
         self.assertEqual(companion.merge(template, record)["subject"],

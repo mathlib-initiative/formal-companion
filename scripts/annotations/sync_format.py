@@ -18,7 +18,7 @@ on any vendored byte that differs from its manifest, so a copy is never edited
 here: a change to a format is a revision upstream, then this script.  Run it
 by path against a local checkout of the upstream repository::
 
-    python3 scripts/annotations/sync_format.py <checkout> v1.0.0rc2
+    python3 scripts/annotations/sync_format.py <checkout> v1.0.0 --package literature_links
     python3 scripts/annotations/sync_format.py <checkout> <full commit id> --package literature_links
     python3 scripts/annotations/sync_format.py <checkout> <full commit id> --branch <name> --package literature_links
 
@@ -31,6 +31,14 @@ records the branch and ``"released": false``.  Files are read from git through
 :mod:`cflib.gitsafe`, never from the working tree, and each is checked against
 its blob id.  ``--check`` changes nothing: it exits 1 unless the vendored tree
 matches the manifest and the manifest matches the revision.
+
+Upstream's ``0.x`` tags renumber older releases and leave their files as they
+were, so each package's ``__version__`` differs from its tag's name
+(``v0.1.1rc2`` says ``1.0.0rc2``) and the version check refuses the tag.  Vendor
+such a release by its full commit id instead, except
+``formal_companion_annotations``: ``tests/test_vendored_format.py`` requires its
+manifest to name a tag, so that manifest keeps the original name ``v1.0.0rc2``
+and takes a new commit id by hand.
 """
 from __future__ import annotations
 

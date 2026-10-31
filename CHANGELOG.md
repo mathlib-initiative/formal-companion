@@ -300,6 +300,13 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- The overlay reads Literature Links 1.0.0 at its tag `v1.0.0`. That is the release tagged
+  `v2.0.0`, renumbered: upstream renamed its tags and rewrote its history, so every commit id
+  changed. The vendored copy differs in `__version__` and the schema's `$id` alone, and accepts
+  and rejects what it did. `cf overlay check` fails on an older overlay until it is re-synced.
+  The legacy format's tag is now `v0.1.1rc2`, at `0b20472`. `sync_format.py` refuses that tag, so
+  its manifest took the new id by hand and keeps the tag's original name. Older entries here use
+  the names of their day.
 - The overlay reads Literature Links 2.0.0 at its tag `v2.0.0`, which replaces the unreleased
   revision `2bb328c` of `format-2.0`. A generated overlay's `GENERATED.json` now names the tag,
   not a branch, so `cf overlay check` asks an older overlay to re-sync. The vendored copy's
