@@ -300,6 +300,23 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- The README is rewritten for a reader new to the project and cut from 497 lines to about 170,
+  and what only a maintainer needs moved out of it: the onboarding transcript, the program and the
+  overrides to `docs/running-an-audit.md`, the workspace model and its rules to
+  `docs/workspace.md`, the overlay walkthrough to `docs/generating-an-overlay.md`, the inventory
+  to `docs/layout.md`, the test matrix to `docs/testing.md`, and the detail of what has run to
+  `docs/status.md`. Their shell blocks read shell variables and paste into an interactive zsh,
+  which the old install block did not. Closed issues #6, #7, #10 and #11 and the locate smoke runs
+  record real hosts, so the README stops saying `cf run --execute` and locate have never met one.
+  Only the shipped registry crosses workspaces, so it stops saying a second workspace knows what
+  the first discovered. The old program also left out the spend ceiling `cf run` asks for and the
+  `--execute` a harvest from a host needs. Merged pull requests record the overlay's checks and
+  browsers on three private companions, whose overlays are generated at `d53be70`, so
+  `docs/status.md` names those runs. The transcript's tests moved with it:
+  `tests/test_rf_scrub.py` reads the new document, and `tests/test_rf_docs.py`,
+  `tests/test_rf_final_docs.py` and `tests/test_rf_items_sources.py` also check the guides that
+  took the README's flags and figures. The test that pins the directory inventory now reads
+  `docs/layout.md`, where the inventory moved.
 - The overlay reads Literature Links 1.0.0 at its tag `v1.0.0`. That is the release tagged
   `v2.0.0`, renumbered: upstream renamed its tags and rewrote its history, so every commit id
   changed. The vendored copy differs in `__version__` and the schema's `$id` alone, and accepts

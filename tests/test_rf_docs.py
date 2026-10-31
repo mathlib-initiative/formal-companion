@@ -15,7 +15,8 @@ So this module parses the documents and asks the real argparse tree:
 * every ``cf <command> [<sub>]`` written in a fenced block or in backticks
   parses -- or is labelled on the same line as deleted / not implemented;
 * every ``--flag`` written beside such a command belongs to that command, and a
-  flag named on its own in the two entry documents is a flag of *something*;
+  flag named on its own in the entry documents and their guides is a flag of
+  *something*;
 * every command the CLI registers has a row in SKILL.md's command index, and
   every ``sources <sub>`` row of that index parses;
 * every repo-relative path a document cites resolves on disk, every relative
@@ -129,10 +130,12 @@ DOCS += [f"docs/proposals/{p.name}" for p in sorted((SKILL / "docs" / "proposals
 ARCHIVE = SKILL / "docs" / "design" / "archive"
 
 #: A bare `--flag` in prose is checked in the two documents a fresh session
-#: actually reads.  Elsewhere the flags belong to the gate, to `tend`, to `lake`
-#: or to a companion's own scripts, and a whitelist of those would be longer than
-#: the check is worth.
-PROSE_FLAG_DOCS = ("SKILL.md", "README.md")
+#: actually reads, and in the guides the README's walkthroughs moved to, which
+#: name the same flags.  Elsewhere the flags belong to the gate, to `tend`, to
+#: `lake` or to a companion's own scripts, and a whitelist of those would be longer
+#: than the check is worth.
+PROSE_FLAG_DOCS = ("SKILL.md", "README.md", "docs/running-an-audit.md", "docs/workspace.md",
+                   "docs/generating-an-overlay.md", "docs/status.md")
 #: flags of other programs that the two entry documents legitimately name.
 FOREIGN_FLAGS = {"--no-verify", "--porcelain", "--offline", "--fixtures",
                  "--group-by", "--changed-files", "--base", "--gate-config", "--pre-merge",
@@ -149,7 +152,7 @@ def read(name: str) -> str:
 
 
 #: `cf …`, `python3 $CF …`, `python3 scripts/cf.py …`.  The `python3` (or the
-#: bare shim at the start of the span) is required, so README's file-tree line
+#: bare shim at the start of the span) is required, so docs/layout.md's file-tree line
 #: "scripts/cf.py     the workspace CLI" is not read as an invocation.
 _INVOCATION = re.compile(
     r"""^\s*(?:\$\s*)?
@@ -210,7 +213,7 @@ def inline_spans_by_line(text: str) -> list[tuple[str, list[str]]]:
     """[(the prose line, its inline-code spans)] outside fenced blocks.
 
     The line is kept because a flag is often named in order to say it is gone:
-    README's "No `--book`, no `--pdf`, no `--offset`" is the whole point of the
+    the audit guide's "No `--book`, no `--pdf`, no `--offset`" is the whole point of the
     sentence it sits in.
     """
     out: list[tuple[str, list[str]]] = []

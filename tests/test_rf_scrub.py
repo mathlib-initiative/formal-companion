@@ -27,8 +27,8 @@ with a short, explicit allowlist, because a rule nobody can read is a rule that
 gets broadened instead of obeyed.
 
 It also holds the two CLI findings of the same package: a warning must reach ONE
-stream as ONE block (first-run#4), and the README's onboarding transcript must
-say what it is (first-run#7).
+stream as ONE block (first-run#4), and the onboarding transcript, now in
+docs/running-an-audit.md, must say what it is (first-run#7).
 """
 from __future__ import annotations
 
@@ -707,13 +707,19 @@ class TestAWarningIsOneBlockOnOneStream(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestTheOnboardingTranscriptSaysWhatItIs(unittest.TestCase):
-    """It read as a promise (1,463 rows) while the tool printed 1,131."""
+    """It read as a promise (1,463 rows) while the tool printed 1,131.
 
-    @staticmethod
-    def _caption_and_block() -> tuple[str, str]:
-        text = (SKILL / "README.md").read_text(encoding="utf-8")
-        head, _, rest = text.partition("cf onboard <path to a companion repo>\n```")
-        caption, _, rest = rest.partition("```\n")
+    The transcript moved from README.md to docs/running-an-audit.md when the README
+    was cut down; the promise it must not make is the same.
+    """
+
+    DOC = "docs/running-an-audit.md"
+
+    @classmethod
+    def _caption_and_block(cls) -> tuple[str, str]:
+        text = (SKILL / cls.DOC).read_text(encoding="utf-8")
+        head, _, rest = text.partition("## What onboarding prints\n")
+        caption, _, rest = rest.partition("```text\n")
         block, _, _ = rest.partition("```")
         return caption, block
 

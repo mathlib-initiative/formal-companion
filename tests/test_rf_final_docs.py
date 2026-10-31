@@ -255,7 +255,8 @@ class TestAPinnedFigureInProseIsAPinnedFigure(unittest.TestCase):
 # the measured figures: one measurement, one set of numbers
 # ---------------------------------------------------------------------------
 
-MEASURED_DOCS = ("README.md", "references/onboarding-contract.md", "references/traps.md")
+MEASURED_DOCS = ("README.md", "docs/running-an-audit.md", "references/onboarding-contract.md",
+                 "references/traps.md")
 #: "0.91 (271 ok / 27 mismatched)" and its short form "0.68 (202 / 95)".  Matched
 #: against a whitespace-flattened document: prose wraps, and a figure the line
 #: break falls inside is exactly the one a re-measurement forgets.
@@ -266,9 +267,10 @@ class TestOneMeasurementIsOneSetOfNumbers(unittest.TestCase):
     """One commit fixed README's anchor figures and left two documents behind.
 
     A commit-pinned measurement is falsifiable in a way a dateless one is not:
-    the reader can re-run it.  These three documents quote the same two anchor
+    the reader can re-run it.  These documents quote the same two anchor
     agreements, so they can be checked against each other with no companion
-    repository and no PDF present.
+    repository and no PDF present.  The onboarding transcript that carries them
+    moved from README.md to docs/running-an-audit.md, and the check moved with it.
     """
 
     def agreements(self) -> list[tuple[str, str, int, int]]:
@@ -316,7 +318,7 @@ class TestACheckCountBelongsToTheScriptItNames(unittest.TestCase):
 
     def test_every_check_count_in_prose_matches_its_script(self):
         checked = 0
-        for name in ("README.md", "CLAUDE.md", "SKILL.md"):
+        for name in ("README.md", "CLAUDE.md", "SKILL.md", "docs/running-an-audit.md"):
             flat = read(name).replace("\n", " ")
             for sentence in re.split(r"(?<=\.)\s+", flat):
                 claim = re.search(r"checks (?:about )?(\w+) artifacts", sentence)
@@ -404,7 +406,7 @@ class TestTheDocsAgreeOnHowManyFindingIdsThereAre(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# the two README passages the first-run findings asked for
+# the two passages the first-run findings asked for
 # ---------------------------------------------------------------------------
 
 class TestTheQuickStartNamesTheServerLessPath(unittest.TestCase):
@@ -430,8 +432,10 @@ class TestTheQuickStartNamesTheServerLessPath(unittest.TestCase):
                       "--journal <workflow dir>`) is what turns it into a corpus")
 
     def test_the_directory_inventory_names_the_local_runner(self):
-        inventory = re.search(r"(?m)^workflows/\s+.*$", read("README.md"))
-        self.assertIsNotNone(inventory, "README.md has no workflows/ inventory row")
+        """The inventory moved to docs/layout.md with the rest of the maintainer's
+        map, and this pin moved with it; the quick start above stays in the README."""
+        inventory = re.search(r"(?m)^workflows/\s+.*$", read("docs/layout.md"))
+        self.assertIsNotNone(inventory, "docs/layout.md has no workflows/ inventory row")
         self.assertIn("fleet-local", inventory.group(0))
 
 
