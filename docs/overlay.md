@@ -99,7 +99,8 @@ them: the status chip (kept for screen readers, back in sight when it has
 keyboard focus or the PDF is not verified), the keys line (the toolbar buttons
 name their shortcuts), the key and related counts and the name filter, a key
 card's kind and badges, a related row's role and kind words, the review footer
-and the ledger cluster, and the "Formalized" word. A word that qualifies the
+and the ledger cluster, and the "Formalized" word. A record's note waits behind
+one "More detail" control, closed until asked for. A word that qualifies the
 links (support only, partial, a proof step's "Close match", "Related" or "No
 match", ...), where a link goes ("module page", "no page"), the notice, the
 pagers and the faithfulness verdicts with their "machine verdicts, unreviewed"

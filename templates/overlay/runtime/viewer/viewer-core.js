@@ -1037,6 +1037,33 @@ const PARTIAL_COVERAGE = Object.freeze(["partial", "support_only", "example_only
 /** A parenthetical that numbers rather than names: "(A.1)", "(3.2b)", "(ii)", "(c)". */
 const NUMBERING = /^(?:\p{L}?[\d.]*\d\p{L}?|[ivxlc]+|\p{L})$/iu;
 
+const SUBSCRIPTS = "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₔₕₖₗₘₙₚₛₜᵢᵣᵤᵥᵦᵧᵨᵩᵪⱼ";
+const SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿʰʲʳʷʸˡˢˣᴬᴮᴰᴱᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿᵀᵁⱽᵂᵃᵇᶜᵈᵉᶠᵍᵏᵐᵒᵖᵗᵘᵛᶻᵝᵞᵟᵠᵡ";
+const SCRIPT_RUN = new RegExp(`((?:[${SUBSCRIPTS}]\\p{M}*)+)|((?:[${SUPERSCRIPTS}]\\p{M}*)+)`, "gu");
+
+/**
+ * A title cut into `[kind, text]` runs: "text", or "sub" or "sup" with the
+ * plain characters its script characters stand for. Firefox on macOS draws a
+ * box for U+2096, U+2098 and U+2099 after a serif letter, and a plain letter
+ * set small needs no font to hold them.
+ */
+export function scriptRuns(value) {
+  const whole = text(value);
+  const runs = [];
+  let at = 0;
+  for (const match of whole.matchAll(SCRIPT_RUN)) {
+    if (match.index > at) {
+      runs.push(["text", whole.slice(at, match.index)]);
+    }
+    runs.push([match[1] ? "sub" : "sup", match[0].normalize("NFKC")]);
+    at = match.index + match[0].length;
+  }
+  if (at < whole.length) {
+    runs.push(["text", whole.slice(at)]);
+  }
+  return runs;
+}
+
 /**
  * A label's title and its trailing parenthetical, when that names something:
  * "Theorem 2 (Main estimate)" is "Theorem 2" over "Main estimate", while
