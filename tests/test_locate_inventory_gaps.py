@@ -38,6 +38,7 @@ for path in (SCRIPTS, HERE):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import _base_commits  # noqa: E402
 import _locate_fixtures as F  # noqa: E402
 import test_locate_gate_statement_cut as SC  # noqa: E402
 import test_locate_inventory_audit as TL  # noqa: E402
@@ -417,7 +418,7 @@ class TestRulesOneAndTwoAreTheBaseCommits(unittest.TestCase):
             out = subprocess.run(["git", "-C", str(SKILL), "show", f"{BASE}:{rel}"],
                                  capture_output=True)
             if out.returncode != 0:
-                self.skipTest(f"this checkout does not hold commit {BASE}")
+                _base_commits.not_held(self, BASE)
             (self.base / name).write_bytes(out.stdout)
         shutil.copytree(SKILL / "vendor", self.base / "vendor",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))

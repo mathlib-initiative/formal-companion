@@ -42,6 +42,7 @@ for path in (SCRIPTS, HERE):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import _base_commits  # noqa: E402
 import _locate_fixtures as F  # noqa: E402
 import test_audit_turn as TA  # noqa: E402
 import test_locate_inventory_audit as TL  # noqa: E402
@@ -819,7 +820,7 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                               "scripts", "templates", "vendor", "registry"],
                              capture_output=True)
         if tar.returncode != 0:
-            self.skipTest(f"this checkout does not hold commit {BASE}")
+            _base_commits.not_held(self, BASE)
         self.base = self.root.parent / "base"
         with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
             archive.extractall(self.base, filter="data") if sys.version_info >= (3, 12) \
@@ -1048,7 +1049,7 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
                               "scripts", "templates", "vendor", "registry"],
                              capture_output=True)
         if tar.returncode != 0:
-            self.skipTest(f"this checkout does not hold commit {SKIP_BASE}")
+            _base_commits.not_held(self, SKIP_BASE)
         self.base = self.root.parent / "base-skips"
         with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
             archive.extractall(self.base, filter="data") if sys.version_info >= (3, 12) \
@@ -1214,7 +1215,7 @@ class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
                               self.BASE_COMMIT, "scripts", "templates", "vendor", "registry"],
                              capture_output=True)
         if tar.returncode != 0:
-            self.skipTest(f"this checkout does not hold commit {self.BASE_COMMIT}")
+            _base_commits.not_held(self, self.BASE_COMMIT)
         self.base = self.root.parent / "base-smoke4"
         with tarfile.open(fileobj=io.BytesIO(tar.stdout)) as archive:
             archive.extractall(self.base, filter="data") if sys.version_info >= (3, 12) \

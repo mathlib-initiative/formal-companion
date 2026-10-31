@@ -41,6 +41,7 @@ for path in (SCRIPTS, SCRIPTS / "run", HERE):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import _base_commits  # noqa: E402
 import test_locate_gate_statement_cut as SC  # noqa: E402
 import test_locate_inventory_audit as TL  # noqa: E402
 import test_verify_locate as G  # noqa: E402
@@ -1364,7 +1365,7 @@ class TestTheUnauditedBridgeIsUnchanged(BridgeCase):
                               "99fbad4:scripts/run/bridge-agentbox.sh"],
                              capture_output=True, text=True)
         if got.returncode != 0:
-            self.skipTest("this checkout does not hold commit 99fbad4")
+            _base_commits.not_held(self, "99fbad4")
         old = self.root / "old-bridge.sh"
         old.write_text(got.stdout)
         # the faithfulness pipeline's gate: its bridge is the base commit's

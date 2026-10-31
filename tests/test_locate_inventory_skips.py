@@ -39,6 +39,7 @@ for path in (SCRIPTS, HERE):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import _base_commits  # noqa: E402
 import _locate_fixtures as F  # noqa: E402
 import test_locate_gate_statement_cut as SC  # noqa: E402
 import test_locate_inventory_audit as TL  # noqa: E402
@@ -394,7 +395,7 @@ class TestTheRendering(SkipCase):
     def test_rule_1_is_the_base_commits_on_every_fixture(self):
         base = _base_tools(self)
         if base is None:
-            self.skipTest(f"this checkout does not hold commit {BASE}")
+            _base_commits.not_held(self, BASE)
         for name in ("inventory_render.py", "inventory_audit.py", "inventory_edit.py"):
             shutil.copy2(base / name, self.gate_dir / f"base_{name}")
         # the base tools import their siblings by their plain names: a directory of their own
