@@ -243,7 +243,7 @@ def read_rows(workflow_dir: Path) -> dict[str, object]:
     if not path.exists():
         raise CfError(f"no journal at {path}",
                       hint="pass the workflow directory under "
-                           "<claude-projects>/<project>/subagents/workflows/wf_*")
+                           "<claude-projects>/<project>/<session-id>/subagents/workflows/wf_*")
     labels = agent_labels(workflow_dir)
     items: dict[str, dict] = {}
     rows: dict[str, list[dict]] = {k: [] for k in ROW_KINDS if k != "item"}

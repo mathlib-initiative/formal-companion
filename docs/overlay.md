@@ -15,7 +15,8 @@ one companion is data the viewer and the tools read at run time:
 | `pdf-overlay/verso.json` (optional, committed) | `tools/verso_extract.py --pages`, where a Verso build of the project is | hovers for a site with no Verso pages of its own (section 5) |
 
 A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generated.py`,
-which needs nothing but CPython and the checkout.
+which needs nothing but CPython and the checkout. `docs/generating-an-overlay.md`
+is the walkthrough; this file is the contract.
 
 The overlay reads **Literature Links** 1.0.0: tag `v1.0.0`, commit
 `ae8f2a65c8f665a4a747842a7e5bf8e1ae19054e`, vendored

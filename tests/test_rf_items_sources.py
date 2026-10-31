@@ -1050,8 +1050,8 @@ class TestTheDocsStateTheGrammarThatIsImplemented(unittest.TestCase):
     a per-source inference.
     """
 
-    DOCS = ("SKILL.md", "README.md", "docs/design/archive/multi-source-model.md",
-            "references/vocabulary.md")
+    DOCS = ("SKILL.md", "README.md", "docs/running-an-audit.md",
+            "docs/design/archive/multi-source-model.md", "references/vocabulary.md")
 
     def _read(self, name: str) -> str:
         return (SKILL / name).read_text(encoding="utf-8")

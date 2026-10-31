@@ -828,7 +828,7 @@ would label a changed def body unchanged; the sampled-attack selector.
   a placeholder witness (records not published).
 - Model-tier recall is unmeasured today. The only recall figure in this
   repository is the model-free tier on the synthetic booklet: precision 1.00,
-  recall 0.50 (`README.md`). M2 and M3 measure it.
+  recall 0.50 (`docs/running-an-audit.md`). M2 and M3 measure it.
 
 ### 3.2 Swarm roles per stage
 
@@ -1131,7 +1131,7 @@ Input is only the PDF with sha `64498329...` and scope `chapters=1`. S1's
 agents run inside the M0c sandbox, and the canary finds 0 hits. The run:
 
 - infers offset 16 at confidence at least 0.99 with 265 pages (the onboarding
-  transcript in `README.md` records 0.996);
+  transcript in `docs/running-an-audit.md` records 0.996);
 - recovers every numbered label of `$MT/pdf-overlay/data/geometry-batch-{a,b,c,d}.json`,
   matched on `(page, kind, number)`. 24 of those 431 labels are free prose
   (computed); they are matched by a page-plus-quote overlap test, and every miss
