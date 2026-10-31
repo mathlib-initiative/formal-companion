@@ -38,6 +38,7 @@ for path in (SCRIPTS, SCRIPTS / "run", HERE):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import _base_commits  # noqa: E402
 import _locate_fixtures as F  # noqa: E402
 import test_audit_turn as TA  # noqa: E402
 import test_locate_inventory_skips as TS  # noqa: E402
@@ -409,7 +410,7 @@ class TestRule1IsTheBaseCommitsTurnMachine(TA.TurnCase):
     def test_the_same_calls_and_files(self):
         base = _base_turn_machine(self)
         if base is None:
-            self.skipTest(f"this checkout does not hold commit {BASE}")
+            _base_commits.not_held(self, BASE)
         then = self.scenario(base)
         self.reset()
         now = self.scenario(at)
