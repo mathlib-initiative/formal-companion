@@ -86,6 +86,9 @@ bash tests/e2e/synthetic.sh                      # the end-to-end demonstration
   `CF_BASELINE_DIFF`, `CF_TML`, `CF_MT`, `CF_BOOK_TXT` and **skip cleanly**
   when those are unset: the suite must be green on a machine that has none of
   them.
+- Tests that compare with a frozen base commit skip in a shallow clone, so run
+  the suite in a full clone. CI takes the whole history and sets
+  `CF_REQUIRE_BASE_COMMITS=1`, which makes that skip a failure.
 - Never write outside a temporary directory, and never into a companion repo.
 - The pinned regression figures live in `tests/baseline/regression-figures.json`,
   which carries each value, the assertion that pins it and why it is what it is
