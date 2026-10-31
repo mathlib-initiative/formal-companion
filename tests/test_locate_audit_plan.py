@@ -11,7 +11,8 @@ against docs/proposals/statement-cut.md section 3.4, every JSON shape the prompt
 show against the schema ``inventory_audit.py`` holds the files to, and an unaudited
 plan equal to the base commit's (99fbad4) apart from its commit, the staged files
 whose source changed since, the inventory prompt's kind and prose-floor sentences, its
-commentary bullet and two readings, and the gate.json files' prose floor.  Every page, library and document is made up.
+commentary bullet and two readings, and the gate.json files' prose floor and vendored
+manifests' pins.  Every page, library and document is made up.
 """
 from __future__ import annotations
 
@@ -803,7 +804,8 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     gate.json files, which name statement-cut rule 3 where the base commit's named 2 (the
     flip of the wide bound, docs/proposals/statement-cut.md section 7), judgment rules 4
     for 3 (the flip of the smoke-4 audit's calls) and ``prose_floor_rule`` 1 (gate rule
-    8's prose floor) and nothing else; and smoke 4's reviewer fixes: the reviewer's rule
+    8's prose floor), and pin this checkout's vendored manifests (:func:`vendored_now`) and
+    nothing else; and smoke 4's reviewer fixes: the reviewer's rule
     card, which gains check 1's git command and the reading of the gate's ownership line
     (its challenge text renders empty in an inventory), and the reviewer's wrapper, whose
     git is read-only by subcommand.  ``run.yaml`` differs only in its skill commit, those
@@ -856,7 +858,7 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
         differ = sorted(k for k in then.keys() | now.keys()
                         if k != "run.yaml" and then.get(k) != now.get(k))
         allowed = {f"tend-root/{staged}" for staged, rel in sources.items()
-                   if rel in self.changed}
+                   if rel in self.changed} | staged_vendor(self.changed)
         self.assertIn("tend-root/bin/audit_turn.py", allowed)
         # the worker prompt gains the kind sentence after the kinds and the prose floor's
         # after the coverage floor's, and only those
@@ -868,8 +870,8 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                 self.assertEqual(now[name], with_prose_floor(then[name].replace(
                     kinds, kinds + b" " + TS.KIND_SENTENCE.encode("utf-8"))))
         self.assertEqual(sorted(set(differ) & set(worker)), sorted(worker))
-        # the gate.json files name statement-cut rule 3 for 2 and the prose floor, and only
-        # that
+        # the gate.json files name statement-cut rule 3 for 2 and the prose floor and pin the
+        # vendored manifests, and only that
         gates = ("gate.json", "gate.local.json", "tend-root/gate/gate.json")
         rule = b'"statement_cut_rule": '
         for name in gates:
@@ -877,8 +879,9 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
                 was = rule + str(vocab.STATEMENT_CUT_CONTINUED).encode()
                 self.assertEqual(then[name].count(was), 1)
                 # and judgment rules 4 for 3, from the flip of the smoke-4 audit's calls
-                self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]).replace(
-                    was, rule + str(vocab.STATEMENT_CUT_WIDE).encode()))
+                self.assertEqual(without_prose_floor(now[name]),
+                                 vendored_now(judged_now(then[name])).replace(
+                                     was, rule + str(vocab.STATEMENT_CUT_WIDE).encode()))
                 self.assertEqual(json.loads(now[name])["prose_floor_rule"],
                                  vocab.PROSE_FLOOR_RULE)
                 self.assertEqual(json.loads(now[name])["statement_cut_rule"],
@@ -987,6 +990,32 @@ def judged_now(gate: bytes) -> bytes:
     was = b'"judgment_rules": ' + str(vocab.RULES_STATEMENT_CUT).encode()
     assert gate.count(was) == 1, gate[:200]
     return gate.replace(was, b'"judgment_rules": ' + str(vocab.JUDGMENT_RULES).encode())
+
+
+def vendored_now(gate: bytes) -> bytes:
+    """A base commit's gate.json as a plan made now writes it: ``vendor`` pins the sha of each
+    manifest in this checkout.
+
+    Re-vendoring a package moves the sha of its manifest, which the gate verifies at start
+    (``verify_locate.verify_vendor``), and the plan's staged copies (:func:`staged_vendor`), and
+    nothing else of an inventory plan moves with it.  Literature Links 2.0.0 (37878b7) moved
+    one pin since the base commits.
+    """
+    pins = json.loads(gate)["vendor"]
+    for package in ltr.VENDORED:
+        sha = hashing.sha256_file(SKILL / "vendor" / f"{package}.manifest.json")
+        was = b'"%s": "%s"' % (package.encode(), pins[package].encode())
+        assert gate.count(was) == 1, gate[:200]
+        gate = gate.replace(was, b'"%s": "%s"' % (package.encode(), sha.encode()))
+    return gate
+
+
+def staged_vendor(changed: set[str]) -> set[str]:
+    """A plan's copies of the ``changed`` files that belong to a vendored package."""
+    packages = tuple(f"vendor/{name}" for name in ltr.VENDORED)
+    return {f"tend-root/gate/{rel}" for rel in changed if rel.startswith(packages)}
+
+
 #: the audit's prompts, as a plan renders them (and its tend root copies them)
 AUDIT_PROMPTS = ("reviewer-system.md", "reviewer.md", "reviewer-check.md", "reviewer-skeptic.md",
                  "worker-revision.md")
@@ -998,18 +1027,18 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
     Under audit rule 1 every file of the run directory is byte for byte the base
     commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
     the files staged from a source this branch changed (the three audit tools,
-    the files staged from a source this branch changed (the three audit tools,
-    ``bin/audit_turn.py``, the gate, and since smoke 4's reviewer fixes the bridge and
-    ``bin/review_record.py``), the worker prompt, which gains the prose floor's sentence,
-    the commentary bullet and the two readings, and the three gate.json files, which gain
-    ``prose_floor_rule`` and name judgment rules 4 for 3; ``run.yaml`` differs only in its
-    skill commit, those files' pins, the five audit templates' shas, the worker prompt's
-    two and the worker system template's.  Under rule 2 the five rendered audit
-    prompts (in ``prompts/`` and the tend root's copy), the two wrappers' ``CF_AUDIT_RULE``,
-    ``locate.audit.rule`` and ``config_shas.agents.audit.rule`` and the rendered prompts'
-    shas differ too, and nothing else.  An unaudited plan stays the base commit's
-    (:class:`TestAnUnauditedPlanIsTheBaseCommits`; no file it stages changed here but
-    ``bin/audit_turn.py``).
+    ``bin/audit_turn.py``, the gate, since smoke 4's reviewer fixes the bridge and
+    ``bin/review_record.py``, and since then ``bin/watchdog.py`` and the vendored Literature
+    Links), the worker prompt, which gains the prose floor's sentence, the commentary bullet
+    and the two readings, and the three gate.json files, which gain ``prose_floor_rule``, name
+    judgment rules 4 for 3 and pin this checkout's vendored manifests (:func:`vendored_now`);
+    ``run.yaml`` differs only in its skill commit, those files' pins, the five audit
+    templates' shas, the worker prompt's two and the worker system template's.  Under rule 2
+    the five rendered audit prompts (in ``prompts/`` and the tend root's copy), the two
+    wrappers' ``CF_AUDIT_RULE``, ``locate.audit.rule`` and ``config_shas.agents.audit.rule``
+    and the rendered prompts' shas differ too, and nothing else.  An unaudited plan stays the
+    base commit's (:class:`TestAnUnauditedPlanIsTheBaseCommits`; no file it stages changed
+    here but ``bin/audit_turn.py``).
     """
 
     def setUp(self):
@@ -1054,18 +1083,20 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
                if rel in self.changed}
         out |= {f"tend-root/bin/{name}" for name in ltr.LOCATE_BIN_HELPERS
                 + (BRIDGE_SCRIPTS["agentbox-claude"][0],) if f"scripts/run/{name}" in self.changed}
-        return out
+        return out | staged_vendor(self.changed)
 
     def floor_only(self, then: dict, now: dict, differ: set) -> set:
         """``differ`` less the worker prompts and gate.json files, after holding each to the
-        base commit's with the prose floor's sentence or key added and judgment rules 4 for 3
-        (:func:`judged_now`), and nothing else."""
+        base commit's with the prose floor's sentence or key added, judgment rules 4 for 3
+        (:func:`judged_now`) and the vendored manifests' pins (:func:`vendored_now`), and
+        nothing else."""
         worker = {"prompts/worker.md", "tend-root/prompts/worker.md"}
         gates = {"gate.json", "gate.local.json", "tend-root/gate/gate.json"}
         for name in sorted(worker):
             self.assertEqual(now[name], with_prose_floor(then[name]), name)
         for name in sorted(gates):
-            self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]), name)
+            self.assertEqual(without_prose_floor(now[name]),
+                             vendored_now(judged_now(then[name])), name)
         self.assertLessEqual(worker | gates, differ)
         return differ - worker - gates
 
@@ -1093,11 +1124,13 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         return then_yaml, now_yaml
 
     def assertGatesJudgedNow(self, then: dict, now: dict) -> set[str]:
-        """The gate.json files differ from the base's by judgment rules 4 for 3 alone, once
-        the prose floor's key is set aside (:meth:`floor_only` holds it)."""
+        """The gate.json files differ from the base's by judgment rules 4 for 3 and the vendored
+        manifests' pins alone, once the prose floor's key is set aside (:meth:`floor_only` holds
+        it)."""
         for name in GATES:
             with self.subTest(gate=name):
-                self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]))
+                self.assertEqual(without_prose_floor(now[name]),
+                                 vendored_now(judged_now(then[name])))
         return set(GATES)
 
     def test_rule_1_is_the_base_commits_plan(self):
@@ -1112,14 +1145,16 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         # into every plan, and binding no inventory document of rule 1; and smoke 4's
         # reviewer fixes: the gate (a challenge's OK line), the bridge and the recorder
         # whose tamper guard the turn machine shares (the audit's prompts and wrappers are
-        # untouched)
+        # untouched); the watchdog, whose clean stop a full disk no longer fails (fbe6e35);
+        # and the vendored files a re-vendoring changed
         self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
                           "tend-root/gate/inventory_render.py",
                           "tend-root/gate/inventory_edit.py",
                           "tend-root/gate/locate_records.py",
                           "tend-root/gate/verify_locate.py",
                           "tend-root/bin/bridge-agentbox.sh",
-                          "tend-root/bin/review_record.py"}, differ)
+                          "tend-root/bin/review_record.py",
+                          "tend-root/bin/watchdog.py"} | staged_vendor(self.changed), differ)
         for name in AUDIT_PROMPTS:
             self.assertEqual(now[f"prompts/{name}"], then[f"prompts/{name}"], name)
         self.assertEqual(now_yaml["locate"]["audit"], {"rule": 1, "review_rounds": 3})
@@ -1165,9 +1200,10 @@ class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
     this one's at rule 2, as the same run: every file is byte for byte 3b29518's -- the five
     rendered audit prompts included, whose rule-3 text sits in blocks that render empty at
     rule 2 -- but the files staged from a source this branch changed, the worker prompt (the
-    smoke-4 sentences) and the three gate.json files (``prose_floor_rule``, and judgment
-    rules 4 for 3); ``run.yaml`` differs only in its skill commit, those files' pins, the
-    five audit templates' shas, the worker prompt's two and the worker system template's."""
+    smoke-4 sentences) and the three gate.json files (``prose_floor_rule``, judgment rules 4
+    for 3 and the vendored manifests' pins); ``run.yaml`` differs only in its skill commit,
+    those files' pins, the five audit templates' shas, the worker prompt's two and the worker
+    system template's."""
 
     BASE_COMMIT = SMOKE4_BASE
 
@@ -1205,14 +1241,16 @@ class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
 
     def floor_only(self, then: dict, now: dict, differ: set) -> set:
         """``differ`` less the worker prompts and gate.json files, each 3b29518's with the
-        smoke-4 sentences or the prose floor's key added and judgment rules 4 for 3
-        (:func:`judged_now`), and nothing else."""
+        smoke-4 sentences or the prose floor's key added, judgment rules 4 for 3
+        (:func:`judged_now`) and the vendored manifests' pins (:func:`vendored_now`), and
+        nothing else."""
         worker = {"prompts/worker.md", "tend-root/prompts/worker.md"}
         gates = {"gate.json", "gate.local.json", "tend-root/gate/gate.json"}
         for name in sorted(worker):
             self.assertEqual(now[name], with_prose_floor(then[name]), name)
         for name in sorted(gates):
-            self.assertEqual(without_prose_floor(now[name]), judged_now(then[name]), name)
+            self.assertEqual(without_prose_floor(now[name]),
+                             vendored_now(judged_now(then[name])), name)
         return differ - worker - gates
 
     def test_rule_2_is_the_base_commits_plan(self):
