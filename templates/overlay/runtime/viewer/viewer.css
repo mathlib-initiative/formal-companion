@@ -466,6 +466,19 @@ kbd {
   stroke-width: 1.5;
 }
 
+/* A proof step's box: the step's passage, not a statement, so the page's items stay what stands out. */
+.overlay-region[data-step] {
+  fill: transparent;
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+}
+
+.overlay-region[data-step]:hover,
+.overlay-region[data-step]:focus-visible,
+.overlay-region[data-step].is-hot {
+  stroke-opacity: 1;
+}
+
 .overlay-region[data-verdict="faithful"] {
   stroke: #2d7d55;
 }
@@ -523,6 +536,10 @@ kbd {
   stroke: var(--on-page-bridge);
   stroke-dasharray: none;
   stroke-width: 2;
+}
+
+.overlay .overlay-region[data-step][aria-pressed="true"] {
+  stroke-opacity: 1;
 }
 
 .overlay .overlay-region[aria-pressed="true"].is-hot {
@@ -878,6 +895,70 @@ kbd {
   color: var(--faint);
   font-family: var(--sans);
   font-style: italic;
+}
+
+/* A proof's steps under its row: one line each, their marks under the row's label. */
+.step-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.page-index .step-list {
+  margin-bottom: 6px;
+  padding-left: 26px;
+}
+
+.page-index .step-list li {
+  border-bottom: 0;
+}
+
+.step-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: calc(100% + 8px);
+  margin: 0 -8px 0 0;
+  padding: 2px 8px 2px 4px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.step-row:hover,
+.step-row.is-hot {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.step-row .swatch {
+  flex: none;
+  align-self: center;
+}
+
+.step-number {
+  flex: none;
+  min-width: 2ch;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.step-text {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-relation,
+.step-page {
+  flex: none;
+  color: var(--faint);
+  font-size: 11.5px;
+  white-space: nowrap;
 }
 
 .legend {
@@ -1275,6 +1356,36 @@ kbd {
   white-space: nowrap;
 }
 
+/* A step's lines: the number sits in a gutter outside the text, which stays the snippet's. */
+.lean.is-numbered .ln {
+  position: relative;
+  margin-left: 5ch;
+}
+
+.lean.is-numbered .ln::before {
+  content: attr(data-line);
+  position: absolute;
+  left: -5ch;
+  width: 4ch;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-indent: 0;
+  user-select: none;
+}
+
+.range-lines,
+.range-more {
+  margin-top: 4px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.range-lines {
+  margin-top: 8px;
+}
+
 .lean.is-clamped {
   max-height: calc(14 * 1.65em + 24px);
   max-height: calc(14lh + 24px);
@@ -1521,6 +1632,22 @@ a.related-link:hover .related-name .leaf {
 
 .empty-line.is-strong {
   color: var(--text);
+}
+
+.checked-in {
+  margin-top: 8px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.step-parent {
+  display: block;
+  max-width: 100%;
+  margin-bottom: 2px;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cluster-line {

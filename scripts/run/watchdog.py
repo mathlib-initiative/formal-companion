@@ -519,5 +519,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
 
+def exit_status(status: int) -> int:
+    """`status`, kept from the flush at exit: a line a full disk refused is still buffered."""
+    try:
+        sys.stdout.flush()
+    except OSError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    return status
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(exit_status(main()))

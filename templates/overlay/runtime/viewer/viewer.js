@@ -37,9 +37,13 @@ import {
   docBlocks,
   firstKeyCard,
   hoverText,
+  isStep,
+  itemFolder,
   labelParts,
   leanTokens,
+  linesText,
   locatorTail,
+  pageRows,
   pageSummaryText,
   paginateCards,
   parseBundle,
@@ -56,6 +60,9 @@ import {
   siteHref,
   splitCards,
   splitName,
+  stepCards,
+  stepParts,
+  stepRelation,
   verdictFooter,
   verdictLine,
   verifyPdfBytes,
@@ -128,7 +135,8 @@ export async function loadAnnotations(config, fetchImpl = globalThis.fetch, cryp
   // siteRoot is relative to the viewer's own directory, where pageUrl is.
   const base = new URL(config.siteRoot, pageUrl).href;
   const files = parseBundle(decodeUtf8(bytes, block.bundle.path), block)
-    .map(({ annotation, path }) => ({ path, records: [annotation], url: new URL(path, base).href }));
+    .map(({ annotation, path }) => ({ folder: itemFolder(path, block.directory), path, records: [annotation],
+                                      url: new URL(path, base).href }));
   return { files, index: buildIndex(files, config, { pageOrigin: new URL(pageUrl).origin, siteUrl: base }) };
 }
 
@@ -297,8 +305,9 @@ export async function bootstrapViewer({
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
-      "item-head", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
+      "item-head", "step-parent", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
       "key-section", "key-head", "key-count", "key-note", "key-list", "key-more",
+      "step-section", "step-count", "step-list",
       "related-section", "related-heading", "related-count", "related-list", "filter-empty", "target-filter",
       "related-pager", "previous-targets", "next-targets", "target-page", "provenance-note", "hover-card",
     ].map((id) => [id, element(documentRef, id)]),
@@ -398,13 +407,17 @@ export async function bootstrapViewer({
   }
 
   /**
-   * Every item on the page once, with the first region that shows it: the
-   * page index's rows and the order the stepper walks.
+   * The page index's rows: every item on the page once, with the first region
+   * that shows it and its steps on this page. A step's item may come from
+   * another page, with no region.
    */
+  function pageIndexRows() {
+    return pageRows(pageRegions(), state.index?.items ?? new Map());
+  }
+
+  /** The rows with a region on this page: the order the stepper walks. */
   function pageEntries() {
-    const seen = new Set();
-    return pageRegions().flatMap((region) => region.itemIds.filter((itemId) => !seen.has(itemId)
-      && seen.add(itemId)).map((itemId) => ({ item: state.index.items.get(itemId), region })));
+    return pageIndexRows().filter((row) => row.region);
   }
 
   function regionItems(region) {
@@ -426,10 +439,17 @@ export async function bootstrapViewer({
     for (const polygon of ui.overlay.children ?? []) {
       setClass(polygon, "is-hot", regionId && polygon.dataset?.regionId === regionId);
     }
-    for (const row of ui["page-index"].children ?? []) {
-      const button = row.children?.[0];
+    for (const button of [...indexButtons(), ...[...(ui["step-list"].children ?? [])].map((li) => li.children?.[0])]) {
       setClass(button, "is-hot", regionId && button?.dataset?.regionId === regionId);
     }
+  }
+
+  /** The page index's buttons: each item's row, then its steps'. */
+  function indexButtons() {
+    return [...(ui["page-index"].children ?? [])].flatMap((li) => {
+      const [row, steps] = li.children ?? [];
+      return [row, ...[...(steps?.children ?? [])].map((step) => step.children?.[0])];
+    });
   }
 
   /**
@@ -461,15 +481,21 @@ export async function bootstrapViewer({
    * source line is its own block, so a line too long for the panel wraps under
    * its own indentation (a hanging indent), not back at the left edge. With
    * Verso `runs` (their texts joined are the snippet) a token carries its
-   * kind, its hover, its binding and its link.
+   * kind, its hover, its binding and its link. With `firstLine`, each line
+   * carries its number for the stylesheet's gutter, outside the text.
    */
-  function leanNode(source, runs = null, statement = { bindings: new Map(), reveal: null, stops: [] }) {
-    const node = make("pre", "lean");
+  function leanNode(source, runs = null, statement = { bindings: new Map(), reveal: null, stops: [] }, firstLine = null) {
+    const node = make("pre", firstLine === null ? "lean" : "lean is-numbered");
     let line = null;
     let indent = 0;
     let leading = false;
+    let number = firstLine;
     const open = () => {
       line = make("span", "ln");
+      if (number !== null) {
+        line.dataset.line = String(number);
+        number += 1;
+      }
       node.append(line);
       indent = 0;
       leading = true;
@@ -711,9 +737,9 @@ export async function bootstrapViewer({
    * than that and STATEMENT_SLACK, with a button to show the rest. A long
    * line counts as the lines it wraps to.
    */
-  function statementNodes(source, runs = null) {
+  function statementNodes(source, runs = null, firstLine = null) {
     const statement = { bindings: new Map(), reveal: null, stops: [] };
-    const pre = leanNode(source, runs, statement);
+    const pre = leanNode(source, runs, statement, firstLine);
     const lines = source.split("\n")
       .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / STATEMENT_COLUMNS)), 0);
     if (lines <= STATEMENT_LINES + STATEMENT_SLACK) {
@@ -801,20 +827,61 @@ export async function bootstrapViewer({
     ui["page-jump"].hidden = !buttons.length;
   }
 
+  /**
+   * One step on one line, under its item: the region's mark, its number, its
+   * text and its relation, and its page when that is not this one.
+   */
+  function stepRow(step) {
+    const parts = stepParts(step, state.index.items);
+    const relation = stepRelation(step, { minimal: state.config.minimal });
+    const row = make("button", "step-row");
+    row.type = "button";
+    row.title = step.label;
+    row.dataset.itemId = step.id;
+    const here = regionOnPage(step.id);
+    const regionId = here?.id ?? step.place.regionId;
+    row.dataset.regionId = regionId;
+    row.append(make("span", `swatch mini ${regionCoverage(step)}`), make("span", "step-number", String(parts.number)),
+               make("span", "step-text", parts.text));
+    if (relation.word) {
+      const word = make("span", "step-relation", relation.word);
+      word.title = relation.title;
+      row.append(word);
+    }
+    if (!here) {
+      row.append(make("span", "step-page", `p. ${step.place.page}`));
+    }
+    row.addEventListener("click", async () => {
+      await openItem(step.id);
+      focusQuietly(ui["item-label"]);
+    });
+    row.addEventListener("mouseenter", () => setHot(regionId));
+    row.addEventListener("mouseleave", () => setHot(null));
+    row.addEventListener("focus", () => setHot(regionId));
+    row.addEventListener("blur", () => setHot(null));
+    const li = make("li");
+    li.append(row);
+    return li;
+  }
+
   function renderIndex() {
-    const entries = pageEntries();
+    const rows = pageIndexRows();
+    const entries = rows.filter((entry) => entry.region);
     const items = entries.map((entry) => entry.item);
+    const stepCount = rows.reduce((total, entry) => total + entry.steps.length, 0);
     ui["index-heading"].textContent = `Page ${state.currentPage}`;
-    ui["index-meta"].textContent = pageSummaryText(items);
-    renderPageJump(!entries.length);
+    ui["index-meta"].textContent = pageSummaryText(items, stepCount);
+    renderPageJump(!rows.length);
     ui["page-index"].setAttribute("aria-label", `Passages on page ${state.currentPage}`);
     ui["page-index"].replaceChildren();
-    ui["page-index"].hidden = !entries.length;
-    ui.legend.hidden = !entries.length;
-    for (const { item, region } of entries) {
+    ui["page-index"].hidden = !rows.length;
+    ui.legend.hidden = !rows.length;
+    for (const { item, region, steps } of rows) {
       const row = make("button", "index-row");
       row.type = "button";
-      row.dataset.regionId = region.id;
+      if (region) {
+        row.dataset.regionId = region.id;
+      }
       row.dataset.itemId = item.id;
       // The same mark as the region's outline and the legend: solid, dashed or dotted.
       const mark = make("span", `swatch mini ${regionCoverage(item)}`);
@@ -833,26 +900,47 @@ export async function bootstrapViewer({
       row.append(cell);
       const lead = firstKeyCard(item);
       const right = make("span", lead ? "index-decl" : "index-decl is-empty");
+      // A step tied to no item keeps a row of its own: its ranges are one card, and its relation is printed.
+      const step = isStep(item);
+      const count = step ? stepCards(item).length : item.cards.length;
+      const relation = step ? stepRelation(item, { minimal: state.config.minimal }).word : "";
       if (lead) {
         right.append(nameNode(lead.name, "decl", null, { breaks: false }));
-        if (item.cards.length > 1) {
-          right.append(make("span", "more", ` +${item.cards.length - 1}`));
+        if (count > 1) {
+          right.append(make("span", "more", ` +${count - 1}`));
         }
+      } else if (relation) {
+        right.textContent = relation;
       } else {
         right.textContent = item.cards.length ? coverageWord(item.coverage) || "No key declaration"
           : "No declaration linked";
       }
+      if (lead && relation) {
+        right.append(make("span", "more", ` ${relation}`));
+      }
+      if (!region) {
+        // Its statement is on another page; only its steps are on this one.
+        right.append(make("span", "more", ` p. ${item.place.page}`));
+      }
       row.append(right);
-      row.addEventListener("click", () => {
-        selectRegion(region, item.id);
+      row.addEventListener("click", async () => {
+        await (region ? selectRegion(region, item.id) : openItem(item.id));
         focusQuietly(ui["item-label"]);
       });
-      row.addEventListener("mouseenter", () => setHot(region.id));
-      row.addEventListener("mouseleave", () => setHot(null));
-      row.addEventListener("focus", () => setHot(region.id));
-      row.addEventListener("blur", () => setHot(null));
+      if (region) {
+        row.addEventListener("mouseenter", () => setHot(region.id));
+        row.addEventListener("mouseleave", () => setHot(null));
+        row.addEventListener("focus", () => setHot(region.id));
+        row.addEventListener("blur", () => setHot(null));
+      }
       const li = make("li");
       li.append(row);
+      if (steps.length) {
+        const list = make("ol", "step-list");
+        list.setAttribute("aria-label", `Proof steps of ${labelParts(item.label).title}`);
+        list.append(...steps.map((entry) => stepRow(entry.item)));
+        li.append(list);
+      }
       ui["page-index"].append(li);
     }
     ui.legend.replaceChildren(
@@ -894,13 +982,21 @@ export async function bootstrapViewer({
     }
   }
 
+  /** What the stepper walks from `item`: the steps of its proof, else the items on the page. */
+  function stepperIds(item) {
+    return state.index.items.get(item.stepOf)?.steps ?? pageEntries().map((entry) => entry.item.id);
+  }
+
   function renderNavStrip(item) {
-    const entries = pageEntries();
-    const at = entries.findIndex((entry) => entry.item.id === item.id);
+    const ids = stepperIds(item);
+    const at = ids.indexOf(item.id);
     ui["back-to-page"].textContent = `← Page ${state.currentPage}`;
-    ui["item-position"].textContent = at >= 0 ? `${at + 1} of ${entries.length}` : "";
+    ui["item-position"].textContent = at >= 0 ? `${at + 1} of ${ids.length}` : "";
     ui["previous-item"].disabled = at <= 0;
-    ui["next-item"].disabled = at < 0 || at >= entries.length - 1;
+    ui["next-item"].disabled = at < 0 || at >= ids.length - 1;
+    const walked = item.stepOf ? "step" : "passage";
+    ui["previous-item"].setAttribute("aria-label", `Previous ${walked}`);
+    ui["next-item"].setAttribute("aria-label", `Next ${walked}`);
   }
 
   /** Move focus without scrolling, when the control that had it is about to be hidden or disabled. */
@@ -912,39 +1008,97 @@ export async function bootstrapViewer({
   function backToPage() {
     const was = state.selected?.id;
     selectRegion(null);
-    const row = [...(ui["page-index"].children ?? [])].map((li) => li.children?.[0])
-      .find((button) => button?.dataset?.itemId === was);
+    const row = indexButtons().find((button) => button?.dataset?.itemId === was);
     focusQuietly(row ?? ui["index-heading"]);
   }
 
-  function stepItem(delta) {
-    const entries = pageEntries();
-    const at = entries.findIndex((entry) => entry.item.id === state.selected?.id);
-    const next = entries[at + delta];
-    if (at >= 0 && next) {
-      selectRegion(next.region, next.item.id);
+  function regionOnPage(itemId) {
+    return pageRegions().find((region) => region.itemIds.includes(itemId)) ?? null;
+  }
+
+  /**
+   * Open an item, on this page if it has a region here, else on the first page
+   * that shows it, with no page index between the two.
+   */
+  async function openItem(itemId) {
+    const here = regionOnPage(itemId);
+    if (here) {
+      selectRegion(here, itemId);
+      return;
+    }
+    const place = state.index.items.get(itemId)?.place;
+    const region = place ? state.index.pages.get(place.page).find((candidate) => candidate.id === place.regionId) : null;
+    if (region) {
+      state.currentPage = place.page;
+      selectRegion(region, itemId);
+      await renderPage();
     }
   }
 
-  function renderHead(item) {
-    const parts = labelParts(item.label);
+  async function stepItem(delta) {
+    const ids = stepperIds(state.selected ?? {});
+    const at = ids.indexOf(state.selected?.id);
+    const next = at >= 0 ? ids[at + delta] : undefined;
+    if (next === undefined) {
+      return;
+    }
+    if (state.selected.stepOf) {
+      await openItem(next);
+    } else {
+      selectRegion(pageEntries().find((entry) => entry.item.id === next).region, next);
+    }
+  }
+
+  /** A step's title and its text; its proof's item, a button above them. */
+  function stepHead(item) {
+    const parts = stepParts(item, state.index.items);
+    const owner = state.index.items.get(item.stepOf);
+    ui["step-parent"].hidden = !owner;
+    ui["step-parent"].textContent = owner ? `Proof of ${labelParts(owner.label).title}` : "";
+    ui["step-parent"].title = owner?.label ?? "";
     ui["item-label"].replaceChildren(make("span", "item-title", parts.title));
-    if (parts.subtitle) {
-      ui["item-label"].append(make("span", "item-subtitle", parts.subtitle));
+    if (parts.text) {
+      ui["item-label"].append(make("span", "item-subtitle", parts.text));
+    }
+  }
+
+  /** A note's text with its backticked code set as code. */
+  function noteNodes(note) {
+    return docBlocks(note).flatMap((block) => block.parts.map(([kind, value]) => (kind === "code"
+      ? make("code", "", value) : value)));
+  }
+
+  function renderHead(item) {
+    const step = isStep(item);
+    if (step) {
+      stepHead(item);
+    } else {
+      const parts = labelParts(item.label);
+      ui["step-parent"].hidden = true;
+      ui["item-label"].replaceChildren(make("span", "item-title", parts.title));
+      if (parts.subtitle) {
+        ui["item-label"].append(make("span", "item-subtitle", parts.subtitle));
+      }
     }
     // A minimal overlay lets the cards say "formalized"; a word that qualifies them stays.
-    const word = state.config.minimal && item.coverage === "formalized" ? "" : coverageWord(item.coverage);
+    // A step says its relation instead, which its coverage only restates.
+    const relation = stepRelation(item, { minimal: state.config.minimal });
+    const word = step ? relation.word
+      : state.config.minimal && item.coverage === "formalized" ? "" : coverageWord(item.coverage);
     ui["target-summary"].className = item.coverage
       ? `target-summary coverage-${item.coverage}` : "target-summary";
     ui["target-summary"].textContent = word;
-    ui["target-summary"].title = coverageSummary(item.coverage);
+    ui["target-summary"].title = step ? relation.title : coverageSummary(item.coverage);
     ui["target-summary"].hidden = !word;
     const tail = locatorTail(item.label, item.locator);
     ui["item-locator"].textContent = tail;
     ui["item-locator"].title = item.locator;
     ui["item-locator"].hidden = !tail;
     ui["coverage-note"].hidden = !item.coverageNote;
-    ui["coverage-note"].textContent = item.coverageNote;
+    ui["coverage-note"].textContent = step ? "" : item.coverageNote;
+    if (step) {
+      ui["coverage-note"].replaceChildren(...noteNodes(item.coverageNote));
+    }
   }
 
   function renderVerdictNotes(item) {
@@ -998,12 +1152,70 @@ export async function bootstrapViewer({
     return li;
   }
 
+  /** One range of a step's Lean lines: its snippet, numbered, or only its line numbers when it has none. */
+  function rangeNodes({ lines, snippet }) {
+    const firstLine = snippet?.line ?? lines?.[0] ?? null;
+    if (!snippet?.text) {
+      return lines ? [make("p", "range-lines", linesText(lines))] : [];
+    }
+    const nodes = statementNodes(snippet.text, null, firstLine);
+    if (lines) {
+      nodes[0].setAttribute("aria-label", linesText(lines));
+    }
+    if (snippet.truncated && lines) {
+      nodes.splice(1, 0, make("p", "range-more", `… through line ${lines[1]}`));
+    }
+    return nodes;
+  }
+
+  /** A declaration a step links: its eyebrow, its name, and only the lines of it the step names. */
+  function stepCard(card) {
+    const li = make("li", "key-card");
+    li.tabIndex = -1;
+    const name = nameNode(card.name, "decl-name");
+    name.title = card.fullName;
+    li.append(eyebrow(card), name, ...card.ranges.flatMap(rangeNodes));
+    return li;
+  }
+
+  /** A declaration or module a checked absence looked in, on one line. */
+  function checkedRow(end) {
+    const li = make("li", "related-row");
+    const row = end.href ? make("a", "related-link") : make("span", "related-link is-unlinked");
+    if (end.href) {
+      row.setAttribute("href", end.href);
+    }
+    row.title = end.fullName || end.module;
+    row.append(nameNode(end.name, "related-name"));
+    if (end.lines) {
+      row.append(make("span", "related-tag", linesText(end.lines).toLowerCase()));
+    }
+    li.append(row);
+    return li;
+  }
+
+  /** What a step with no card says when it was checked: the absence, and where it was looked for. */
+  function checkedNote(item) {
+    const note = ui["key-note"];
+    note.append(make("p", "empty-line is-strong", "Checked: no Lean line makes this step."));
+    if (item.checked.length) {
+      const list = make("ul", "related-list checked-list");
+      list.setAttribute("aria-label", "Where it was checked");
+      list.append(...item.checked.map(checkedRow));
+      note.append(make("p", "checked-in", "Checked in"), list);
+    }
+  }
+
   /** What the key list says when it has no card: no key one, or nothing linked at all. */
   function renderKeyNote(item, keys) {
     const note = ui["key-note"];
     note.replaceChildren();
     note.hidden = keys.length > 0;
     if (keys.length) {
+      return;
+    }
+    if (isStep(item) && item.relations.includes("noMatch")) {
+      checkedNote(item);
       return;
     }
     if (item.cards.length) {
@@ -1061,13 +1273,14 @@ export async function bootstrapViewer({
     }
     const filtered = item.cards.length > FILTER_ABOVE && !state.config.minimal;
     const query = filtered ? ui["target-filter"].value : "";
-    const { keys, related } = splitCards(item);
+    const step = isStep(item);
+    const { keys, related } = step ? { keys: stepCards(item), related: [] } : splitCards(item);
     const shownKeys = cardsMatching(keys, { query });
     const shownRelated = cardsMatching(related, { query });
 
     renderKeyNote(item, keys);
     const capped = state.keysAll ? shownKeys : shownKeys.slice(0, KEY_CARDS);
-    ui["key-list"].replaceChildren(...capped.map(keyCard));
+    ui["key-list"].replaceChildren(...capped.map(step ? stepCard : keyCard));
     ui["key-list"].hidden = !capped.length;
     // A neutral count, only when there is more than one: no heading says what the cards state.
     ui["key-count"].hidden = keys.length < 2 || state.config.minimal;
@@ -1116,11 +1329,20 @@ export async function bootstrapViewer({
     ui["provenance-note"].hidden = !footer;
   }
 
+  /** An item's proof steps, each opening its step, wherever on the book's pages it is. */
+  function renderSteps(item) {
+    ui["step-section"].hidden = !item.steps.length;
+    ui["step-count"].textContent = String(item.steps.length);
+    ui["step-count"].hidden = state.config.minimal;
+    ui["step-list"].replaceChildren(...item.steps.map((id) => stepRow(state.index.items.get(id))));
+  }
+
   function renderItem(item) {
     renderNavStrip(item);
     renderHead(item);
     renderVerdictNotes(item);
     renderCards();
+    renderSteps(item);
     renderFooter(item);
   }
 
@@ -1185,13 +1407,22 @@ export async function bootstrapViewer({
     }
     const item = state.index.items.get(preferredItemId(region, state.index.items));
     const peek = ui["region-peek"];
-    peek.replaceChildren(make("span", "peek-label", labelParts(item.label).title));
+    const step = isStep(item) && item.stepOf ? stepParts(item, state.index.items) : null;
+    peek.replaceChildren(make("span", "peek-label", step ? step.title : labelParts(item.label).title));
     const lead = firstKeyCard(item);
+    // A step's ends may be many ranges of one declaration: "+N" counts the declarations.
+    const count = isStep(item) ? stepCards(item).length : item.cards.length;
+    const relation = isStep(item) ? stepRelation(item, { minimal: state.config.minimal }).word : "";
     if (lead) {
       peek.append(make("span", "peek-name", lead.name));
-      if (item.cards.length > 1) {
-        peek.append(make("span", "peek-more", `+${item.cards.length - 1}`));
+      if (count > 1) {
+        peek.append(make("span", "peek-more", `+${count - 1}`));
       }
+      if (relation) {
+        peek.append(make("span", "peek-more", relation));
+      }
+    } else if (relation) {
+      peek.append(make("span", "peek-more", relation));
     } else {
       peek.append(make("span", "peek-more",
                        item.cards.length ? coverageWord(item.coverage) || "No key declaration" : "No declaration linked"));
@@ -1231,8 +1462,12 @@ export async function bootstrapViewer({
   function decorateRegions() {
     for (const region of pageRegions()) {
       const verdict = state.faithfulness ? regionVerdict(regionItems(region)) : null;
+      const steps = regionItems(region).every(isStep);
       for (const polygon of polygonsOf(region.id)) {
         polygon.dataset.coverage = coverageOfRegion(region);
+        if (steps) {
+          polygon.dataset.step = "true";
+        }
         if (verdict) {
           polygon.dataset.verdict = verdict;
         } else {
@@ -1468,9 +1703,13 @@ export async function bootstrapViewer({
   ui["rotate-right"].addEventListener("click", () => rotate(90));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
   ui["back-to-page"].addEventListener("click", backToPage);
+  ui["step-parent"].addEventListener("click", async () => {
+    await openItem(state.selected?.stepOf);
+    focusQuietly(ui["item-label"]);
+  });
   for (const [id, delta, other] of [["previous-item", -1, "next-item"], ["next-item", 1, "previous-item"]]) {
-    ui[id].addEventListener("click", () => {
-      stepItem(delta);
+    ui[id].addEventListener("click", async () => {
+      await stepItem(delta);
       if (ui[id].disabled) {
         focusQuietly(ui[other].disabled ? ui["item-label"] : ui[other]);
       }

@@ -29,6 +29,7 @@ import {
   bundleText,
   makeGenerated,
   linkRecord,
+  makeProofSections,
   makeSections,
   makeVerso,
   memoryStorage,
@@ -1450,4 +1451,274 @@ test("verso: focus on a token the clamp hides opens the whole statement", async 
   await fire(tokens.at(-2), "focus");
   assert.deepEqual([pre.className, pre.scrollTop, shown], ["lean", 0, { block: "nearest" }],
                    "a block focus scrolled opens, back at its top, with the token in view");
+});
+
+// --- proof steps --------------------------------------------------------------
+
+const PROOF_FULL = { sections: makeProofSections(PDF_SHA256) };
+const PROOF_MINIMAL = { ...PROOF_FULL, config: makeConfig(MINIMAL) };
+
+/** The step rows nested under each index row, as `[its item's title, [step text, ...]]`. */
+function nestedRows(documentRef) {
+  return el(documentRef, "page-index").children.map((li) => [
+    textOf(li.children[0].children[1]),
+    (li.children[1]?.children ?? []).map((step) => step.children[0].children.slice(1).map(textOf).join("|")),
+  ]);
+}
+
+async function openStep(documentRef, itemId) {
+  const row = el(documentRef, "page-index").children.flatMap((li) => li.children[1]?.children ?? [])
+    .map((li) => li.children[0]).find((button) => button.dataset.itemId === itemId);
+  assert.ok(row, `${itemId} has no row on this page`);
+  await fire(row, "click");
+}
+
+test("steps: the index nests each step under its item, with its number, text and relation", async () => {
+  const { documentRef } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  assert.equal(el(documentRef, "index-meta").textContent, "2 passages · 2 with a key declaration · 2 proof steps");
+  assert.deepEqual(nestedRows(documentRef), [
+    ["Theorem 9.1", ["1|Unfold the product|Exact match", "2|Collect the two terms|Close match"]],
+    ["Remark 9.2", []],
+  ]);
+  assert.equal(el(documentRef, "page-index").children.length, 2, "two rows, not four");
+});
+
+test("steps: a page with only an item's later steps brings the item with it, and its row opens that page", async () => {
+  const { documentRef, result } = await start(PROOF_FULL);
+  await turnTo(documentRef, 10);
+  assert.equal(el(documentRef, "index-meta").textContent, "2 proof steps");
+  assert.deepEqual(nestedRows(documentRef), [
+    ["Theorem 9.1", ["3|Bound each side|Related", "4|The sum is finite|No match"]],
+  ]);
+  const [row] = indexRows(documentRef);
+  assert.equal(row.dataset.regionId, undefined);
+  assert.match(textOf(row.children[2]), /p\. 9$/);
+  await fire(row, "click");
+  assert.equal(result.state.currentPage, 9);
+  assert.equal(itemTitle(documentRef), "Theorem 9.1");
+  assert.equal(result.state.region.page, 9);
+});
+
+test("steps: a box and a row light each other, and a step's box is marked as one", async () => {
+  const { documentRef, result } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  const step = result.state.index.items.get("a");
+  const polygon = polygonOf(documentRef, step.place.regionId);
+  assert.equal(polygon.dataset.step, "true");
+  assert.equal(polygonOf(documentRef, result.state.index.items.get("thm").place.regionId).dataset.step, undefined);
+  const row = el(documentRef, "page-index").children[0].children[1].children[0].children[0];
+  await fire(polygon, "pointerenter", { pointerType: "mouse" });
+  assert.ok(row.classList.contains("is-hot"));
+  await fire(polygon, "pointerleave");
+  assert.ok(!row.classList.contains("is-hot"));
+});
+
+test("steps: a step's card shows its Lean lines, one range each, not the declaration again and again", async () => {
+  const { documentRef } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "b");
+  assert.equal(itemTitle(documentRef), "Step 2");
+  assert.equal(textOf(el(documentRef, "item-label").children[1]), "Collect the two terms");
+  assert.equal(el(documentRef, "key-list").children.length, 1, "three ranges of one declaration are one card");
+  const [[, name, ...ranges]] = keyCards(documentRef);
+  assert.equal(textOf(name), "Box.double");
+  const pres = ranges.filter((node) => node.tagName === "PRE");
+  assert.deepEqual(pres.map((pre) => pre.attributes["aria-label"]), ["Lines 22–23", "Line 25", "Lines 27–40"]);
+  assert.deepEqual(pres.map(textOf), ["rw [two_mul]\nring", "exact h", "calc _ = _ := by\n  simp"],
+                   "the text is the snippet's, exactly");
+  assert.deepEqual(pres.map((pre) => pre.children.map((line) => line.dataset.line)),
+                   [["22", "23"], ["25"], ["27", "28"]], "and each line carries its number");
+  assert.ok(pres.every((pre) => pre.classList.contains("is-numbered")));
+  assert.deepEqual(ranges.filter((node) => node.tagName !== "PRE").map(textOf), ["… through line 40"],
+                   "a cut range says how far it runs");
+  assert.ok(!pres.map(textOf).includes("theorem double (b : Box) : 2 * b = b + b"), "the whole statement is not repeated");
+});
+
+test("steps: a step with lines of two declarations shows a card for each", async () => {
+  const { documentRef } = await start(PROOF_FULL);
+  await turnTo(documentRef, 10);
+  await openStep(documentRef, "c");
+  assert.deepEqual(keyCards(documentRef).map(([, name]) => textOf(name)), ["Box.double", "Box.bound"]);
+});
+
+test("steps: the note's backticked code is set as code, on a step only", async () => {
+  const { documentRef } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "b");
+  const [code, rest] = el(documentRef, "coverage-note").children;
+  assert.deepEqual([code.tagName, code.textContent, rest], ["CODE", "ring", " closes what the book does by hand."]);
+  const definition = await start();
+  await selectPageRegion(definition.documentRef, definition.result.state, "loc:0002");
+  assert.deepEqual(el(definition.documentRef, "coverage-note").children, []);
+});
+
+test("steps: the relation is printed, in place of the coverage word it restates", async () => {
+  const { documentRef } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "a");
+  assert.equal(el(documentRef, "target-summary").textContent, "Exact match");
+  assert.equal(el(documentRef, "target-summary").hidden, false);
+  assert.equal(el(documentRef, "target-summary").title, "The Lean lines make this step's move.");
+  await fire(el(documentRef, "back-to-page"), "click");
+  await openStep(documentRef, "b");
+  assert.equal(el(documentRef, "target-summary").textContent, "Close match");
+  assert.match(el(documentRef, "target-summary").className, /coverage-formalized/, "the mark is still the region's");
+});
+
+test("minimal: an exact match goes unmarked; a relation that qualifies the link stays", async () => {
+  const { documentRef } = await start(PROOF_MINIMAL);
+  await turnTo(documentRef, 9);
+  assert.deepEqual(nestedRows(documentRef)[0][1], ["1|Unfold the product", "2|Collect the two terms|Close match"]);
+  await openStep(documentRef, "a");
+  assert.equal(el(documentRef, "target-summary").hidden, true);
+  await fire(el(documentRef, "back-to-page"), "click");
+  await openStep(documentRef, "b");
+  assert.equal(el(documentRef, "target-summary").hidden, false);
+  assert.equal(el(documentRef, "target-summary").textContent, "Close match");
+  await turnTo(documentRef, 10);
+  assert.deepEqual(nestedRows(documentRef)[0][1], ["3|Bound each side|Related", "4|The sum is finite|No match"]);
+});
+
+test("minimal: a step's card keeps its link, its name and its lines, and drops its kind and badges", async () => {
+  const { documentRef } = await start(PROOF_MINIMAL);
+  await turnTo(documentRef, 10);
+  await openStep(documentRef, "c");
+  const [, [eyebrow, name, pre]] = keyCards(documentRef);
+  assert.equal(textOf(eyebrow.children[0]), "", "no kind and no sorry badge");
+  assert.equal(eyebrow.children[1].tagName, "A");
+  assert.equal(textOf(name), "Box.bound");
+  assert.equal(pre.attributes["aria-label"], "Line 7");
+  assert.equal(el(documentRef, "provenance-note").hidden, true);
+  const full = await start(PROOF_FULL);
+  await turnTo(full.documentRef, 10);
+  await openStep(full.documentRef, "c");
+  assert.match(textOf(keyCards(full.documentRef)[1][0].children[0]), /sorry: exercise/);
+  assert.equal(el(full.documentRef, "provenance-note").textContent, "Audit links, unreviewed.");
+});
+
+for (const [mode, options] of [["full", PROOF_FULL], ["minimal", PROOF_MINIMAL]]) {
+  test(`steps: a checked absence reads as one, with where it was checked (${mode})`, async () => {
+    const { documentRef } = await start(options);
+    await turnTo(documentRef, 10);
+    await openStep(documentRef, "d");
+    assert.equal(el(documentRef, "target-summary").textContent, "No match");
+    assert.equal(textOf(el(documentRef, "coverage-note")), "Lean takes finiteness from an instance.");
+    const [lead, heading, list] = el(documentRef, "key-note").children;
+    assert.equal(el(documentRef, "key-note").hidden, false);
+    assert.equal(textOf(lead), "Checked: no Lean line makes this step.");
+    assert.equal(textOf(heading), "Checked in");
+    assert.deepEqual(list.children.map(textOf), ["Box.double", "Notes.Setlines 50–52"]);
+    const [named, bare] = list.children.map((li) => li.children[0]);
+    assert.deepEqual([named.tagName, named.attributes.href],
+                     ["A", `${ORIGIN}/Notes/Box/index.html#Notes___Box___double`], "linked through the theorem's card");
+    assert.deepEqual([bare.tagName, bare.attributes.href], ["SPAN", undefined]);
+    assert.ok(!/No Lean declaration is linked/.test(textOf(el(documentRef, "key-note"))));
+    assert.deepEqual(el(documentRef, "key-list").children, []);
+  });
+}
+
+test("steps: a checked absence that is not a step still says nothing is linked", async () => {
+  const { documentRef } = await start(PROOF_FULL);
+  await turnTo(documentRef, 11);
+  await fire(indexRows(documentRef)[0], "click");
+  assert.equal(textOf(el(documentRef, "key-note")), "No Lean declaration is linked to this passage.");
+  assert.equal(el(documentRef, "target-summary").textContent, "Not formalized");
+});
+
+test("steps: an item lists its proof's steps, across pages, and a row opens its step on its page", async () => {
+  const { documentRef, result } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  await fire(indexRows(documentRef)[0], "click");
+  assert.equal(itemTitle(documentRef), "Theorem 9.1");
+  assert.equal(el(documentRef, "step-section").hidden, false);
+  const steps = rows(documentRef, "step-list").map((li) => li.children[0]);
+  assert.deepEqual(steps.map((step) => step.children.slice(1).map(textOf).join("|")), [
+    "1|Unfold the product|Exact match", "2|Collect the two terms|Close match",
+    "3|Bound each side|Related|p. 10", "4|The sum is finite|No match|p. 10",
+  ]);
+  await fire(steps[2], "click");
+  assert.equal(result.state.currentPage, 10);
+  assert.equal(itemTitle(documentRef), "Step 3");
+  assert.equal(el(documentRef, "selection").hidden, false, "no page index between the two");
+  assert.equal(el(documentRef, "page-number").value, "10");
+});
+
+test("steps: the stepper walks the proof, turning the page, and the head leads back to the item", async () => {
+  const { documentRef, result } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "b");
+  assert.equal(el(documentRef, "item-position").textContent, "2 of 4");
+  assert.equal(el(documentRef, "next-item").attributes["aria-label"], "Next step");
+  await fire(el(documentRef, "next-item"), "click");
+  assert.equal(result.state.selected.id, "c");
+  assert.equal(result.state.currentPage, 10);
+  assert.equal(el(documentRef, "item-position").textContent, "3 of 4");
+  await fire(el(documentRef, "next-item"), "click");
+  assert.equal(el(documentRef, "next-item").disabled, true);
+  assert.equal(el(documentRef, "step-parent").textContent, "Proof of Theorem 9.1");
+  assert.equal(el(documentRef, "step-parent").hidden, false);
+  await fire(el(documentRef, "step-parent"), "click");
+  assert.equal(result.state.selected.id, "thm");
+  assert.equal(result.state.currentPage, 9);
+  assert.equal(el(documentRef, "step-parent").hidden, true);
+  // On an item the stepper is back to the page's items, which are not its steps.
+  assert.equal(el(documentRef, "item-position").textContent, "1 of 2");
+  assert.equal(el(documentRef, "next-item").attributes["aria-label"], "Next passage");
+  await fire(el(documentRef, "next-item"), "click");
+  assert.equal(result.state.selected.id, "remark");
+});
+
+test("steps: a click on a step's box opens the step, and the way back lands on its row", async () => {
+  const documentRef = fakeDocument(SHELL);
+  const created = documentRef.createElement;
+  let focused = null;
+  documentRef.createElement = (tag) => {
+    const node = created(tag);
+    node.focus = () => {
+      focused = node;
+    };
+    return node;
+  };
+  const { result } = await start({ ...PROOF_FULL, documentRef });
+  await turnTo(documentRef, 9);
+  await fire(polygonOf(documentRef, result.state.index.items.get("b").place.regionId), "click");
+  assert.equal(result.state.selected.id, "b");
+  assert.equal(itemTitle(documentRef), "Step 2");
+  await fire(el(documentRef, "back-to-page"), "click");
+  assert.equal(result.state.selected, null);
+  assert.equal(focused.dataset.itemId, "b");
+});
+
+test("steps: a step tied to no item keeps its own row, with its lines and its relation", async () => {
+  const proof = makeProofSections(PDF_SHA256);
+  const [theorem, , second, , fourth] = proof["9/theorem-9.1"];
+  const { documentRef } = await start({ sections: { 9: [theorem, second], 10: [fourth] } });
+  await turnTo(documentRef, 9);
+  assert.equal(el(documentRef, "page-index").children.length, 2);
+  const [, row] = indexRows(documentRef);
+  assert.equal(textOf(row.children[2]), "Box.double Close match", "three ranges of one declaration, no \"+2\"");
+  await fire(row, "click");
+  assert.equal(itemTitle(documentRef), "b: Collect the two terms");
+  assert.equal(el(documentRef, "step-parent").hidden, true);
+  assert.equal(el(documentRef, "target-summary").textContent, "Close match");
+  assert.equal(el(documentRef, "key-list").children.length, 1);
+  assert.equal(el(documentRef, "item-position").textContent, "2 of 2", "the stepper walks the page");
+  await turnTo(documentRef, 10);
+  assert.equal(textOf(indexRows(documentRef)[0].children[2]), "No match");
+});
+
+test("steps: a companion with no steps shows no step section, no step mark and the same index", async () => {
+  const { documentRef, result } = await start();
+  await turnTo(documentRef, 2);
+  assert.deepEqual(el(documentRef, "page-index").children.map((li) => li.children.length), [1, 1], "no nested list");
+  assert.equal(el(documentRef, "overlay").children.some((polygon) => polygon.dataset.step), false);
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(el(documentRef, "step-section").hidden, true);
+  assert.equal(el(documentRef, "step-parent").hidden, true);
+  assert.equal(el(documentRef, "next-item").attributes["aria-label"], "Next passage");
+  assert.equal(el(documentRef, "target-summary").textContent, "Formalized", "a relation is not printed on an item");
+  const [[, , statement]] = keyCards(documentRef);
+  assert.equal(statement.classList.contains("is-numbered"), false);
+  assert.equal(statement.children[0].dataset.line, undefined);
 });
