@@ -287,6 +287,10 @@ The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
 `CF_M1_ENFORCE_BARS=1` (assert the proposal's recall bars instead of only
 reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
 and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
+Tests that compare this checkout with a frozen base commit skip in a checkout
+that does not hold it, such as a shallow clone; `CF_REQUIRE_BASE_COMMITS=1`
+makes that a failure (`tests/_base_commits.py`), and CI sets it and takes the
+whole history, so they run there. Compare results from a full clone.
 Discovery and inference tests use fixture repos and synthetic text: no network,
 and the only PDFs read are the fixture PDFs the suite generates in a temporary
 directory. `tests/_hermetic.py` is what makes that true: importing it pins HOME
