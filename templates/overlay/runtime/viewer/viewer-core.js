@@ -1,6 +1,6 @@
 /**
  * The overlay viewer's pure functions: the annotation bundle, the Literature
- * Links 2.0 records, coordinate conversion, the href rules and sha256
+ * Links 1.0 records, coordinate conversion, the href rules and sha256
  * verification.
  *
  * Nothing here touches the DOM, so `node --test` exercises all of it; viewer.js

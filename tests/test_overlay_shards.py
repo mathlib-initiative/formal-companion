@@ -1,4 +1,4 @@
-"""The annotation document → Literature Links 2.0 annotation files mapping (`scripts/overlay/shards.py`).
+"""The annotation document → Literature Links 1.0 annotation files mapping (`scripts/overlay/shards.py`).
 
 docs/overlay.md section 7, record by record, on a synthetic document: what a
 link, a region, a quad region, an item that links nothing, a destination, a

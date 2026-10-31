@@ -8,7 +8,7 @@ one companion is data the viewer and the tools read at run time:
 
 | path in the companion | written by | what it holds |
 |---|---|---|
-| `annotations/<section>/[<item>/]<name>.json`, `_defaults.json` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) 2.0 annotations, one annotation per file, one folder per book section and per item with several, with folder defaults and end templates (section 7) |
+| `annotations/<section>/[<item>/]<name>.json`, `_defaults.json` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) 1.0 annotations, one annotation per file, one folder per book section and per item with several, with folder defaults and end templates (section 7) |
 | `pdf-overlay/overlay.config.json` | `cf overlay init`, then edited | presentation and local-build settings (section 3) |
 | `pdf-overlay/annotations.bundle.json` | `cf overlay sync` | every annotation as the reader reads it, defaults applied, with its file's path, in file order: what the viewer reads, in one fetch (section 6) |
 | `pdf-overlay/GENERATED.json` | `cf overlay sync` (and `export`) | the generator commit, the Literature Links release, the sha256 of every copied file, and the annotation files' count, manifest sha256 and bundle sha256 (section 6) |
@@ -17,8 +17,8 @@ one companion is data the viewer and the tools read at run time:
 A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generated.py`,
 which needs nothing but CPython and the checkout.
 
-The overlay reads **Literature Links** 2.0.0: tag `v2.0.0`, commit
-`358e65c68304245f503a77843821d2953469457c`, vendored
+The overlay reads **Literature Links** 1.0.0: tag `v1.0.0`, commit
+`ae8f2a65c8f665a4a747842a7e5bf8e1ae19054e`, vendored
 under `vendor/literature_links/` (sealed by
 `vendor/literature_links.manifest.json`) and shipped to companions as
 `pdf-overlay/tools/literature_links/`. The skill's other tools keep the
@@ -303,7 +303,7 @@ cf overlay check <companion>
   "schema": "formal-companion/overlay-generated",
   "schema_version": 3,
   "generator": {"name": "formal-companion", "version": "...", "commit": "<this repo's HEAD>"},
-  "format": {"package": "literature-links", "version": "2.0.0", "commit": "<40 hex>", "tag": "v2.0.0"},
+  "format": {"package": "literature-links", "version": "1.0.0", "commit": "<40 hex>", "tag": "v1.0.0"},
   "instance_files": ["overlay.config.json"],
   "files": [{"path": "tools/literature_links/companion.py", "sha256": "..."}],
   "annotations": {
@@ -333,7 +333,7 @@ annotation per line, in path order, folder defaults applied.
 ## 7. The annotation files
 
 `scripts/overlay/shards.py` converts the exporter's annotation document into
-Literature Links 2.0 records:
+Literature Links 1.0 records:
 
 | record field | from |
 |---|---|

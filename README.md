@@ -31,7 +31,7 @@ declarations linked to it. It writes two directories in the companion:
 
 - `annotations/`: the companion's
   [Literature Links](https://github.com/mathlib-initiative/literature-links)
-  2.0 annotations, one annotation per file, one folder per book section and
+  1.0 annotations, one annotation per file, one folder per book section and
   per item with several;
 - `pdf-overlay/`: the viewer, its tools and PDF.js, copied verbatim, plus the
   annotation bundle the viewer reads and `GENERATED.json`, which records the
@@ -65,7 +65,7 @@ its `pdf-overlay/`. It needs no workspace; any faithfulness verdicts it shows
 come from files committed in the companion, never from an audit workspace.
 `ingest` and `inventory` are the first two stages of an experimental
 PDF-to-companion pipeline (`docs/pipeline.md`). `vendor/` holds Literature
-Links 2.0.0 and the legacy annotation format the exporters write as an
+Links 1.0.0 and the legacy annotation format the exporters write as an
 intermediate step.
 
 ## Companions, sources and workspaces
@@ -93,7 +93,7 @@ docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inve
 docs/overlay.md   the contract for the generated companion PDF overlay (`cf overlay`)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
-vendor/           literature_links/ (Literature Links 2.0.0, which
+vendor/           literature_links/ (Literature Links 1.0.0, which
                   the overlay writes and reads)
                   and formal_companion_annotations/ (the legacy intermediate
                   format that `cf export` writes and `cf overlay export`

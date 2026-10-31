@@ -311,8 +311,8 @@ cf export docstring-tags <tao-measure-lean checkout> --commit 677ada1 \
 gzip -n -9 measure_theory.annotations.json tao-measure-lean.annotations.json
 ```
 
-The references written against the withdrawn `v1.0.0` tag (at `00a2438` and
-`f158509`) do not validate under the release candidate and must be
+The references written against the withdrawn tag now named `v0.1.0` (at
+`00a2438` and `f158509`) do not validate under the release candidate and must be
 regenerated at these pins; the reproduction tests skip until they are. A
 measure_theory reference written while snippets were read from its
 `declaration-snippets.json` differs at `2cd263a` in two definition snippets

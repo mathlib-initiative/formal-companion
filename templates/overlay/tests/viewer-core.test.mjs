@@ -2,7 +2,7 @@
  * The overlay viewer's pure half, against synthetic annotation files and configs.
  *
  * Everything the contract (docs/overlay.md section 4) says the viewer builds
- * from the Literature Links 2.0 annotations is checked here: the bundle, the
+ * from the Literature Links 1.0 annotations is checked here: the bundle, the
  * refusals, geometry, link ordering, one card per link however many records
  * repeat it, status and note, the href rules, verdict display and sha256
  * verification. The
