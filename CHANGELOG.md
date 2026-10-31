@@ -300,6 +300,11 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- The overlay reads Literature Links 2.0.0 at its tag `v2.0.0`, which replaces the unreleased
+  revision `2bb328c` of `format-2.0`. A generated overlay's `GENERATED.json` now names the tag,
+  not a branch, so `cf overlay check` asks an older overlay to re-sync. The vendored copy's
+  checker and reader change as upstream did; annotations valid at `2bb328c` stay valid unless a
+  reference holds one of the invisible characters the schema now refuses.
 - **The two calls on the cut, finished: the hypothesis rule wins, a bare "and" cuts nothing, the
   R-INSTANCE pieces have their own text, and the rule card states the calls itself**
   (`templates/prompts/locate-inventory.md.tmpl`, `locate-inventory-audit-system.md.tmpl`,

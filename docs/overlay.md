@@ -17,8 +17,8 @@ one companion is data the viewer and the tools read at run time:
 A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generated.py`,
 which needs nothing but CPython and the checkout.
 
-The overlay reads **Literature Links** 2.0.0, not yet released: commit
-`2bb328c2584db1fc21e2864e3a8f8eeaebb74263` of its `format-2.0` branch, vendored
+The overlay reads **Literature Links** 2.0.0: tag `v2.0.0`, commit
+`358e65c68304245f503a77843821d2953469457c`, vendored
 under `vendor/literature_links/` (sealed by
 `vendor/literature_links.manifest.json`) and shipped to companions as
 `pdf-overlay/tools/literature_links/`. The skill's other tools keep the
@@ -277,7 +277,7 @@ cf overlay check <companion>
   "schema": "formal-companion/overlay-generated",
   "schema_version": 3,
   "generator": {"name": "formal-companion", "version": "...", "commit": "<this repo's HEAD>"},
-  "format": {"package": "literature-links", "version": "2.0.0", "commit": "<40 hex>", "branch": "format-2.0"},
+  "format": {"package": "literature-links", "version": "2.0.0", "commit": "<40 hex>", "tag": "v2.0.0"},
   "instance_files": ["overlay.config.json"],
   "files": [{"path": "tools/literature_links/companion.py", "sha256": "..."}],
   "annotations": {

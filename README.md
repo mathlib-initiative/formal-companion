@@ -93,7 +93,7 @@ docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inve
 docs/overlay.md   the contract for the generated companion PDF overlay (`cf overlay`)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
-vendor/           literature_links/ (Literature Links 2.0.0, unreleased, which
+vendor/           literature_links/ (Literature Links 2.0.0, which
                   the overlay writes and reads)
                   and formal_companion_annotations/ (the legacy intermediate
                   format that `cf export` writes and `cf overlay export`

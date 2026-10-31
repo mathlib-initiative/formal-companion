@@ -6,6 +6,7 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 from typing import Any
 
@@ -21,6 +22,9 @@ _OPERATIONAL = {"IO", "JSON", "NO_ANNOTATIONS", "SYMLINK", "PATH"}
 
 _EXIT_STATUS = ("exit status: 0 when every annotation is valid, 1 for an invalid annotation, file shape or "
                 "defaults file, 2 for a read, write, JSON, path or symlink failure, no annotations, or a usage error")
+
+
+_ROOT = "the companion's root folder: defaults files above it do not apply, and a file outside it is a problem"
 
 
 def _write_json(text: str) -> None:
@@ -39,26 +43,46 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
+def _text(value: Any) -> str:
+    """``str(value)`` with each unpaired surrogate, as in a file name that is not UTF-8, written as an escape."""
+    return str(value).encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+def _report(problems: list[Problem]) -> list[dict[str, str]]:
+    """Problems for a JSON report, which must hold no unpaired surrogate."""
+    return [{key: _text(value) for key, value in asdict(problem).items()} for problem in problems]
+
+
 def _status(problems: list[Problem]) -> int:
     return 2 if any(problem.code in _OPERATIONAL for problem in problems) else 1 if problems else 0
 
 
-def _check_row(value: Any, line: int | None, path: Path) -> tuple[dict[str, Any] | None, tuple[Path, ...],
-                                                                  list[Problem]]:
+def _check_row(value: Any, line: int | None, path: Path, chain: list[tuple[Path, dict[str, Any]]] | None,
+               reading: list[Problem]) -> tuple[dict[str, Any] | None, tuple[Path, ...], list[Problem]]:
     """The merged annotation or None, the defaults files applied, and the problems."""
     shape = discovery._shape(value, line)
     if shape:
         return None, (), [Problem("SHAPE", "$", shape)]
-    merged, applied, failures = discovery.inherit(value, path)
+    merged, applied, failures = discovery._inherit(value, path, chain, reading)
     if merged is None:
         return None, (), failures
     return merged, applied, companion.check(merged).problems
 
 
-def _check_file(path: Path) -> tuple[list[Problem], tuple[Path, ...], list[list[str]]]:
+def _check_file(path: Path, root: Path | None) -> tuple[list[Problem], tuple[Path, ...], list[list[str]]]:
     """Check each annotation in ``path``: the problems, the defaults files applied and each valid one's end types."""
+    mode = path.lstat().st_mode  # checked before reading, as scan checks a file named explicitly
+    if stat.S_ISLNK(mode):
+        return [Problem("SYMLINK", "$", "explicit inputs must not be symlinks")], (), []
+    if not stat.S_ISREG(mode):
+        return [Problem("PATH", "$", "input must be a regular file")], (), []
     if path.name == discovery.DEFAULTS:
         return [Problem("DEFAULTS", "$", "a defaults file is not an annotation")], (), []
+    resolved = path.resolve()
+    reading: list[Problem] = []
+    defaults = discovery._Defaults(reading, root)
+    if defaults.folders(resolved) is None:
+        return reading, (), []  # outside the root, before reading
     rows = discovery._rows(path, path.read_bytes().decode("utf-8"))
     if not rows:
         return [Problem("NO_ANNOTATIONS", "$", "the file holds no annotations")], (), []
@@ -66,9 +90,10 @@ def _check_file(path: Path) -> tuple[list[Problem], tuple[Path, ...], list[list[
     reported: set[Problem] = set()
     applied: tuple[Path, ...] = ()
     types: list[list[str]] = []
+    chain = defaults.chain(resolved)
     for line, row in rows:
         try:
-            merged, files, found = _check_row(companion.loads(row), line, path)
+            merged, files, found = _check_row(companion.loads(row), line, resolved, chain, reading)
         except companion.LoadError as exc:
             merged, files, found = None, (), [Problem("JSON", "$", str(exc))]
         applied = files or applied
@@ -89,11 +114,12 @@ def _check_file(path: Path) -> tuple[list[Problem], tuple[Path, ...], list[list[
 def _validate(args: argparse.Namespace) -> int:
     """Report every input, including after unreadable files; status 2 wins."""
     status = 0
+    root = None if args.root is None else args.root.resolve()
     for path in args.documents:
         applied: tuple[Path, ...] = ()
         types: list[list[str]] = []
         try:
-            found, applied, types = _check_file(path)
+            found, applied, types = _check_file(path, root)
         except (OSError, ValueError, RecursionError) as exc:
             code = "IO" if isinstance(exc, (OSError, UnicodeError)) else "JSON"
             found = [Problem(code, "$", str(exc))]
@@ -101,9 +127,10 @@ def _validate(args: argparse.Namespace) -> int:
         status = max(status, item_status)
         problems = [asdict(problem) for problem in found]
         if args.format == "json":
-            _write_json(json.dumps({"document": str(path), "valid": not problems, "status": item_status,
-                                   "defaults": [str(file) for file in applied],
-                                   "problems": problems, "warnings": []}, ensure_ascii=True, allow_nan=False) + "\n")
+            _write_json(json.dumps({"document": _text(path), "valid": not problems, "status": item_status,
+                                   "defaults": [_text(file) for file in applied],
+                                   "problems": _report(found), "warnings": []},
+                                  ensure_ascii=True, allow_nan=False) + "\n")
         else:
             note = f" (with defaults from {', '.join(map(str, applied))})" if applied else ""
             for problem in problems:
@@ -117,7 +144,7 @@ def _validate(args: argparse.Namespace) -> int:
 
 def _scan(args: argparse.Namespace) -> int:
     try:
-        collection = discovery.collect(args.paths, include=args.include, exclude=args.exclude)
+        collection = discovery.collect(args.paths, include=args.include, exclude=args.exclude, root=args.root)
     except (OSError, ValueError, RecursionError) as exc:
         # A failure that is not about one input, such as an unreadable schema.
         if args.format == "json":
@@ -129,12 +156,12 @@ def _scan(args: argparse.Namespace) -> int:
     status = _status(collection.problems)
     if args.format == "json":
         result = {"valid": not collection.problems, "status": status,
-                  "files": [str(path) for path in collection.files],
+                  "files": [_text(path) for path in collection.files],
                   "records": [{"annotation": record.annotation,
-                               "origin": {"path": str(record.path), "line": record.line, "base_uri": record.base_uri,
-                                          "defaults": [str(file) for file in record.defaults]}}
+                               "origin": {"path": _text(record.path), "line": record.line, "base_uri": record.base_uri,
+                                          "defaults": [_text(file) for file in record.defaults]}}
                               for record in collection.records],
-                  "problems": [asdict(problem) for problem in collection.problems]}
+                  "problems": _report(collection.problems)}
         _write_json(companion.dumps(result))
     else:
         for problem in collection.problems:
@@ -157,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
                                        help="check JSON files, one annotation each, and JSONL files, one per line")
     validation.add_argument("documents", nargs="+", type=Path, metavar="FILE",
                             help="a .json file holds one annotation, a .jsonl or .ndjson file one per line")
+    validation.add_argument("--root", type=Path, metavar="DIR", help=_ROOT)
     validation.add_argument("--format", choices=("text", "json"), default="text",
                             help="json writes a report on one line for each file")
     scanning = subparsers.add_parser("scan", allow_abbrev=False, epilog=_EXIT_STATUS,
@@ -164,12 +192,17 @@ def main(argv: list[str] | None = None) -> int:
     scanning.add_argument("paths", nargs="+", type=Path, metavar="PATH",
                           help="a file, or a folder to walk for .json, .jsonl and .ndjson files")
     scanning.add_argument("--include", action="append", metavar="PATTERN",
-                          help="select files by root-relative pattern instead of suffix (repeatable)")
+                          help="select files by pattern on the path inside the walked folder instead of suffix "
+                               "(repeatable)")
     scanning.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
-                          help="leave out files by root-relative pattern; wins over --include (repeatable)")
+                          help="leave out files by pattern on the path inside the walked folder; wins over "
+                               "--include (repeatable)")
+    scanning.add_argument("--root", type=Path, metavar="DIR", help=_ROOT)
     scanning.add_argument("--format", choices=("text", "json"), default="text",
                           help="json writes one report with the files, records and problems")
     args = parser.parse_args(argv)
+    if args.root is not None and not args.root.is_dir():
+        (validation if args.command == "validate" else scanning).error(f"--root {args.root} is not a folder")
     if args.format == "text" and getattr(sys.stdout, "errors", None) == "strict" and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
     try:
