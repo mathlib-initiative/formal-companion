@@ -75,6 +75,31 @@ export const COVERAGE_SUMMARIES = Object.freeze({
 /** Every status `COVERAGE_SUMMARIES` has a line for, sorted. */
 export const COVERAGE_VALUES = Object.freeze(Object.keys(COVERAGE_SUMMARIES).sort());
 
+/** A record of this `kind` is one step of its item's proof (docs/overlay.md section 4). */
+export const STEP_KIND = "proof_step";
+
+/** The word a step's relation prints; a token not listed prints as written. */
+export const RELATION_WORDS = Object.freeze({
+  broadMatch: "Broader",
+  closeMatch: "Close match",
+  exactMatch: "Exact match",
+  hasPart: "In part",
+  narrowMatch: "Narrower",
+  noMatch: "No match",
+  relatedMatch: "Related",
+});
+
+/** What a step's relation claims about its Lean lines: the word's title. */
+export const RELATION_SUMMARIES = Object.freeze({
+  broadMatch: "The Lean lines prove more than this step.",
+  closeMatch: "The Lean lines reach the same claim by other means.",
+  exactMatch: "The Lean lines make this step's move.",
+  hasPart: "The Lean lines carry out part of this step.",
+  narrowMatch: "The Lean lines prove a special case of this step.",
+  noMatch: "Checked: the Lean has no counterpart to this step.",
+  relatedMatch: "The step's content enters the Lean at these lines, which do not make its move.",
+});
+
 // --- small helpers ----------------------------------------------------------
 
 function asArray(value) {
@@ -377,6 +402,12 @@ export function readAnnotationsBlock(generated) {
   return { bundle: { path: bundle.path, sha256: bundle.sha256 }, count: block.count, directory: block.directory };
 }
 
+/** `<section>/<item>` of an annotation file's path, or null for a file directly in a section. */
+export function itemFolder(path, directory) {
+  const parts = text(path).slice(directory.length + 1).split("/");
+  return parts.length === 3 ? parts.slice(0, 2).join("/") : null;
+}
+
 /**
  * The bundle's annotations, `[{path, annotation}]` in file order, folder
  * defaults applied. Each path is `<directory>/<section>/[<item>/]<name>.json`,
@@ -597,6 +628,18 @@ function stripPrefix(name, prefix) {
   return prefix && name.startsWith(prefix) ? name.slice(prefix.length) : name;
 }
 
+/** `[first, last]` of an end's `location.lines`, which may name one line; else null. */
+function lineRange(lines) {
+  const list = asArray(lines);
+  return (list.length === 1 || list.length === 2) && list.every(positiveInteger) ? [list[0], list.at(-1)] : null;
+}
+
+/** "Line 7", "Lines 7–9", or "". */
+export function linesText(range) {
+  const [first, last] = asArray(range);
+  return !first ? "" : first === last ? `Line ${first}` : `Lines ${first}–${last}`;
+}
+
 /**
  * One card: an object end of a record. The overlay's own ends say in their
  * extension whether there is a rendered page (`cardHref`); an end from
@@ -625,7 +668,8 @@ function card(record, end, context) {
     badges.push(`sorry: ${declaration.sorry}`);
   }
   const snippet = isObject(ext.snippet) && text(ext.snippet.text)
-    ? { line: Number.isInteger(ext.snippet.line) ? ext.snippet.line : null, text: ext.snippet.text }
+    ? { line: Number.isInteger(ext.snippet.line) ? ext.snippet.line : null, text: ext.snippet.text,
+        ...(ext.snippet.truncated === true ? { truncated: true } : {}) }
     : null;
   const verdict = isObject(ext.declaration_verdict) && text(ext.declaration_verdict.verdict)
     ? {
@@ -643,6 +687,7 @@ function card(record, end, context) {
     href,
     id: [text(record.id), text(end.role), declarationId].join("/"),
     kind: text(declaration.kind),
+    lines: lineRange(location.lines),
     module: text(location.module),
     name: stripPrefix(fullName, context.stripPrefix) || fullName,
     provenanceMethod: isObject(recordExt.provenance) ? text(recordExt.provenance.method) : "",
@@ -653,6 +698,23 @@ function card(record, end, context) {
     snippet,
     target: ours ? cardTarget(end) : null,
     verdict,
+  };
+}
+
+/**
+ * What a checked absence names: the Lean its record looked in, by declaration,
+ * else by module, with its lines when it gives them. It carries no link of its
+ * own: `linkSteps` borrows one from a card of the same proof.
+ */
+function checkedEnd(end, context) {
+  const location = isObject(end.location) ? end.location : {};
+  const fullName = text(location.declaration) || text(end.title);
+  return {
+    fullName,
+    href: null,
+    lines: lineRange(location.lines),
+    module: text(location.module),
+    name: stripPrefix(fullName, context.stripPrefix) || text(location.module),
   };
 }
 
@@ -715,6 +777,42 @@ function siteRootOf(file) {
   return path && url.endsWith(path) ? url.slice(0, url.length - path.length) : url;
 }
 
+export function isStep(item) {
+  return item?.kind === STEP_KIND;
+}
+
+const NATURAL = new Intl.Collator("en", { numeric: true });
+
+/**
+ * Tie each step to its item. The overlay's layout gives an item with several
+ * records a folder of its own, so a step's item is the one other item with
+ * records in the step's folder; steps in a folder with none, or with several,
+ * stay items of their own, never guessed onto one. A proof's steps are in the
+ * natural order of their file names. Then a checked absence's declaration links
+ * where a card of the same proof that names it links.
+ */
+function linkSteps(items, folders) {
+  for (const { owners, steps } of folders.values()) {
+    if (owners.size === 1) {
+      const [owner] = owners;
+      const ordered = [...steps].filter(([id]) => id !== owner)
+        .sort((left, right) => NATURAL.compare(left[1], right[1]));
+      for (const [id] of ordered) {
+        items.get(id).stepOf = owner;
+        items.get(owner).steps.push(id);
+      }
+    }
+  }
+  for (const item of items.values()) {
+    const owner = items.get(item.stepOf);
+    const proof = owner ? [owner, ...owner.steps.map((id) => items.get(id))] : [item];
+    for (const end of item.checked) {
+      end.href = (end.fullName && proof.flatMap((member) => member.cards)
+        .find((entry) => entry.fullName === end.fullName)?.href) || null;
+    }
+  }
+}
+
 /**
  * The page → region → item → card index the viewer renders, built purely from
  * the annotation files (`[{url, path, records}]`, each url the file's own) and
@@ -728,6 +826,11 @@ function siteRootOf(file) {
  * (`noMatch`). `warnings` holds one line per region this build could not
  * place; such a region is dropped, never guessed at, and a record with no
  * region left adds nothing.
+ *
+ * An item of kind `STEP_KIND` is a step: its relation is kept, its cards stay
+ * in the record's order, and the ends of its checked absence are `checked`,
+ * never cards. A step belongs to the one other item with records in its item
+ * folder (`linkSteps`).
  */
 export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = {}) {
   const source = pdfSource(files, config.sourceId);
@@ -736,6 +839,7 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
   const items = new Map();
   const regions = new Map();
   const seen = new Map();
+  const folders = new Map();
   const warnings = [];
   for (const file of asArray(files)) {
     const context = {
@@ -766,6 +870,7 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
       if (!items.has(itemId)) {
         items.set(itemId, {
           cards: [],
+          checked: [],
           clusterIds: asArray(ext.clusters).map(text).filter(Boolean),
           coverage: text(ext.coverage) || text(record.status),
           coverageNote: text(record.note),
@@ -773,16 +878,41 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
           kind: text(record.kind),
           label: title || itemId,
           locator: locatorText(ext.locator),
+          place: null,
+          relations: [],
+          stepOf: null,
+          steps: [],
           verdicts: asArray(ext.verdicts).filter(isObject),
         });
         seen.set(itemId, new Set());
       }
-      if (record.relation !== "noMatch") {
+      const item = items.get(itemId);
+      const relation = text(record.relation);
+      if (relation && !item.relations.includes(relation)) {
+        item.relations.push(relation);
+      }
+      if (file.folder) {
+        if (!folders.has(file.folder)) {
+          folders.set(file.folder, { owners: new Set(), steps: new Map() });
+        }
+        const folder = folders.get(file.folder);
+        if (record.kind !== STEP_KIND) {
+          folder.owners.add(itemId);
+        } else if (!folder.steps.has(itemId)) {
+          folder.steps.set(itemId, text(file.path));
+        }
+      }
+      const absent = record.relation === "noMatch";
+      if (!absent || isStep(item)) {
         for (const end of ends(record, "object")) {
           const key = [text(end.role), text(end.uri), JSON.stringify(end.location ?? null)].join("\n");
           if (!seen.get(itemId).has(key)) {
             seen.get(itemId).add(key);
-            items.get(itemId).cards.push(card(record, end, context));
+            if (absent) {
+              item.checked.push(checkedEnd(end, context));
+            } else {
+              item.cards.push(card(record, end, context));
+            }
           }
         }
       }
@@ -803,8 +933,11 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
     }
   }
   for (const item of items.values()) {
-    item.cards = orderCards(item.cards);
+    if (!isStep(item)) {
+      item.cards = orderCards(item.cards);
+    }
   }
+  linkSteps(items, folders);
   const pages = new Map();
   for (const region of regions.values()) {
     // The curation's order (the item the region's own label names first), not file order.
@@ -829,6 +962,14 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
       const [ry, rx] = corner(right);
       return ly - ry || lx - rx || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
     });
+  }
+  // Where a row of another page opens an item: its first region in reading order.
+  for (const page of [...pages.keys()].sort((a, b) => a - b)) {
+    for (const region of pages.get(page)) {
+      for (const id of region.itemIds) {
+        items.get(id).place ??= { page, regionId: region.id };
+      }
+    }
   }
   return {
     bytes: Number.isInteger(sourceExt.bytes) ? sourceExt.bytes : null,
@@ -939,6 +1080,91 @@ export function firstKeyCard(item) {
 }
 
 /**
+ * A step's cards, one per declaration in the record's order, each with its
+ * `ranges`: `{lines, snippet}` per end that names lines or a snippet.
+ */
+export function stepCards(item) {
+  const groups = new Map();
+  for (const entry of asArray(item?.cards)) {
+    const key = [entry.fullName, entry.module, entry.href ?? ""].join("\n");
+    if (!groups.has(key)) {
+      groups.set(key, { ...entry, ranges: [] });
+    }
+    if (entry.lines || entry.snippet) {
+      groups.get(key).ranges.push({ lines: entry.lines, snippet: entry.snippet });
+    }
+  }
+  return [...groups.values()];
+}
+
+/**
+ * How a step reads: `title` "Step 3" and its `number` among the `of` steps of
+ * its proof, and `text`, its label less the id it repeats. A step tied to no
+ * item is titled by its whole label.
+ */
+export function stepParts(item, items) {
+  const label = text(item?.label);
+  const id = text(item?.id);
+  const steps = asArray(items?.get(item?.stepOf)?.steps);
+  const at = steps.indexOf(item?.id);
+  if (at < 0) {
+    return { number: null, of: null, text: "", title: label };
+  }
+  return {
+    number: at + 1,
+    of: steps.length,
+    text: label === id ? "" : label.startsWith(`${id}: `) ? label.slice(id.length + 2).trim() : label,
+    title: `Step ${at + 1}`,
+  };
+}
+
+/**
+ * A step's relation as printed: its `word` and `title`. A minimal overlay
+ * prints only what qualifies the link, as it does with the coverage word: an
+ * exact match goes unmarked, so a step with no word there is an exact one.
+ */
+export function stepRelation(item, { minimal = false } = {}) {
+  const shown = asArray(item?.relations).filter((relation) => !minimal || relation !== "exactMatch");
+  return {
+    title: shown.map((relation) => RELATION_SUMMARIES[relation] ?? "").filter(Boolean).join(" "),
+    word: shown.map((relation) => RELATION_WORDS[relation] ?? relation).join(", "),
+  };
+}
+
+/**
+ * The page index's rows: `{item, region, steps: [{item, region}]}`, in the
+ * order the page's regions show them, each step under its item. A step whose
+ * item has no region on this page brings the item with it, with `region` null.
+ */
+export function pageRows(regions, items) {
+  const rows = new Map();
+  const seen = new Set();
+  const row = (item) => {
+    if (!rows.has(item.id)) {
+      rows.set(item.id, { item, region: null, steps: [] });
+    }
+    return rows.get(item.id);
+  };
+  for (const region of asArray(regions)) {
+    for (const id of region.itemIds) {
+      const item = items.get(id);
+      if (!seen.has(id)) {
+        seen.add(id);
+        if (item.stepOf) {
+          row(items.get(item.stepOf)).steps.push({ item, region });
+        } else {
+          row(item).region = region;
+        }
+      }
+    }
+  }
+  for (const { item, steps } of rows.values()) {
+    steps.sort((left, right) => item.steps.indexOf(left.item.id) - item.steps.indexOf(right.item.id));
+  }
+  return [...rows.values()];
+}
+
+/**
  * An item's cards as the item view lists them: `keys`, each shown with its
  * statement, and `related`, every other role, one line each.
  */
@@ -1008,12 +1234,12 @@ export function pageSummary(items) {
   return { passages: list.length, withKey: list.filter((item) => firstKeyCard(item)).length };
 }
 
-/** The count line under the page index's heading. */
-export function pageSummaryText(items) {
+/** The count line under the page index's heading; `steps` is how many proof steps the page holds. */
+export function pageSummaryText(items, steps = 0) {
   const { passages, withKey } = pageSummary(items);
-  return passages
-    ? `${plural(passages, "passage")} · ${withKey} with a key declaration`
-    : "No highlighted passages on this page.";
+  const parts = [passages ? `${plural(passages, "passage")} · ${withKey} with a key declaration` : "",
+                 steps ? plural(steps, "proof step") : ""].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "No highlighted passages on this page.";
 }
 
 /** Whether a verdict was reviewed: true, false, or null when it does not say. */
