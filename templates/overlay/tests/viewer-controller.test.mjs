@@ -604,12 +604,13 @@ test("minimal: several key cards need no count", async () => {
   assert.deepEqual([el(documentRef, "key-count").hidden, el(documentRef, "key-head").hidden], [true, true]);
 });
 
-test("minimal: a status that qualifies the links still says so, with its note", async () => {
+test("minimal: a status that qualifies the links still says so, and its note waits behind the control", async () => {
   const { documentRef, result } = await start({ config: makeConfig(MINIMAL) });
   await selectPageRegion(documentRef, result.state, "loc:0002");
   const pill = el(documentRef, "target-summary");
   assert.deepEqual([pill.textContent, pill.hidden], ["Support only", false]);
-  assert.equal(el(documentRef, "coverage-note").hidden, false);
+  assert.equal(el(documentRef, "coverage-note").hidden, true);
+  assert.equal(el(documentRef, "note-toggle").hidden, false);
   assert.deepEqual(el(documentRef, "related-heading").children.map(textOf), ["Related", " · support"],
                    "the heading still says what the related rows are");
 });
@@ -1721,4 +1722,147 @@ test("steps: a companion with no steps shows no step section, no step mark and t
   const [[, , statement]] = keyCards(documentRef);
   assert.equal(statement.classList.contains("is-numbered"), false);
   assert.equal(statement.children[0].dataset.line, undefined);
+});
+
+// --- a record's note, and scripts in titles -----------------------------------
+
+function noteState(documentRef) {
+  const [toggle, note] = [el(documentRef, "note-toggle"), el(documentRef, "coverage-note")];
+  return { expanded: toggle.attributes["aria-expanded"], note: !note.hidden, toggle: toggle.hidden ? "" : toggle.textContent };
+}
+
+test("minimal: a step's note opens on asking, and its claim never waits for that", async () => {
+  const { documentRef } = await start(PROOF_MINIMAL);
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "b");
+  assert.deepEqual(noteState(documentRef), { expanded: "false", note: false, toggle: "More detail" });
+  assert.equal(el(documentRef, "target-summary").textContent, "Close match");
+  await fire(el(documentRef, "note-toggle"), "click");
+  assert.deepEqual(noteState(documentRef), { expanded: "true", note: true, toggle: "Less detail" });
+  assert.equal(textOf(el(documentRef, "coverage-note")), "ring closes what the book does by hand.");
+  await fire(el(documentRef, "note-toggle"), "click");
+  assert.deepEqual(noteState(documentRef), { expanded: "false", note: false, toggle: "More detail" });
+});
+
+test("minimal: a checked absence is the claim, and stays in sight with its note closed", async () => {
+  const { documentRef } = await start(PROOF_MINIMAL);
+  await turnTo(documentRef, 10);
+  await openStep(documentRef, "d");
+  assert.deepEqual(noteState(documentRef), { expanded: "false", note: false, toggle: "More detail" });
+  assert.equal(el(documentRef, "target-summary").textContent, "No match");
+  assert.equal(el(documentRef, "key-note").hidden, false);
+  assert.equal(textOf(el(documentRef, "key-note").children[0]), "Checked: no Lean line makes this step.");
+});
+
+test("minimal: an opened note stays open from record to record; a record with no note has no control", async () => {
+  const { documentRef } = await start(PROOF_MINIMAL);
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "b");
+  await fire(el(documentRef, "note-toggle"), "click");
+  await fire(el(documentRef, "next-item"), "click");
+  assert.equal(el(documentRef, "note-toggle").hidden, true, "step c has no note");
+  assert.equal(el(documentRef, "coverage-note").hidden, true);
+  await fire(el(documentRef, "next-item"), "click");
+  assert.deepEqual(noteState(documentRef), { expanded: "true", note: true, toggle: "Less detail" });
+  assert.equal(textOf(el(documentRef, "coverage-note")), "Lean takes finiteness from an instance.");
+});
+
+test("minimal: another record's note waits too, and a plain record is as it was", async () => {
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL) });
+  await selectPageRegion(documentRef, result.state, "loc:0002");
+  assert.deepEqual(noteState(documentRef), { expanded: "false", note: false, toggle: "More detail" });
+  await fire(el(documentRef, "note-toggle"), "click");
+  assert.equal(el(documentRef, "coverage-note").textContent,
+               "The companion states the neighbouring box lemma, not this definition.");
+  assert.equal(el(documentRef, "coverage-note").hidden, false);
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(el(documentRef, "note-toggle").hidden, true);
+  assert.equal(el(documentRef, "coverage-note").hidden, true);
+});
+
+for (const [what, options] of [["a step", PROOF_FULL], ["no step", undefined]]) {
+  test(`full: a note shows with no control (${what})`, async () => {
+    const { documentRef, result } = await start(options);
+    if (options) {
+      await turnTo(documentRef, 9);
+      await openStep(documentRef, "b");
+    } else {
+      await selectPageRegion(documentRef, result.state, "loc:0002");
+    }
+    assert.equal(el(documentRef, "note-toggle").hidden, true);
+    assert.equal(el(documentRef, "coverage-note").hidden, false);
+  });
+}
+
+/** The proof fixture, with its theorem and step "a" titled with script characters. */
+function scriptedSections() {
+  const sections = makeProofSections(PDF_SHA256);
+  const proof = sections["9/theorem-9.1"];
+  proof[0].subject[0].selector = { ...proof[0].subject[0].selector };
+  const retitle = (record, from, to) => {
+    const before = JSON.stringify(record);
+    assert.ok(before.includes(from), `no "${from}" in the fixture`);
+    return JSON.parse(before.replace(from, to));
+  };
+  proof[0] = retitle(proof[0], "Theorem 9.1 (Doubling)", "Theorem 9.1 (eₖ ≠ 0 for xⁿ)");
+  proof[1] = retitle(proof[1], "a: Unfold the product", "a: fₖ ≠ 0, ‖eₘ‖ = 1 and x⁻¹");
+  return sections;
+}
+
+/** A node's text with its `<sub>` and `<sup>` children marked, as `f_{k}` and `x^{n}`. */
+function scripted(node) {
+  if (typeof node === "string") {
+    return node;
+  }
+  const inner = (node.textContent ?? "") + node.children.map(scripted).join("");
+  return node.tagName === "SUB" ? `_{${inner}}` : node.tagName === "SUP" ? `^{${inner}}` : inner;
+}
+
+for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MINIMAL)]]) {
+  test(`titles: script characters are real <sub> and <sup> on every surface (${mode})`, async () => {
+    const { documentRef } = await start({ config, sections: scriptedSections() });
+    await turnTo(documentRef, 9);
+    const row = el(documentRef, "page-index").children.find((li) => li.children[1]);
+    assert.equal(scripted(row.children[0].children[1].children[0]), "Theorem 9.1");
+    const step = row.children[1].children[0].children[0];
+    assert.equal(scripted(step.children[2]), "f_{k} ≠ 0, ‖e_{m}‖ = 1 and x^{−1}");
+    assert.equal(step.title, "a: fₖ ≠ 0, ‖eₘ‖ = 1 and x⁻¹", "a tooltip keeps the label as written");
+    await openStep(documentRef, "a");
+    const [title, subtitle] = el(documentRef, "item-label").children;
+    assert.equal(textOf(title), "Step 1");
+    assert.equal(scripted(subtitle), "f_{k} ≠ 0, ‖e_{m}‖ = 1 and x^{−1}");
+    await fire(el(documentRef, "step-parent"), "click");
+    const [item, itemSubtitle] = el(documentRef, "item-label").children;
+    assert.equal(scripted(item), "Theorem 9.1");
+    assert.equal(scripted(itemSubtitle), "e_{k} ≠ 0 for x^{n}");
+    assert.equal(el(documentRef, "step-parent").hidden, true);
+  });
+}
+
+test("titles: a step's parent button sets its item's scripts", async () => {
+  const sections = scriptedSections();
+  sections["9/theorem-9.1"][0] = JSON.parse(JSON.stringify(sections["9/theorem-9.1"][0])
+    .replace("Theorem 9.1 (eₖ ≠ 0 for xⁿ)", "Theorem eₖ"));
+  const { documentRef } = await start({ sections });
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "a");
+  assert.equal(scripted(el(documentRef, "step-parent")), "Proof of Theorem e_{k}");
+  await fire(el(documentRef, "next-item"), "click");
+  assert.equal(scripted(el(documentRef, "step-parent")), "Proof of Theorem e_{k}", "and redraws it once");
+});
+
+test("titles: a label with no script characters stays one text, as it was", async () => {
+  const { documentRef } = await start(PROOF_FULL);
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "a");
+  const [, subtitle] = el(documentRef, "item-label").children;
+  assert.deepEqual([subtitle.textContent, subtitle.children], ["Unfold the product", []]);
+  assert.deepEqual(el(documentRef, "step-parent").children, []);
+});
+
+test("fonts: the serif and code stacks end in the system font, after their generic family", async () => {
+  const css = await (await import("node:fs/promises")).readFile(
+    (await import("node:path")).join((await import("./fixtures.mjs")).VIEWER_DIR, "viewer.css"), "utf8");
+  assert.match(css, /--serif:[^;]*, serif, system-ui;/);
+  assert.match(css, /--mono:[^;]*, monospace, system-ui;/);
 });

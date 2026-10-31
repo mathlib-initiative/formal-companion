@@ -63,6 +63,7 @@ import {
   siteRootFor,
   splitName,
   stepCards,
+  scriptRuns,
   stepParts,
   stepRelation,
   targetHref,
@@ -1002,4 +1003,27 @@ test("steps: line ranges read one way, and an item folder is the file's <section
   assert.equal(itemFolder("annotations/3E/3.101/proof-step-01.json", "annotations"), "3E/3.101");
   assert.equal(itemFolder("annotations/3E/3.90__key__x.json", "annotations"), null);
   assert.equal(itemFolder("a/b/3E/3.101/x.json", "a/b"), "3E/3.101");
+});
+
+test("titles: script characters become runs of the plain characters they stand for", () => {
+  assert.deepEqual(scriptRuns("plain"), [["text", "plain"]]);
+  assert.deepEqual(scriptRuns(""), []);
+  assert.deepEqual(scriptRuns(undefined), []);
+  assert.deepEqual(scriptRuns("fₖ ≠ 0"), [["text", "f"], ["sub", "k"], ["text", " ≠ 0"]]);
+  assert.deepEqual(scriptRuns("eₘ, eₙ, eⱼ, vᵢ"), [
+    ["text", "e"], ["sub", "m"], ["text", ", e"], ["sub", "n"], ["text", ", e"], ["sub", "j"], ["text", ", v"], ["sub", "i"],
+  ]);
+  assert.deepEqual(scriptRuns("fₖ₋₁"), [["text", "f"], ["sub", "k−1"]]);
+  assert.deepEqual(scriptRuns("T⁻¹ and xⁿ⁺¹"), [["text", "T"], ["sup", "−1"], ["text", " and x"], ["sup", "n+1"]]);
+  assert.deepEqual(scriptRuns("Aᵀ, tᵐ, xᵏ, wʲ, z²"), [
+    ["text", "A"], ["sup", "T"], ["text", ", t"], ["sup", "m"], ["text", ", x"], ["sup", "k"], ["text", ", w"], ["sup", "j"],
+    ["text", ", z"], ["sup", "2"],
+  ]);
+  assert.deepEqual(scriptRuns("x₍ₖ₎²"), [["text", "x"], ["sub", "(k)"], ["sup", "2"]]);
+});
+
+test("titles: other mathematics is left as written", () => {
+  for (const value of ["½ × Ŝ", "⟨u, v⟩ ⟂ ℝ", "𝐅 𝑇 𝒫 ℒ", "x′", "⋯ ∑ √", "ê", "α β λ"]) {
+    assert.deepEqual(scriptRuns(value), [["text", value]]);
+  }
 });
