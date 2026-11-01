@@ -1049,6 +1049,34 @@ class TestBuildSite(OverlayToolsTestCase):
         published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
         self.assertEqual(list(published["statements"]), [f"{self.REMOTE}#L3"])
 
+    def test_a_committed_statement_whose_card_pins_a_tag_is_refused_not_dropped(self):
+        site = self.companion.write_site()
+        self.write_committed()
+        for name, versions in (("only some", (self.BUILT, "v1.0.0")), ("all", ("v1.0.0", "v1.0.0"))):
+            with self.subTest(name):
+                self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3, versions[0]),
+                                                       self.remote_end("area", "def area := 1", 5, versions[1])])
+                with self.assertRaisesRegex(BUILD.BuildError, r"pdf-overlay/verso.json: .*'v1\.0\.0'.*annotations/"
+                                                              r".*git rev-parse") as refused:
+                    BUILD.build_site(self.companion.overlay)
+                self.assertNotIn("from a build of that commit", str(refused.exception))
+                self.assertFalse((site / "pdf-overlay").exists(), "nothing published")
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3),
+                                               self.remote_end("area", "def area := 1", 5)])
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual((summary["verso"]["statements"], summary["verso"]["dropped"]), (2, 0),
+                         "given the commit, every statement is back")
+
+    def test_a_tag_is_nothing_to_a_site_that_reads_no_committed_file(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3, "v1.0.0")])
+        self.assertEqual(BUILD.build_site(self.companion.overlay)["verso"],
+                         {"source": "none", "statements": 0, "targets": 1}, "no committed file, no pin to hold")
+        self.write_committed()
+        (site / "-verso-docs.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(BUILD.build_site(self.companion.overlay)["verso"],
+                         {"source": "site", "statements": 0, "targets": 1}, "its own pages, whatever the pin says")
+
     def test_a_site_with_verso_pages_extracts_its_own_and_ignores_the_committed_file(self):
         site = self.companion.write_site()
         self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3)])

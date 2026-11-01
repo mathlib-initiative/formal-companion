@@ -47,7 +47,8 @@ no token keeps a link (those pages are not the viewer's site), and `build`
 records the project commit and the build's Verso revision (`build_record`).
 `build_site.py` publishes it only for a site with no Verso pages, and only
 when its cards pin that commit (`unpinned`), each statement checked again
-against the bundle (`committed_problems`, `joined`).
+against the bundle (`committed_problems`, `joined`). A card with a statement
+there pins a full commit, not a release tag (`inexact_pins`).
 """
 from __future__ import annotations
 
@@ -63,7 +64,7 @@ import posixpath
 import re
 import stat
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 import urllib.parse
 
 sys.dont_write_bytecode = True
@@ -905,21 +906,70 @@ def build_record(root: Path, commit: str | None) -> dict[str, Any]:
     return out
 
 
+def bundle_cards(entries: list[tuple[str, dict[str, Any]]]) -> Iterator[tuple[str, dict[str, Any], str, str]]:
+    """`(annotation's path, end, target, snippet)` of each object end with a key and a snippet."""
+    for path, annotation in entries:
+        for end in annotation.get("object") or []:
+            target, text = (card_target(end), snippet_text(end)) if isinstance(end, dict) else (None, None)
+            if target and text:
+                yield path, end, target, text
+
+
 def pinned(entries: list[tuple[str, dict[str, Any]]]) -> set[str]:
-    """The commits the bundle's cards pin: the `version` of each object end with a key and a snippet."""
-    return {end["version"] for _path, annotation in entries for end in annotation.get("object") or []
-            if isinstance(end, dict) and isinstance(end.get("version"), str)
-            and card_target(end) and snippet_text(end)}
+    """What the bundle's cards pin: the `version` of each object end with a key and a snippet."""
+    return {end["version"] for _path, end, _target, _text in bundle_cards(entries)
+            if isinstance(end.get("version"), str)}
+
+
+def _is_commit(version: Any) -> bool:
+    return isinstance(version, str) and COMMIT.match(version) is not None
+
+
+def _named(items: list[str]) -> str:
+    return ", ".join(items[:3]) + (f" and {len(items) - 3} more" if len(items) > 3 else "")
+
+
+def inexact_pins(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> str | None:
+    """Why the cards of a committed `verso.json` (one `committed_problems` passes) cannot be held to its
+    build, and what settles it; None when they can.
+
+    A statement is of one tree, and `joined` keeps it for a card that pins the
+    build's commit. Another commit is another tree. A release tag, which
+    Literature Links allows, or no `version` says nothing either way, and only
+    the project's git could tell, so a statement that would go for that reason
+    is refused rather than dropped, and so is a file when no card pins a commit
+    at all. A card with no statement here loses nothing to its pin: a
+    declaration of another project may stay at its release.
+    """
+    commit = value["build"]["commit"]
+    cards = list(bundle_cards(entries))
+    lost = {(target, "".join(run[1] for run in runs))
+            for target, alternatives in value["statements"].items() for runs in alternatives}
+    lost -= {(target, text) for _path, end, target, text in cards if end.get("version") == commit}
+    inexact = [card for card in cards if not _is_commit(card[1].get("version"))]
+    found = [card for card in inexact if card[2:] in lost] or (inexact if len(inexact) == len(cards) else [])
+    if not found:
+        return None
+    versions = sorted({repr(end["version"]) if isinstance(end.get("version"), str) else "no version"
+                       for _path, end, _target, _text in found})
+    paths = list(dict.fromkeys(path for path, _end, _target, _text in found))
+    return (f"these cards pin {_named(versions)}, not a full lowercase commit, so they cannot be held to this "
+            f"build of {commit}: {_named(paths)}; pin each by a full commit (for a tag, "
+            "`git rev-parse '<tag>^{commit}'` in its project), then run `cf overlay sync`")
 
 
 def unpinned(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> str | None:
-    """Why a committed `verso.json` (one `committed_problems` passes) is not of the build the cards pin:
-    its build's commit is one no card pins, so its hovers would be another build's. None when it is."""
-    commit, versions = value["build"]["commit"], sorted(pinned(entries))
-    if not versions or commit in versions:
+    """Why a committed `verso.json` (one `committed_problems` passes) is not of the build the cards pin,
+    and what settles it: a pin that cannot be compared (`inexact_pins`), or a build's commit that no card
+    pins, so its hovers would be another build's. None when it is."""
+    inexact = inexact_pins(value, entries)
+    if inexact:
+        return inexact
+    commit, commits = value["build"]["commit"], sorted(filter(_is_commit, pinned(entries)))
+    if not commits or commit in commits:
         return None
-    named = ", ".join(versions[:3]) + (f" and {len(versions) - 3} more" if len(versions) > 3 else "")
-    return f"cut from a build of {commit}, but the cards pin {named}"
+    return (f"cut from a build of {commit}, but the cards pin {_named(commits)}; write it again with "
+            "`verso_extract.py --pages` from a build of that commit")
 
 
 def _run_problem(run: Any, hovers: dict[str, Any]) -> str | None:
@@ -986,13 +1036,10 @@ def joined(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> 
     commit = value["build"]["commit"]
     cards: set[tuple[str, str]] = set()
     wanted: dict[str, set[str]] = {}
-    for _path, annotation in entries:
-        for end in annotation.get("object") or []:
-            target, text = (card_target(end), snippet_text(end)) if isinstance(end, dict) else (None, None)
-            if target and text:
-                cards.add((target, text))
-                if end.get("version") == commit:
-                    wanted.setdefault(target, set()).add(text)
+    for _path, end, target, text in bundle_cards(entries):
+        cards.add((target, text))
+        if end.get("version") == commit:
+            wanted.setdefault(target, set()).add(text)
     statements: dict[str, list[list[list[Any]]]] = {}
     dropped = 0
     for target, alternatives in value["statements"].items():
@@ -1083,6 +1130,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         entries = bundle_entries(args.bundle)
         value, counts = extract_pages(args.pages, entries, commit=args.commit)
+        inexact = inexact_pins(value, entries)
+        if inexact:
+            raise overlay_annotations.AnnotationError(inexact)
         raw = dumps_lines(value)
         write_out(args.out, raw)
     except (overlay_annotations.AnnotationError, OSError) as error:
