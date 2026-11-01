@@ -43,7 +43,7 @@ Do **not** use it to fix Lean proofs, to review a PR, or to answer a single
   `python3 $CF <command>` — or put the shim on PATH
   (`ln -s <skill>/bin/cf ~/.local/bin/cf`) and write `cf <command>`, which is
   the spelling the commands themselves print. `README.md` has the install.
-- **Python 3.11+**, standard library only (PyYAML is used when importable).
+- **Python 3.11+**, standard library only (PyYAML is used when importable). The shim runs under the first `python3` on PATH, and `cf` refuses anything older.
 - On PATH: `git`; `pdftotext` and `pdftoppm` (poppler) to prepare a PDF source;
   `curl` for errata. A `.tex`/`.md`/`.txt` manuscript needs no poppler.
 - **`cf doctor`** checks all of that, prints what is missing and lists the PDF
@@ -313,8 +313,8 @@ hand-off is the emitted args file plus the count `cf adjudicate` prints.
 Shipped, real code that has **not** been demonstrated end to end. Say so when
 you use it.
 
-- **The server substrate.** `cf run --execute` has never been exercised against
-  `tend` + `agentbox` from this repo; the five recorded runs pre-date it.
+- **The server substrate.** `cf run --execute` has driven `tend` + `agentbox` on one private host,
+  for differential and locate smoke runs, no recorded attack preset (`docs/status.md`); nothing pins either tool.
 - **The tend-agent bridge** (`scripts/run/bridge-tend-agent.sh`) is a stub, and
   its own TODO says that backend's CLI contract has not been exercised.
 - **The codex presets** (`attack-vac`, `differential-gpt`) plan against a
