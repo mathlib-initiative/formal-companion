@@ -23,6 +23,13 @@ export const meta = {
 //     gate -> requeue), because this substrate is expected to die mid-run: the
 //     journal is the durable artifact, not the script's return value.
 
+// The Workflow tool hands `args` over verbatim and cannot read a file. A path, or the
+// file's JSON as one string, reads as undefined below, so the run would finish over 0
+// items with no error, which looks like a run that found nothing.
+if (typeof args === 'string') {
+  throw new Error('args is a string: pass the JSON object in fleet-local.args.json, not the path to it or its text in a string')
+}
+
 const A = args || {}
 const C = A.source || {}
 const ITEMS = A.items || []

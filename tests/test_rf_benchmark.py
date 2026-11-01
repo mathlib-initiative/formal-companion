@@ -41,7 +41,9 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -782,8 +784,10 @@ class SyntheticPipelineTests(unittest.TestCase):
         cls._home.start()
         pdf = cls.root / "elementary-notes.pdf"
         pdf.write_bytes(make_pdf.build())
-        with contextlib.redirect_stdout(io.StringIO()):   # the generator's own report
+        report = io.StringIO()
+        with contextlib.redirect_stdout(report):          # the generator's own report
             cls.planted = fixture.build(str(cls.root), str(pdf))
+        cls.report = report.getvalue()
         cls.ws = cls.root / "ws"
         assert run_cf("init", str(cls.ws), "--no-git", "-q")[0] == 0
         with mock.patch.object(prepare_source, "pdftotext", fake_pdftotext):
@@ -814,6 +818,15 @@ class SyntheticPipelineTests(unittest.TestCase):
         self.assertEqual(meta["offset"], 2)
         self.assertEqual(meta["offset_method"], "running_head_mode")
         self.assertEqual(meta["sha256"], BOOKLET_SHA)
+
+    def test_the_generator_reports_the_defects_the_key_plants(self):
+        """It said 2 and 7 beside a key of eight: `convention_rename` plants a decoy."""
+        printed = {repo: int(count) for repo, count in re.findall(
+            r"(notes-[ab]): .*, (\d+) planted defect\(s\)", self.report)}
+        self.assertEqual(printed, {"notes-a": 2, "notes-b": 6})
+        planted = key_mod.defects(key_mod.load(ANSWER_KEY))
+        self.assertEqual(printed, {repo: sum(1 for e in planted if e["repo"] == repo)
+                                   for repo in printed})
 
     def test_the_key_was_written_against_the_edition_this_workspace_pins(self):
         key = key_mod.load(ANSWER_KEY)
@@ -961,6 +974,65 @@ class SyntheticPipelineTests(unittest.TestCase):
         self.assertEqual(result["totals"]["true_positives"], 1)
         self.assertEqual(result["totals"]["false_positives"], 0)
         self.assertEqual(result["totals"]["planted"], 8)
+
+
+# --------------------------------------------------------------------------
+# the e2e scripts from a path with a space
+# --------------------------------------------------------------------------
+class E2EScriptsInAPathWithASpaceTests(unittest.TestCase):
+    """`CF="python3 $SKILL/scripts/cf.py"` and a bare `$CF` split the checkout's own path.
+
+    A clone under a directory with a space stopped at the first command, `cf init`,
+    with `can't open file '.../My'`.
+    """
+
+    #: macOS's /bin/bash is 3.2, the oldest bash these scripts have to run under
+    BASH = "/bin/bash" if os.path.exists("/bin/bash") else "bash"
+
+    def test_cf_is_an_array_and_every_use_expands_it_in_quotes(self):
+        """The one check that reaches multisource.sh, which needs two private checkouts."""
+        scripts = sorted(pathlib.Path(_E2E).glob("*.sh"))
+        self.assertTrue(scripts, "no .sh files found: the glob is wrong")
+        for script in scripts:
+            with self.subTest(script=script.name):
+                text = script.read_text(encoding="utf-8")
+                self.assertIn('\nCF=(python3 "$SKILL/scripts/cf.py")\n', text)
+                self.assertNotRegex(text, r"\$CF\b")
+                uses = re.findall(r'.?\$\{CF\[@\]\}.{0,2}', text)
+                self.assertTrue(uses)
+                self.assertEqual(set(uses), {'"${CF[@]}" '})
+                proc = subprocess.run([self.BASH, "-n", str(script)], capture_output=True,
+                                      text=True)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_synthetic_sh_passes_from_a_path_with_a_space(self):
+        """The documented command, with a space in the clone's path and the workspace's.
+
+        `pdftotext` is a stand-in that hands over the booklet's own lines, the stub
+        above as a program, so this runs where poppler is absent, which is every job
+        that runs this suite.
+        """
+        root = pathlib.Path(tmp_dir("cf-space-"))
+        clone = root / "My Clone"
+        shutil.copytree(_REPO, clone, symlinks=True,
+                        ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        booklet = root / "booklet.txt"
+        booklet.write_text(booklet_text(), encoding="utf-8")
+        tools = root / "tools"
+        tools.mkdir()
+        (tools / "pdftotext").write_text(
+            '#!/bin/sh\nfor out in "$@"; do :; done\n'
+            f'if [ "$out" = "-" ]; then exec cat {shlex.quote(str(booklet))}; fi\n'
+            f'exec cp {shlex.quote(str(booklet))} "$out"\n', encoding="utf-8")
+        (tools / "pdftotext").chmod(0o755)
+        temp = root / "My Temp"
+        temp.mkdir()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("CF_")}
+        env.update(PATH=f"{tools}{os.pathsep}{os.environ['PATH']}", TMPDIR=str(temp))
+        proc = subprocess.run([self.BASH, "tests/e2e/synthetic.sh"], cwd=clone, env=env,
+                              capture_output=True, text=True, timeout=300)
+        self.assertEqual(proc.returncode, 0, proc.stdout[-4000:] + proc.stderr[-2000:])
+        self.assertIn("ALL CHECKS PASSED", proc.stdout)
 
 
 # --------------------------------------------------------------------------

@@ -251,13 +251,18 @@ def instructions(args_path: Path, count: int, run_id: str = "<run-id>",
     ``python3 scripts/cf.py ...`` / ``python3 scripts/gate/...`` to an operator
     standing in the workspace, where neither path exists.  The `cf` one is now
     the shim spelling every other hint uses.
+
+    The args line names the file's JSON, as those two siblings and ``cf bench`` do.
+    The Workflow tool hands ``args`` over verbatim and cannot read a file, so a bare
+    path here read as an instruction to pass the path, and that ran the script over
+    0 items with no error.
     """
     return "\n".join([
         f"{count} items staged for the local fleet.",
         "",
         "The Workflow tool cannot be launched from cf.py; run it from a Claude Code session:",
         f"  script: {skill_root() / WORKFLOW_SCRIPT}",
-        f"  args:   {args_path}",
+        f"  args:   <the JSON in {args_path}>",
         "",
         "  - subagents must be model 'opus' (Fable-default runs lost agents to the session limit)",
         "  - expect to resume: pass resumeFromRunId and edit only the failed agent() opts",

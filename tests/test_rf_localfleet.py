@@ -698,7 +698,8 @@ process.stdout.write(JSON.stringify({ result, calls, logs }))
 """
 
 
-def run_body(case: unittest.TestCase, name: str, args: dict, responses: dict) -> dict:
+def exec_body(case: unittest.TestCase, name: str, args,
+              responses: dict) -> subprocess.CompletedProcess:
     """Execute one workflow body with stubbed runtime globals.
 
     The scripts get no filesystem access and no ``require``, so nothing is
@@ -716,8 +717,13 @@ def run_body(case: unittest.TestCase, name: str, args: dict, responses: dict) ->
     (tmp / "driver.mjs").write_text(DRIVER_JS, encoding="utf-8")
     (tmp / "spec.json").write_text(json.dumps({"args": args, "responses": responses}),
                                    encoding="utf-8")
-    proc = subprocess.run([NODE, str(tmp / "driver.mjs"), str(tmp / "spec.json")],
+    return subprocess.run([NODE, str(tmp / "driver.mjs"), str(tmp / "spec.json")],
                           capture_output=True, text=True, cwd=str(tmp))
+
+
+def run_body(case: unittest.TestCase, name: str, args: dict, responses: dict) -> dict:
+    """``exec_body`` for a run that must finish: its result, calls and logs."""
+    proc = exec_body(case, name, args, responses)
     case.assertEqual(proc.returncode, 0, proc.stderr[-4000:])
     return json.loads(proc.stdout)
 
@@ -781,6 +787,22 @@ class TestFleetLocalBody(unittest.TestCase):
 
     def _run(self, responses: dict, args: dict | None = None) -> dict:
         return run_body(self, "fleet-local", args or FLEET_ARGS, responses)
+
+    def test_a_string_for_args_is_refused(self):
+        """The Workflow tool hands ``args`` over verbatim and cannot read a file.
+
+        A path, or the file's JSON as one string, reached the script as a string, and
+        every read off a string is undefined. So the run logged ``local fleet: 0 items``
+        and ``items done: 0/0`` and finished with no error, and the path is what
+        ``cf run --local`` used to print.
+        """
+        for args in ("/w/runs/demo/fleet-local.args.json", json.dumps(FLEET_ARGS), ""):
+            with self.subTest(args=args[:40]):
+                proc = exec_body(self, "fleet-local", args, {})
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertEqual(proc.stdout, "", "the run must not start")
+                self.assertIn("args is a string", proc.stderr)
+                self.assertIn("fleet-local.args.json", proc.stderr)
 
     def test_verdicts_attach_to_the_disagreement_they_read(self):
         out = self._run({
@@ -1076,6 +1098,28 @@ class TestPrintedWorkflowPaths(unittest.TestCase):
         printed = Path(line.split(":", 1)[1].strip())
         self.assertTrue(printed.is_absolute(), printed)
         self.assertTrue(printed.exists(), printed)
+
+    def test_the_local_fleet_prints_the_args_as_the_json_not_the_path(self):
+        """The spelling the three sibling commands print, and for the same reason."""
+        args_path = Path("/w/runs/demo/fleet-local.args.json")
+        text = fleet_local.instructions(args_path, 3)
+        line = [l for l in text.splitlines() if l.strip().startswith("args:")][0]
+        self.assertEqual(line.split(":", 1)[1].strip(), f"<the JSON in {args_path}>")
+        for sibling in ("adjudicate", "report", "bench"):
+            source = (SCRIPTS / "cfcmd" / f"{sibling}.py").read_text(encoding="utf-8")
+            self.assertIn("args: <the JSON in ", source, sibling)
+
+    def test_following_what_cf_run_local_prints_runs_its_items(self):
+        """The whole hand-off: the line names a file, and that file's JSON is a run."""
+        ws = make_workspace(self)
+        rc, out = cf("run", "demo", "--local", "--workspace", str(ws["root"]))
+        self.assertEqual(rc, 0, out)
+        named = re.search(r"^\s*args:\s+<the JSON in (.+)>$", out, re.M)
+        self.assertIsNotNone(named, out)
+        args = json.loads(Path(named.group(1)).read_text(encoding="utf-8"))
+        run = run_body(self, "fleet-local", args, {})
+        self.assertEqual(run["result"]["summary"]["items_in"], 1)
+        self.assertEqual([c["label"] for c in run["calls"]], ["work:Exercise 1.2.4"])
 
     def test_all_four_workflow_references_resolve_through_one_function(self):
         from cflib.paths import skill_root

@@ -3007,6 +3007,15 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `cf run --local` prints `args:   <the JSON in <path>>`, the spelling of `cf adjudicate`,
+  `cf report` and `cf bench`, instead of `args:   <path>`. The Workflow tool hands `args` over
+  verbatim and cannot read a file, so passing what it printed ran
+  `workflows/fleet-local.workflow.js` over 0 items with no error. The script now refuses a string.
+- `tests/e2e/synthetic.sh` and `tests/e2e/multisource.sh` run from a path with a space. They
+  word-split their own `$CF`, so such a clone stopped at `cf init` with `can't open file`. `CF` is
+  an array now, which macOS's bash 3.2 also runs.
+- `tests/e2e/make_notes_repos.py` reports 2 and 6 planted defects, not 2 and 7. It counted the
+  `convention_rename` decoy, which the answer key does not.
 - `cf overlay check` and `check_generated.py` match a config's patterns against the whole
   value, so they refuse a file name, route, path or host that ends in a newline, as the
   schema does. `serve.py` refused such a file name, so `cf overlay check` could pass a
