@@ -3014,6 +3014,9 @@ release has something to say.
 - `tests/e2e/synthetic.sh` and `tests/e2e/multisource.sh` run from a path with a space. They
   word-split their own `$CF`, so such a clone stopped at `cf init` with `can't open file`. `CF` is
   an array now, which macOS's bash 3.2 also runs.
+- The two gate commands `cf run --local` builds are shell-quoted: `gate.command`, which a worker
+  self-gates with, and the line it prints for after the run. From a clone or a workspace in a path
+  with a space, both stopped at `can't open file`. A path with nothing to quote prints as before.
 - `tests/e2e/make_notes_repos.py` reports 2 and 6 planted defects, not 2 and 7. It counted the
   `convention_rename` decoy, which the answer key does not.
 - `cf overlay check` and `check_generated.py` match a config's patterns against the whole

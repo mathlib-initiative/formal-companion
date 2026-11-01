@@ -34,6 +34,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
@@ -585,6 +586,45 @@ class TestWhoRefusesOrphanedRulings(unittest.TestCase):
 # 3. a local corpus against the gate the tool prints next
 
 
+def conformant_record(args: dict) -> dict:
+    """A record shaped by ``fleet-local.workflow.js``, which the run's own gate accepts."""
+    gate, source = args["gate"], args["source"]
+    return {
+        "schema_version": gate["schema_version"],
+        "run_id": args["run_id"],
+        "source_id": source["source_id"],
+        "source_sha": source["source_sha"],
+        "item": "Exercise 1.2.4",
+        "book_located": True,
+        "book_passage_quote": BOOK_QUOTE,
+        "matches": [{"concept": "finite additivity",
+                     "decls": [{"repo": "ours", "decl": "foo"}],
+                     "verdict": gate["verdicts"][0]}],
+        "disagreements": [{
+            "concept": "finite additivity",
+            "kind": gate["kinds"][0],
+            "repos_involved": ["ours"],
+            "faithful": [],
+            "unfaithful_decls": ["ours:foo"],
+            "book_quote": BOOK_QUOTE,
+            "reasoning": "the dimension hypothesis is missing",
+            "severity": "high",
+        }],
+        "coverage_notes": "",
+    }
+
+
+def local_gate_config(preset, args: dict) -> dict:
+    """The gate config a planned local run holds, for the source *args* names."""
+    source = args["source"]
+    return presets_mod.gate_config(
+        preset, run_id=args["run_id"],
+        sources={source["source_id"]: {"text": source["text"],
+                                       "sha256": source["source_sha"],
+                                       "page_offset": source["page_offset"]}},
+        repos=["ours"])
+
+
 class TestLocalCorpusPassesItsOwnGate(unittest.TestCase):
     """fleet_local.build() args -> a record shaped by the .js -> write_corpus -> gate."""
 
@@ -618,40 +658,13 @@ class TestLocalCorpusPassesItsOwnGate(unittest.TestCase):
 
     def test_a_conformant_local_record_passes_verify_findings(self):
         args = self._fleet_args()
-        gate, source = args["gate"], args["source"]
-        record = {
-            "schema_version": gate["schema_version"],
-            "run_id": args["run_id"],
-            "source_id": source["source_id"],
-            "source_sha": source["source_sha"],
-            "item": "Exercise 1.2.4",
-            "book_located": True,
-            "book_passage_quote": BOOK_QUOTE,
-            "matches": [{"concept": "finite additivity",
-                         "decls": [{"repo": "ours", "decl": "foo"}],
-                         "verdict": gate["verdicts"][0]}],
-            "disagreements": [{
-                "concept": "finite additivity",
-                "kind": gate["kinds"][0],
-                "repos_involved": ["ours"],
-                "faithful": [],
-                "unfaithful_decls": ["ours:foo"],
-                "book_quote": BOOK_QUOTE,
-                "reasoning": "the dimension hypothesis is missing",
-                "severity": "high",
-            }],
-            "coverage_notes": "",
-        }
+        source = args["source"]
+        record = conformant_record(args)
         dest = scratch(self) / "corpus"
         harvest_journal.write_corpus({record["item"]: record}, {}, dest, args["run_id"],
                                      source_id=source["source_id"],
                                      source_sha=source["source_sha"])
-        config = presets_mod.gate_config(
-            self.ws["preset"], run_id=args["run_id"],
-            sources={source["source_id"]: {"text": source["text"],
-                                           "sha256": source["source_sha"],
-                                           "page_offset": source["page_offset"]}},
-            repos=["ours"])
+        config = local_gate_config(self.ws["preset"], args)
         config_path = scratch(self) / "gate.json"
         config_path.write_text(json.dumps(config, indent=1), encoding="utf-8")
         proc = subprocess.run(
@@ -1146,6 +1159,69 @@ class TestPrintedWorkflowPaths(unittest.TestCase):
                      if stacked in (SCRIPTS / name).read_text(encoding="utf-8")]
         self.assertEqual(offenders, [],
                          "use cflib.paths.skill_root() instead: " + ", ".join(offenders))
+
+
+class TestTheGateCommandsFromASpacedPath(unittest.TestCase):
+    """`cf run --local` hands each worker one gate command and prints the operator another.
+
+    Both name the clone's gate and the workspace's files, and neither was quoted. From a
+    clone in `My Clone` both stopped at `can't open file '.../My'`, which a worker told to
+    fix whatever the gate rejects can do nothing with. So both run here as a shell runs
+    them, from a copied clone and a workspace whose paths hold a space.
+    """
+
+    def setUp(self):
+        parent = scratch(self) / "My Folder"
+        parent.mkdir()
+        clone = parent / "My Clone"
+        shutil.copytree(SKILL_ROOT, clone, symlinks=True,
+                        ignore=shutil.ignore_patterns(".git", "__pycache__", "tests"))
+        with mock.patch.dict(os.environ, {"CF_TEST_TMP": str(parent)}):
+            self.ws = make_workspace(self)
+        proc = subprocess.run([sys.executable, str(clone / "scripts" / "cf.py"), "run", "demo",
+                               "--local", "--workspace", str(self.ws["root"])],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.printed = proc.stdout
+        self.args = json.loads((self.ws["run_dir"] / "fleet-local.args.json")
+                               .read_text(encoding="utf-8"))
+        self.record = conformant_record(self.args)
+        (self.ws["run_dir"] / "gate.local.json").write_text(
+            json.dumps(local_gate_config(self.ws["preset"], self.args), indent=1),
+            encoding="utf-8")
+
+    def _shell(self, command: str, **env: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", "-c", command], capture_output=True, text=True,
+                              env={**os.environ, **env})
+
+    def test_the_command_a_worker_self_gates_with_runs(self):
+        task = "Exercise-1-2-4"
+        (self.ws["run_dir"] / "self-gate" / f"{task}.json").write_text(
+            json.dumps(self.record), encoding="utf-8")
+        proc = self._shell(self.args["gate"]["command"], TASK_ID=task)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_the_line_printed_for_after_the_run_runs(self):
+        source = self.args["source"]
+        harvest_journal.write_corpus(
+            {self.record["item"]: self.record}, {}, self.ws["root"] / "corpus" / "demo",
+            self.args["run_id"], source_id=source["source_id"], source_sha=source["source_sha"])
+        line = [l for l in self.printed.splitlines() if "verify_findings.py" in l][0]
+        proc = self._shell(line.strip())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_a_path_with_nothing_to_quote_prints_as_it_always_did(self):
+        ws = make_workspace(self)
+        rc, out = cf("run", "demo", "--local", "--workspace", str(ws["root"]))
+        self.assertEqual(rc, 0, out)
+        args = json.loads((ws["run_dir"] / "fleet-local.args.json").read_text(encoding="utf-8"))
+        run_dir = ws["run_dir"]
+        self.assertEqual(
+            args["gate"]["command"].split(" ", 2)[2],
+            f"--gate-config {run_dir / 'gate.local.json'} "
+            f"--findings {run_dir / 'self-gate'}/${{TASK_ID}}.json")
+        self.assertIn(f"--gate-config {run_dir / 'gate.local.json'} "
+                      f"--root {ws['root'] / 'corpus' / 'demo'} --findings-dir .", out)
 
 
 # ---------------------------------------------------------------------------

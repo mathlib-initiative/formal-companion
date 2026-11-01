@@ -20,6 +20,7 @@ script that computes anything from ``Date.now()`` cannot be resumed.
 """
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 
@@ -256,7 +257,11 @@ def instructions(args_path: Path, count: int, run_id: str = "<run-id>",
     The Workflow tool hands ``args`` over verbatim and cannot read a file, so a bare
     path here read as an instruction to pass the path, and that ran the script over
     0 items with no error.
+
+    The gate line is shell-quoted, because it is a command to paste: a space in the
+    clone's path or the workspace's split it at ``can't open file``.
     """
+    gate_script = skill_root() / "scripts/gate/verify_findings.py"
     return "\n".join([
         f"{count} items staged for the local fleet.",
         "",
@@ -268,7 +273,8 @@ def instructions(args_path: Path, count: int, run_id: str = "<run-id>",
         "  - expect to resume: pass resumeFromRunId and edit only the failed agent() opts",
         "  - the script CANNOT run the quote gate; after the run:",
         f"      cf harvest {run_id} --journal <workflow-dir> --gate",
-        f"      python3 {skill_root() / 'scripts/gate/verify_findings.py'} "
-        f"--gate-config {gate_config} --root {corpus_dir} --findings-dir .",
+        f"      python3 {shlex.quote(str(gate_script))} "
+        f"--gate-config {shlex.quote(gate_config)} --root {shlex.quote(corpus_dir)} "
+        "--findings-dir .",
         "      re-queue whatever failed in a second Workflow run",
     ])
