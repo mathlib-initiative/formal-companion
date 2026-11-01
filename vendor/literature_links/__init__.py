@@ -12,4 +12,4 @@ from __future__ import annotations
 
 __all__ = ["__version__", "schemacheck", "companion", "cli", "discovery"]
 
-__version__ = "2.0.0"
+__version__ = "1.0.0"
