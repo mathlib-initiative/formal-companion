@@ -3007,6 +3007,13 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `workflows/adjudicate.workflow.js`, `workflows/challenge.workflow.js` and
+  `workflows/verify-claims.workflow.js` refuse a string for `args`, as
+  `workflows/fleet-local.workflow.js` does. A path or a JSON-encoded string read as an object with
+  nothing in it and the run finished with no error: `adjudicate` started its critic and
+  `verify-claims` its numbers lens and critic over nothing, and `challenge` finished over 0
+  findings. `workflows/locate-label.workflow.js` still takes a string, because a change to it moves
+  the sha256 that `cf bench anchor --emit-args` stamps into its args.
 - `cf run --local` prints `args:   <the JSON in <path>>`, the spelling of `cf adjudicate`,
   `cf report` and `cf bench`, instead of `args:   <path>`. The Workflow tool hands `args` over
   verbatim and cannot read a file, so passing what it printed ran

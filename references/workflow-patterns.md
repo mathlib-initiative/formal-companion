@@ -24,7 +24,10 @@ completeness critic · §6 the per-item local fleet.
 2. **All inputs come through `args`, and `args` must be real JSON.** A launch with `[]` completes
    instantly, silently, with zero agents — so the first line of the script logs the input count.
    The tool hands `args` over verbatim and cannot read a file, so a path or a JSON-encoded string
-   reaches the script as a string; `fleet-local.workflow.js` refuses one.
+   reaches the script as a string; `adjudicate.workflow.js`, `challenge.workflow.js`,
+   `fleet-local.workflow.js` and `verify-claims.workflow.js` refuse one. `locate-label.workflow.js`
+   does not: `cf bench anchor --emit-args` stamps its sha256 into the args, and the transcriber
+   refuses a result once that sha has moved (`references/locate-bench.md` §6).
 3. **No clocks, no randomness, no ambient state.** Replay is keyed on the prompt bytes and the
    order of the preceding `agent()` calls. `Date.now()` in a prompt makes every resume a full
    re-run.

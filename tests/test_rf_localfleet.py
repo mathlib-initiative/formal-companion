@@ -707,6 +707,7 @@ async function pipeline(items, ...stages) {
 
 const parallel = (thunks) => Promise.all(thunks.map((t) => t()))
 const result = await body(spec.args, agent, pipeline, parallel, (m) => logs.push(String(m)))
+  .catch((err) => { console.error('agents started: ' + calls.length); throw err })
 process.stdout.write(JSON.stringify({ result, calls, logs }))
 """
 
@@ -1024,6 +1025,84 @@ class TestChallengeAndAdjudicateBodies(unittest.TestCase):
                       "suggested_tldr": "fine"}})
         self.assertEqual(out["result"]["schema"], "cf-verify-claims-v1")
         self.assertEqual(out["result"]["missing_lenses"], ["corpus-numbers"])
+
+
+class TestAStringForArgsIsRefused(unittest.TestCase):
+    """``fleet-local``'s refusal, in the three scripts ``cf adjudicate`` and ``cf report`` name.
+
+    The Workflow tool hands ``args`` over verbatim and cannot read a file, and
+    ``const A = args || {}`` reads a string as an object with nothing in it. So a path, or
+    the file's JSON as one string, started ``adjudicate``'s critic and ``verify-claims``'
+    numbers lens and critic over nothing, and finished ``challenge`` over 0 findings, each
+    with no error. The args here are what the commands really wrote.
+    """
+
+    #: the script, the command that writes its args, the agents an empty launch starts
+    SCRIPTS = (
+        ("adjudicate", ("adjudicate", "--companion", "ours", "--emit-args"), ["critic"]),
+        ("challenge", ("adjudicate", "--companion", "ours", "--challenge-only", "--emit-args"), []),
+        ("verify-claims", ("report",), ["verify:numbers-independent", "critic"]),
+    )
+
+    def setUp(self):
+        self.root = make_workspace(self)["root"]
+        corpus = self.root / "corpus" / "hunt"
+        corpus.mkdir(parents=True)
+        (corpus / "exercise-1-2-4.json").write_text(json.dumps({
+            "item": "Exercise 1.2.4", "book_located": True, "source_id": PUBLISHED_ID,
+            "source_sha": PUBLISHED_SHA, "matches": [], "coverage_notes": "",
+            "disagreements": [{"kind": "CONTENT", "severity": "high", "concept": "missing d >= 1",
+                               "unfaithful_decls": ["ours:foo"], "repos_involved": ["ours"],
+                               "faithful": [], "reasoning": "r", "suggested_fix": "s",
+                               "book_quote": BOOK_QUOTE}]}), encoding="utf-8")
+
+    def _emit(self, argv: tuple) -> Path:
+        """The args file a command wrote, read off the line it prints."""
+        rc, out = cf(*argv, "--workspace", str(self.root))
+        self.assertEqual(rc, 0, out)
+        named = re.search(r"args: <the JSON in (.+)> \}\)$", out, re.M)
+        self.assertIsNotNone(named, out)
+        return Path(named.group(1))
+
+    def test_a_string_for_args_is_refused(self):
+        for name, argv, _ in self.SCRIPTS:
+            path = self._emit(argv)
+            # a string carries no companion, so the refusal names the file with a placeholder
+            named = path.relative_to(self.root).as_posix().replace(".ours.", ".<companion>.")
+            for args in (str(path), path.read_text(encoding="utf-8"), ""):
+                with self.subTest(script=name, args=args[:40]):
+                    proc = exec_body(self, name, args, {})
+                    self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                    self.assertEqual(proc.stdout, "", "the run must not start")
+                    self.assertIn("agents started: 0\n", proc.stderr)
+                    self.assertIn("args is a string", proc.stderr)
+                    self.assertIn(named, proc.stderr)
+
+    def test_what_the_command_wrote_still_runs(self):
+        """The whole hand-off: the line names a file, and that file's JSON is a run."""
+        for name, argv, empty in self.SCRIPTS:
+            with self.subTest(script=name):
+                args = json.loads(self._emit(argv).read_text(encoding="utf-8"))
+                self.assertGreater(len(run_body(self, name, args, {})["calls"]), len(empty))
+
+    def test_no_args_and_an_empty_list_or_object_still_finish(self):
+        """Only a string is refused: ``references/workflow-patterns.md`` section 0 rule 2."""
+        for name, _, empty in self.SCRIPTS:
+            for args in (None, [], {}):
+                with self.subTest(script=name, args=args):
+                    run = run_body(self, name, args, {})
+                    self.assertEqual([c["label"] for c in run["calls"]], empty)
+
+    def test_section_0_rule_2_names_the_scripts_that_refuse(self):
+        text = (SKILL_ROOT / "references" / "workflow-patterns.md").read_text(encoding="utf-8")
+        rule = re.search(r"^2\. \*\*All inputs come through `args`.*?^3\. ", text,
+                         re.M | re.S).group(0)
+        refusing = rule.partition(" refuse one")[0]
+        for path in sorted((SKILL_ROOT / "workflows").glob("*.workflow.js")):
+            with self.subTest(script=path.name):
+                proc = exec_body(self, path.name.removesuffix(".workflow.js"), "/w/args.json", {})
+                self.assertIn(f"`{path.name}`", rule)
+                self.assertEqual(f"`{path.name}`" in refusing, "args is a string" in proc.stderr)
 
 
 class TestWorkflowArgsCoverEveryKeyTheScriptsRead(unittest.TestCase):
