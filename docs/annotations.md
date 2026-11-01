@@ -6,7 +6,7 @@ This is a legacy intermediate format. `cf export` writes it, and
 format of a companion's `annotations/` and of the PDF overlay
 (`docs/overlay.md`).
 
-Its specification is tag `legacy-v1.0.0rc2` of the Literature Links
+Its specification is tag `v0.1.1rc2` of the Literature Links
 repository, which was formal-companion-annotations before the rename: the
 specification, the id rules as an algorithm and every enum value, each a
 document under that tag's `docs` directory, plus its JSON Schema and a
@@ -17,4 +17,4 @@ The skill carries that release's package under
 `vendor/formal_companion_annotations/` (identifier
 `formal-companion/annotations`, `schema_version` `1.0`; its manifest records
 the tag under its original name, `v1.0.0rc2`) and imports it through
-`cflib.vendored`. It is not compatible with Literature Links 1.0.0.
+`cflib.vendored`. It is not compatible with Literature Links 0.2.0 or 1.0.0.

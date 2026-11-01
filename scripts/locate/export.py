@@ -6,7 +6,7 @@ and 11.1 in the layout of references/locate-documents.md section 6::
     <set>/SEAL.json                 every other file with its sha256, and the pins
     <set>/universe.json             the universe: its sha, frozen date, a LIST of libraries
     <set>/sources.jsonl             per source: ids, revision, title, QID, shas, renderer
-    <set>/records/<source-id>.jsonl the Literature Links 2.0 records
+    <set>/records/<source-id>.jsonl the Literature Links 1.0 records
     <set>/receipts/<sha256>.json    the search receipts the absence records reference
 
 The shapes are the ones the consumer reads (references/locate-documents.md

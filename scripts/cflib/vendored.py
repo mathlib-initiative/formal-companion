@@ -4,7 +4,8 @@ New code, for the switchover to formal-companion-annotations (CLAUDE.md
 section 2).  ``vendor/formal_companion_annotations/`` is one tagged release of
 the format's own repository, copied byte for byte and sealed by
 ``vendor/formal_companion_annotations.manifest.json``
-(``scripts/annotations/sync_format.py`` writes both; never edit them by hand).
+(``scripts/annotations/sync_format.py`` wrote both; never edit them by hand, but
+for the one line that script's docstring names).
 A module that imports the format imports this first::
 
     from cflib import vendored  # noqa: F401  (vendor/ on sys.path)

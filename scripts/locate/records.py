@@ -1,4 +1,4 @@
-"""Build the Literature Links 2.0 records of locate -- standard library only.
+"""Build the Literature Links 1.0 records of locate -- standard library only.
 
 New code, implementing docs/proposals/wikipedia-locate.md section 2.7 in the
 form references/locate-documents.md section 6 fixes.  It imports nothing from

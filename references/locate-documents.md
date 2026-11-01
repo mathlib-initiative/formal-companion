@@ -949,7 +949,7 @@ and `written` when `--source` narrowed it:
 <set>/universe.json    {"id", "universe_sha256", "frozen", "libraries": [...], "excluded": [...]}
 <set>/sources.jsonl    per source: source_id, pageid, revision, title, wikidata, html_sha256,
                        layer_sha256, renderer, assessment
-<set>/records/<source-id>.jsonl   Literature Links 2.0 records (proposal §2.7)
+<set>/records/<source-id>.jsonl   Literature Links 1.0 records (proposal §2.7)
 <set>/receipts/<sha256>.json      search receipts referenced from absence records
 ```
 

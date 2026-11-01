@@ -1000,7 +1000,7 @@ def vendored_now(gate: bytes) -> bytes:
     Re-vendoring a package moves the sha of its manifest, which the gate verifies at start
     (``verify_locate.verify_vendor``), and the plan's staged copies (:func:`staged_vendor`), and
     nothing else of an inventory plan moves with it.  Literature Links 2.0.0 (37878b7) moved
-    one pin since the base commits.
+    one pin since the base commits, and its rename to 1.0.0 both.
     """
     pins = json.loads(gate)["vendor"]
     for package in ltr.VENDORED:
@@ -1029,8 +1029,8 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
     commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
     the files staged from a source this branch changed (the three audit tools,
     ``bin/audit_turn.py``, the gate, since smoke 4's reviewer fixes the bridge and
-    ``bin/review_record.py``, and since then ``bin/watchdog.py`` and the vendored Literature
-    Links), the worker prompt, which gains the prose floor's sentence, the commentary bullet
+    ``bin/review_record.py``, and since then ``bin/watchdog.py`` and the vendored packages'
+    files), the worker prompt, which gains the prose floor's sentence, the commentary bullet
     and the two readings, and the three gate.json files, which gain ``prose_floor_rule``, name
     judgment rules 4 for 3 and pin this checkout's vendored manifests (:func:`vendored_now`);
     ``run.yaml`` differs only in its skill commit, those files' pins, the five audit
