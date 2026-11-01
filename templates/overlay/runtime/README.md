@@ -37,7 +37,8 @@ rendered page is a page of `<site.output_root>`. It also writes
 statement with its tokens and hovers (the viewer draws the key cards'). A
 site without them gets your committed `pdf-overlay/verso.json`, less the
 statements whose snippet changed since, or an empty one; a committed file
-cut from a build of a commit no card pins is refused.
+cut from a build of a commit no card pins is refused, and so is one with a
+statement whose card pins a release tag rather than a full commit.
 
 ## Checking it in CI
 

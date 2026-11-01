@@ -654,6 +654,32 @@ class TestPagesOfABuildElsewhere(PagesCase):
                 self.assertEqual(VERSO.main([*command, "--commit", self.COMMIT]), 1)
                 self.assertIn("bundle", said.getvalue())
 
+    def test_the_command_writes_nothing_every_check_would_refuse_for_a_card_that_pins_a_tag(self):
+        bundle = self.site.parent / "annotations.bundle.json"
+        out = self.site.parent / "verso.json"
+
+        def command(*ends: dict) -> tuple[int, str]:
+            bundle.write_text(json.dumps({"schema": VERSO.overlay_annotations.BUNDLE_SCHEMA, "schema_version": 1,
+                                          "directory": "annotations", "count": len(ends),
+                                          "annotations": [{"path": p, "annotation": a} for p, a in entries(*ends)]}),
+                              encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()) as said, contextlib.redirect_stdout(io.StringIO()):
+                code = VERSO.main(["--pages", str(self.site), "--bundle", str(bundle), "--out", str(out),
+                                   "--commit", self.COMMIT])
+            return code, said.getvalue()
+
+        three = remote_end("Notes.Box.three", "def three := 3", line=8)
+        uno = remote_end("Notes.Box.uno", "def uno := 1", line=2, version="v1.0.0")
+        code, said = command(three, uno)
+        self.assertEqual(code, 1, "the statement it cut for the tagged card could not be held to the build")
+        self.assertIn("STOP", said)
+        self.assertIn("'v1.0.0'", said)
+        self.assertIn("annotations/1.1/01.json", said)
+        self.assertFalse(out.exists())
+        elsewhere = remote_end("Mathlib.Order.le_refl", "theorem le_refl", module="Mathlib.Order", version="v4.33.0")
+        self.assertEqual(command(three, elsewhere), (0, ""), "no page of this build holds it, so nothing is lost")
+        self.assertTrue(out.exists())
+
 
 VERSO_KEY_START = REMOTE.encode("utf-8")
 
@@ -743,9 +769,101 @@ class TestTheCommittedFile(PagesCase):
                          "a card that pins another commit keeps no statement of this build")
         ends[0] = remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3, version=other)
         self.assertEqual(VERSO.unpinned(value, entries(*ends)),
-                         f"cut from a build of {BUILD_COMMIT}, but the cards pin {other}")
+                         f"cut from a build of {BUILD_COMMIT}, but the cards pin {other}; write it again with "
+                         "`verso_extract.py --pages` from a build of that commit")
         many = [remote_end("Notes.Box.three", "def three := 3", line=8, version=f"{n}" * 40) for n in range(1, 6)]
-        self.assertTrue(VERSO.unpinned(value, entries(*many)).endswith("and 2 more"))
+        self.assertIn("and 2 more", VERSO.unpinned(value, entries(*many)))
+
+    @staticmethod
+    def pinning(*versions: str | None) -> list[tuple[str, dict]]:
+        """The two cards `committed` cuts statements for, pinning these; None for no `version`."""
+        ends = [remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3),
+                remote_end("Notes.Box.three", "def three := 3", line=8)]
+        for end, version in zip(ends, versions):
+            end["version"] = version
+            if version is None:
+                del end["version"]
+        return entries(*ends)
+
+    def test_a_card_that_pins_a_tag_is_refused_by_name_when_only_some_do(self):
+        value = self.committed()
+        problem = VERSO.unpinned(value, self.pinning(BUILD_COMMIT, "v1.0.0"))
+        self.assertIsNotNone(problem, "joined would drop its statement with nothing said")
+        self.assertIn("'v1.0.0'", problem)
+        self.assertIn("annotations/1.1/01.json", problem)
+        self.assertNotIn("annotations/1.1/00.json", problem, "the card that pins the build's commit is not named")
+        self.assertIn("git rev-parse", problem)
+
+    def test_a_card_that_pins_a_tag_is_told_what_works_when_all_do(self):
+        problem = VERSO.unpinned(self.committed(), self.pinning("v1.0.0", "v1.0.0"))
+        self.assertIn("'v1.0.0'", problem)
+        self.assertIn("annotations/1.1/00.json, annotations/1.1/01.json", problem)
+        self.assertIn("git rev-parse", problem)
+        self.assertNotIn("from a build of that commit", problem, "--commit refuses a tag, so that cannot work")
+
+    def test_what_the_refusal_says_settles_it(self):
+        value = self.committed()
+        self.assertIsNone(VERSO.unpinned(value, self.pinning(BUILD_COMMIT, BUILD_COMMIT)))
+        kept, counts = VERSO.joined(value, self.pinning(BUILD_COMMIT, BUILD_COMMIT))
+        self.assertEqual((kept, counts["dropped"]), (value, 0), "the tag named the build's commit: nothing else to do")
+        other = "f" * 40
+        problem = VERSO.unpinned(value, self.pinning(other, other))
+        self.assertEqual(problem, f"cut from a build of {BUILD_COMMIT}, but the cards pin {other}; write it again "
+                                  "with `verso_extract.py --pages` from a build of that commit")
+        again = self.pages(remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3),
+                           remote_end("Notes.Box.three", "def three := 3", line=8), commit=other)[0]
+        self.assertIsNone(VERSO.unpinned(again, self.pinning(other, other)), "and --commit takes that commit")
+        elsewhere = remote_end("Mathlib.Order.le_refl", "theorem le_refl", module="Mathlib.Order", version="v4.33.0")
+        self.assertEqual(VERSO.unpinned(value, [*self.pinning(other, other), *entries(elsewhere)]), problem,
+                         "a build of a tag cannot be asked for, so it names the commits alone")
+
+    def test_anything_but_a_full_lowercase_commit_is_refused_and_so_is_no_version(self):
+        value = self.committed()
+        for version in ("main", "abc1234", "A" * 40, "a" * 39, "a" * 41, "v4.33.0-rc1", f"{BUILD_COMMIT}\n"):
+            with self.subTest(version=version):
+                self.assertIn(repr(version), VERSO.unpinned(value, self.pinning(BUILD_COMMIT, version)))
+        self.assertIn("no version", VERSO.unpinned(value, self.pinning(BUILD_COMMIT, None)))
+        self.assertIn("no version", VERSO.unpinned(value, self.pinning(None, None)))
+        self.assertIn("cut from a build", VERSO.unpinned(value, self.pinning("a" * 64, "a" * 64)),
+                      "a sha-256 commit is a commit")
+
+    def test_many_cards_and_tags_are_named_up_to_a_point(self):
+        tags = [f"v{n}.0.0" for n in range(5)]
+        value = self.pages(*(remote_end("Notes.Box.three", "def three := 3", line=8, version=tag) for tag in tags),
+                           commit=self.COMMIT)[0]
+        problem = VERSO.unpinned(value, entries(*(remote_end("Notes.Box.three", "def three := 3", line=8, version=tag)
+                                                  for tag in tags)))
+        self.assertIn("'v0.0.0', 'v1.0.0', 'v2.0.0' and 2 more", problem)
+        self.assertIn("annotations/1.1/02.json and 2 more", problem)
+
+    def test_a_card_with_no_statement_to_lose_may_pin_what_it_likes(self):
+        value = self.committed()
+        ends = [remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3),
+                remote_end("Notes.Box.three", "def three := 3", line=8)]
+        snippetless = remote_end("Notes.Box.uno", "def uno := 1", line=2, version="v1.0.0")
+        snippetless["extensions"][NAMESPACE].pop("snippet")
+        keyless = remote_end("Notes.Box.uno", "def uno := 1", line=2, version="v1.0.0")
+        keyless["extensions"][NAMESPACE].pop("destination")
+        for name, end in (("a declaration of another project, at its release",
+                           remote_end("Mathlib.Order.le_refl", "theorem le_refl", module="Mathlib.Order", line=9,
+                                      version="v4.33.0")),
+                          ("a statement the file does not hold",
+                           remote_end("Notes.Box.uno", "def uno := 1", line=2, version="v1.0.0")),
+                          ("a snippet the file's statement no longer joins",
+                           remote_end("Notes.Box.three", "def three := 4", line=8, version="v1.0.0")),
+                          ("a statement another card keeps",
+                           remote_end("Notes.Box.three", "def three := 3", line=8, version="v1.0.0")),
+                          ("no snippet", snippetless), ("no key", keyless)):
+            with self.subTest(name):
+                self.assertIsNone(VERSO.unpinned(value, entries(*ends, end)))
+                self.assertEqual(VERSO.joined(value, entries(*ends, end))[1]["dropped"], 0)
+
+    def test_a_file_no_card_can_be_held_to_is_refused_with_nothing_to_lose(self):
+        problem = VERSO.unpinned(self.committed(), entries(remote_end("Notes.Box.uno", "def uno := 1", line=2,
+                                                                      version="v1.0.0")))
+        self.assertIn("annotations/1.1/00.json", problem)
+        self.assertIn("git rev-parse", problem)
+        self.assertNotIn("from a build of that commit", problem)
 
     def test_a_statement_two_cards_find_alike_is_kept_once(self):
         snippet = "def «x y» := 1\ndef two' := 2"
