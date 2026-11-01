@@ -5,7 +5,7 @@ version: 1
 #
 # METADATA ONLY -- a commit, a date, a pull request number, the reasoning. Never
 # a line of Lean, never a line of a book, never an owner's identity (CLAUDE.md
-# section 1). A companion is named by its repository name, as README.md does.
+# section 1). A companion is named by its repository name, as docs/status.md does.
 companions:
 
   tao-measure-lean:

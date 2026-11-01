@@ -80,6 +80,8 @@ python3 -m pytest -q tests/                      # same suite, with a temporary 
 bash tests/e2e/synthetic.sh                      # the end-to-end demonstration
 ```
 
+`docs/testing.md` lists the environment variables the tests read and the CI jobs.
+
 - **Every fix needs a test that fails before it.** Say how you confirmed the
   "fails before" half in the PR.
 - Tests that read local baselines take their paths from `CF_BASELINE_CORPUS`,

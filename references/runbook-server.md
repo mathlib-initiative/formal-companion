@@ -41,9 +41,9 @@ the host with no diagnosis. Every tend command runs as `cd <tend_dir> && uv run 
 items, plus every mechanical stage — `pair`, `detect-proxies`, the anchor check, `import-corpus`,
 `tally`, `route`, `report` — which needs neither tool and produced the whole def-coverage baseline.
 
-**`cf run --execute` has never been exercised against this pair from this repo**: the five runs
-that produced the baseline corpus pre-date the code that drives them. Treat the first server run as
-a smoke test (§4.4), not as a resumption.
+**`cf run --execute` has driven this pair from this repo on one private host, for differential runs
+and locate's smoke runs** (`docs/status.md`): the five runs that produced the baseline corpus pre-date the code that
+drives them. Treat a first server run as a smoke test (§4.4), not as a resumption.
 
 ---
 
