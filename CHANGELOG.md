@@ -300,6 +300,11 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- The overlay reads Literature Links 1.0.1 at its tag `v1.0.1`, commit `789af9a`. The vendored
+  copy differs from 1.0.0 in `__version__` and the schema's `$id` alone, and accepts and rejects
+  what it did. 1.0.1's specification lets a `lean` end's `version` name a release tag, which a
+  committed `verso.json` now refuses (see Fixed). `cf overlay check` asks an older overlay to
+  re-sync.
 - The overlay vendors PDF.js's legacy build, `legacy/build/` of the same `pdfjs-dist@6.2.108`, in
   place of its default build. The default build calls builtins without checking for them (the
   global `Iterator` at load, then `Promise.try`, `URL.parse`, `Math.sumPrecise` and others), so in
