@@ -42,6 +42,20 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **An overlay may publish an openly licensed PDF** (`docs/overlay.md` rule 4 and section 3), so
+  its built site works from a static host under a project path, such as
+  `https://<owner>.github.io/<repository>/` on GitHub Pages, where the `/__` route at the root of
+  the domain does not. `pdf.publish: {"license": "<SPDX id>"}` in `overlay.config.json` opts in,
+  with one of `Apache-2.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC0-1.0` and `MIT` and a `file_name`
+  that ends in `.pdf`; any other license, or none, is refused. `build_site.py` then copies the
+  cached PDF, checked again against the records' sha256 and `bytes`, to `<mount>/<file_name>`
+  beside `overlay.config.json`; the viewer fetches it from `../<file_name>`, relative to its own
+  page, and its status note names the license; `serve.py` serves the cache there. The PDF is
+  still never committed, and a config without `pdf.publish` behaves as before. `config.py`, the
+  schema, `check_generated.py`, `serve.py`, `build_site.py` and the viewer carry the same license
+  list, held together by `tests/test_overlay_config.py`. The viewer now resolves the PDF's URL
+  against its own page before it fetches, which sends the same request for a route. `cf overlay
+  check` asks an older overlay to re-sync.
 - **Judgment rules 4, the flip: the smoke-4 audit's calls in the rules and the prompts**
   (`references/vocabulary.md` §1.11; `templates/prompts/locate.md.tmpl`,
   `locate-challenge.md.tmpl`, `locate-worker-system.md.tmpl`,

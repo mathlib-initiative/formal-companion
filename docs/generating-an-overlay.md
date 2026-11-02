@@ -16,8 +16,8 @@ It needs no workspace. Any faithfulness verdicts the viewer shows come from file
 committed in the companion, never from an audit workspace. [docs/overlay.md](overlay.md)
 is the contract, and [docs/exporters.md](exporters.md) says what the exporter reads.
 
-**Contents**: the steps · what export needs · reading the overlay · what the viewer
-shows · proof steps · browsers · checking it in CI
+**Contents**: the steps · what export needs · reading the overlay · publishing an
+openly licensed PDF · what the viewer shows · proof steps · browsers · checking it in CI
 
 ## The steps
 
@@ -95,6 +95,25 @@ exits 1. Hovers come from that build; `tools/verso_extract.py` cuts them from a 
 made elsewhere (`docs/overlay.md` section 5). A second `serve.py` on the port the first
 holds stops with `is already in use`. One on another port, or one that only builds, waits
 on `.overlay-serve.lock` until the first exits.
+
+## Publishing an openly licensed PDF
+
+By default the overlay works only on loopback, because the PDF never leaves the
+machine. A companion whose PDF is under an open license can publish it with the site
+instead, so the overlay also works from GitHub Pages. Add the license to the `pdf`
+block of `overlay.config.json`:
+
+```json
+"publish": {"license": "CC-BY-4.0"}
+```
+
+The license is the one the PDF states, and one of `Apache-2.0`, `CC-BY-4.0`,
+`CC-BY-SA-4.0`, `CC0-1.0` and `MIT`; anything else is refused, and `pdf.file_name`
+must end in `.pdf`. In the Pages workflow, `python3 pdf-overlay/tools/serve.py
+--build-only` fetches and verifies the PDF, builds the site and copies the PDF into it
+at `<site.mount>/<pdf.file_name>`; upload `site.output_root` as the Pages site. The
+viewer fetches the PDF from beside its config, so it works under a project path such
+as `https://<owner>.github.io/<repository>/`. The PDF is still never committed.
 
 ## What the viewer shows
 

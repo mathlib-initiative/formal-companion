@@ -9,8 +9,8 @@ runs with the standard library alone and so cannot import either of the other
 two.  Three copies of a rule set drift, and the drift is invisible until a
 companion's CI and `cf overlay check` disagree about the same file.
 
-So this module holds them in step two ways: the four pattern strings must be
-the same string in all three, and a table of configurations -- the shipped
+So this module holds them in step two ways: the five pattern strings and the
+license list must be the same in all three, and a table of configurations -- the shipped
 example, the minimum, and one deliberate breach per rule -- must be accepted or
 refused by all three alike.  `templates/overlay/runtime/tools/serve.py` is a
 fourth reader, outside the three-way table because it is deliberately laxer in
@@ -97,6 +97,15 @@ def without(key: str) -> dict:
     return value
 
 
+#: The open licenses section 3 names, as the contract states them.
+OPEN_LICENSES = ("Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT")
+
+
+def published(license="CC-BY-4.0", **pdf) -> dict:
+    """``minimal()`` with its PDF published under ``license``."""
+    return with_("pdf", {"file_name": "notes.pdf", "publish": {"license": license}, **pdf})
+
+
 def with_(path: str, replacement) -> dict:
     """``minimal()`` with one dotted path set (a two-level path at most)."""
     value = minimal()
@@ -136,6 +145,9 @@ TABLE: tuple[tuple[str, dict, bool], ...] = (
     ("port 65535", with_("serve.port", 65535), True),
     ("a dotted cache dir", with_("pdf.cache_dir", ".lake/overlay-pdf"), True),
     ("a one-segment output root", with_("site.output_root", "build"), True),
+    *((f"a PDF published under {name}", published(name), True) for name in OPEN_LICENSES),
+    ("a published PDF beside a route it does not use",
+     published(route="/__overlay_pdf__/notes.pdf", cache_dir=".build/overlay-pdf"), True),
 
     ("not an object", [], False),
     ("no schema", without("schema"), False),
@@ -157,6 +169,19 @@ TABLE: tuple[tuple[str, dict, bool], ...] = (
     ("an unknown serve key", with_("serve", {"host": "127.0.0.1", "tls": True}), False),
     ("an unknown build key", with_("build", {"env": {}}), False),
     ("an unknown display key", with_("display", {"hide": "Notes."}), False),
+    ("publish with no license", with_("pdf", {"file_name": "notes.pdf", "publish": {}}), False),
+    ("publish under a license that is not open", published("CC-BY-NC-4.0"), False),
+    ("publish under no license at all", published("LicenseRef-proprietary"), False),
+    ("publish under a lowercase id", published("cc-by-4.0"), False),
+    ("publish under a license that is not a string", published(["CC-BY-4.0"]), False),
+    ("publish as true", with_("pdf", {"file_name": "notes.pdf", "publish": True}), False),
+    ("publish as a bare license id", with_("pdf", {"file_name": "notes.pdf", "publish": "CC-BY-4.0"}), False),
+    ("publish with an unknown key", with_("pdf", {
+        "file_name": "notes.pdf", "publish": {"license": "CC-BY-4.0", "attribution": "x"}}), False),
+    ("a published file name that does not end in .pdf", with_("pdf", {
+        "file_name": "notes.djvu", "publish": {"license": "CC-BY-4.0"}}), False),
+    ("a published file name in capitals", with_("pdf", {
+        "file_name": "NOTES.PDF", "publish": {"license": "CC-BY-4.0"}}), False),
     ("minimal as a string", with_("display.minimal", "yes"), False),
     ("minimal as a number", with_("display.minimal", 1), False),
     ("a back_link with no text", with_("back_link", {"href": "../../index.html"}), False),
@@ -208,16 +233,37 @@ class TestTheThreeReadersCarryTheSamePatterns(unittest.TestCase):
                          overlay_config.RELATIVE_PATH_REFUSED)
         self.assertEqual(serve["host"]["pattern"], overlay_config.LOOPBACK_PATTERN)
 
+    def test_the_schema_repeats_the_publish_rules(self):
+        pdf = SCHEMA["properties"]["pdf"]
+        publish = pdf["properties"]["publish"]
+        self.assertEqual(set(publish["properties"]), set(overlay_config.PUBLISH_KEYS))
+        self.assertEqual(set(publish["required"]), set(overlay_config.PUBLISH_KEYS))
+        self.assertIs(publish["additionalProperties"], False)
+        self.assertEqual(tuple(publish["properties"]["license"]["enum"]), overlay_config.OPEN_LICENSES)
+        self.assertEqual(pdf["if"], {"required": ["publish"]})
+        self.assertEqual(pdf["then"]["properties"]["file_name"]["pattern"],
+                         overlay_config.PUBLISHED_FILE_NAME_PATTERN)
+
+    def test_the_open_licenses_are_the_contracts_in_every_reader(self):
+        self.assertEqual(overlay_config.OPEN_LICENSES, OPEN_LICENSES)
+        for tool in (CHECK_GENERATED, SERVE, BUILD_SITE):
+            with self.subTest(tool=tool.__name__):
+                self.assertEqual(tool.OPEN_LICENSES, OPEN_LICENSES)
+                self.assertEqual(set(tool.PUBLISH_KEYS), set(overlay_config.PUBLISH_KEYS))
+        viewer = (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8")
+        self.assertIn("OPEN_LICENSES = Object.freeze([" + ", ".join(json.dumps(name) for name in OPEN_LICENSES)
+                      + "])", viewer)
+
     def test_check_generated_repeats_them_too(self):
         for name in ("FILE_NAME_PATTERN", "ROUTE_PATTERN", "RELATIVE_PATH_PATTERN",
-                     "RELATIVE_PATH_REFUSED", "LOOPBACK_PATTERN"):
+                     "RELATIVE_PATH_REFUSED", "LOOPBACK_PATTERN", "PUBLISHED_FILE_NAME_PATTERN"):
             with self.subTest(pattern=name):
                 self.assertEqual(getattr(CHECK_GENERATED, name),
                                  getattr(overlay_config, name))
 
     def test_the_three_carry_the_same_key_sets(self):
         for name in ("CONFIG_KEYS", "REQUIRED_CONFIG_KEYS", "PDF_KEYS", "REQUIRED_PDF_KEYS",
-                     "SITE_KEYS", "BUILD_KEYS", "SERVE_KEYS", "BACK_LINK_KEYS",
+                     "PUBLISH_KEYS", "SITE_KEYS", "BUILD_KEYS", "SERVE_KEYS", "BACK_LINK_KEYS",
                      "DISPLAY_KEYS"):
             with self.subTest(keys=name):
                 self.assertEqual(set(getattr(CHECK_GENERATED, name)),
@@ -313,6 +359,12 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
         self.assertEqual((config.back_link_href, config.back_link_text), ("", ""),
                          "no back_link is no back link, not a default one")
 
+    def test_the_pdf_is_published_only_when_the_config_says_so(self):
+        self.assertEqual(overlay_config.parse(minimal()).publish_license, "")
+        self.assertEqual(overlay_config.parse(published("CC0-1.0")).publish_license, "CC0-1.0")
+        self.assertEqual(overlay_config.parse(published()).route, "/__overlay_pdf__/notes.pdf",
+                         "the route keeps its default; a published PDF does not use it")
+
     def test_minimal_is_off_unless_the_config_says_so(self):
         self.assertIs(overlay_config.parse(minimal()).minimal, False)
         self.assertIs(overlay_config.parse(with_("display.minimal", True)).minimal, True)
@@ -394,6 +446,17 @@ class TestProblemsAreReportedWhole(unittest.TestCase):
         found = overlay_config.problems(with_("pdf.route", "/nope"))
         self.assertEqual(len(found), 1, found)
         self.assertTrue(found[0].startswith("overlay.config.json.pdf.route:"), found[0])
+
+    def test_a_refused_license_names_itself_and_the_licenses_that_open(self):
+        for reader in (overlay_config.problems, CHECK_GENERATED.config_problems):
+            with self.subTest(reader=reader.__module__):
+                found = reader(published("CC-BY-NC-4.0"))
+                self.assertEqual(len(found), 1, found)
+                self.assertTrue(found[0].startswith("overlay.config.json.pdf.publish.license: "
+                                                    "expected one of Apache-2.0, CC-BY-4.0"), found[0])
+                self.assertIn("'CC-BY-NC-4.0'", found[0])
+                found = reader(with_("pdf", {"file_name": "notes.pdf", "publish": {}}))
+                self.assertEqual(found, ["overlay.config.json.pdf.publish: missing keys ['license']"])
 
 
 class TestReadingTheFile(unittest.TestCase):

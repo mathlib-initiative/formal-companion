@@ -9,8 +9,8 @@ mechanically:
 * this module, which `cf overlay init|check|export` use;
 * `templates/overlay/runtime/schema/overlay-config-v1.schema.json`, the
   Draft 2020-12 schema a companion can hand any offline validator -- it repeats
-  the four patterns defined here, and `tests/test_overlay_config.py` fails when
-  one of the strings differs;
+  the five patterns and the license list defined here, and
+  `tests/test_overlay_config.py` fails when one of the strings differs;
 * `templates/overlay/runtime/tools/check_generated.py`, which a companion's CI
   runs with nothing but the standard library and the directory itself, so it
   carries its own copy of the same rules and the same patterns.
@@ -26,7 +26,9 @@ includes `0:0:0:0:0:0:0:1`).
 The PDF's identity is deliberately not here: its URL and `sha256` come from the
 PDF subject ends of the annotations whose overlay extension carries this
 `source_id`, and `bytes`, `alternate_urls` and `physical_page_count` from that
-extension.
+extension.  What is here is whether the PDF may leave loopback: `pdf.publish`
+names its open license, and only a license in :data:`OPEN_LICENSES` opts in
+(section 1 rule 4).
 """
 from __future__ import annotations
 
@@ -45,7 +47,8 @@ __all__ = [
     "CONFIG_SCHEMA_VERSION", "Config", "DEFAULT_CACHE_DIR",
     "DEFAULT_HOST", "DEFAULT_INDEX", "DEFAULT_MOUNT", "DEFAULT_OUTPUT_ROOT",
     "DEFAULT_PORT", "DEFAULT_STORAGE_KEY", "DISPLAY_KEYS", "FILE_NAME_PATTERN",
-    "LOOPBACK_PATTERN", "PDF_KEYS", "PORT_MAX", "PORT_MIN", "RELATIVE_PATH_PATTERN",
+    "LOOPBACK_PATTERN", "OPEN_LICENSES", "PDF_KEYS", "PORT_MAX", "PORT_MIN",
+    "PUBLISHED_FILE_NAME_PATTERN", "PUBLISH_KEYS", "RELATIVE_PATH_PATTERN",
     "RELATIVE_PATH_REFUSED", "REQUIRED_CONFIG_KEYS", "REQUIRED_PDF_KEYS", "ROUTE_DIR",
     "ROUTE_PATTERN", "SCHEMA_FILE", "SERVE_KEYS", "SITE_KEYS", "load", "load_problems",
     "parse", "problems", "route_for", "strict_json",
@@ -64,8 +67,9 @@ CONFIG_KEYS = frozenset({
 })
 REQUIRED_CONFIG_KEYS = frozenset({"schema", "schema_version", "source_id", "title",
                                   "pdf", "site"})
-PDF_KEYS = frozenset({"file_name", "cache_dir", "route"})
+PDF_KEYS = frozenset({"file_name", "cache_dir", "route", "publish"})
 REQUIRED_PDF_KEYS = frozenset({"file_name"})
+PUBLISH_KEYS = frozenset({"license"})
 SITE_KEYS = frozenset({"output_root", "index", "mount", "link_text"})
 BUILD_KEYS = frozenset({"commands"})
 SERVE_KEYS = frozenset({"host", "port"})
@@ -88,6 +92,12 @@ LOOPBACK_PATTERN = (r"^(127\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
                     r"(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){2}|::1)$")
 PORT_MIN = 1
 PORT_MAX = 65535
+#: `pdf.publish.license`: the SPDX ids of the open licenses under which a
+#: companion may publish its PDF with the built site.  Any other value, or none,
+#: keeps the PDF on loopback.
+OPEN_LICENSES = ("Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT")
+#: A published PDF's `file_name` ends in `.pdf`, so a static host serves it as one.
+PUBLISHED_FILE_NAME_PATTERN = r"\.pdf$"
 
 #: The defaults section 3 states.  `site.link_text` defaults to the title and
 #: `pdf.route` to :data:`ROUTE_DIR` plus the file name, so neither is a constant.
@@ -107,6 +117,7 @@ _ROUTE = re.compile(ROUTE_PATTERN)
 _RELATIVE = re.compile(RELATIVE_PATH_PATTERN)
 _REFUSED = tuple(re.compile(p) for p in RELATIVE_PATH_REFUSED)
 _LOOPBACK = re.compile(LOOPBACK_PATTERN)
+_PUBLISHED_FILE_NAME = re.compile(PUBLISHED_FILE_NAME_PATTERN)
 
 
 def route_for(file_name: str) -> str:
@@ -136,6 +147,7 @@ class Config:
     host: str
     port: int
     minimal: bool = False
+    publish_license: str = ""  # "" unless `pdf.publish` opts in to publishing the PDF
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +245,22 @@ def _argv_list(value: Any, label: str, out: list[str]) -> tuple[tuple[str, ...],
     return tuple(commands)
 
 
+def _publish(value: Any, file_name: str, label: str, out: list[str]) -> str:
+    """`pdf.publish`: the open license it names, or "" with a problem."""
+    publish = _keys(value, PUBLISH_KEYS, PUBLISH_KEYS, f"{label}.publish", out)
+    if file_name and not _PUBLISHED_FILE_NAME.search(file_name):
+        out.append(f"{label}.file_name: a published PDF's file name ends in .pdf: "
+                   f"{file_name!r}")
+    if "license" not in publish:
+        return ""
+    found = publish["license"]
+    if isinstance(found, str) and found in OPEN_LICENSES:
+        return found
+    out.append(f"{label}.publish.license: expected one of {', '.join(OPEN_LICENSES)}, "
+               f"got {found!r}")
+    return ""
+
+
 def _is_loopback(host: str) -> bool:
     try:
         return ipaddress.ip_address(host).is_loopback
@@ -285,7 +313,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
             else:
                 out.append(f"{label}.display.minimal: expected true or false")
 
-    file_name, cache_dir, route = "", DEFAULT_CACHE_DIR, ""
+    file_name, cache_dir, route, publish_license = "", DEFAULT_CACHE_DIR, "", ""
     if "pdf" in value:
         pdf = _keys(value["pdf"], PDF_KEYS, REQUIRED_PDF_KEYS, f"{label}.pdf", out)
         if "file_name" in pdf:
@@ -305,6 +333,8 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
             out.append(f"{label}.pdf.route: must start with /__, name a file and "
                        f"hold no ..: {route!r}")
             route = ""
+        if "publish" in pdf:
+            publish_license = _publish(pdf["publish"], file_name, f"{label}.pdf", out)
 
     output_root, index = DEFAULT_OUTPUT_ROOT, DEFAULT_INDEX
     mount, link_text = DEFAULT_MOUNT, title
@@ -350,6 +380,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
         file_name=file_name, cache_dir=cache_dir, route=route, output_root=output_root,
         index=index, mount=mount, link_text=link_text or title,
         build_commands=commands, host=host, port=port, minimal=minimal,
+        publish_license=publish_license,
     )
 
 
