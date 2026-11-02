@@ -300,6 +300,17 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- The overlay vendors PDF.js's legacy build, `legacy/build/` of the same `pdfjs-dist@6.2.108`, in
+  place of its default build. The default build calls builtins without checking for them (the
+  global `Iterator` at load, then `Promise.try`, `URL.parse`, `Math.sumPrecise` and others), so in
+  Safari 17.4, which has none of them, the viewer stopped with `Can't find variable: Iterator` and
+  showed no page. The legacy build carries polyfills (core-js 3.49.0, MIT, named in
+  `THIRD_PARTY.md`) and leaves a browser's own builtins in place. Measured on a 404-page companion:
+  Safari 17.4, Chrome and Firefox draw the same 2,512 boxes, Chrome and Firefox render every page
+  as they did and turn pages as fast, and the first page takes about 15 ms longer in Chrome (of
+  250) and 9 ms in Firefox (of 525). The two files grow by 108 KB (35 KB gzipped). CI has no Safari,
+  so `templates/overlay/tests/pdfjs-build.test.mjs` removes those builtins and then loads each
+  file. `cf overlay check` asks an older overlay to re-sync.
 - The README is rewritten for a reader new to the project and cut from 497 lines to about 170,
   and what only a maintainer needs moved out of it: the onboarding transcript, the program and the
   overrides to `docs/running-an-audit.md`, the workspace model and its rules to

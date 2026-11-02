@@ -11,17 +11,24 @@ overlay.
 - Version: **6.2.108**
 - License: **Apache License 2.0**, reproduced verbatim in
   `vendor/pdfjs/LICENSE`
-- Files, copied without modification from `pdfjs-dist@6.2.108`:
+- Files, copied without modification from `pdfjs-dist@6.2.108`, the two
+  JavaScript files from its legacy build (`legacy/build/`):
 
   ```text
-  e0be3863c23c8af2305b16548febd58e7f8874a460253317d7771cddbc1c0f6d  vendor/pdfjs/pdf.min.mjs
-  0613f41490dd6aaceed7a93fbbd38c85e6d6aa60474b6588c6e7709cfbe18cb3  vendor/pdfjs/pdf.worker.min.mjs
+  9fab0c910bf1484835c5c2aeb68f7eb3dfce7f9eb435a004526c5af86d70890c  vendor/pdfjs/pdf.min.mjs
+  bc0d1b88ea0b66196b1d36a58ac243c6d92adfe725624e2a9fdd381bdf8ef434  vendor/pdfjs/pdf.worker.min.mjs
   0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594  vendor/pdfjs/LICENSE
   ```
 
 - `vendor/pdfjs/PINNED.md` records the npm tarball's own digests and the two
   commands that reproduce the extraction, so the bytes above can be checked
-  against the published package without trusting this directory.
+  against the published package without trusting this directory. It also says
+  why the legacy build.
+- Bundled in both files by the legacy build: core-js 3.49.0,
+  <https://github.com/zloirock/core-js>, under the MIT License
+  (<https://github.com/zloirock/core-js/blob/v3.49.0/LICENSE>), Copyright (c)
+  2013–2025 Denis Pushkarev (zloirock.ru) and Copyright (c) 2025–2026 CoreJS
+  Company (core-js.io). Each file carries that copyright line and licence URL.
 
 The viewer loads `pdf.min.mjs` and `pdf.worker.min.mjs` from this directory
 only: no CDN is contacted at run time, and the page's Content-Security-Policy
