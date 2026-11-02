@@ -9,7 +9,7 @@ agents over the real host tools and gate, on ``tests/_locate_fixtures.py``'s mad
 "Widget bounds" page (F1, its proof skipped whole): a skip verdict flagged, upheld,
 repaired into passages through ``inventory_edit.py --rule 2``, ``passage_ids.py`` and the
 gate, checked and approved; the mechanical skip rule and ``skip_ok``; the random-outcome
-property under rule 2; and the rule-1 golden -- the base commit f523584's turn machine and
+property under rule 2; and the rule-1 golden -- the base commit 84e40ba's turn machine and
 this one make the same calls, prompts and tool command lines on one run.
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ from run import attempt_cap  # noqa: E402
 at, ia = TA.at, TA.ia
 SID, TASK = TA.SID, TA.TASK
 SCHEMA2 = ia.AUDIT_SCHEMAS[2]
-BASE = "f523584"
+BASE = "84e40ba"
 
 
 class Agents2(TA.Agents):
@@ -366,7 +366,7 @@ def _base_turn_machine(case) -> object | None:
 
 
 class TestRule1IsTheBaseCommitsTurnMachine(TA.TurnCase):
-    """One rule-1 run -- a rejection, a revision, a check -- through f523584's turn machine
+    """One rule-1 run -- a rejection, a revision, a check -- through 84e40ba's turn machine
     and through this one: the same agent calls (step, label, prompt, system prompt), the
     same host tool command lines and the same round files."""
 

@@ -1267,12 +1267,12 @@ class TestTheAuditedBridge(BridgeCase):
 #: harness, for three turns: a worker's first call, a worker's revision (a discussion on
 #: disk) and a reviewer, each against a fake agent that writes no result file; <WT> is the
 #: worktree, <GATE> the gate directory.  The system prompt is passed as staged
-#: ($TEND_TASK_ID unsubstituted), as it always was.  The worker's first call is 99fbad4's;
+#: ($TEND_TASK_ID unsubstituted), as it always was.  The worker's first call is 91ca839's;
 #: the revision is the locate run's (it declines feedback its rules forbid, as
-#: needs_review, where 99fbad4's said not to re-litigate), and the reviewer's git is
+#: needs_review, where 91ca839's said not to re-litigate), and the reviewer's git is
 #: read-only by subcommand and its prompt carries the needs_review block, since the
 #: revision before it finished needs_review (scripts/run/review_record.py).  The
-#: faithfulness pipeline's bridge still makes 99fbad4's calls
+#: faithfulness pipeline's bridge still makes 91ca839's calls
 #: (``test_the_bridge_of_the_base_commit_makes_the_same_calls``)
 LOCATE_GATE_ENTRY = ("Bash(python3 <GATE>/verify_locate.py --gate-config <GATE>/gate.json "
                      "--findings:*)")
@@ -1320,7 +1320,7 @@ GOLDEN_STDOUT = {
 
 class TestTheUnauditedBridgeIsUnchanged(BridgeCase):
     """Without CF_AUDIT_RULE the bridge makes the golden calls, and the faithfulness
-    pipeline's are 99fbad4's byte for byte."""
+    pipeline's are 91ca839's byte for byte."""
 
     def setUp(self):
         super().setUp()
@@ -1362,10 +1362,10 @@ class TestTheUnauditedBridgeIsUnchanged(BridgeCase):
 
     def test_the_bridge_of_the_base_commit_makes_the_same_calls(self):
         got = subprocess.run(["git", "-C", str(SKILL), "show",
-                              "99fbad4:scripts/run/bridge-agentbox.sh"],
+                              "91ca839:scripts/run/bridge-agentbox.sh"],
                              capture_output=True, text=True)
         if got.returncode != 0:
-            _base_commits.not_held(self, "99fbad4")
+            _base_commits.not_held(self, "91ca839")
         old = self.root / "old-bridge.sh"
         old.write_text(got.stdout)
         # the faithfulness pipeline's gate: its bridge is the base commit's

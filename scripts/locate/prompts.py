@@ -193,7 +193,7 @@ def audit_context(host: Mapping[str, str], review_rounds: int) -> dict[str, Any]
     2 ``audit_skips`` keeps the templates' skip blocks (section 13.11), which render empty
     under rule 1, so a rule-1 plan's prompts are the base commit's byte for byte; under rule 3
     ``audit_gaps`` keeps the gap blocks too (section 13.12), which render empty under rules 1
-    and 2, so a rule-2 plan's prompts are 3b29518's, and ``cut_calls`` the worker prompt's two
+    and 2, so a rule-2 plan's prompts are 66f4936's, and ``cut_calls`` the worker prompt's two
     calls on the cut (R-SPLIT, R-INSTANCE), which an unaudited plan renders empty too."""
     from .tend_root import audit_commands
     cmd = audit_commands(host["gate_dir"])

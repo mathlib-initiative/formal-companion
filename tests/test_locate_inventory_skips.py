@@ -10,7 +10,7 @@ merge's evidence inside the skip, the skip rule and ``skip_seen``, a carried ver
 to the next snapshot's ids, ``skip_edit`` collateral, ``decide``'s ``audit/2`` clause and
 ``skip_report``) and ``scripts/gate/inventory_edit.py --rule 2`` (``unskip``: drop, shrink,
 split, and what it refuses), with the gate as the judge of a repair.  Rule 1 renders what
-the base commit f523584 renders.  The fixtures are ``tests/_locate_fixtures.py``'s made-up
+the base commit 84e40ba renders.  The fixtures are ``tests/_locate_fixtures.py``'s made-up
 "Widget bounds" page: F1 a skipped proof, F2 legitimate skips, F3 a skipped display, F3b a
 skip that starts inside a paragraph, F4 a hand edit of F1's skips.
 """
@@ -50,7 +50,7 @@ ia, ie, ir = TL.ia, TL.ie, TL.ir
 SID, TASK = TL.SID, TL.TASK
 LAYER, PARAGRAPHS = F.SKIP_LAYER, F.SKIP_PARAGRAPHS
 #: the base commit the skip audit's build branched from: rule 1 is its behaviour
-BASE = "f523584"
+BASE = "84e40ba"
 SCHEMA2 = ia.AUDIT_SCHEMAS[2]
 
 

@@ -27,8 +27,8 @@ pipeline is not wired to one title.
 **Server fleets.** `cf run --execute` has driven `tend` and `agentbox` on one private
 host, under tend 0.1.0: differential runs over chapter 1 and section 1.7, including a
 first finding merged after a 1/1 smoke test. Closed issues #6, #7, #10 and #11 record
-what those runs found, and commits `8257287`, `23e8744`, `f7fcd2b`, `a8c8e1b` and
-`3ba75fb` are fixes made during them. Issue #11 prices three such runs from their
+what those runs found, and commits `8dea3c7`, `22471a0`, `f12d90a`, `a4c7008` and
+`0187d45` are fixes made during them. Issue #11 prices three such runs from their
 transcripts at list prices: $2,698.82 for chapter 1 (383 tasks), then for section 1.7
 $219.55 for an attempt paused at 4 of 47 tasks and $358.10 for the re-run of all 47. Those
 totals count one usage per content block, so they are probably about
@@ -52,9 +52,9 @@ them. The stage tables `detect-proxies --lean` needs are per-source and hand-wri
 and the shipped one covers one book.
 
 **Adapters.** `docstring_tags` and `attribution_table` have run on the two companions
-above. `blueprint_tex` was measured on one real leanblueprint project: commit `1382c38`
+above. `blueprint_tex` was measured on one real leanblueprint project: commit `b3ea375`
 records 293 of 391 statement environments, score 0.86, and 310 rows over 293 items, and
-commit `8dfc9dd` a defect reproduced on it. No full audit of that project is recorded here.
+commit `e5c92ba` a defect reproduced on it. No full audit of that project is recorded here.
 
 **Not generalized yet.** A second book is likeliest to fail at a source whose items are
 not headed by a capitalized kind word, or at a companion convention no adapter recognizes.
@@ -77,7 +77,7 @@ DOM and a fake PDF.js, and six Python modules test the generator
 `attribution-table`, sync, check, `check_generated.py`, a Literature Links scan,
 `serve.py`, and the viewer in Chromium, including proof steps and `display.minimal`.
 
-**Real companions.** Three private companions carry overlays generated at `d53be70`, as
+**Real companions.** Three private companions carry overlays generated at `50e7649`, as
 their `pdf-overlay/GENERATED.json` records: `measure_theory`, 1,085 annotations through
 the `attribution-table` export, and two whose annotations come from producers of their
 own, one of them with 1,197 proof steps among its 3,677 annotations. PR #43 records
@@ -85,7 +85,7 @@ own, one of them with 1,197 proof steps among its 3,677 annotations. PR #43 reco
 checked in a browser. PR #45 records a re-export of `measure_theory` at `0297cc6`,
 byte-identical to that companion's own PR #30. PRs #48 and #50 record the viewer driven
 against the companion with proof steps, #50 in Chromium 152 and Firefox 159, and that
-companion's re-sync at `e7d6be4` records both checks passing. The re-syncs to `d53be70`
+companion's re-sync at `4125474` records both checks passing. The re-syncs to `50e7649`
 change one comment in the viewer and the Literature Links version, not the annotations;
 `measure_theory`'s PR #34 and one other companion's PR #4 record both checks passing there.
 The exporters also reproduce
@@ -115,8 +115,8 @@ universe of 48 libraries built on the run host by the probe drivers, the first r
 against real pages, and smoke runs with workers, gate, reviewers and merges. The smoke-2
 audit of 2026-10-19 found unchallenged supporting records about 65% right and their
 strong relations about 45% right, with every error an overclaim. Smoke 4 had 2 of 76
-reviews rejected in each run (commit `825ed55`). Inventory pilots ran over 83 articles
-(commit `f523584`).
+reviews rejected in each run (commit `0514feb`). Inventory pilots ran over 83 articles
+(commit `84e40ba`).
 
 **Not done.** No record shows the campaign sequencer or the spend watchdog running on a
 host, and none shows frozen bench gold. Milestones L-M4 to L-M6 are open, and no coverage

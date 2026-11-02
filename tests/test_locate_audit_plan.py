@@ -9,7 +9,7 @@ machine appends is admitted, nothing wider), the seven prompts the turn machine
 reads with no unfilled slot of the plan's or the turn's, the rule card's C1 to C10
 against docs/proposals/statement-cut.md section 3.4, every JSON shape the prompts
 show against the schema ``inventory_audit.py`` holds the files to, and an unaudited
-plan equal to the base commit's (99fbad4) apart from its commit, the staged files
+plan equal to the base commit's (91ca839) apart from its commit, the staged files
 whose source changed since, the inventory prompt's kind and prose-floor sentences, its
 commentary bullet and two readings, and the gate.json files' prose floor and vendored
 manifests' pins.  Every page, library and document is made up.
@@ -57,7 +57,7 @@ at = TA.at
 ia = TL.ia
 PROPOSAL = (SKILL / "docs" / "proposals" / "statement-cut.md").read_text(encoding="utf-8")
 #: the base commit the audit's build branched from: an unaudited plan is its plan
-BASE = "99fbad4"
+BASE = "91ca839"
 AUDIT_TEMPLATE_NAMES = ("locate-inventory-audit-system.md.tmpl", "locate-inventory-audit.md.tmpl",
                         "locate-inventory-check.md.tmpl", "locate-inventory-skeptic.md.tmpl",
                         "locate-inventory-revision.md.tmpl")
@@ -791,7 +791,7 @@ def ir_hint_names() -> str:
 class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
     """The base commit's planner and this one, on one workspace, write the same plan.
 
-    The plan is made by 99fbad4's ``cf plan-locate`` (its tree from ``git archive``)
+    The plan is made by 91ca839's ``cf plan-locate`` (its tree from ``git archive``)
     and then re-made by this checkout's, as the same run.  Every file of the run
     directory is byte for byte the same -- the rendered prompts, the wrappers,
     ``config.yaml``, the task files and manifests, both gate.json files -- but the
@@ -959,11 +959,11 @@ class TestAnUnauditedPlanIsTheBaseCommits(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# an audited plan is f523584's but for the rule it names
+# an audited plan is 84e40ba's but for the rule it names
 # --------------------------------------------------------------------------- #
 
 #: the base commit the skip audit branched from
-SKIP_BASE = "f523584"
+SKIP_BASE = "84e40ba"
 #: a plan's three gate.json files
 GATES = ("gate.json", "gate.local.json", "tend-root/gate/gate.json")
 
@@ -999,7 +999,7 @@ def vendored_now(gate: bytes) -> bytes:
 
     Re-vendoring a package moves the sha of its manifest, which the gate verifies at start
     (``verify_locate.verify_vendor``), and the plan's staged copies (:func:`staged_vendor`), and
-    nothing else of an inventory plan moves with it.  Literature Links 2.0.0 (37878b7) moved
+    nothing else of an inventory plan moves with it.  Literature Links 2.0.0 (af134d7) moved
     one pin since the base commits, and its rename to 1.0.0 both.
     """
     pins = json.loads(gate)["vendor"]
@@ -1023,7 +1023,7 @@ AUDIT_PROMPTS = ("reviewer-system.md", "reviewer.md", "reviewer-check.md", "revi
 
 
 class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
-    """f523584's ``cf plan-locate --audit-rounds 3`` and this one's, as the same run.
+    """84e40ba's ``cf plan-locate --audit-rounds 3`` and this one's, as the same run.
 
     Under audit rule 1 every file of the run directory is byte for byte the base
     commit's -- the rendered prompts, the wrappers, the gate.json files, the tasks -- but
@@ -1146,7 +1146,7 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         # into every plan, and binding no inventory document of rule 1; and smoke 4's
         # reviewer fixes: the gate (a challenge's OK line), the bridge and the recorder
         # whose tamper guard the turn machine shares (the audit's prompts and wrappers are
-        # untouched); the watchdog, whose clean stop a full disk no longer fails (fbe6e35);
+        # untouched); the watchdog, whose clean stop a full disk no longer fails (324daf5);
         # and the vendored files a re-vendoring changed
         self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
                           "tend-root/gate/inventory_render.py",
@@ -1193,12 +1193,12 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
 
 
 #: the commit the smoke-4 fixes branched from: an audited plan of rule 2 or 1 is its plan
-SMOKE4_BASE = "3b29518"
+SMOKE4_BASE = "66f4936"
 
 
 class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
-    """3b29518's ``cf plan-locate --audit-rounds 3`` (audit rule 2, the rule smoke 4 ran) and
-    this one's at rule 2, as the same run: every file is byte for byte 3b29518's -- the five
+    """66f4936's ``cf plan-locate --audit-rounds 3`` (audit rule 2, the rule smoke 4 ran) and
+    this one's at rule 2, as the same run: every file is byte for byte 66f4936's -- the five
     rendered audit prompts included, whose rule-3 text sits in blocks that render empty at
     rule 2 -- but the files staged from a source this branch changed, the worker prompt (the
     smoke-4 sentences) and the three gate.json files (``prose_floor_rule``, judgment rules 4
@@ -1241,7 +1241,7 @@ class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
         return then, self.snapshot("inv-q"), then_yaml, read_yaml(self.paths.run_yaml("inv-q"))
 
     def floor_only(self, then: dict, now: dict, differ: set) -> set:
-        """``differ`` less the worker prompts and gate.json files, each 3b29518's with the
+        """``differ`` less the worker prompts and gate.json files, each 66f4936's with the
         smoke-4 sentences or the prose floor's key added, judgment rules 4 for 3
         (:func:`judged_now`) and the vendored manifests' pins (:func:`vendored_now`), and
         nothing else."""
@@ -1268,11 +1268,11 @@ class TestARule2PlanIsTheSmoke4BaseCommits(TestAnAuditedPlanIsTheBaseCommits):
         self.assertEqual(now_yaml, then_yaml)
 
     def test_rule_1_is_the_base_commits_plan(self):
-        self.skipTest("3b29518 plans audit rule 2: a rule-1 plan is f523584's, which "
+        self.skipTest("66f4936 plans audit rule 2: a rule-1 plan is 84e40ba's, which "
                       "TestAnAuditedPlanIsTheBaseCommits holds")
 
     def test_rule_2_differs_in_the_rule_and_its_prompts_only(self):
-        self.skipTest("3b29518 plans rule 2 already; see test_rule_2_is_the_base_commits_plan")
+        self.skipTest("66f4936 plans rule 2 already; see test_rule_2_is_the_base_commits_plan")
 
 
 if __name__ == "__main__":

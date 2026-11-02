@@ -1614,7 +1614,7 @@ class TestRemovingASourceNamesTheCorpusThatStillPointsAtIt(GhostCorpus):
 class TestTheCaveatsAreSaidWhereTheRestOfTheNoteIsATodo(Workspace):
     """Branch 3: no ``items.json``, so the note is one TODO line -- and a run no gate saw.
 
-    Commit 25cbda3 fixed this hole for the unreadable sentence alone; the
+    Commit babd487 fixed this hole for the unreadable sentence alone; the
     ungated, gate-FAILED, out-of-scope and unstamped ones stayed below the
     ``continue``s, and unlike the unreadable one they were not echoed on
     `cf report`'s terminal either.  "No quote in this corpus was checked against

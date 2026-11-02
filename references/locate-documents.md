@@ -3601,7 +3601,7 @@ record existed. The prose floor (gate rule 8, §2) now makes every paragraph of 
 passage's or a skip's; rule 3 judges what is left. Every file of a rule-3 run carries
 `cf-inventory-audit/3`, every tool runs with `--rule 3`, and a verdicts file names `audit/3`,
 whose decision table is `audit/2`'s, a gap verdict counting as any actionable verdict. Rules 1 and
-2 render, validate, strip and merge byte for byte as 3b29518 did.
+2 render, validate, strip and merge byte for byte as 66f4936 did.
 
 **Terms.** A block's **own text** is its `paragraphs.json` span less the spans of the blocks
 nested in it (of two entries of one span, a theorem box and its paragraph, the first in the
@@ -3683,7 +3683,7 @@ diff's GAP VERDICT line.
 
 **The prompts.** A plan of rule 3 renders the five audit prompts with rule 3's blocks
 (`{{#if audit_gaps}}`, which render empty under rules 1 and 2, so a rule-2 plan's prompts are
-3b29518's byte for byte): the rule card's **Gaps** paragraph and its **three readings of the cut**
+66f4936's byte for byte): the rule card's **Gaps** paragraph and its **three readings of the cut**
 — under C4 a "need not" clause stays with the condition that replaces it, under C6 a method's
 commentary and an instruction of a computation are narration and a number written as a product
 names a step, under C7 a sentence naming a symbol is a `notation` passage scoped `formal_math`

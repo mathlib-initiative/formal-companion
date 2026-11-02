@@ -1542,7 +1542,7 @@ class TestTheOutcomesKeepWhatFitsTheRelation(unittest.TestCase):
 
 
 def renumbered_at_89011f2(locations: list[dict], **_version) -> list[dict]:
-    """``locate.outcomes._renumbered`` as ``master`` 89011f2 wrote it, body for body.
+    """``locate.outcomes._renumbered`` as ``master`` 38ba634 wrote it, body for body.
 
     The version before R-SPECIFIC's strength half: the locations in their worker's rank
     order, ranked 1..n again so a refuted card leaves no gap.  A run judged under
@@ -1973,7 +1973,7 @@ class TestThePrompts(unittest.TestCase):
         self.assertNotIn("junk values", lines["R1"])
         # PD7's test for a value (the maintainer's, 2026-10-20): the passage's mathematics does
         # not depend on the value the declaration gives outside its domain, so riemannZeta at
-        # its pole is R1's junk-value example again (40f364d had taken it out as the record's
+        # its pole is R1's junk-value example again (871c37f had taken it out as the record's
         # call)
         self.assertIn("a junk or default value, given where the passage leaves f undefined, that "
                       "the passage's mathematics does not depend on (x/0 = 0, `riemannZeta` at "

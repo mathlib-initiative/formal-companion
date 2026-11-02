@@ -434,7 +434,7 @@ class TestTheCommandLineIsTheLabel(tvl.GateTestCase):
 
 
 class TestTheCallerField(tvl.OwnershipCase):
-    """Each log line says which call it was, and the readers of 27656b3 still agree."""
+    """Each log line says which call it was, and the readers of be3f3e1 still agree."""
 
     def test_the_four_callers_and_the_readers(self):
         self.contribute()

@@ -51,7 +51,7 @@ the gaps' legend and line, the HINTs ``commentary`` and the kind rule's reach ov
 ``other`` passage; the index gains ``gaps`` and each part the gaps it shows; ``--show <gap
 id>`` prints one gap whole; and the diff gains its GAPS line and a GAP VERDICT line per gap
 verdict of the last round.  Without ``--rule`` (rule 1) every output is the base commit's,
-byte for byte, and rule 2's is 3b29518's.
+byte for byte, and rule 2's is 66f4936's.
 
 Exit 0, 2 when an input cannot be read, an item is not in the document or an
 output path is refused, 3 when ``gate.json`` or a pinned file cannot be read.

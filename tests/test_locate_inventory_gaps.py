@@ -13,7 +13,7 @@ hint), with the edit tool's ``add`` and the gate as the repair.  The two shapes 
 audit found no record for are synthetic cases here: a formula-free paragraph inside a long
 gap, which the first renderer clipped away, and a notation sentence left in a gap; so are
 the seven narration patterns the ``commentary`` hint reads.  Rules 1 and 2 render, validate
-and merge what 3b29518 did.  The page is ``tests/_locate_fixtures.py``'s made-up "Widget
+and merge what 66f4936 did.  The page is ``tests/_locate_fixtures.py``'s made-up "Widget
 gaps"; every text is synthetic.
 """
 from __future__ import annotations
@@ -52,7 +52,7 @@ SID, TASK = TL.SID, TL.TASK
 LAYER, PARAGRAPHS, FORMULAS = F.GAP_LAYER, F.GAP_PARAGRAPHS, F.GAP_FORMULAS
 SCHEMA3 = ia.AUDIT_SCHEMAS[3]
 #: the commit whose rule-1 and rule-2 tools this branch must reproduce
-BASE = "3b29518"
+BASE = "66f4936"
 NOTATION_AT = "We write N for the product"
 
 
@@ -404,7 +404,7 @@ class TestTheRenderingOnTheHost(GapCase):
 
 
 class TestRulesOneAndTwoAreTheBaseCommits(unittest.TestCase):
-    """3b29518's renderer and this one, at rules 1 and 2, on the skip and the gap pages."""
+    """66f4936's renderer and this one, at rules 1 and 2, on the skip and the gap pages."""
 
     def setUp(self):
         self.base = Path(tempfile.mkdtemp())

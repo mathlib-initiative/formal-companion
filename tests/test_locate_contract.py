@@ -436,7 +436,7 @@ class TestEveryHostCopyOfTheVocabularyIsPinned(unittest.TestCase):
         self.assertEqual(records.MAX_LOCATIONS, vocab.MAX_LOCATIONS_PER_PASSAGE)
         self.assertEqual(records.NO_MATCH, vocab.NO_MATCH)
         self.assertEqual(records.NOT_FORMALIZED, vocab.STATUS_NOT_FORMALIZED)
-        # restated by 568905a (the record set's prominence and closeMatch-note rules)
+        # restated by 83cefb4 (the record set's prominence and closeMatch-note rules)
         self.assertEqual(records.PROMINENCES, vocab.PROMINENCE)
         self.assertEqual(records.CLOSE_MATCH, vocab.CLOSE_MATCH)
         # restated by the coverage claim (the maintainer's decision D1)

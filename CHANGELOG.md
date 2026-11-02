@@ -136,7 +136,7 @@ release has something to say.
 - **The audit's prompts under rule 3** (`templates/prompts/locate-inventory-{audit-system,audit,
   skeptic,check,revision}.md.tmpl`, `scripts/locate/prompts.py`; `references/locate-documents.md`
   §13.12). Rule 3's text sits in `{{#if audit_gaps}}` blocks that render empty under rules 1 and
-  2: a rule-2 plan's prompts are 3b29518's byte for byte (a test plans both and compares). Under
+  2: a rule-2 plan's prompts are 66f4936's byte for byte (a test plans both and compares). Under
   rule 3 the rule card says what a gap is and the three readings of the cut the inventory prompt
   states (C4's "need not", C6's commentary and instructions, C7's notation before context); the
   auditor reads the GAP lines and the `commentary` hint, judges every gap in `gaps`, answers the
@@ -161,7 +161,7 @@ release has something to say.
   remark. The turn machine accepts `CF_AUDIT_RULE=3` (strips with `--gate-config`, names each
   part's gaps, the gap hunt, combined `examined_gaps` and `missed_gaps`, a gap verdict weighing
   max(1, its statements)). No planner writes rule 3 yet; rules 1 and 2 render, validate, strip
-  and merge byte for byte as 3b29518 did (a test renders both pages with 3b29518's renderer).
+  and merge byte for byte as 66f4936 did (a test renders both pages with 66f4936's renderer).
 - **The prose floor: no paragraph of the body left out silently** (gate rule 8,
   `scripts/gate/verify_locate.py`; `references/locate-documents.md` §2; the smoke-4 audit).
   Both statements smoke 4's inventory lost were whole formula-free paragraphs that no passage and
@@ -192,7 +192,7 @@ release has something to say.
   SKIP VERDICT lines and `skip_edit` collateral; the revision applies a `skipped_statements`
   verdict with `unskip` and adds (the narration expository, never a skip), weighed sessions, and
   every host tool line names `--rule 2`. The text sits in `{{#if audit_skips}}` blocks a rule-1
-  plan renders empty, so a rule-1 audited plan is byte for byte f523584's but for the staged
+  plan renders empty, so a rule-1 audited plan is byte for byte 84e40ba's but for the staged
   tools and the templates' shas (`tests/test_locate_audit_plan.py` plans one with the base
   commit and with this one under each rule); the planner still writes rule 1.
 - **The turn machine runs audit rule 2** (`scripts/run/audit_turn.py`, `references/locate-documents.md`
@@ -205,7 +205,7 @@ release has something to say.
   stages the last round's verdicts for the diff's SKIP VERDICT lines, and weighs the revision's
   sessions: a skip verdict weighs max(1, its statements, the math paragraphs under it), up to
   40 a session. Under rule 1 its calls, prompts, command lines and round files are the base
-  commit's: `tests/test_audit_turn_skips.py` runs one rule-1 run through f523584's turn machine
+  commit's: `tests/test_audit_turn_skips.py` runs one rule-1 run through 84e40ba's turn machine
   and this one and compares them, and drives a skip verdict through fake agents end to end
   (flagged, upheld with evidence inside the skip, repaired with `unskip` and adds through the
   staged edit tool, the id tool and the gate, checked applied, approved), the skip rule and
@@ -327,7 +327,7 @@ release has something to say.
   Only the shipped registry crosses workspaces, so it stops saying a second workspace knows what
   the first discovered. The old program also left out the spend ceiling `cf run` asks for and the
   `--execute` a harvest from a host needs. Merged pull requests record the overlay's checks and
-  browsers on three private companions, whose overlays are generated at `d53be70`, so
+  browsers on three private companions, whose overlays are generated at `50e7649`, so
   `docs/status.md` names those runs. The transcript's tests moved with it:
   `tests/test_rf_scrub.py` reads the new document, and `tests/test_rf_docs.py`,
   `tests/test_rf_final_docs.py` and `tests/test_rf_items_sources.py` also check the guides that
@@ -488,7 +488,7 @@ release has something to say.
   (`references/locate-documents.md` §13.11). *The diff's SKIP VERDICT line counts
   `paragraphs.json` entries* (two entries of one span, a theorem box and its paragraph, are two,
   as the skip report counts them), and `cflib.vocab` says a repair session's bound is a weight
-  under rule 2 (d250758, which had no entry here). *Overlapping and nested skips* (the gate admits
+  under rule 2 (5bb1c0f, which had no entry here). *Overlapping and nested skips* (the gate admits
   both): a verdict that judges one skip of the round (an upheld flag, a missed skip, the skip rule)
   names that skip alone, so two such skips are two verdicts whose weights are their own, an upheld
   flag no longer settles the skip it overlaps, and the repair unskips each skip once (the edit

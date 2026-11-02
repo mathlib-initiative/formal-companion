@@ -132,7 +132,7 @@ against a synthetic one. It stops in Safari 17.4. The vendored PDF.js 6.2.108 re
 under the JavaScriptCore shell of macOS 14.4, importing `pdf.min.mjs` throws
 `ReferenceError: Can't find variable: Iterator`. JPEG 2000 figures draw as empty frames,
 with the warning `JpxError: OpenJPEG failed to initialize`, because the vendored PDF.js
-has no OpenJPEG decoder beside it. Commit `056bb17` records that Firefox
+has no OpenJPEG decoder beside it. Commit `75fa8aa` records that Firefox
 on macOS draws a box for some script characters after a letter, which is why titles set
 scripts as markup. The 158 tests of `templates/overlay/tests/` run under Node with a fake
 DOM and a fake PDF.js, so they cannot see a browser's limits.
