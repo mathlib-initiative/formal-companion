@@ -64,7 +64,7 @@ run with a model, and no task has yet gone through worker, gate, reviewer and me
 | text manuscripts located by heading path + line | `scripts/sources/locator.py`, `prepare_source.py` | the faithfulness stages' own: an `.html` source there is copied raw into `text.txt`; locate does not use it |
 | S0 ingest, S1 inventory (deterministic halves) | `scripts/pipeline/` | PDF-only; the passage enumerator is deferred; measured passage recall 19/222 |
 | scoring with a recall denominator | `scripts/score` | defect kinds only; `cf score` is unchanged by locate |
-| Literature Links 1.0 (vendored at tag `v1.0.0`), overlay viewer | `vendor/literature_links`, `templates/overlay/runtime` | the viewer reads `pdf` ends only |
+| Literature Links 1.0 (vendored at tag `v1.0.1`), overlay viewer | `vendor/literature_links`, `templates/overlay/runtime` | the viewer reads `pdf` ends only |
 
 Mathlib scores 0 on every adapter and should not be onboarded: a library is not a
 companion of Wikipedia, which is why locate plans from a sourceset and a universe.

@@ -38,7 +38,7 @@ docs/proposals/            designs: pdf-to-companion.md (not yet built) and
                            wikipedia-locate.md (locate; its §1 says what is built)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
-vendor/              literature_links/: Literature Links 1.0.0,
+vendor/              literature_links/: Literature Links 1.0.1,
                      the format the overlay writes and reads;
                      formal_companion_annotations/: the legacy intermediate
                      format that `cf export` writes and `cf overlay export`

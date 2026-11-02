@@ -18,8 +18,8 @@ A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generate
 which needs nothing but CPython and the checkout. `docs/generating-an-overlay.md`
 is the walkthrough; this file is the contract.
 
-The overlay reads **Literature Links** 1.0.0: tag `v1.0.0`, commit
-`ae8f2a65c8f665a4a747842a7e5bf8e1ae19054e`, vendored
+The overlay reads **Literature Links** 1.0.1: tag `v1.0.1`, commit
+`789af9af85ae7590d7149cb8312f09cfac0752b4`, vendored
 under `vendor/literature_links/` (sealed by
 `vendor/literature_links.manifest.json`) and shipped to companions as
 `pdf-overlay/tools/literature_links/`. The skill's other tools keep the
@@ -313,7 +313,7 @@ cf overlay check <companion>
   "schema": "formal-companion/overlay-generated",
   "schema_version": 3,
   "generator": {"name": "formal-companion", "version": "...", "commit": "<this repo's HEAD>"},
-  "format": {"package": "literature-links", "version": "1.0.0", "commit": "<40 hex>", "tag": "v1.0.0"},
+  "format": {"package": "literature-links", "version": "1.0.1", "commit": "<40 hex>", "tag": "v1.0.1"},
   "instance_files": ["overlay.config.json"],
   "files": [{"path": "tools/literature_links/companion.py", "sha256": "..."}],
   "annotations": {
