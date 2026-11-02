@@ -304,7 +304,9 @@ cf overlay check <companion>
 - `sync --check` is read-only and includes the scan; `check` adds the config,
   the inputs' hashes and the overlay's rules (one PDF per `source_id`, pages
   within its `physical_page_count`, object ends' `uri` `https:` or relative,
-  and a destination's own `href` `https:` or a path inside the site).
+  and a destination's own `href` `https:` or a path inside the site), and
+  says of a committed `verso.json` what `check_generated.py` says, from this
+  checkout's copy of that tool: a companion's copy of a tool is never run.
 
 ```json
 {
