@@ -22,7 +22,7 @@ to a workspace (`scripts/corpus/`, `scripts/locate/`, `scripts/bench/`, and
 `scripts/sources/` for the web sources).
 
 `ingest` and `inventory` are the first two stages of an experimental PDF-to-companion
-pipeline (`docs/pipeline.md`). `vendor/` holds Literature Links 1.0.0 and the legacy
+pipeline (`docs/pipeline.md`). `vendor/` holds Literature Links 1.0.1 and the legacy
 annotation format the exporters write as an intermediate step.
 
 ## What is in here
@@ -56,7 +56,7 @@ references/       method, vocabulary, schemas (findings-schema-v2), review patte
                   traps, the server runbook, the onboarding contract, workflow patterns,
                   and locate's documents and benchmark
 registry/         the shipped source registry (metadata only, never book text)
-vendor/           literature_links/ (Literature Links 1.0.0, which the overlay writes
+vendor/           literature_links/ (Literature Links 1.0.1, which the overlay writes
                   and reads) and formal_companion_annotations/ (the legacy intermediate
                   format that `cf export` writes and `cf overlay export` converts to
                   Literature Links), byte for byte, each sealed by its manifest;
