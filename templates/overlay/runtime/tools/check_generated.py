@@ -17,7 +17,8 @@ It reports, one line per problem, and exits 1 when there is one:
   `GENERATED.json`, the bundle, the instance file `overlay.config.json` and
   the companion's own `verso.json`, if it commits one: that one must have the
   form `tools/verso_extract.py --pages` writes and be of a build of a commit
-  the bundle's cards pin (a statement that no longer joins to its card's
+  the bundle's cards pin, with no statement whose card pins a release tag
+  rather than a full commit (a statement that no longer joins to its card's
   snippet is not a problem: `build_site.py` drops it);
 * `GENERATED.json`'s `format` block names the Literature Links release whose
   package `cf overlay sync` shipped in `tools/literature_links/`;

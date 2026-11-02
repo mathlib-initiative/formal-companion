@@ -267,6 +267,13 @@ class OverlayCase(unittest.TestCase):
                                      bundle={"path": BUNDLE, "sha256": hashlib.sha256(bundle).hexdigest()})
         self.write_record(record)
 
+    def nothing_exported(self) -> None:
+        """Annotations nothing exported, which `sync` records as they are, whatever they pin."""
+        record = self.record()
+        for key in ("export", "inputs"):
+            del record["annotations"][key]
+        self.write_record(record)
+
     def two_records(self) -> dict:
         """A second declaration linked to the lemma, and a lemma of 1.1 in its region: an item folder and defaults."""
         doc = document()
@@ -822,7 +829,8 @@ class TestSync(OverlayCase):
 
     def test_a_committed_verso_json_is_the_companions_own_input(self):
         self.ready()
-        raw = b'{"hovers":{},"schema":"formal-companion/overlay-verso","schema_version":1,"statements":{}}\n'
+        raw = (b'{"build":{"commit":"' + b"0" * 40
+               + b'"},"hovers":{},"schema":"formal-companion/overlay-verso","schema_version":1,"statements":{}}\n')
         (self.overlay / "verso.json").write_bytes(raw)
         result = overlay_sync.sync(self.companion)
         self.assertNotIn("verso.json", result.written + result.deleted)
@@ -934,6 +942,81 @@ class TestCheck(OverlayCase):
         self.ready()
         code, said = self.check()
         self.assertEqual(code, 0, said)
+
+    #: A statement of the one card `carded` exports, as `verso_extract.py --pages` writes it.
+    VERSO = {"build": {"commit": "0" * 40}, "hovers": {}, "schema": "formal-companion/overlay-verso",
+             "schema_version": 1,
+             "statements": {"Notes/Basic/index.html#Notes___Box___volume_nonneg": [[["tx", f"theorem {DECL} : True"]]]}}
+
+    def carded(self) -> None:
+        doc = document()
+        doc["snippets"] = [{"declaration": DECL, "id": f"snippet:{DECL}", "line": 3, "text": f"theorem {DECL} : True"}]
+        self.ready(doc)
+
+    def test_it_holds_a_committed_verso_json_to_what_check_generated_does(self):
+        self.carded()
+        path = self.overlay / "verso.json"
+
+        def said_of_it() -> list[str]:
+            """What `cf overlay check` says of the file, once it says the same as `check_generated.py`."""
+            code, said = self.check()
+            lines = [line for line in said.splitlines() if line.startswith("verso.json: ")]
+            done = self.tool("check_generated")
+            self.assertEqual(lines, [line for line in done.stderr.splitlines() if line.startswith("verso.json: ")])
+            self.assertEqual((code, done.returncode), (1, 1) if lines else (0, 0), said + done.stderr)
+            return lines
+
+        self.assertEqual(said_of_it(), [], "with no file there is nothing to say")
+        path.write_text(json.dumps(self.VERSO), encoding="utf-8")
+        self.assertEqual(said_of_it(), [])
+        linked = [["const", "Nat", None, None, "Notes/Nat/index.html#Nat"]]
+        for words, value in (("cut from a build of", {**self.VERSO, "build": {"commit": "1" * 40}}),
+                             ("build: expected {commit, verso}", {**self.VERSO, "build": {}}),
+                             ("a run carries a link", {**self.VERSO, "statements": {"key": [linked]}})):
+            with self.subTest(words):
+                path.write_text(json.dumps(value), encoding="utf-8")
+                [line] = said_of_it()
+                self.assertIn(words, line)
+        path.write_text("{", encoding="utf-8")
+        self.assertIn("invalid JSON", said_of_it()[0])
+
+    def test_it_refuses_a_committed_statement_whose_card_pins_a_tag(self):
+        self.carded()
+        self.nothing_exported()
+        (self.overlay / "verso.json").write_text(json.dumps(self.VERSO), encoding="utf-8")
+        path = self.annotation()
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["object"][0]["version"] = "v1.0.0"
+        path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(self.sync(), 0)
+        code, said = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("verso.json: these cards pin 'v1.0.0'", said)
+        self.assertIn(FILE, said)
+        self.assertIn("git rev-parse", said)
+
+    def test_it_never_runs_the_companions_copy_of_a_tool(self):
+        self.carded()
+        (self.overlay / "verso.json").write_text(
+            json.dumps({**self.VERSO, "build": {"commit": "1" * 40}}), encoding="utf-8")
+        ran = self.root / "ran"
+        for name in ("check_generated", "overlay_annotations", "verso_extract"):
+            (self.overlay / "tools" / f"{name}.py").write_text(f"open({str(ran)!r}, 'w').close()\n", encoding="utf-8")
+        code, said = self.check()
+        self.assertEqual(code, 1)
+        self.assertFalse(ran.exists(), said)
+        self.assertIn("changed: tools/check_generated.py", said)
+        self.assertIn("verso.json: cut from a build of", said, "and the file is still held to this checkout's rule")
+
+    def test_it_reads_a_verso_json_before_any_sync(self):
+        self.assertEqual(self.init(), 0)
+        path = self.overlay / "verso.json"
+        path.write_text(json.dumps(self.VERSO), encoding="utf-8")
+        code, said = self.check()
+        self.assertEqual(code, 1)
+        self.assertNotIn("verso.json: ", said, "no bundle yet to hold its pins against")
+        path.write_text("{", encoding="utf-8")
+        self.assertIn("verso.json: invalid JSON", self.check()[1])
 
     def test_it_reports_a_curation_input_that_changed_since_the_export(self):
         self.ready()
@@ -1095,6 +1178,62 @@ class TestCheckGenerated(OverlayCase):
         self.assertIn("verso.json: invalid JSON", self.tool("check_generated").stderr)
         path.unlink()
         self.assertEqual(self.tool("check_generated").returncode, 0)
+
+    def test_a_card_that_pins_a_tag_stops_both_tools_until_it_pins_a_commit(self):
+        two = DECL + "_two"
+        doc = self.two_records()
+        doc["destinations"].append(dict(doc["destinations"][0], declaration=two, id=f"dest:{two}",
+                                        fragment=f"{doc['destinations'][0]['fragment']}_two"))
+        doc["snippets"] = [{"declaration": name, "id": f"snippet:{name}", "line": 3, "text": f"theorem {name} : True"}
+                           for name in (DECL, two)]
+        self.ready(doc)
+        self.nothing_exported()
+        commit = "0" * 40
+        (self.overlay / "verso.json").write_text(json.dumps({
+            "build": {"commit": commit}, "hovers": {}, "schema": "formal-companion/overlay-verso", "schema_version": 1,
+            "statements": {f"Notes/Basic/index.html#{row['fragment']}": [[["tx", f"theorem {row['declaration']} : True"]]]
+                           for row in doc["destinations"]}}), encoding="utf-8")
+        config = overlay_config.load(self.overlay / "overlay.config.json")
+        site = self.companion.joinpath(*config.output_root.split("/"))
+        site.mkdir(parents=True)
+        (site / config.index).write_text("<!doctype html><html><body><p>site</p></body></html>\n", encoding="utf-8")
+        folder = self.annotations / "1.2" / "lemma-1.2.3"
+
+        def pin(version: str, *names: str) -> None:
+            for name in names:
+                path = folder / f"key__{name}.json"
+                value = json.loads(path.read_text(encoding="utf-8"))
+                value["object"][0]["version"] = version
+                path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+            self.assertEqual(self.sync(), 0)
+
+        def published() -> tuple[int, int]:
+            done = self.tool("build_site")
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            verso = json.loads((site / config.mount / "receipt.json").read_text(encoding="utf-8"))["verso"]
+            return verso["statements"], verso["dropped"]
+
+        self.assertEqual(self.tool("check_generated").returncode, 0)
+        self.assertEqual(published(), (2, 0))
+        for names in ((two,), (DECL, two)):
+            with self.subTest(tagged=names):
+                pin("v1.0.0", *names)
+                for tool in ("check_generated", "build_site"):
+                    done = self.tool(tool)
+                    self.assertEqual(done.returncode, 1, f"{tool}: {done.stdout}")
+                    self.assertIn("verso.json: these cards pin 'v1.0.0'", done.stderr)
+                    self.assertIn(f"key__{two}.json", done.stderr)
+                    self.assertEqual(f"key__{DECL}.json" in done.stderr, DECL in names, done.stderr)
+                    self.assertIn("git rev-parse", done.stderr)
+                    self.assertNotIn("from a build of that commit", done.stderr)
+        pin(commit, DECL, two)
+        self.assertEqual(self.tool("check_generated").returncode, 0)
+        self.assertEqual(published(), (2, 0))
+        pin("1" * 40, DECL, two)
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(f"but the cards pin {'1' * 40}; write it again with `verso_extract.py --pages` from a build of "
+                      "that commit", done.stderr, "the one left is a commit, so another build settles it")
 
     def test_it_fails_on_a_config_section_three_refuses(self):
         self.ready()

@@ -2496,6 +2496,24 @@ release has something to say.
   touch, a tap inside the card keeps it. A token scrolled out of the panel
   hides its card, and the next Escape leaves the item. A token links only to
   a page under the site's own path.
+- `verso_extract.py`: a card whose `version` is a release tag, which Literature
+  Links allows, or absent. A committed `verso.json` keeps a statement for a
+  card that pins the build's commit, and a tag never equals a commit, so where
+  only some cards named a tag their statements went with nothing said (on one
+  real companion's annotations 245 of 4,197 statements and 1,851 of 14,545
+  hovers published, and every check ok); where all did, the message sent the
+  producer to `--commit`, which refuses a tag. A tag may or may not name the
+  build's commit and only the project's git could tell, so `build_site.py`,
+  `check_generated.py` and `--pages` now refuse such a statement, name the
+  cards and say to pin each by a full commit. A card with no statement in the
+  file may still pin a tag, and one that pins another full commit keeps no
+  statement, as before. `check_generated.py` now also prints the remedy for a
+  build no card pins. Companions take this at their next `cf overlay sync`.
+- `cf overlay check` never read a committed `verso.json`, so it said ok on a
+  file `check_generated.py` and `build_site.py` refuse, and a producer following
+  `docs/generating-an-overlay.md` found out in CI. It now says what
+  `check_generated.py` says, from that tool's own function in this checkout, so
+  the two cannot differ. A companion's copy of a tool is never run.
 - `verso_extract.py`: a token whose link names no anchor gets no link, as
   documented; an encoded NUL in a card's or a token's link is skipped; and a
   committed `verso.json` whose run kind is not text is refused by

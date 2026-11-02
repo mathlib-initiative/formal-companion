@@ -243,17 +243,24 @@ bytecode writing off.
   no Verso pages (no `-verso-docs.json` and no statement) it publishes the
   committed `pdf-overlay/verso.json` instead, a statement that no longer
   joins to its card's snippet, or whose card pins another commit, dropped;
-  a file whose build commit no card pins is refused. `verso_extract.py
+  a file whose build commit no card pins is refused. So is a file with a
+  statement whose card pins no full commit (a release tag, which Literature
+  Links allows, or no `version`), naming those cards: a statement is of one
+  tree, only the project's git could say which tree a tag is, and the
+  statement would go for a spelling, so the producer gives the commit. A card
+  with no statement in the file may pin what it likes. `verso_extract.py
   --pages <dir> --bundle <bundle> --out pdf-overlay/verso.json --commit
   <sha>` writes that file from a Verso build elsewhere: a card is found by
   its module's page and its declaration's anchor (the build's `xref.json`,
   else Verso's slug of the name), no token keeps a link, and `build`
-  records the commit and the build's Verso revision. The receipt records
+  records the commit and the build's Verso revision; it stops before
+  writing on a statement whose card pins no full commit. The receipt records
   `verso.json` with the other files, and its `verso.source` is `site`,
   `committed` (with the build commit) or `none`.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
   sha256, and nothing else in `pdf-overlay/` but the bundle and a committed
-  `verso.json` in the form `--pages` writes, of a commit the cards pin; the
+  `verso.json` in the form `--pages` writes, of a commit the cards pin, with
+  no statement whose card pins a tag or no `version`; the
   `format`
   block against the shipped package's version; the config; `annotations/`
   holding only the layout of section 7, each file as a recorded export writes
@@ -297,7 +304,9 @@ cf overlay check <companion>
 - `sync --check` is read-only and includes the scan; `check` adds the config,
   the inputs' hashes and the overlay's rules (one PDF per `source_id`, pages
   within its `physical_page_count`, object ends' `uri` `https:` or relative,
-  and a destination's own `href` `https:` or a path inside the site).
+  and a destination's own `href` `https:` or a path inside the site), and
+  says of a committed `verso.json` what `check_generated.py` says, from this
+  checkout's copy of that tool: a companion's copy of a tool is never run.
 
 ```json
 {

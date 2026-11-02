@@ -19,8 +19,8 @@ New code, implementing sections 2, 5 and 6 of the overlay contract
   no-op and why `tools/check_generated.py` can verify the whole directory
   with the standard library alone.
 * **check** is `sync --check` plus the config rules, the Literature Links scan
-  of every annotation file, the curation inputs' hashes and the overlay's own
-  rules.
+  of every annotation file, the curation inputs' hashes, the overlay's own
+  rules and what `tools/check_generated.py` says of a committed `verso.json`.
 
 Rule 5 of section 1 is the exception to "never write to a companion repo", and
 it is narrow: these commands write under `<companion>/pdf-overlay/` and, for
@@ -33,6 +33,7 @@ companion at all.  The one git call is in THIS checkout, read-only through
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import posixpath
@@ -761,6 +762,18 @@ def inputs_problems(companion: str | Path, record: dict) -> list[str]:
     return out
 
 
+def _verso_problems(overlay: Path) -> list[str]:
+    """What `check_generated.py` says of a committed `verso.json`, from that tool's own function, so the
+    two cannot differ. The tool is this checkout's: a companion's copy of it is never run."""
+    path = runtime_root() / "tools" / "check_generated.py"
+    spec = importlib.util.spec_from_file_location("overlay_check_generated", path)
+    if spec is None or spec.loader is None:                  # pragma: no cover
+        raise CfError(f"{path} cannot be imported", hint="this is not a formal-companion checkout")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool.verso_problems(overlay)
+
+
 def check(companion: str | Path) -> list[str]:
     """Every problem `cf overlay check` reports, one line each."""
     overlay = overlay_dir(companion)
@@ -770,6 +783,7 @@ def check(companion: str | Path) -> list[str]:
     if not files:
         out.append(f"{ANNOTATIONS_DIRNAME}/ holds no annotation file; `cf overlay export` writes them")
     out += inputs_problems(companion, _previous(overlay) or {})
+    out += _verso_problems(overlay)
     config_path = overlay / overlay_config.CONFIG_NAME
     found = overlay_config.load_problems(config_path)
     out += found

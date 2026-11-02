@@ -435,7 +435,7 @@ def verso_file(overlay: Path, output_root: Path, entries: list) -> tuple[dict[st
         fail(f"{label}: {problems[0]}; write it again with `verso_extract.py --pages`")
     stale = verso_extract.unpinned(committed, entries)
     if stale:
-        fail(f"{label}: {stale}; write it again with `verso_extract.py --pages` from a build of that commit")
+        fail(f"{label}: {stale}")
     value, counts = verso_extract.joined(committed, entries)
     return value, {"source": "committed", "sha256": sha256(raw), "commit": committed["build"]["commit"], **counts}
 
