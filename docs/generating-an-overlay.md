@@ -46,8 +46,8 @@ cf overlay export "$COMPANION" --convention attribution-table --commit "$COMMIT"
 is the companion's to edit; `docs/overlay.md` section 3 lists its keys.
 `cf overlay sync` copies the runtime, writes the bundle and `GENERATED.json`,
 and a second run changes nothing. `cf overlay sync --check` is read-only and includes
-the scan. `cf overlay check` adds the curation inputs' hashes and the overlay's own
-rules. The copied runtime comes to about 2 MB. `annotations.bundle.json`, and `verso.json`
+the scan. `cf overlay check` adds the curation inputs' hashes, the overlay's own
+rules and a committed `verso.json`. The copied runtime comes to about 2 MB. `annotations.bundle.json`, and `verso.json`
 where a companion commits one, grow with the annotations: the three private companions'
 `pdf-overlay/` directories come to 5.5 MB, 9.3 MB and 40 MB. The PDF is never copied or
 committed.
