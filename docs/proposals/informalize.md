@@ -61,11 +61,11 @@ a theorem or a reference work; those are the arguments of `cf informalize init`.
 
 ### 1.3 The rule exception
 
-`SKILL.md` rule 10, `CLAUDE.md` section 4 and `docs/overlay.md` rule 5 allow writes into a
-companion only under `pdf-overlay/` and `annotations/`. This mode writes a repository it
-creates, as `cf ingest` creates `pipelines/<id>/repo/` (`docs/pipeline.md`). Component 3
-(section 11) adds this paragraph to those three files and to `docs/design/stage_map.md`, in
-the same commit as the code:
+`SKILL.md` rule 10, `CLAUDE.md` section 4, `CONTRIBUTING.md` invariant 3 and
+`docs/overlay.md` rule 5 allow writes into a companion only under `pdf-overlay/` and
+`annotations/`. This mode writes a repository it creates, as `cf ingest` creates
+`pipelines/<id>/repo/` (`docs/pipeline.md`). Component 3 (section 11) adds this paragraph to
+those four files and to `docs/design/stage_map.md`, in the same commit as the code:
 
 > **A second exception: the repository informalize creates.** `cf informalize init` creates
 > `informalize/<id>/repo/` inside the workspace, a git repository of its own that the
@@ -125,7 +125,7 @@ informalize/<id>/
     deps.json               DumpDeps' constants with type_deps and value_deps
     src/                    the library's source at the commit, from git archive (no .lake)
     host/                   build and probe logs, lean-toolchain, lake-manifest.json, the
-                            license file, the canary index, DONE
+                            license file, the driver's state, the canary index, DONE
   scope.json              I2
   pdf/<commit12>/         I6 (ignored): the canonical PDF, pdf-receipt.json, proof-sheets/
   stages/                 I*.json receipts and approve-*.json approvals (section 5.7)
@@ -188,18 +188,16 @@ text:
   job: example-thm
 reference:
   work: Author, Title, Publisher, Year
-host:
-  name: examplebox
-  min_free_gb: 60
-  lean_threads: 16
 caps:
   workers: 6
   reviewers: 4
   max_cost_per_phase: 300
   agent_timeout: 2h
-  model: claude-opus-5
 ```
 
+- `id` is lowercase letters, digits and `-`, a letter or digit first, at most 40 characters,
+  so that `<id>-lib` is a universe id (`universe_host`'s `_ID`) and `<id>-<phase>-<n>` a run
+  id (`vocab.RUN_TOKEN_ID`); `init` refuses another.
 - `library.url` is `https://`; `commit` 40 hex; `module` the theorem's module; `prefix` the
   module prefix of the library's own modules. `license` is null until I1 discovers it from the
   library's license file (section 6.1); `init --library-license` sets it by hand, stamped
@@ -210,12 +208,13 @@ caps:
   (`<job>.pdf`).
 - `reference` is optional; `work` is a citation line (author, title, edition, publisher,
   year), never a sentence of the work.
-- `host.name` must be in `hosts.allowlist` (`Workspace.check_host`); ssh and `remote_root`
-  come from `workspace.yaml`, never from here.
+- No host and no model is named here: `workspace.yaml` is the only place either is
+  (`templates/workspace.yaml.example`). Every command that reaches the host takes `--host`,
+  which must be in `hosts.allowlist` (`Workspace.check_host`); ssh and `remote_root` come
+  from `workspace.yaml`. The agents' model is `workspace.yaml`'s `models`, or
+  `cf plan-informalize --model` (section 8.1).
 - `caps` are what `cf plan-informalize` uses when its flags are absent. Workers plus
-  reviewers stay under `defaults.max_concurrent_sessions`; `model` is the worker and reviewer
-  model, ahead of `workspace.yaml`'s `models` (SKILL.md rule 8: another id only after a 1/1
-  smoke test on the host confirms it).
+  reviewers stay under `defaults.max_concurrent_sessions`.
 
 ### 5.2 `informal/informalize.json` and `informal/GENERATED.json`
 
@@ -291,19 +290,23 @@ docstrings: drafters read those in the library's source.
  "decisions": []}
 ```
 
-- **Ids.** `<section>.<n>`, `n` from 1 without gaps within a section, in reading order; the
-  printed number *is* the id (`fcmarkers.sty` prints it, section 7.2), so they never differ.
-  The items task drafts provisional ids; `approve items --in-v1` moves the other items to
-  `deferred`, drops empty sections, renumbers sections and items, records the old-to-new map
-  in `decisions` and freezes them. Once `annotations/` exists a renumbering is refused: an
-  item is then only added at the end of its section, and a withdrawn id is never reused. An
-  annotation's id derives from the kind and the id (section 10), so the kind is frozen too.
+- **Ids.** `<section>.<n>`, in reading order; the printed number *is* the id
+  (`fcmarkers.sty` prints it, section 7.2), so they never differ. The items task drafts
+  provisional ids. While every section file is empty, `approve items --in-v1` moves the other
+  items to `deferred`, drops empty sections, renumbers sections and items with `n` from 1
+  without gaps within a section, records the old-to-new map in `decisions`, and writes
+  `sections.tex` and an empty file per section. Once a section file is not empty (the first
+  applied draft run), the ids are frozen: a later approval only pins, never renumbers and
+  never writes a section file that is not empty; an item is only added at the end of its
+  section, and a withdrawn id is never reused but stays a gap, recorded in `decisions` as
+  `{"withdrawn": "<id>", "why": "..."}`. An annotation's id derives from the kind and the id
+  (section 10), so the kind is frozen too.
 - **Parts.** Letters `a`, `b`, ... in order. Every key declaration of an item with parts
   names its `part`; every part has at least one key declaration; an item without parts has
   `part: null` on all of them. A helper may name a part or none.
 - `role` is `key` or `helper`. `relation` is a Literature Links relation: `exactMatch`,
-  `closeMatch`, `broadMatch`, `narrowMatch` or `relatedMatch`; a key declaration that is not
-  `exactMatch` says why in `departures`.
+  `broadMatch`, `narrowMatch` or `relatedMatch`, the four the legacy export can carry
+  (section 10); a key declaration that is not `exactMatch` says why in `departures`.
 - `junk`: the junk values the statement relies on, in words ("the rank is 0 on an
   infinite-dimensional space"); the drafter turns each into one sentence of the text.
   `hypotheses`: the binders of the declaration's signature the statement must carry.
@@ -314,8 +317,12 @@ docstrings: drafters read those in the library's source.
 
 `check-items` (a port of the pilot's `verify.py`) refuses a table whose declarations are not
 in `declarations.json`, whose module or keyword line differs from it, whose keyword line in
-`library/src/` does not hold the declaration's keyword and last name component, or that
-breaks a rule above.
+`library/src/` does not hold a keyword of the declaration's kind in `declarations.json` (the
+probe's) and its last name component, or that breaks a rule above. The probe's kinds map to
+keywords: `theorem` to `theorem` or `lemma`; `def` to `def`; `abbrev` to `abbrev` or `def`;
+`opaque`, `axiom`, `inductive`, `structure` and `class` to themselves; `instance` to
+`instance`, where the name is not required, since an anonymous instance's generated name is
+not on its line.
 
 `cf informalize reference-checklist <id>` writes `reference-checklist.md`: per `in_v1` item
 and part with a reference, the id, kind, title, the number, its source and the declaration
@@ -372,12 +379,15 @@ section 13 says what each one pins.
 
 ### 6.1 I1: build, probe and dump on the host
 
-`cf informalize build-command <id>` prints, and runs nothing:
+`cf informalize build-command <id> --host <host>` prints, and runs nothing:
 
 ```sh
 rsync -a <the drivers> $HOST:<remote_root>/drivers/
-ssh -n $HOST 'cd <remote_root> && setsid -f env ATLAS_ROOT=$PWD/library MIN_FREE_GB=60 LEAN_THREADS=16 bash drivers/scripts/informalize/library_host.sh library.tsv > library/host.log 2>&1 < /dev/null'
+ssh -n $HOST 'cd <remote_root> && mkdir -p library/host && setsid -f env ATLAS_ROOT=$PWD/library MIN_FREE_GB=60 LEAN_THREADS=16 bash drivers/scripts/informalize/library_host.sh library.tsv > library/host/library_host.log 2>&1 < /dev/null'
 ```
+
+The `mkdir` comes first because the shell opens the log before the job starts, and the
+rsync created only `drivers/`.
 
 The drivers are those `cf corpus probe-command` copies (`build_universe_host.sh`,
 `probe_host.sh`, `probe_merge.py`, `universe_host.py`, `probe.lean.tmpl`), the canary,
@@ -401,28 +411,35 @@ writes its list. `library.tsv` is one universe line (`scripts/corpus/universe_ho
 2. renders and runs the acceptance canary for the clone's `lean-toolchain`, as
    `cf corpus probe-command --canary` prints it;
 3. runs `scripts/detect/dump_deps.sh` with `--root-module <module> --module-prefix <prefix>`
-   in the built checkout, writing `library/deps.json` outside it;
-4. copies `lean-toolchain`, `lake-manifest.json`, the license file and the commit's committer
-   time to `library/host/`, and writes `git archive <commit>` of the source as
-   `library/host/src.tar`;
+   in the built checkout, writing `library/deps.json` outside it, the way the driver's
+   `heavy` runs a tool: the driver's open-file limit ended with the driver, so
+   `library_host.sh` raises `ulimit -n 65536` itself, and runs the dump under `env -i` with
+   `PATH=$HOME/.elan/bin:/usr/bin:/bin`, `nice`, `ionice -c3`, `LEAN_NUM_THREADS` from
+   `LEAN_THREADS`, and the dump's own timeout;
+4. copies `lean-toolchain`, `lake-manifest.json`, the license file, the commit's committer
+   time, the driver's state for the universe (`$ATLAS_ROOT/state/library/`) and the canary's
+   index (`$ATLAS_ROOT/canary/<version>/index/`) to `library/host/`, and writes
+   `git archive <commit>` of the source as `library/host/src.tar`;
 5. writes `library/host/DONE` holding its exit status, last.
 
 The universe line takes a new option, `LIBRARY_CACHE`, in `universe_host.OPTION_DEFAULTS`:
 `1`, the default, keeps today's behaviour for locate's universes (the driver runs
 `<library>/scripts/lake-cache-get.sh` when the library ships one, and a failure stops it);
 `0` skips that script and logs that it did. Informalize writes `0` unless
-`library.library_cache` is true. `MIN_FREE_GB` and `LEAN_THREADS` come from
-`host.min_free_gb` and `host.lean_threads`; the driver's own default floor (450 GB) is for
-whole universes.
+`library.library_cache` is true. `1` runs the script in the driver's clean environment
+(`PATH=$HOME/.elan/bin:/usr/bin:/bin`), so a script that needs a tool outside that path
+(`uvx` under `~/.local/bin`, say) still fails; such a library keeps `0`. `MIN_FREE_GB` and
+`LEAN_THREADS` come from `build-command`'s `--min-free-gb` (default 60) and `--lean-threads`
+(default 16); the driver's own default floor (450 GB) is for whole universes.
 
-`cf informalize fetch-library <id> --execute --i-have-consent` copies `library/host/`, the
-index directory and `deps.json` back, unpacks `src.tar` into `library/src/` (refusing links,
-absolute paths and `..`), and checks: `DONE` is 0; the driver's state names the commit; the
-index is whole, by the checks `cf corpus ingest` makes (`scripts/corpus/ingest.py`: the
-manifest's sha256 and counts, every shard's end record); the canary passed
-(`corpus.ingest.CANARY`'s four answers); `deps.json` names the module and the prefix; the
-theorem is in the index; the license file matches one SPDX id of a fixed table of license
-fingerprints, which becomes `library.license` (else the command stops and names
+`cf informalize fetch-library <id> --host <host> --execute --i-have-consent` copies
+`library/host/`, the index directory and `deps.json` back, unpacks `src.tar` into
+`library/src/` (refusing links, absolute paths and `..`), and checks: `DONE` is 0; the driver's
+state names the commit; the index is whole, by the checks `cf corpus ingest` makes
+(`scripts/corpus/ingest.py`: the manifest's sha256 and counts, every shard's end record); the
+canary's index gives `corpus.ingest.CANARY`'s four answers; `deps.json` names the module and
+the prefix; the theorem is in the index; the license file matches one SPDX id of a fixed table
+of license fingerprints, which becomes `library.license` (else the command stops and names
 `init --library-license`). It writes `source_date_epoch` into `informalize.json` and the I1
 receipt with the toolchain, the index and deps sha256s and every check.
 
@@ -430,12 +447,19 @@ receipt with the toolchain, the index and deps sha256s and every check.
 
 `cf informalize scope <id>` reads `deps.json` and the index. From the theorem it walks
 `type_deps` and `value_deps` over the constants of modules with the library's prefix
-(`repo_constants`); a constant the probe does not index (an auxiliary lemma, a matcher, a
-private declaration) is walked through but not listed. The scope is every walked constant the
-index records. It refuses when the theorem is missing from either file, when its
-`nonstandard_axioms` are not empty (`sorryAx` included: an unproved chain is not informalized),
-or when `deps.json`'s package, root module or prefix disagree with `informalize.yaml`. It
-writes `scope.json` and `repo/informal/declarations.json` and commits the latter.
+(`repo_constants`); a constant the probe does not index (an auxiliary lemma, a matcher) or
+indexes as private is walked through but not listed. The scope is every other walked constant
+the index records. As `cf corpus ingest` does (`scripts/corpus/ingest.py`), each member's
+`proof_status` is re-decided with `cflib.vocab.decide_proof_status`, never copied from the
+probe, and two public records with one name are refused. It refuses when the theorem is
+missing from either file, when its `nonstandard_axioms` are not empty (`sorryAx` included: an
+unproved chain is not informalized), when `deps.json`'s root module or prefix disagree with
+`informalize.yaml` (no `--package` is passed, so its package is the root module), or when the
+theorem's `value_deps` are empty, or those of every theorem of the library's modules: the
+proofs' bodies were not loaded (a module-system library the dump could not read), and the
+scope would silently shrink to the closure through types. The I2 receipt reports how many
+members were reached through types alone. It writes `scope.json` and
+`repo/informal/declarations.json` and commits the latter.
 
 ## 7. The LaTeX runtime
 
@@ -451,15 +475,17 @@ texts, `.gitignore`); those files are the project's afterwards and `sync` never 
 |---|---|---|
 | `fcmarkers.sty` | `rrmarkers.sty` | `fc@` prefixes; the id printed as the number; hypothesis macros defined per project; a reference macro; `\FCOnly` |
 | `STYLE.md` | `STYLE.md`'s generic half | the project half is `STYLE-project.md` |
-| `tools/build_pdf.sh` | `build_pdf.sh` | main file and job from `informalize.json`; builds a snapshot; a receipt |
+| `tools/build_pdf.sh` | `build_pdf.sh` | main file and job from `informalize.json`; builds a snapshot; `-norc` and `openin_any=p`; a receipt |
 | `tools/canonical_pdf.sh` | the pilot's final-build steps | section 9 |
 | `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json` |
-| `tools/check_items.py` | `check_items.py` | `--aux-only`; hypotheses from `hypotheses.json`; the reference check |
+| `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check |
 | `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py` |
 | `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts` |
 
 The tools are standard-library Python and POSIX shell, run from the output repository's
-root as `python3 informal/tools/<tool>.py` (or `bash`), and import only their siblings.
+root as `python3 informal/tools/<tool>.py` (or `bash`), and import only their siblings. Each
+Python tool sets `sys.dont_write_bytecode = True` before it imports one, as the overlay's
+tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output repository.
 
 ### 7.2 `fcmarkers.sty`
 
@@ -487,17 +513,22 @@ root as `python3 informal/tools/<tool>.py` (or `bash`), and import only their si
 
 ### 7.3 The tools and their checks
 
-`tools/build_pdf.sh [--only N[,M]] [--clean] <outdir>`: copies `informal/` into
-`<outdir>/src/` and builds there (so an edit during a build cannot leave latexmk out of
-passes), with latexmk `-pdf -no-shell-escape -recorder`, `SOURCE_DATE_EPOCH` from
+`tools/build_pdf.sh [--only N[,M]] [--clean] <outdir>`: copies `informal/` into `<outdir>/src/`
+and builds there (so an edit during a build cannot leave latexmk out of passes), with latexmk
+`-norc -pdf -no-shell-escape -recorder` (`-norc`: no `latexmkrc` in the copy is read),
+`openin_any=p` and `openout_any=p` in its environment (kpathsea reads both from there; a file
+the source names may then not be an absolute path, climb to a parent directory or be a dot
+file, so a section cannot `\input` a file of the host), `SOURCE_DATE_EPOCH` from
 `informalize.json` and `FORCE_SOURCE_DATE=1` (the template sets `\pdftrailerid{}` and
 `\pdfsuppressptexinfo=-1`). First it runs kpsewhich on every file of `tex_packages` and stops
-naming the missing ones. It writes `<outdir>/<job>.pdf` and `<outdir>/build-receipt.json`:
-the PDF's sha256 (`sha256sum`, else `shasum -a 256`), the pdfTeX and latexmk versions, and
-the sha256 of every input the `.fls` lists.
+naming the missing ones. When `--only` differs from the last build's, which a stamp file in
+`<outdir>` records, it deletes the `.aux` and `.fdb_latexmk` files first, as the pilot's does:
+a stale `.fdb_latexmk` let latexmk skip a pass. It writes `<outdir>/<job>.pdf` and
+`<outdir>/build-receipt.json`: the PDF's sha256 (`sha256sum`, else `shasum -a 256`), the pdfTeX
+and latexmk versions, and the sha256 of every input the `.fls` lists.
 
-`tools/check_items.py <outdir> [--section N] [--items IDS] [--strict] [--aux-only]` fails
-unless:
+`tools/check_items.py <outdir> [--section N] [--items IDS] [--strict] [--aux-only] [--conventions]`
+fails unless:
 
 1. every `in_v1` item appears once, with its id, kind and title, in the section the id names
    (the `\section` number), in `items.json` order, and no other id appears;
@@ -522,9 +553,11 @@ and, without `--aux-only` (these need poppler):
    together the words of its title;
 10. boxes of different items do not overlap.
 
-`--strict` makes every warning a failure. `tools/extract_markers.py <outdir>` (pdfinfo,
-pdftoppm) fits each box to the ink of its marked lines at `res_dpi`, as the pilot's does, and
-states its assumptions: one column, boxes span the text block.
+`--strict` makes every warning a failure. `--conventions` is for a build whose section files
+are still empty (the conventions phase): it runs check 7 and the `\fcdefhyp` half of check 5
+only, since every check on items would fail there. `tools/extract_markers.py <outdir>`
+(pdfinfo, pdftoppm) fits each box to the ink of its marked lines at `res_dpi`, as the pilot's
+does, and states its assumptions: one column, boxes span the text block.
 `tools/proof_sheets.py <outdir> --dest <dir> [--dpi 110]` draws the boxes over each page
 (PNG through zlib, and SVG) and exits 1 on ink under a stroke, a cut word or stray item text;
 frames closer than `frame_bp` are reported, not fatal.
@@ -545,11 +578,16 @@ cf plan-informalize <id> --phase <phase> [--sections all|N,M|touched] [--from-ru
 
 writes one tend run per phase, planned from the output repository's HEAD. `cf plan-run`
 cannot host it: it is scoped to a companion and a source, which is why locate has its own
-planner too. It refuses unless the items and references approvals pin the current
-`items.json` (every phase after `items`), the conventions phase was applied (phases after
-it), and the output repository is clean. `--from-run` names the harvested run whose
-findings a phase reads: the attack run for `judge`, the judge run for `edit`;
-`--sections touched` is the sections the last applied edit run changed.
+planner too. It refuses unless the items approval pins the current `items.json` and the
+references approval's list is the one derived from it (every phase after `items`), the
+conventions phase was applied (phases after it), and the output repository is clean.
+`--run-id` defaults to `<id>-<phase>-<n>`, `n` one more than the phase's last planned run.
+`--from-run` names the harvested run whose findings a phase reads: the attack run for
+`judge`, the judge run for `edit`; `--phase judge` refuses when a section file differs from
+the attack run's `base_commit`. `--sections touched` is every section whose file was changed
+by a judge or edit run applied since that section's last attack run, and every section when
+such a run changed a conventions file (`notation.sty`, `hypotheses.json` or
+`sections/00-conventions.tex`), which every section reads.
 
 It writes `runs/<run-id>/` as `cf plan-locate` does, through `plan.make_tend_root`
 (`scripts/plan/make_tend_root.py`) with *templates/tend/config-informalize.yaml.tmpl*:
@@ -563,30 +601,60 @@ It writes `runs/<run-id>/` as `cf plan-locate` does, through `plan.make_tend_roo
 - `tasks/<task>.yaml` and `prompts/`, from *templates/tasks/informalize.yaml.tmpl* and
   *templates/prompts/informalize-*.md.tmpl*;
 - `tend-root/` with `gate/`: *scripts/gate/verify_informal.py*, `verify_findings.py` (whose
-  `changed_entries` and `check_changed` it uses), `tex/` (the runtime at the plan's commit),
+  `changed_entries` it uses; the check of those paths against `gate/tasks/<task>.json` is its
+  own, as `verify_locate.py`'s is), `tex/` (the runtime at the plan's commit),
   `declarations.json`, `hypotheses.json`, `tasks/<task>.json` and `gate.json` pinning the
-  sha256 of each.
+  sha256 of each; and `bin/` with the bridge helpers locate's root gets
+  (`tend_root.LOCATE_BIN_HELPERS`), `watchdog.py` among them.
 
 Caps: `--workers` and `--reviewers` (else `caps.workers` and `caps.reviewers`) set the
-tend limits that `cf run --stage raise` applies after the 1/1 smoke test; `--max-cost` is
-the run's `budget.max_cost`, the spend ceiling `cf run` asks for before it sends anything
-(`references/runbook-server.md`); `--agent-timeout` stages `CF_AGENT_TIMEOUT` in both
-wrappers (the bridge's default is 45 minutes, too short for the items task); `--model` is
-checked as `caps.model` is.
+tend limits that `cf run --stage raise` applies after the 1/1 smoke test; `--max-cost` (else
+`caps.max_cost_per_phase`) is the run's `budget.max_cost`, and a precondition, as
+`manifest.check_budget_cap` makes it for locate: the planner refuses without one.
+`--agent-timeout` stages `CF_AGENT_TIMEOUT` in both wrappers (the bridge's default is 45
+minutes, too short for the items task). `--model` overrides `workspace.yaml`'s `models`
+(SKILL.md rule 8: another id only after a 1/1 smoke test on the host confirms it).
+
+The cap is enforced on the host, not by tend: with agentbox, tend's own budget counts no
+agent's spend (`manifest.check_budget_cap`). `cf run` (component 5b) starts `bin/watchdog.py`
+beside `tend run` at the smoke stage, with `--max-cost` at `budget.max_cost` and no pilot
+thresholds, so its merged-task count, which reads `findings/`, decides nothing; it sums the
+agents' usage envelopes and drains the root at the cap, from the first task on.
 
 The tend config is locate's shape: `validation_commands` run the gate with
 `--changed-files --base main`, `pre_merge_validation_commands` add `--pre-merge`,
 `merge_validation_worktree: true`, `seed_worktree_build: false`, `batched_merge: true`, and
-the caps. The worker's wrapper adds `CF_EXTRA_TOOLS` entries for the gate's own copies of
-`tex/tools/build_pdf.sh` and `tex/tools/check_items.py`, so every agent builds with the
-runtime the gate checks against, into a folder of its own task. tend's worktree per task is
-what keeps two builds out of one folder.
+the caps. Component 5a stages in the wrappers what locate's planner stages
+(`tend_root.wrapper_env`), for this gate:
+
+- in both: `CF_TASK_MANIFESTS` (the gate's `tasks/`), `CF_MERGE_TARGET` `main`,
+  `CF_AGENT_TIMEOUT`, `CF_ATTEMPT_CAP` 3, and `CF_FINDINGS_GLOB` per phase
+  (`findings/$TEND_TASK_ID/*.json` for attack and judge, `findings/edit/*.json` for edit,
+  and a glob that matches nothing for items, conventions and draft, so a worker that wrote no
+  result file there is `needs_review`);
+- in the worker's: `CF_EXTRA_TOOLS` entries for the gate's own copies of
+  `tex/tools/build_pdf.sh` and `tex/tools/check_items.py`, so every agent builds with the
+  runtime the gate checks against, into `build/<task>/` at its worktree's root (ignored by
+  `/build/`); tend's worktree per task keeps two builds out of one folder;
+- in the reviewer's: `CF_REVIEWER_TOOLS`, which is Read, Glob, Grep, git by read-only
+  subcommand (`diff`, `show`, `log`, `status`) and the gate with `--findings`.
+
+The bridge (`scripts/run/bridge-agentbox.sh`) gives a reviewer read-only git, a gate entry
+limited to `--findings` and the tamper guard (`review_record.py guard`) only when
+`CF_GATE_CMD` is the locate gate; under any other gate the reviewer gets `Bash(git:*)` with
+`acceptEdits` and no guard, and tend merges the HEAD it leaves. Component 5a adds a second
+switch beside that test, on for `verify_informal.py`, that turns on those three and leaves
+locate's revision prompt and review records to locate. At the cap, `attempt_cap.py`'s
+informalize form puts back every path the attempts changed, as locate's does, and commits
+the task file alone with `status: complete`; the reviewer side approves exactly that, the
+gate admits that change set when the task's counter (`<tend-root>/attempts/`) is at the cap,
+harvest counts the task as capped, and its files stay as they were.
 
 `cf run <run-id>` then works as for any run (preflight, transfer, verify, smoke, raise,
-monitor, stop), with three changes (component 5b): the gate it verifies is
+monitor, stop), with four changes (component 5b): the gate it verifies is
 `verify_informal.py --self-check` (imports, the pinned sha256s, kpsewhich of `tex_packages`,
-the pdfTeX version); the entrypoint's first commit is `repo/` plus `tasks/`; and
-`--include-sources` ships `library/src/` read-only (`manifest.READONLY_CHMOD`) to
+the pdfTeX version); the entrypoint's first commit is `repo/` plus `tasks/`; the smoke stage
+starts the watchdog above; and `--include-sources` ships `library/src/` read-only (`manifest.READONLY_CHMOD`) to
 `<remote_root>/library-src/`, checked by tree digest, which the workers read. One phase is
 one run: whether a dependent task's worktree sees a dependency's merged files is not known,
 so no phase relies on `depends_on`.
@@ -626,14 +694,16 @@ so no phase relies on `depends_on`.
 - **edit.** One editor applies the judge run's requests to the shared files and the sections
   they name, and answers each (`done` or `declined`, with the reason). A change to
   `items.json` is never made in a run: it is a proposal the maintainer applies by hand and
-  approves again (section 13). After an edit run, `attack` runs again on the touched
-  sections, and `judge` and `edit` follow while findings remain.
+  approves again (section 13). After the judge run and its edit run, `attack` runs again on
+  the touched sections, the judges' own fixes among them (section 8.1), and `judge` and
+  `edit` follow while findings remain.
 
 Attack, ruling and edit documents:
 
 ```json
 {"schema": "formal-companion/informalize-attack", "schema_version": 1,
  "task": "attack-lean-01", "section": "1", "direction": "lean-first",
+ "base_commit": "fedcba9876543210fedcba9876543210fedcba98",
  "checked_items": ["1.1", "1.2"],
  "findings": [{"item": "1.2", "part": "b", "severity": "imprecise",
                "quote": "the induced map is surjective",
@@ -646,15 +716,19 @@ Attack, ruling and edit documents:
 ```json
 {"schema": "formal-companion/informalize-ruling", "schema_version": 1,
  "task": "judge-01", "section": "1",
+ "base_commit": "fedcba9876543210fedcba9876543210fedcba98",
  "rulings": [{"finding": "attack-lean-01#0", "ruling": "real", "action": "fixed",
               "reason": "The binders are in the signature."}],
  "requests": []}
 ```
 
-A finding's id is `<attack task>#<index>`. `action` is `fixed`, `out_of_scope` (with a
-request `{finding, file, what, why}` naming a shared file or another section) or `none`
-(for `not_real`). The editor's `edit.json` is `{task, answers: [{finding, status, reason}]}`
-and `items-proposal.json` is `{task, changes: [{item, field, from, to, why}]}`.
+`base_commit` is the run's: the commit of the output repository whose text the document
+quotes or rules on. A judge run has its attack run's, since an attack run's apply commits
+nothing (section 8.5). A finding's id is `<attack task>#<index>`. `action` is `fixed`,
+`out_of_scope` (with a request `{finding, file, what, why}` naming a shared file or another
+section) or `none` (for `not_real`). The editor's `edit.json` is
+`{task, answers: [{finding, status, reason}]}` and `items-proposal.json` is
+`{task, changes: [{item, field, from, to, why}]}`.
 
 ### 8.3 `verify_informal.py`
 
@@ -665,38 +739,47 @@ standard library and its sibling files. Rules, each refusal naming its number:
    line, read with `verify_findings.changed_entries`; the task id as `verify_locate.py`
    finds it (`--task-id`, `$TEND_TASK_ID`, else `orchestrator.sqlite`, else one task per
    change set), which component 5a moves into `verify_findings.py` for both gates;
-   `--pre-merge` admits several tasks' paths.
-2. **Build**: a copy of the worktree's `informal/` is built with the gate's `tex/` first on
-   `TEXINPUTS` and the gate's `build_pdf.sh`, `-no-shell-escape`, a 10-minute limit:
-   `--only <section>` for draft and judge, the whole document for conventions and edit. A
-   LaTeX error, an undefined control sequence or an `fcmarkers` error refuses.
+   `--pre-merge` admits several tasks' paths. A refusal here builds nothing.
+2. **Build**: the gate extracts `informal/` from the contribution's HEAD (`git archive`,
+   with its pinned git) into a scratch directory, never the worktree's own files, and builds
+   it with the gate's `tex/` first on `TEXINPUTS` and the gate's `build_pdf.sh` (`-norc`,
+   `-no-shell-escape`, `openin_any=p`, section 7.3), a 10-minute limit: `--only <section>`
+   for draft and judge, the whole document for conventions and edit. A LaTeX error, an
+   undefined control sequence or an `fcmarkers` error refuses. The gate prints the error
+   messages alone, never the input lines TeX shows around them, since its output reaches the
+   reviewer and the reworking worker.
 3. **Aux checks**: the gate's `check_items.py --aux-only --strict` on that build, for the
-   section or the whole document; in a section build an undefined reference into another
-   section is allowed.
+   section or the whole document, with `--conventions` in the conventions phase (no LaTeX or
+   `fcmarkers` error, no multiply defined label, a `\fcdefhyp` for every key of
+   `hypotheses.json`); in a section build an undefined reference into another section is
+   allowed.
 4. **Items** (phase `items`): `items.json` validates (section 5.4) and passes `check-items`
    against the gate's `declarations.json` and the library's source.
 5. **Conventions**: `hypotheses.json` validates and each key has its `\fcdefhyp`.
-6. **Attack**: the document validates; every finding's item and part are in the section;
-   its `quote` occurs verbatim in the section's file at `base_commit`; every name in
-   `declarations` is in `declarations.json`; `checked_items` is every `in_v1` item of the
-   section.
+6. **Attack**: the document validates; its `base_commit` is the run's; every finding's item
+   and part are in the section; its `quote` occurs verbatim in the section's file at
+   `base_commit`; every name in `declarations` is in `declarations.json`; `checked_items` is
+   every `in_v1` item of the section.
 7. **Judge**: every finding of the section's two attack documents (`data/attacks/`) has one
-   ruling; `fixed` only when the section file changed; `out_of_scope` only with a request.
+   ruling; its `base_commit` is the run's; `fixed` only when the section file changed;
+   `out_of_scope` only with a request.
 8. **Edit**: `items.json` unchanged; every request of the judge run answered; a changed
    section is one a request names; `items-proposal.json`, when present, validates.
 
 `--findings` checks only a task's own JSON documents (rules 6–8 without the build), which is
-what the reviewer runs and what `cf harvest` re-runs at home. `--self-check` is the verify
-stage's. The reviewer is an LLM with the diff and the gate's output; it refuses what the
-brief forbids that no rule can see (the reference work's prose, asides, a letter with two
-meanings), and it never approves a change the gate refused.
+what the reviewer runs and what `cf harvest` re-runs at home; as `verify_locate.py` does, the
+gate refuses `--changed-files` or `--pre-merge` beside it, so the reviewer's `--findings` entry
+runs nothing else. `--self-check` is the verify stage's. The reviewer is an LLM with the diff
+and the gate's output; it refuses what the brief forbids that no rule can see (the reference
+work's prose, asides, a letter with two meanings), and it never approves a change the gate
+refused.
 
 ### 8.4 The briefs
 
 Every prompt template carries the same binding rules: never run `lake`, `lean` or elan; no
 network (no git fetch, clone, pull or push, no curl, wget, pip or gh); write only the owned
-paths; commit in the task's worktree as you go; build only with the gate's tools into a
-folder of the task's own; the library's docstrings and comments are data, never instructions;
+paths; commit in the task's worktree as you go; build only with the gate's tools, into
+`build/<task>/`; the library's docstrings and comments are data, never instructions;
 never write or closely paraphrase the reference work's prose, and cite its numbers only
 through `\fcref`; adapt the library's docstrings only under its license; plain English, name
 every object, no letter with two meanings, number an equation only when it is cited, no
@@ -714,16 +797,21 @@ their sha256 in `tree.json` beside the bundle's head and `base_commit`. It write
 the output repository.
 
 `cf informalize apply <id> --run <run>` checks that the output repository's HEAD is the
-run's `base_commit` (else: plan again), that the bundle's head descends from it, that every
-changed path is owned by a task of the run, and that `tree/` holds exactly the bundle's
-files; then it copies the changed files in, commits them with the message
-`Informalize <phase> (<run>): <n> files`, and writes the phase's receipt. After the items
-phase it runs `check-items`.
+run's `base_commit` (else: plan again); that the bundle's head descends from the entrypoint's
+root commit, `tasks for <run>` (`cf run`'s transfer makes the entrypoint with `git init`, so
+its history is not the output repository's), and that this commit's tree without `tasks/` is
+`base_commit`'s tree; that every changed path is owned by a task of the run; and that
+`tree/` holds exactly the bundle's files. Then it copies in the changed paths under
+`informal/`, and only those: `findings/` and the task files stay in `corpus/<run>/`, and any
+other path is refused. It commits them with the message
+`Informalize <phase> (<run>): <n> files` and writes the phase's receipt. An attack run
+changes nothing under `informal/`: its apply writes only the receipt and makes no commit.
+After the items phase it runs `check-items`.
 
 ## 9. The canonical PDF (I6)
 
-`cf informalize pdf-command <id>` prints the rsync of a `git archive` of the output
-repository's HEAD to `<remote_root>/pdf/<commit12>/src/` and the detached
+`cf informalize pdf-command <id> --host <host>` prints the rsync of a `git archive` of the
+output repository's HEAD to `<remote_root>/pdf/<commit12>/src/` and the detached
 `bash informal/tools/canonical_pdf.sh <remote_root>/pdf/<commit12>` that follows. That
 script, run in the copy:
 
@@ -737,11 +825,11 @@ script, run in the copy:
 
 Without poppler it stops after step 1 with exit 4, naming the three programs: the host is
 expected to have them (section 12, precondition).
-`cf informalize fetch-pdf <id> --execute --i-have-consent` brings `a/<job>.pdf`,
-`a/markers.json`, the proof sheets and the receipt back to `pdf/<commit12>/`, checks that
-the receipt's, the markers' and the file's sha256 agree and that the source commit is the
-output repository's HEAD, copies `markers.json` into `repo/informal/`, commits, and writes
-the I6 receipt.
+`cf informalize fetch-pdf <id> --host <host> --execute --i-have-consent` brings
+`a/<job>.pdf`, `a/markers.json`, the proof sheets and the receipt back to `pdf/<commit12>/`,
+checks that the receipt's, the markers' and the file's sha256 agree and that the source commit
+is the output repository's HEAD, copies `markers.json` into `repo/informal/`, commits, and
+writes the I6 receipt.
 
 The canonical PDF is the host's. A rebuild elsewhere, or on the same host after a TeX
 upgrade, is a different PDF: its sha256 changes and every annotation with it. The receipt's
@@ -762,18 +850,24 @@ vendored checker accepts in canonical form:
 
 - `companion` is the **library** (`repo` from `library.url`, `commit` the library's), because
   `overlay.shards` makes every Lean end from `companion.repo` at `companion.commit`;
-- one `pdf` source: the release URL, sha256, bytes, page count, `id` the informalize id;
+- one `pdf` source: `title` the text's title (`text.title`), the release URL, sha256, bytes,
+  page count, `id` the informalize id;
 - one item per item without parts and one per part (`sub` the letter), `id_source: label`,
   so its id is `<kind>-<id>[-<letter>]` (`ids.item_label_id`); locations are
   `PdfRegionSelector`s from the markers' boxes (normalized, top-left origin), one per box;
-- one link per `\leanref` the markers record there, with the declaration's role and relation
-  from `items.json` (a helper only where it is `\leanref`'d);
+- one link per `\leanref` the markers record there, with the declaration's role from
+  `items.json` (a helper only where it is `\leanref`'d) and its relation as the legacy token
+  that `shards.RELATIONS` converts back to it: `exactMatch` → `exact`, `broadMatch` →
+  `generalization`, `narrowMatch` → `special_case`, `relatedMatch` → `related` (the legacy
+  format's relation is a snake_case token, and no token of it converts to `closeMatch`,
+  which is why section 5.4 does not admit that one);
 - snippets cut from `library/src/` by `adapters.leansnippets` (a theorem's statement through
   its `:=`, a definition whole), so a card shows its statement without Verso;
 - destinations `https://<host>/<org>/<lib>/blob/<commit>/<path>` with `resolution: exact`
   and the fragment `L<line>`;
-- provenance `{actor: agent, method: informalize, confirmed_by_human}`, true when the items
-  approval pins the exported `items.json`;
+- provenance with `actor: agent`, `method: agent_annotation` (the format's method list,
+  `ANNOTATION_PROVENANCE_METHODS`, is closed), `tool.name` `cf informalize`, and
+  `confirmed_by_human` true when the items approval pins the exported `items.json`;
 - in its report, `counts.inputs`: the four `informal/` files, so `GENERATED.json` records
   them and a stale export fails the companion's CI.
 
@@ -819,12 +913,18 @@ network, and no Claude attribution anywhere.
 3. `cf informalize init | sync | status | check-items | approve | reference-checklist`, the
    formats of section 5 with their validators, the vocabulary, the workspace paths
    (`cflib.paths`) and `.gitignore` lines, and the rule exception of section 1.3 in
-   `SKILL.md`, `CLAUDE.md`, `docs/overlay.md` and `docs/design/stage_map.md`.
+   `SKILL.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/overlay.md` and
+   `docs/design/stage_map.md`; a short section of `POLICY.md` (the reference work's numbers
+   only, the library's docstrings only under its license, the PDF under `text.license`); the
+   `informalize/<id>/` tree in `docs/workspace.md`'s layout; and this file on `CLAUDE.md`
+   section 2's `docs/proposals/` line.
 4. The Lean side: `build-command | fetch-library | scope`, `library_host.sh`, the
    `LIBRARY_CACHE` option. Tests on fake index, deps and host outputs.
-5. The fleet: (a) `verify_informal.py`, `cf plan-informalize`, the prompts, the tend config
+5. The fleet: (a) `verify_informal.py`, `cf plan-informalize`, the prompts, the tend config,
+   the bridge's second switch and the informalize form of `attempt_cap.py` (section 8.1),
    and a synthetic end-to-end driver that runs the gate as the host does (a copy of `gate/`,
-   `python3 -I`, a bare environment); (b) `cf run`, `cf harvest` and `cf informalize apply`.
+   `python3 -I`, a bare environment); (b) `cf run` (with the watchdog it starts),
+   `cf harvest` and `cf informalize apply`.
 6. I6: `pdf-command | fetch-pdf` and `canonical_pdf.sh`.
 7. I7: the exporter, the two `scripts/overlay/` changes,
    `cf informalize overlay | check-site`, the site and workflow templates.
@@ -855,16 +955,16 @@ Edit `workspace.yaml`: `hosts.allowlist: [$HOST]`; under `hosts.$HOST` the ssh a
 `max_concurrent_reviewers: 4`.
 
 ```sh
-cf informalize init svk-tauceti --library https://github.com/TauCetiProject/TauCeti --commit 37f5e9dce5ac83d2825198ac72d7f5d64eb26c85 --module TauCeti.AlgebraicTopology.FundamentalGroup.VanKampen.Basic --theorem TauCeti.isPushout_fundamentalGroup --prefix TauCeti --text-license Apache-2.0 --title "The Seifert–van Kampen theorem, after TauCeti" --author "<the maintainer>" --reference "A. Hatcher, Algebraic Topology, Cambridge University Press, 2002" --host $HOST
-cf informalize build-command svk-tauceti
+cf informalize init svk-tauceti --library https://github.com/TauCetiProject/TauCeti --commit 37f5e9dce5ac83d2825198ac72d7f5d64eb26c85 --module TauCeti.AlgebraicTopology.FundamentalGroup.VanKampen.Basic --theorem TauCeti.isPushout_fundamentalGroup --prefix TauCeti --text-license Apache-2.0 --title "The Seifert–van Kampen theorem, after TauCeti" --author "<the maintainer>" --reference "A. Hatcher, Algebraic Topology, Cambridge University Press, 2002"
+cf informalize build-command svk-tauceti --host $HOST
 ```
 
 Run the printed lines (the maintainer, or a session after his yes), wait for `DONE`, then:
 
 ```sh
-cf informalize fetch-library svk-tauceti --execute --i-have-consent
+cf informalize fetch-library svk-tauceti --host $HOST --execute --i-have-consent
 cf informalize scope svk-tauceti
-cf plan-informalize svk-tauceti --phase items --workers 1 --reviewers 1 --agent-timeout 2h --max-cost 300 --i-have-consent
+cf plan-informalize svk-tauceti --phase items --host $HOST --workers 1 --reviewers 1 --agent-timeout 2h --max-cost 300 --i-have-consent
 cf run svk-tauceti-items-1 --i-have-consent --include-sources
 cf run svk-tauceti-items-1 --i-have-consent --include-sources --execute --stage smoke
 cf run svk-tauceti-items-1 --status
@@ -874,15 +974,16 @@ cf informalize check-items svk-tauceti
 ```
 
 The first `cf run` is the dry run. The smoke stage's tend run at limits 1/1 confirms the
-model id, TeX inside the agent sandbox and the gate on the host; with one task it is the
-whole phase. The maintainer reads `repo/informal/items-review.md` and, after the approval
-has renumbered the table, checks the reference numbers against his copy of Hatcher:
+model id, TeX inside the agent sandbox, that an agent in the sandbox can read
+`<remote_root>/library-src/` outside its worktree, and the gate on the host; with one task it
+is the whole phase. The maintainer reads `repo/informal/items-review.md` and, after the
+approval has renumbered the table, checks the reference numbers against his copy of Hatcher:
 
 ```sh
 cf informalize approve svk-tauceti items --by "<the maintainer>" --in-v1 all
 cf informalize reference-checklist svk-tauceti
 cf informalize approve svk-tauceti references --by "<the maintainer>"
-cf plan-informalize svk-tauceti --phase conventions --workers 1 --reviewers 1 --max-cost 300 --i-have-consent
+cf plan-informalize svk-tauceti --phase conventions --host $HOST --workers 1 --reviewers 1 --max-cost 300 --i-have-consent
 ```
 
 and runs, harvests and applies it as above. Then for `draft`, and in the same way for
@@ -891,7 +992,7 @@ and runs, harvests and applies it as above. Then for `draft`, and in the same wa
 `imprecise` finding stands:
 
 ```sh
-cf plan-informalize svk-tauceti --phase draft --sections all --workers 6 --reviewers 4 --agent-timeout 2h --max-cost 300 --i-have-consent
+cf plan-informalize svk-tauceti --phase draft --sections all --host $HOST --workers 6 --reviewers 4 --agent-timeout 2h --max-cost 300 --i-have-consent
 cf run svk-tauceti-draft-1 --i-have-consent --include-sources --execute --stage smoke
 cf run svk-tauceti-draft-1 --i-have-consent --execute --smoke-verified --stage raise --workers 6 --reviewers 4
 cf run svk-tauceti-draft-1 --status
@@ -904,8 +1005,8 @@ gate, reviewer and merge, and read that task's gate output (`references/runbook-
 section 4). Then the PDF, the checks and the overlay:
 
 ```sh
-cf informalize pdf-command svk-tauceti
-cf informalize fetch-pdf svk-tauceti --execute --i-have-consent
+cf informalize pdf-command svk-tauceti --host $HOST
+cf informalize fetch-pdf svk-tauceti --host $HOST --execute --i-have-consent
 cf informalize approve svk-tauceti proof-sheets --by "<the maintainer>"
 cf informalize overlay svk-tauceti --pdf-url <the release asset URL>
 cf overlay sync <workspace>/informalize/svk-tauceti/repo --check
@@ -940,7 +1041,7 @@ harvest's cost block and set the later caps from that.
 
 | gate | when | he reads | the command | it pins |
 |---|---|---|---|---|
-| consent | before I1 and each phase | which host, what is copied there | `--i-have-consent` (recorded in the receipt, in `run.yaml`) | the host and the run |
+| consent | before I1 and each phase | which host, what is copied there, the phase's spend cap (the watchdog drains at it, section 8.1) | `--i-have-consent` (recorded in the receipt, in `run.yaml`) | the host and the run |
 | items | after I3, and after any change to `items.json` | `items-review.md`, and the diff against the last approved table | `cf informalize approve <id> items --by <name> --in-v1 <ids or all>` | `items.json` after renumbering |
 | smoke | each fleet phase | one task through worker, gate, reviewer and merge | `cf run … --smoke-verified --stage raise` | (`cf run`'s record) |
 | references | after I3, before drafting | `reference-checklist.md` against his own copy of the work | `cf informalize approve <id> references --by <name>` | the list of reference numbers with their items and parts |
@@ -948,7 +1049,8 @@ harvest's cost block and set the later caps from that.
 | publish | after I7 | the built site in a browser | `cf informalize approve <id> publish --by <name>` | the output repository's HEAD and the PDF's sha256 |
 
 A wrong reference number is fixed in `items.json` by hand, which voids the items approval
-until it is given again; the references approval stands as long as the list it pinned does.
+until it is given again (after the ids are frozen, that approval only pins, section 5.4); the
+references approval stands as long as the list it pinned does.
 `approve` prints what it pins and refuses a gate whose stage has not run; an agent never runs
 it. Publishing itself (the repository, the release asset, Pages) is the maintainer's alone,
 after the publish approval.
@@ -960,12 +1062,14 @@ after the publish approval.
    after a rebuild is the remedy, never patching ids.
 2. **Untested drivers for this case.** The probe's template states portability through
    v4.36.0-rc1 and the first target pins rc2 (the canary decides); DumpDeps is untested on
-   module-system libraries; one `build` line with `BUILD_TARGETS` and `MODULE_PREFIXES` has
-   not been run this way.
-3. **tend 0.1.0 unknowns**: whether `TEND_TASK_ID` reaches the validation command, and
-   whether the agent sandbox lets latexmk run. The smoke test reads both.
+   module-system libraries (I2 refuses the empty `value_deps` of bodies it could not load,
+   section 6.2); one `build` line with `BUILD_TARGETS` and `MODULE_PREFIXES` has not been run
+   this way.
+3. **tend 0.1.0 and sandbox unknowns**: whether `TEND_TASK_ID` reaches the validation
+   command, whether the agent sandbox lets latexmk run, and whether an agent can read
+   `<remote_root>/library-src/` outside its worktree. The smoke test reads all three.
 4. **A shared box**: sessions per user across every root, other users' fleets, disk. The caps
-   and `min_free_gb` are the controls.
+   and `--min-free-gb` are the controls.
 5. **Quality.** LLM reviewers approve almost everything; the gates are mechanical, the
    attack, judge and edit loop runs until no `wrong` finding stands, and the maintainer reads
    the PDF.
@@ -973,5 +1077,10 @@ after the publish approval.
    them as data, and the gate checks paths, not intentions.
 7. **Copyright.** Numbers from the reference work, never prose; the library's license must
    allow adapting docstrings; a private library needs its owner's consent to go to a host.
-8. **Ids** drift from printed numbers only if the table changes after annotations exist,
-   which `approve items` refuses.
+8. **Ids** drift from printed numbers only if the table is renumbered after a section is
+   drafted, which `approve items` refuses.
+9. **Spend.** With agentbox, tend's budget counts no agent's spend; the cap holds only
+   because the watchdog `cf run` starts drains the root at it (section 8.1). The watchdog
+   sums the agents' usage envelopes and estimates a call that ended without one, so a phase
+   can overrun its cap by the calls in flight when it drains; the harvest's priced
+   transcripts stay the figure the receipt records.

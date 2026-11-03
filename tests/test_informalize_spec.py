@@ -15,7 +15,8 @@ when the specification stops describing this repository. Three kinds of check:
   lands, the code agrees with the list.  Those checks skip until then.
 
 It also keeps the mode generic: the first target's theorem is named only in the
-acceptance section, and in no file under scripts/ or templates/.
+acceptance section, and in no file under scripts/, templates/ or tests/ but this one,
+which reads its names from that section rather than spelling them.
 """
 from __future__ import annotations
 
@@ -47,6 +48,7 @@ from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from cflib import vocab                                       # noqa: E402
 from cflib.yamlio import load_yaml                            # noqa: E402
 from formal_companion_annotations import ids                  # noqa: E402
+from formal_companion_annotations import vocab as fmt         # noqa: E402
 from overlay import config as overlay_config                  # noqa: E402
 from overlay import shards                                    # noqa: E402
 
@@ -60,12 +62,17 @@ FLAT = " ".join(SPEC.split())
 # what the specification promises, as closed lists
 # ---------------------------------------------------------------------------
 
-#: Every `cf informalize` subcommand the specification names (sections 3 and 11).
-SUBCOMMANDS = frozenset({
-    "init", "sync", "status", "build-command", "fetch-library", "scope", "check-items",
-    "approve", "reference-checklist", "apply", "pdf-command", "fetch-pdf", "overlay",
-    "check-site",
-})
+#: Every `cf informalize` subcommand the specification names (sections 3 and 11), with
+#: the component of section 11 that builds it: each component is one pull request, so a
+#: CLI holds all of a component's subcommands or none of them.
+SUBCOMMANDS = {
+    "init": "3", "sync": "3", "status": "3", "check-items": "3", "approve": "3",
+    "reference-checklist": "3",
+    "build-command": "4", "fetch-library": "4", "scope": "4",
+    "apply": "5b",
+    "pdf-command": "6", "fetch-pdf": "6",
+    "overlay": "7", "check-site": "7",
+}
 #: The fleet phases (section 8.2), in the order they run.
 PHASES = ("items", "conventions", "draft", "attack", "judge", "edit")
 #: What the maintainer signs with `cf informalize approve` (section 13).
@@ -73,7 +80,7 @@ APPROVAL_GATES = ("items", "references", "proof-sheets", "publish")
 #: Section 5.4's enums.
 KINDS = ("definition", "lemma", "proposition", "theorem", "corollary", "example", "remark")
 ROLES = ("key", "helper")
-RELATIONS = ("exactMatch", "closeMatch", "broadMatch", "narrowMatch", "relatedMatch")
+RELATIONS = ("exactMatch", "broadMatch", "narrowMatch", "relatedMatch")
 REFERENCE_SOURCES = ("docstring", "module docstring", "inferred", "none")
 #: Section 8.2's documents.
 SEVERITIES = ("wrong", "imprecise", "style")
@@ -157,6 +164,7 @@ def items_problems(doc: dict) -> list[str]:
     numbers = [s["number"] for s in doc["sections"]]
     if numbers != [str(i) for i in range(1, len(numbers) + 1)]:
         out.append(f"sections are not numbered 1.. without gaps: {numbers}")
+    withdrawn = {d["withdrawn"] for d in doc["decisions"] if isinstance(d, dict) and "withdrawn" in d}
     last: dict[str, int] = {}
     for item in doc["items"]:
         iid = item["id"]
@@ -167,7 +175,11 @@ def items_problems(doc: dict) -> list[str]:
         sec, n = match.group(1), int(match.group(2))
         if sec != item["section"] or sec not in numbers:
             out.append(f"{iid}: its section is {item['section']!r}")
-        if n != last.get(sec, 0) + 1:
+        # after the freeze a withdrawn id stays a gap, recorded in decisions
+        expected = last.get(sec, 0) + 1
+        while f"{sec}.{expected}" in withdrawn:
+            expected += 1
+        if n != expected:
             out.append(f"{iid}: ids run from 1 without gaps within a section")
         last[sec] = n
         if item["kind"] not in KINDS:
@@ -239,7 +251,11 @@ NAMED = (
     ("scripts/overlay/shards.py", "section_of", "shards.section_of"),
     ("scripts/plan/make_tend_root.py", "make_tend_root", "plan.make_tend_root"),
     ("scripts/gate/verify_findings.py", "changed_entries", "verify_findings.changed_entries"),
-    ("scripts/gate/verify_findings.py", "check_changed", "check_changed"),
+    ("scripts/run/manifest.py", "check_budget_cap", "manifest.check_budget_cap"),
+    ("scripts/locate/tend_root.py", "wrapper_env", "tend_root.wrapper_env"),
+    ("scripts/locate/tend_root.py", "LOCATE_BIN_HELPERS", "tend_root.LOCATE_BIN_HELPERS"),
+    ("scripts/cflib/vocab.py", "decide_proof_status", "cflib.vocab.decide_proof_status"),
+    ("scripts/cflib/vocab.py", "RUN_TOKEN_ID", "vocab.RUN_TOKEN_ID"),
     ("scripts/annotations/export/common.py", "pinned_checkout", "common.pinned_checkout"),
     ("scripts/pipeline/stage_receipt.py", "sum_fleets", "pipeline.stage_receipt.sum_fleets"),
     ("scripts/cflib/workspace.py", "Workspace.check_host", "Workspace.check_host"),
@@ -332,7 +348,7 @@ class TestTheDriversItRuns(unittest.TestCase):
 
 
 class TestTheOverlayFactsItUses(unittest.TestCase):
-    """Section 10 rests on four facts about the overlay as it is."""
+    """Section 10 rests on these facts about the overlay and the legacy format as they are."""
 
     def test_the_text_licenses_are_the_ones_pdf_publish_admits(self):
         named = [t for t in re.findall(r"`([^`]+)`", section("1.1"))
@@ -348,6 +364,21 @@ class TestTheOverlayFactsItUses(unittest.TestCase):
         self.assertIsNone(shards._HTTPS.fullmatch("https://example.org/a/b#L12"))   # noqa: SLF001
         self.assertIsNotNone(shards._HTTPS.fullmatch("https://example.org/a/b"))   # noqa: SLF001
         self.assertIn("and the fragment `L<line>`", FLAT)
+
+    def test_the_provenance_method_is_one_the_format_admits(self):
+        """The format's method list is closed: an `informalize` method fails the checker."""
+        methods = re.findall(r"method: ([a-z_]+)", section("10"))
+        self.assertEqual(methods, ["agent_annotation"])
+        self.assertIn(methods[0], fmt.ANNOTATION_PROVENANCE_METHODS)
+
+    def test_every_relation_it_writes_converts_back(self):
+        """Each relation of section 5.4 is written as the legacy token the overlay turns back into it."""
+        pairs = dict(re.findall(r"`([a-z]+Match)` → `([a-z_]+)`", " ".join(section("10").split())))
+        self.assertEqual(set(pairs), set(RELATIONS))
+        for relation, token in pairs.items():
+            with self.subTest(relation=relation):
+                self.assertIn(token, fmt.ANNOTATION_LINK_RELATIONS)
+                self.assertEqual(shards.RELATIONS[token], relation)
 
     def test_what_it_says_of_the_section_folder_is_true(self):
         folder = shards.section_of({"number": "1.2", "section": "1"}, {})
@@ -386,10 +417,15 @@ class TestTheExamples(unittest.TestCase):
         self.assertIsNone(minimal["library"]["license"])
         self.assertIs(minimal["library"]["library_cache"], False)
         self.assertIn(minimal["text"]["license"], overlay_config.OPEN_LICENSES)
-        self.assertEqual(minimal["host"]["name"], "examplebox")
+        # workspace.yaml is the only place a host or a model is named
+        self.assertNotIn("host", minimal)
         caps = minimal["caps"]
+        self.assertNotIn("model", caps)
         self.assertLessEqual(caps["workers"] + caps["reviewers"], 16)
         self.assertEqual(minimal["id"], minimal["text"]["job"])
+        self.assertRegex(minimal["id"], r"\A[a-z0-9][a-z0-9-]{0,39}\Z")
+        self.assertRegex(minimal["id"] + "-lib", r"\A[a-z0-9][a-z0-9._-]{0,63}\Z")
+        self.assertTrue(vocab.RUN_TOKEN_ID.fullmatch(minimal["id"] + "-conventions-99"))
 
     def test_the_runtime_config_agrees_with_the_markers_and_the_items(self):
         runtime = self.docs["formal-companion/informalize-runtime"]
@@ -415,12 +451,21 @@ class TestTheExamples(unittest.TestCase):
             "an unexplained broadMatch": lambda d: d["items"][0]["declarations"][0].update(
                 relation="broadMatch"),
             "an unknown reference source": lambda d: d["items"][0]["reference"].update(source="book"),
+            "a closeMatch, which the legacy export cannot carry":
+                lambda d: d["items"][0]["declarations"][0].update(relation="closeMatch"),
         }
         for what, mutate in breaks.items():
             with self.subTest(broken=what):
                 doc = copy.deepcopy(good)
                 mutate(doc)
                 self.assertTrue(items_problems(doc), what)
+
+    def test_a_withdrawn_id_stays_a_gap(self):
+        doc = copy.deepcopy(self.docs["formal-companion/informalize-items"])
+        doc["items"][1]["id"] = "1.3"
+        self.assertTrue(items_problems(doc))
+        doc["decisions"].append({"withdrawn": "1.2", "why": "merged into 1.1"})
+        self.assertEqual(items_problems(doc), [])
 
     def test_the_markers_example_keeps_every_rule(self):
         doc = self.docs["formal-companion/informalize-markers"]
@@ -459,6 +504,9 @@ class TestTheExamples(unittest.TestCase):
             if row["action"] == "out_of_scope":
                 self.assertTrue(any(r["finding"] == row["finding"] for r in ruling["requests"]))
         self.assertEqual(attack["section"], ruling["section"])
+        # both stamp the commit they read; a judge run plans from its attack run's
+        self.assertRegex(attack["base_commit"], r"\A[0-9a-f]{40}\Z")
+        self.assertEqual(attack["base_commit"], ruling["base_commit"])
 
     def test_the_hypotheses_example_names_macros(self):
         doc = self.docs["formal-companion/informalize-hypotheses"]
@@ -500,7 +548,13 @@ class TestEachPromiseIsOneList(unittest.TestCase):
         tree = cli_tree()
         if "informalize" not in tree:
             self.skipTest("cf informalize is not built yet (component 3)")
-        self.assertEqual(subcommands_of(tree["informalize"]), set(SUBCOMMANDS))
+        built = subcommands_of(tree["informalize"])
+        self.assertTrue(built <= set(SUBCOMMANDS), built - set(SUBCOMMANDS))
+        for component in sorted(set(SUBCOMMANDS.values())):
+            names = {n for n, c in SUBCOMMANDS.items() if c == component}
+            with self.subTest(component=component):
+                self.assertIn(built & names, (set(), names),
+                              f"component {component} builds {sorted(names)}, all or none")
 
     def test_the_planner_once_built_plans_the_phases(self):
         tree = cli_tree()
@@ -538,36 +592,61 @@ class TestTheRuleException(unittest.TestCase):
     def test_once_built_the_rule_says_so_where_it_lives(self):
         if "informalize" not in cli_tree():
             self.skipTest("cf informalize is not built yet (component 3)")
-        for name in ("SKILL.md", "CLAUDE.md", "docs/overlay.md", "docs/design/stage_map.md"):
+        for name in ("SKILL.md", "CLAUDE.md", "CONTRIBUTING.md", "docs/overlay.md",
+                     "docs/design/stage_map.md"):
             with self.subTest(document=name):
                 self.assertIn("informalize/<id>/repo/", (SKILL / name).read_text(encoding="utf-8"))
 
 
 class TestTheFirstTargetIsOnlyAnExample(unittest.TestCase):
-    """The mode is generic: its first theorem lives in the acceptance section and nowhere in code."""
+    """The mode is generic: its first theorem lives in the acceptance section and nowhere in code.
 
-    NEEDLES = ("TauCeti", "isPushout_fundamentalGroup", "VanKampen", "Hatcher")
+    The names are read from section 12's `cf informalize init` line, so this file spells none
+    of them: the library prefix, the theorem's last component, the reference work's first
+    author, and every component of the module that the specification uses nowhere else.
+    """
+
+    @staticmethod
+    def init_flags() -> dict[str, str]:
+        (line,) = [ln for ln in section("12").splitlines() if ln.startswith("cf informalize init ")]
+        return {flag: value.strip('"') for flag, value in
+                re.findall(r'--([a-z-]+) ("[^"]*"|\S+)', line)}
+
+    def needles(self) -> tuple[list[str], list[str]]:
+        """``(in the specification, in code)``: what may appear in section 12 only, and nowhere in code."""
+        flags = self.init_flags()
+        prefix, theorem, module = flags["prefix"], flags["theorem"], flags["module"]
+        author = flags["reference"].split(",")[0].split()[-1]
+        start, end = SPEC.index("\n## 12. "), SPEC.index("\n## 13. ")
+        outside = SPEC[:start] + SPEC[end:]
+        parts = [c for c in module.split(".")[1:] if c not in outside]
+        last = theorem.rsplit(".", 1)[-1]
+        code = [last, *parts]
+        self.assertTrue(parts, "no component of the module is particular to the first target")
+        return [prefix, author, *code], code
 
     def test_the_specification_names_it_only_in_the_acceptance_section(self):
         start = SPEC.index("\n## 12. ")
         end = SPEC.index("\n## 13. ")
-        for needle in self.NEEDLES:
+        for needle in self.needles()[0]:
             for match in re.finditer(re.escape(needle), SPEC):
                 with self.subTest(needle=needle, at=match.start()):
                     self.assertTrue(start < match.start() < end,
                                     f"{needle} outside section 12: "
                                     f"{SPEC[max(0, match.start() - 40):match.start() + 40]!r}")
 
-    def test_no_code_or_template_names_it(self):
-        for root in ("scripts", "templates"):
+    def test_no_code_template_or_test_names_it(self):
+        needles = self.needles()[1]
+        here = Path(__file__).resolve()
+        for root in ("scripts", "templates", "tests"):
             for path in sorted((SKILL / root).rglob("*")):
-                if not path.is_file() or "vendor" in path.parts:
+                if not path.is_file() or "vendor" in path.parts or path.resolve() == here:
                     continue
                 try:
                     text = path.read_text(encoding="utf-8")
                 except (UnicodeDecodeError, OSError):
                     continue
-                for needle in ("isPushout_fundamentalGroup", "VanKampen"):
+                for needle in needles:
                     with self.subTest(path=str(path.relative_to(SKILL)), needle=needle):
                         self.assertNotIn(needle, text)
 
