@@ -19,8 +19,8 @@ builds a workspace imports it first, so neither runner reads a real home.
 
 The Python suite is about 5,000 tests. Counts vary by platform and runner: at commit
 `4125474`, `unittest` on Python 3.13 ran 4,952 with 217 skipped, and pytest on 3.11,
-3.12 and 3.13 passed 4,741 with 242 skipped. The viewer's suite is 158 tests under
-Node's built-in runner, with a fake DOM and a fake PDF.js.
+3.12 and 3.13 passed 4,741 with 242 skipped. The viewer's suite is 160 tests under
+Node's built-in runner, all but two with a fake DOM and a fake PDF.js.
 
 ## Environment variables
 

@@ -126,16 +126,21 @@ so proof steps belong to a companion whose annotations come from that producer.
 ## Browsers
 
 PR #50 records this viewer in Chromium 152 and Firefox 159 against a private companion,
-with one comment in its files changed since, and it has also been driven in Chromium
-against a synthetic one. It stops in Safari 17.4. The vendored PDF.js 6.2.108 reads
-`Iterator.prototype` when it loads, and that browser's engine has no `Iterator` global:
-under the JavaScriptCore shell of macOS 14.4, importing `pdf.min.mjs` throws
-`ReferenceError: Can't find variable: Iterator`. JPEG 2000 figures draw as empty frames,
-with the warning `JpxError: OpenJPEG failed to initialize`, because the vendored PDF.js
-has no OpenJPEG decoder beside it. Commit `75fa8aa` records that Firefox
-on macOS draws a box for some script characters after a letter, which is why titles set
-scripts as markup. The 158 tests of `templates/overlay/tests/` run under Node with a fake
-DOM and a fake PDF.js, so they cannot see a browser's limits.
+with one comment in its own code changed since, and it has also been driven in Chromium
+against a synthetic one. PR #54 records it in Safari 17.4, Chrome 154 and Firefox 159 on
+a 404-page companion, where each draws the same 2,512 boxes. Before PR #54 it stopped in
+Safari 17.4: the default build of PDF.js 6.2.108 reads the global `Iterator` when it
+loads, and that browser has none (`ReferenceError: Can't find variable: Iterator`). The
+vendored files are now the legacy build of the same release, which brings its own
+`Iterator` and the other newer builtins PDF.js calls. JPEG 2000 and JBIG2 images still
+draw as empty frames, with the warning `JpxError: OpenJPEG failed to initialize` or
+`Jbig2Error: JBig2 failed to initialize`: PDF.js decodes them with WebAssembly files that
+are not vendored, and the viewer gives it no `wasmUrl`. Commit `75fa8aa` records that
+Firefox on macOS draws a box for some script characters after a letter, which is why
+titles set scripts as markup. The 160 tests of `templates/overlay/tests/` run under Node,
+all but two with a fake DOM and a fake PDF.js. The two in `pdfjs-build.test.mjs` load the
+real vendored files with the builtins Safari 17.4 lacks removed. None of them runs a
+browser.
 
 ## Checking it in CI
 
