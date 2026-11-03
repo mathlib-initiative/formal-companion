@@ -29,6 +29,14 @@ export const PDF_BYTES = new TextEncoder().encode(
 /** Where the viewer page sits when the site is served on loopback. */
 export const ORIGIN = "http://127.0.0.1:8000";
 export const PAGE_URL = `${ORIGIN}/pdf-overlay/viewer/index.html`;
+/** The route as the viewer fetches it: resolved against its page, at the root of the origin. */
+export const PDF_URL = `${ORIGIN}${PDF_ROUTE}`;
+/**
+ * A site served from a project path, as a static host such as GitHub Pages
+ * serves a repository's site: the site root is a directory below the origin.
+ */
+export const PROJECT_ORIGIN = "https://an-owner.github.io";
+export const PROJECT_PAGE_URL = `${PROJECT_ORIGIN}/notes-companion/pdf-overlay/viewer/index.html`;
 
 /** A 64-hex-digit stand-in that is nobody's real digest. */
 export function fakeSha256(seed) {

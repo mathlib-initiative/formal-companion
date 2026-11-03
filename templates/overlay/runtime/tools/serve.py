@@ -13,7 +13,9 @@ through `overlay_annotations.py`), both found from this file's own path.
 the PDF is cached under an ignored directory and served only on loopback at one
 route, and section 1 rule 6 is why the acquisition hardening (HTTPS only,
 redirects only to HTTPS, atomic install, no directory listings, no traversal)
-is kept while the refusal of a symlinked executable is not.
+is kept while the refusal of a symlinked executable is not. A config whose
+`pdf.publish` names an open license (rule 4's exception) moves that route to
+`/<mount>/<file_name>`, where `build_site.py` publishes the same verified bytes.
 """
 
 from __future__ import annotations
@@ -69,13 +71,18 @@ PDF_MEDIA_TYPES = {"application/pdf", "application/octet-stream", "binary/octet-
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 ROUTE = re.compile(r"/__[A-Za-z0-9._~/-]*\Z")
 FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
+#: `pdf.publish.license`: the open licenses under which the PDF may be published
+#: with the site (section 3).
+OPEN_LICENSES = ("Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT")
+PUBLISHED_FILE_NAME = re.compile(r"\.pdf\Z")
 
 CONFIG_KEYS = {
     "schema", "schema_version", "source_id", "title", "lede", "back_link",
     "display", "storage_key", "pdf", "site", "build", "serve",
 }
 REQUIRED_CONFIG_KEYS = {"schema", "schema_version", "source_id", "title", "pdf", "site"}
-PDF_KEYS = {"file_name", "cache_dir", "route"}
+PDF_KEYS = {"file_name", "cache_dir", "route", "publish"}
+PUBLISH_KEYS = {"license"}
 SITE_KEYS = {"output_root", "index", "mount", "link_text"}
 BUILD_KEYS = {"commands"}
 SERVE_KEYS = {"host", "port"}
@@ -127,9 +134,19 @@ class Config:
     build_commands: tuple[tuple[str, ...], ...]
     host: str
     port: int
+    publish_license: str = ""
+
+    @property
+    def published_path(self) -> str:
+        """`<mount>/<file_name>` when the PDF is published with the site, else ""."""
+        return f"{self.mount}/{self.file_name}" if self.publish_license else ""
 
     @property
     def route_prefix(self) -> str:
+        """Requests under it that are not the route are refused; a published PDF's
+        route is a file of the mount, so only `/__` is reserved then."""
+        if self.publish_license:
+            return "/__"
         return self.route.rsplit("/", 1)[0] + "/"
 
 
@@ -381,6 +398,7 @@ def load_config(overlay: Path) -> Config:
     if not route.startswith("/__") or ".." in route or not ROUTE.fullmatch(route) \
             or route.endswith("/"):
         fail(f"{CONFIG_NAME}.pdf.route: must start with /__, name a file and hold no ..")
+    publish_license = publish_license_of(pdf, file_name)
 
     site = exact_keys(value["site"], SITE_KEYS, set(), f"{CONFIG_NAME}.site")
     output_root = relative_subpath(site.get("output_root", DEFAULT_OUTPUT_ROOT),
@@ -388,6 +406,9 @@ def load_config(overlay: Path) -> Config:
     index = relative_subpath(site.get("index", DEFAULT_INDEX), f"{CONFIG_NAME}.site.index")
     mount = relative_subpath(site.get("mount", DEFAULT_MOUNT), f"{CONFIG_NAME}.site.mount")
     link_text = nonempty_string(site.get("link_text", title), f"{CONFIG_NAME}.site.link_text")
+    if publish_license:
+        # The viewer fetches a published PDF from beside the config, `../<file_name>`.
+        route = urllib.parse.quote(f"/{mount}/{file_name}")
 
     build = exact_keys(value.get("build", {}), BUILD_KEYS, set(), f"{CONFIG_NAME}.build")
     commands = argv_list(build.get("commands", []), f"{CONFIG_NAME}.build.commands")
@@ -417,7 +438,22 @@ def load_config(overlay: Path) -> Config:
         build_commands=commands,
         host=host,
         port=port,
+        publish_license=publish_license,
     )
+
+
+def publish_license_of(pdf: dict[str, Any], file_name: str) -> str:
+    """`pdf.publish.license`, or "" when the config does not publish the PDF."""
+    if "publish" not in pdf:
+        return ""
+    publish = exact_keys(pdf["publish"], PUBLISH_KEYS, PUBLISH_KEYS, f"{CONFIG_NAME}.pdf.publish")
+    found = publish["license"]
+    if not isinstance(found, str) or found not in OPEN_LICENSES:
+        fail(f"{CONFIG_NAME}.pdf.publish.license: expected one of {', '.join(OPEN_LICENSES)}, "
+             f"got {found!r}")
+    if not PUBLISHED_FILE_NAME.search(file_name):
+        fail(f"{CONFIG_NAME}.pdf.file_name: a published PDF's file name ends in .pdf: {file_name!r}")
+    return found
 
 
 def load_source_record(overlay: Path, config: Config) -> SourceRecord:
@@ -850,8 +886,8 @@ def run_build(
 # the loopback server
 # ---------------------------------------------------------------------------
 
-def assert_site_servable(site: Path) -> Path:
-    """No symlink and no PDF under the served root: rule 4 of section 1."""
+def assert_site_servable(site: Path, published: str = "") -> Path:
+    """No symlink and no PDF under the served root, but the `published` one: rule 4 of section 1."""
     pending = [site]
     while pending:
         directory = pending.pop()
@@ -864,7 +900,8 @@ def assert_site_servable(site: Path) -> Path:
             path = Path(entry.path)
             if stat.S_ISLNK(mode):
                 fail(f"the site contains a symlink: {path.relative_to(site)}")
-            if entry.name.casefold().endswith(".pdf"):
+            if entry.name.casefold().endswith(".pdf") \
+                    and path.relative_to(site).as_posix() != published:
                 fail(f"the site contains a PDF, which is served only at its route: "
                      f"{path.relative_to(site)}")
             if stat.S_ISDIR(mode):
@@ -911,8 +948,9 @@ class OverlayRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def _is_pdf_route(self) -> bool:
         parsed = self._request_parts()
-        return (parsed.path == self.server.route and not parsed.query
-                and not parsed.fragment)
+        # decoded, since a browser sends a mount's `+`, `(` or `@` as it is
+        return (urllib.parse.unquote(parsed.path) == urllib.parse.unquote(self.server.route)
+                and not parsed.query and not parsed.fragment)
 
     def _reserved_near_miss(self) -> bool:
         path = self._request_parts().path
@@ -1083,12 +1121,16 @@ def execute(arguments: argparse.Namespace, overlay: Path) -> int:
             if building:
                 run_build(overlay, root, config)
             if not serving:
-                print("PASS overlay build complete; the PDF stayed out of the site")
+                # the site goes up as it is, so hold it to what serving would
+                assert_site_servable(site_root, config.published_path)
+                where = (f"is published at {config.published_path} under {config.publish_license}"
+                         if config.publish_license else "stayed out of the site")
+                print(f"PASS overlay build complete; the PDF {where}")
                 return 0
             assert server is not None
             require_directory(site_root, "site output root",
                               hint="; build the site first (--build)")
-            assert_site_servable(site_root)
+            assert_site_servable(site_root, config.published_path)
             pdf = open_validated_pdf(cache_dir / config.file_name, record)
             server.pdf = pdf
             base = f"http://{config.host}:{port}"

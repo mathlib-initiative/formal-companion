@@ -29,10 +29,16 @@ python3 pdf-overlay/tools/build_site.py       # publish into an already-built si
 
 The PDF is fetched over HTTPS from the URLs the annotations' PDF ends name,
 verified against their sha256, cached under `pdf.cache_dir` and served only on
-loopback at `pdf.route`; it is never committed. `build_site.py` copies the
-viewer and the bundle into `<site.output_root>/<site.mount>/` and the
-annotation files into `<site.output_root>/annotations/`; a declaration's
-rendered page is a page of `<site.output_root>`. It also writes
+loopback at `pdf.route`; it is never committed. A PDF under an open license
+may be published with the site instead: with `pdf.publish` naming its license,
+`build_site.py` also copies the verified PDF to `<site.mount>/<pdf.file_name>`,
+and the built site works from a static host such as GitHub Pages
+(`docs/overlay.md` section 3 in the formal-companion skill).
+
+`build_site.py` copies the viewer and the bundle into
+`<site.output_root>/<site.mount>/` and the annotation files into
+`<site.output_root>/annotations/`; a declaration's rendered page is a page
+of `<site.output_root>`. It also writes
 `<site.mount>/verso.json` from the site's Verso pages: each card's
 statement with its tokens and hovers (the viewer draws the key cards'). A
 site without them gets your committed `pdf-overlay/verso.json`, less the

@@ -1,6 +1,6 @@
 # Generating an overlay
 
-A companion's PDF overlay is a viewer, served on loopback, that shows the source PDF
+A companion's PDF overlay is a viewer, served on loopback by default, that shows the source PDF
 with each item outlined and the declarations linked to it. `cf overlay` writes two
 directories in the companion, and nothing else:
 
@@ -16,8 +16,8 @@ It needs no workspace. Any faithfulness verdicts the viewer shows come from file
 committed in the companion, never from an audit workspace. [docs/overlay.md](overlay.md)
 is the contract, and [docs/exporters.md](exporters.md) says what the exporter reads.
 
-**Contents**: the steps · what export needs · reading the overlay · what the viewer
-shows · proof steps · browsers · checking it in CI
+**Contents**: the steps · what export needs · reading the overlay · publishing an
+openly licensed PDF · what the viewer shows · proof steps · browsers · checking it in CI
 
 ## The steps
 
@@ -49,8 +49,8 @@ and a second run changes nothing. `cf overlay sync --check` is read-only and inc
 the scan. `cf overlay check` adds the curation inputs' hashes, the overlay's own
 rules and a committed `verso.json`. The copied runtime comes to about 2 MB. `annotations.bundle.json`, and `verso.json`
 where a companion commits one, grow with the annotations: the three private companions'
-`pdf-overlay/` directories come to 5.5 MB, 9.3 MB and 40 MB. The PDF is never copied or
-committed.
+`pdf-overlay/` directories come to 5.5 MB, 9.3 MB and 40 MB. The PDF is never committed,
+and it is copied only into a built site whose config publishes it (`pdf.publish`, below).
 
 ## What export needs
 
@@ -96,6 +96,27 @@ made elsewhere (`docs/overlay.md` section 5). A second `serve.py` on the port th
 holds stops with `is already in use`. One on another port, or one that only builds, waits
 on `.overlay-serve.lock` until the first exits.
 
+## Publishing an openly licensed PDF
+
+By default the overlay works only on loopback, because the PDF never leaves the
+machine. A companion whose PDF is under an open license can publish it with the site
+instead, so the overlay also works from GitHub Pages. Add the license to the `pdf`
+block of `overlay.config.json`:
+
+```json
+"publish": {"license": "CC-BY-4.0"}
+```
+
+The license is the one the PDF states, and one of `Apache-2.0`, `CC-BY-4.0`,
+`CC-BY-SA-4.0`, `CC0-1.0` and `MIT`; anything else is refused, and `pdf.file_name`
+must end in `.pdf`. In the Pages workflow, `python3 pdf-overlay/tools/serve.py
+--build-only` fetches and verifies the PDF, builds the site and copies the PDF into it
+at `<site.mount>/<pdf.file_name>`; upload `site.output_root` as the Pages artifact. The
+viewer fetches the PDF from beside its config, so it works under a project path such
+as `https://<owner>.github.io/<repository>/`. Keep `site.output_root` git-ignored, as
+the default is, and the PDF is still never committed. A site deployed from a branch
+would commit it, and its Jekyll build drops any path part that starts with `_`.
+
 ## What the viewer shows
 
 - The source, with a "Verified PDF" chip once the sha256 the annotations pin has
@@ -134,7 +155,7 @@ under the JavaScriptCore shell of macOS 14.4, importing `pdf.min.mjs` throws
 with the warning `JpxError: OpenJPEG failed to initialize`, because the vendored PDF.js
 has no OpenJPEG decoder beside it. Commit `75fa8aa` records that Firefox
 on macOS draws a box for some script characters after a letter, which is why titles set
-scripts as markup. The 158 tests of `templates/overlay/tests/` run under Node with a fake
+scripts as markup. The tests of `templates/overlay/tests/` run under Node with a fake
 DOM and a fake PDF.js, so they cannot see a browser's limits.
 
 ## Checking it in CI

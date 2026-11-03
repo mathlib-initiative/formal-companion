@@ -18,6 +18,7 @@ import {
   COVERAGE_VALUES,
   LINK_ROLES,
   NAMESPACE,
+  OPEN_LICENSES,
   VERDICT_KINDS,
   VERDICT_LABELS,
   buildIndex,
@@ -43,6 +44,7 @@ import {
   pageSummaryText,
   paginateCards,
   parseBundle,
+  pdfFetchUrl,
   pdfSource,
   pointToViewport,
   preferredItemId,
@@ -78,8 +80,11 @@ import {
   HERE,
   ORIGIN,
   OTHER_SOURCE_ID,
+  PAGE_URL,
   PDF_BYTES,
   PDF_ROUTE,
+  PROJECT_ORIGIN,
+  PROJECT_PAGE_URL,
   REPOSITORY,
   SOURCE_ID,
   VERSO_TARGET,
@@ -113,7 +118,7 @@ function cardsOf(index, itemId) {
 test("config: the viewer reads what it needs and fills section 3's defaults", () => {
   const config = readConfig(makeConfig());
   assert.equal(config.sourceId, SOURCE_ID);
-  assert.equal(config.pdfRoute, PDF_ROUTE);
+  assert.equal(config.pdfUrl, PDF_ROUTE);
   assert.equal(config.siteRoot, "../../");
   assert.equal(config.stripPrefix, "Notes.");
   assert.equal(config.minimal, false, "an overlay explains itself unless the config says otherwise");
@@ -141,6 +146,56 @@ test("config: a wrong schema, version, missing field, unsafe route or mount is r
     assert.throws(() => readConfig(makeConfig(override)), pattern);
   }
   assert.throws(() => siteRootFor(""), /site\.mount/);
+});
+
+/** A config that publishes its PDF under `license`, with `overrides` on top. */
+function publishing(license = "CC-BY-4.0", overrides = {}) {
+  return makeConfig({ pdf: { cache_dir: ".lake/overlay-pdf", file_name: "notes.pdf", publish: { license } },
+                      ...overrides });
+}
+
+test("config: with no pdf.publish the PDF stays at its loopback route", () => {
+  const config = readConfig(makeConfig());
+  assert.equal(config.pdfLicense, null);
+  assert.equal(config.pdfUrl, PDF_ROUTE);
+  assert.equal(pdfFetchUrl(config, PAGE_URL), `${ORIGIN}${PDF_ROUTE}`);
+});
+
+test("config: a PDF published under an open license is fetched from beside the config", () => {
+  assert.deepEqual([...OPEN_LICENSES], ["Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT"]);
+  for (const license of OPEN_LICENSES) {
+    const config = readConfig(publishing(license));
+    assert.equal(config.pdfLicense, license);
+    assert.equal(config.pdfUrl, "../notes.pdf");
+  }
+  const kept = makeConfig({ pdf: { file_name: "notes.pdf", publish: { license: "MIT" }, route: PDF_ROUTE } });
+  assert.equal(readConfig(kept).pdfUrl, "../notes.pdf", "a route the config keeps is not used");
+});
+
+test("config: publishing needs an open license and a file name ending in .pdf", () => {
+  for (const [pdf, pattern] of [
+    [{ file_name: "notes.pdf", publish: {} }, /pdf\.publish\.license null/],
+    [{ file_name: "notes.pdf", publish: { license: "CC-BY-NC-4.0" } }, /pdf\.publish\.license "CC-BY-NC-4\.0"/],
+    [{ file_name: "notes.pdf", publish: { license: "cc-by-4.0" } }, /pdf\.publish\.license "cc-by-4\.0"/],
+    [{ file_name: "notes.pdf", publish: "CC-BY-4.0" }, /pdf\.publish\.license null/],
+    [{ file_name: "notes.pdf", publish: null }, /pdf\.publish\.license null/],
+    [{ file_name: "notes.djvu", publish: { license: "CC-BY-4.0" } }, /pdf\.file_name "notes\.djvu"/],
+    [{ file_name: "../notes.pdf", publish: { license: "CC-BY-4.0" } }, /pdf\.file_name "\.\.\/notes\.pdf"/],
+    [{ publish: { license: "CC-BY-4.0" } }, /pdf\.file_name null/],
+  ]) {
+    assert.throws(() => readConfig(makeConfig({ pdf })), pattern);
+  }
+});
+
+test("config: a published PDF resolves under a project path, where the route would not", () => {
+  const published = readConfig(publishing());
+  assert.equal(pdfFetchUrl(published, PROJECT_PAGE_URL), `${PROJECT_ORIGIN}/notes-companion/pdf-overlay/notes.pdf`);
+  assert.equal(pdfFetchUrl(published, PAGE_URL), `${ORIGIN}/pdf-overlay/notes.pdf`);
+  // The route sits at the root of the origin, outside the project's site.
+  assert.equal(pdfFetchUrl(readConfig(makeConfig()), PROJECT_PAGE_URL), `${PROJECT_ORIGIN}${PDF_ROUTE}`);
+  const deep = readConfig(publishing("MIT", { site: { mount: "tools/pdf-overlay" } }));
+  assert.equal(pdfFetchUrl(deep, `${PROJECT_ORIGIN}/notes-companion/tools/pdf-overlay/viewer/index.html`),
+               `${PROJECT_ORIGIN}/notes-companion/tools/pdf-overlay/notes.pdf`, "beside the config at any depth");
 });
 
 // --- the bundle -------------------------------------------------------------

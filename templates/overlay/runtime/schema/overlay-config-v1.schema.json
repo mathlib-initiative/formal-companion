@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:formal-companion:overlay-config-v1",
   "title": "formal-companion overlay configuration, version 1",
-  "description": "Section 3 of the overlay contract. The identifier above names this schema and is never fetched. The authoritative implementations are scripts/overlay/config.py in the formal-companion skill and tools/check_generated.py beside this file; they repeat these four patterns verbatim and a test fails when a string differs. A loopback host is written 127.x.y.z or ::1.",
+  "description": "Section 3 of the overlay contract. The identifier above names this schema and is never fetched. The authoritative implementations are scripts/overlay/config.py in the formal-companion skill and tools/check_generated.py beside this file; they repeat these five patterns and the license list verbatim and a test fails when a string differs. A loopback host is written 127.x.y.z or ::1.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "schema_version", "source_id", "title", "pdf", "site"],
@@ -48,12 +48,23 @@
         "file_name": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"},
         "cache_dir": {"$ref": "#/$defs/relative_path"},
         "route": {
-          "description": "Starts with /__, names a file, holds no `..`. Defaults to /__overlay_pdf__/<file_name>.",
+          "description": "Starts with /__, names a file, holds no `..`. Defaults to /__overlay_pdf__/<file_name>. Not used when the PDF is published.",
           "type": "string",
           "pattern": "^/__[A-Za-z0-9._~/-]*[A-Za-z0-9._~-]$",
           "not": {"pattern": "\\.\\."}
+        },
+        "publish": {
+          "description": "Opt in to publishing the PDF with the built site, at <mount>/<file_name> beside this file, so the overlay works from a static host. Only for a PDF under one of these open licenses (SPDX ids), and the file name then ends in .pdf. Without it the PDF is served only on loopback, at the route.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["license"],
+          "properties": {
+            "license": {"enum": ["Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT"]}
+          }
         }
-      }
+      },
+      "if": {"required": ["publish"]},
+      "then": {"properties": {"file_name": {"pattern": "\\.pdf$"}}}
     },
     "site": {
       "type": "object",

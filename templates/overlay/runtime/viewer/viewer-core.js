@@ -26,6 +26,13 @@ export const MAX_JSON_BYTES = 64 * 1024 * 1024;
 
 /** `pdf.route` must start with this and carry no `..` (the contract's section 3). */
 export const ROUTE_PREFIX = "/__";
+/**
+ * `pdf.publish.license`: the open licenses under which the PDF may be published
+ * with the site (the contract's section 3). A published PDF sits beside
+ * `overlay.config.json`, so its URL is relative and works under a project path.
+ */
+export const OPEN_LICENSES = Object.freeze(["Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT"]);
+const PUBLISHED_FILE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*\.pdf$/;
 
 export const DEFAULT_MOUNT = "pdf-overlay";
 export const DEFAULT_STORAGE_KEY = "formal-companion-overlay-page";
@@ -338,11 +345,7 @@ export function readConfig(raw) {
   if (!title) {
     fail("overlay.config.json names no title.");
   }
-  const route = text(isObject(raw.pdf) ? raw.pdf.route : "");
-  if (!route.startsWith(ROUTE_PREFIX) || route.includes("..")) {
-    fail(`overlay.config.json has pdf.route ${JSON.stringify(route)}; a route starts with `
-         + `"${ROUTE_PREFIX}" and carries no "..".`);
-  }
+  const { pdfLicense, pdfUrl } = readPdf(isObject(raw.pdf) ? raw.pdf : {});
   // No back_link, or one whose href is refused, is no back link: the top bar starts with the title.
   const back = isObject(raw.back_link) ? raw.back_link : {};
   const backHref = safeBackLinkHref(back.href);
@@ -352,7 +355,8 @@ export function readConfig(raw) {
   return {
     backLink: backHref && backText ? { href: backHref, text: backText } : null,
     lede: text(raw.lede),
-    pdfRoute: route,
+    pdfLicense,
+    pdfUrl,
     // build_site.py publishes the annotation files at the site root, the same
     // place relative to the built pages as in the repository; it is this far up.
     siteRoot: siteRootFor(site.mount ?? DEFAULT_MOUNT),
@@ -362,6 +366,37 @@ export function readConfig(raw) {
     minimal: display.minimal === true,
     title,
   };
+}
+
+/**
+ * Where the PDF is fetched from, relative to the viewer page: `pdf.route` on
+ * loopback, or, when `pdf.publish` names an open license, `../<file_name>`,
+ * beside `overlay.config.json` in the built site.
+ */
+function readPdf(pdf) {
+  if (pdf.publish === undefined) {
+    const route = text(pdf.route);
+    if (!route.startsWith(ROUTE_PREFIX) || route.includes("..")) {
+      fail(`overlay.config.json has pdf.route ${JSON.stringify(route)}; a route starts with `
+           + `"${ROUTE_PREFIX}" and carries no "..".`);
+    }
+    return { pdfLicense: null, pdfUrl: route };
+  }
+  const license = isObject(pdf.publish) ? pdf.publish.license : undefined;
+  if (!OPEN_LICENSES.includes(license)) {
+    fail(`overlay.config.json has pdf.publish.license ${JSON.stringify(license ?? null)}; `
+         + `a published PDF carries one of ${OPEN_LICENSES.join(", ")}.`);
+  }
+  if (typeof pdf.file_name !== "string" || !PUBLISHED_FILE_NAME.test(pdf.file_name)) {
+    fail(`overlay.config.json has pdf.file_name ${JSON.stringify(pdf.file_name ?? null)}; `
+         + "a published PDF is one plain file name ending in .pdf.");
+  }
+  return { pdfLicense: license, pdfUrl: `../${pdf.file_name}` };
+}
+
+/** The absolute URL the viewer fetches the PDF from, resolved against its own page. */
+export function pdfFetchUrl(config, pageUrl) {
+  return new URL(config.pdfUrl, pageUrl).href;
 }
 
 // --- the bundle -------------------------------------------------------------

@@ -19,7 +19,8 @@
  * `href` is used only when a card's page resolves to an `https:` URL or a
  * page of this site, and a token's only when it is a page of this site; the
  * hover card is placed through CSSOM, never a style attribute; the PDF is
- * requested only from `config.pdf.route`; PDF.js runs with
+ * requested only from `pdf.route`, or, when `pdf.publish` names an open
+ * license, from `../<file_name>` beside the config; PDF.js runs with
  * `isEvalSupported: false`.
  */
 import {
@@ -47,6 +48,7 @@ import {
   pageSummaryText,
   paginateCards,
   parseBundle,
+  pdfFetchUrl,
   preferredItemId,
   quadToViewport,
   readConfig,
@@ -154,36 +156,39 @@ export async function loadVerso(fetchImpl = globalThis.fetch, url = VERSO_URL) {
 }
 
 /**
- * Fetch the PDF from the configured loopback route and verify its bytes against
- * the sha256 its subject ends state before anything renders them.
+ * Fetch the PDF from the configured loopback route, or from beside the config
+ * when it is published, and verify its bytes against the sha256 its subject
+ * ends state before anything renders them.
  */
 export async function loadPdfBytes(config, index, fetchImpl = globalThis.fetch,
-                                   cryptoProvider = globalThis.crypto) {
+                                   cryptoProvider = globalThis.crypto, pageUrl = globalThis.location?.href) {
   if (typeof fetchImpl !== "function") {
-    throw new Error("Fetch is unavailable; the verified loopback PDF cannot be loaded.");
+    throw new Error("Fetch is unavailable; the verified PDF cannot be loaded.");
   }
-  const response = await fetchImpl(config.pdfRoute, {
+  // An error names the PDF as the reader knows it: on loopback, or published with the site.
+  const what = config.pdfLicense ? "published PDF" : "loopback PDF";
+  const response = await fetchImpl(pdfFetchUrl(config, pageUrl), {
     cache: "no-store",
     credentials: "same-origin",
   });
   if (!response?.ok) {
     throw new Error(
-      `Unable to load the verified loopback PDF (${response?.status ?? "no response"}).`,
+      `Unable to load the verified ${what} (${response?.status ?? "no response"}).`,
     );
   }
   const mediaType = response.headers?.get?.("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
   if (mediaType !== PDF_MEDIA_TYPE) {
-    throw new Error(`The loopback PDF response has unexpected media type ${mediaType || "missing"}.`);
+    throw new Error(`The ${what} response has unexpected media type ${mediaType || "missing"}.`);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const declared = index.bytes;
   if (Number.isInteger(declared) && bytes.byteLength !== declared) {
-    throw new Error(`The loopback PDF is ${bytes.byteLength} bytes; the source record says ${declared}.`);
+    throw new Error(`The ${what} is ${bytes.byteLength} bytes; the source record says ${declared}.`);
   }
   const verification = await verifyPdfBytes(bytes, index.sha256, cryptoProvider);
   if (!verification.ok) {
     throw new Error(
-      `Loopback PDF SHA-256 is ${verification.actual}; expected ${verification.expected}.`,
+      `${what[0].toUpperCase()}${what.slice(1)} SHA-256 is ${verification.actual}; expected ${verification.expected}.`,
     );
   }
   return { bytes, verification };
@@ -299,7 +304,7 @@ export async function bootstrapViewer({
   const ui = Object.fromEntries(
     [
       "back-link", "page-heading", "page-lede", "keys",
-      "error", "status", "status-glyph", "status-chip", "notice", "workspace",
+      "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness",
       "page-scroller", "page-stage", "pdf-canvas", "overlay", "region-bar", "region-peek",
@@ -407,6 +412,11 @@ export async function bootstrapViewer({
     ui["page-lede"].hidden = !config.lede;
     // `display.minimal`: the toolbar buttons name their own shortcuts.
     ui.keys.hidden = config.minimal;
+    // The shell says the PDF never leaves loopback; a published one did, under its license.
+    if (config.pdfLicense) {
+      ui["status-note"].textContent = `The PDF is published with this site under ${config.pdfLicense}. `
+        + "This page checks its SHA-256 against the one the annotations pin before PDF.js renders it.";
+    }
     // With no back link the top bar starts with the title; the stylesheet drops the divider too.
     const back = config.backLink;
     ui["back-link"].hidden = !back;
@@ -1697,7 +1707,7 @@ export async function bootstrapViewer({
   }
   clearError();
   try {
-    const { bytes } = await loadPdfBytes(state.config, state.index, fetchImpl, cryptoProvider);
+    const { bytes } = await loadPdfBytes(state.config, state.index, fetchImpl, cryptoProvider, pageUrl);
     const pdfjs = await pdfjsLoader();
     pdfjs.GlobalWorkerOptions.workerSrc = new URL(
       "../vendor/pdfjs/pdf.worker.min.mjs",
