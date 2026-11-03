@@ -42,6 +42,11 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **A specification for the informalize mode** (`docs/proposals/informalize.md`), not yet
+  built: from a Lean library at a commit and one theorem, an item table, an informal LaTeX text
+  written and checked by a fleet, a reproducible PDF with a box per item and part, Literature
+  Links annotations and a published overlay; `tests/test_informalize_spec.py` holds it to the
+  code it names.
 - **An overlay may publish an openly licensed PDF** (`docs/overlay.md` rule 4 and section 3), so
   its built site works from a static host under a project path, such as
   `https://<owner>.github.io/<repository>/` on GitHub Pages, where the `/__` route at the root of

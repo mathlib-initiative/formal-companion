@@ -35,8 +35,10 @@ CHANGELOG.md      what a version number promises, and what changed
 POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
 docs/proposals/   designs: pdf-to-companion.md (the PDF-to-companion pipeline, not yet built),
-                  wikipedia-locate.md (locate; its section 1 lists what is built)
-                  and statement-cut.md (how locate's inventory cuts passages)
+                  wikipedia-locate.md (locate; its section 1 lists what is built),
+                  statement-cut.md (how locate's inventory cuts passages)
+                  and informalize.md (an informal companion written from a Lean
+                  library, not yet built)
 docs/running-an-audit.md
                   the audit's program, an onboarding transcript, the overrides
 docs/workspace.md the workspace directory model and the rules it enforces
