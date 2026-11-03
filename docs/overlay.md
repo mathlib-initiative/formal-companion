@@ -44,7 +44,9 @@ annotation document format of `vendor/formal_companion_annotations/`;
    verifies it again. The exception is a PDF under an open license: when
    `pdf.publish` names one (section 3), `build_site.py` copies the verified
    PDF into the built site at `<mount>/<file_name>`, so the site may be served
-   from anywhere, GitHub Pages included. It is still never committed.
+   from anywhere, GitHub Pages included (`POLICY.md` section 3). It is still
+   never committed, as long as `site.output_root` stays git-ignored, as the
+   default under `.lake/` is.
 5. **One exception to "never write to a companion repo".** `cf overlay init`,
    `export` and `sync`, run by a person by name, write
    `<companion>/pdf-overlay/` and (`export`) `<companion>/annotations/`, and
@@ -95,9 +97,8 @@ section folders of annotation files and nothing else.
 
 Unchanged: `schema`, `schema_version`, `source_id`, `title`, `pdf` and `site`
 are required; `lede`, `display.strip_prefix`, `display.minimal`, `storage_key`,
-`pdf.cache_dir`, `pdf.route`, `pdf.publish` (default: none), `site.output_root`,
-`site.index`, `site.mount`, `site.link_text`, `build.commands` (default: none)
-and `serve` have defaults;
+`pdf.cache_dir`, `pdf.route`, `site.output_root`, `site.index`, `site.mount`,
+`site.link_text`, `build.commands` (default: none) and `serve` have defaults;
 unknown keys are errors. `back_link` is optional: with none, or one whose `href`
 the viewer refuses, the top bar shows no back link. `display.minimal: true`
 keeps the passage, its links and their statements, and leaves out what describes
@@ -121,12 +122,15 @@ together by `tests/test_overlay_config.py`.
 `{"license": "<SPDX id>"}` it is published with the site (rule 4): the id is one
 of `Apache-2.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC0-1.0` and `MIT`, and
 `file_name` must end in `.pdf`, so a static host serves it as a PDF. Name the
-license the PDF itself states; any other id, or none, is refused. The PDF then
+license the PDF itself states; any other id, or none, is refused. The tools take
+that id on trust, since no record carries a license, so a change that adds
+`pdf.publish` needs a person to check it against the PDF's own notice. The PDF then
 sits at `<mount>/<file_name>`, beside `overlay.config.json`, and the viewer
 fetches it from `../<file_name>`, relative to its own page. That works under a
 project path such as `https://<owner>.github.io/<repository>/`, where a `/__`
-route at the root of the domain would not, and Jekyll, which drops what starts
-with `_`, keeps it unless `site.mount` does. `pdf.route` is then not used.
+route at the root of the domain would not. `pdf.route` is then not used. Deploy
+the site as a Pages workflow artifact: a site deployed from a branch would commit
+the PDF, and its Jekyll build drops any path part that starts with `_`.
 
 ## 4. The viewer (`runtime/viewer/`)
 
@@ -236,7 +240,9 @@ bytecode writing off.
   extension's `alternate_urls`, over HTTPS only; its `sha256` and the
   extension's `bytes`. Acquire, verify, cache, optionally build, serve on
   loopback. With `pdf.publish` the PDF is served at `/<mount>/<file_name>`
-  rather than at `pdf.route`, and that one PDF may be in the site.
+  rather than at `pdf.route`, and that one PDF may be in the site. Before it
+  serves, and before `--build-only` passes, it refuses a site that holds any
+  other PDF or a symlink.
 - **`build_site.py`**: publish `viewer/`, `vendor/`, `overlay.config.json`,
   `GENERATED.json` and the bundle into `<output_root>/<mount>/`, and the
   annotation files and their `_defaults.json` (exactly the bundle's records)

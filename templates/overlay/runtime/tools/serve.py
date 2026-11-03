@@ -948,8 +948,9 @@ class OverlayRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def _is_pdf_route(self) -> bool:
         parsed = self._request_parts()
-        return (parsed.path == self.server.route and not parsed.query
-                and not parsed.fragment)
+        # decoded, since a browser sends a mount's `+`, `(` or `@` as it is
+        return (urllib.parse.unquote(parsed.path) == urllib.parse.unquote(self.server.route)
+                and not parsed.query and not parsed.fragment)
 
     def _reserved_near_miss(self) -> bool:
         path = self._request_parts().path
@@ -1120,6 +1121,8 @@ def execute(arguments: argparse.Namespace, overlay: Path) -> int:
             if building:
                 run_build(overlay, root, config)
             if not serving:
+                # the site goes up as it is, so hold it to what serving would
+                assert_site_servable(site_root, config.published_path)
                 where = (f"is published at {config.published_path} under {config.publish_license}"
                          if config.publish_license else "stayed out of the site")
                 print(f"PASS overlay build complete; the PDF {where}")

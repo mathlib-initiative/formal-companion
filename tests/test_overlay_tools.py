@@ -1315,10 +1315,10 @@ class TestTheLoopbackServer(OverlayToolsTestCase):
         mount = self.companion.site / "pdf-overlay"
         (mount / "viewer").mkdir(parents=True)
         (mount / "viewer" / "index.html").write_text("<p>viewer</p>", encoding="utf-8")
-        (mount / "notes.pdf").write_bytes(FIXTURE_PDF)
+        (mount / "notes.pdf").write_bytes(FIXTURE_PDF[:-1] + b"X")
         with urllib.request.urlopen(base + "/pdf-overlay/notes.pdf", timeout=10) as response:
             self.assertEqual(response.headers.get_content_type(), "application/pdf")
-            self.assertEqual(response.read(), FIXTURE_PDF)
+            self.assertEqual(response.read(), FIXTURE_PDF, "the verified cache, not the site's copy")
         with urllib.request.urlopen(base + "/pdf-overlay/viewer/index.html", timeout=10) as response:
             self.assertIn(b"viewer", response.read())
         for path in ("/__overlay_pdf__/notes.pdf", "/pdf-overlay/notes.pdf?x=1", "/pdf-overlay/other.pdf"):
@@ -1332,6 +1332,15 @@ class TestTheLoopbackServer(OverlayToolsTestCase):
         (self.companion.site / "leak.pdf").write_bytes(FIXTURE_PDF)
         with self.assertRaisesRegex(SERVE.OverlayError, "contains a PDF.*leak\\.pdf"):
             SERVE.assert_site_servable(self.companion.site, config.published_path)
+
+    def test_a_published_pdf_under_a_mount_with_sub_delimiters_is_served(self):
+        value = self.companion.config_value()
+        self.companion.write_config(pdf=dict(value["pdf"], publish={"license": "MIT"}),
+                                    site=dict(value["site"], mount="a+b(c)"))
+        base, _config = self.serving()
+        for path in ("/a+b(c)/notes.pdf", "/a%2Bb%28c%29/notes.pdf"):
+            with self.subTest(path=path), urllib.request.urlopen(base + path, timeout=10) as response:
+                self.assertEqual(response.read(), FIXTURE_PDF)
 
     def test_a_busy_port_is_reported_and_nothing_else_runs(self):
         listener = socket.socket()
@@ -1375,6 +1384,32 @@ class TestTheToolsFromTheirOwnPath(OverlayToolsTestCase):
         self.assertEqual((self.companion.site / "pdf-overlay" / "notes.pdf").read_bytes(), FIXTURE_PDF)
         self.assertEqual(list(self.companion.site.rglob("*.pdf")),
                          [self.companion.site / "pdf-overlay" / "notes.pdf"])
+
+    def test_build_only_refuses_a_pdf_in_the_site_that_is_not_the_published_one(self):
+        value = self.companion.config_value()
+        self.companion.fake_build_tool()
+        self.companion.write_config(pdf=dict(value["pdf"], cache_dir=".lake/build/literate-html/cache"))
+        cache = self.companion.site / "cache" / "notes.pdf"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(FIXTURE_PDF)
+        result = self.companion.run_tool("serve", "--build-only")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("the site contains a PDF", result.stderr)
+        self.assertIn("cache/notes.pdf", result.stderr)
+        self.assertNotIn("PASS", result.stdout)
+
+    def test_build_only_refuses_a_pdf_left_under_an_old_mount(self):
+        value = self.companion.config_value()
+        self.companion.publish()
+        self.companion.write_cache()
+        self.companion.fake_build_tool()
+        self.assertEqual(self.companion.run_tool("serve", "--build-only").returncode, 0)
+        self.companion.write_config(site=dict(value["site"], mount="overlay2"))
+        result = self.companion.run_tool("serve", "--build-only")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("the site contains a PDF", result.stderr)
+        self.assertIn("pdf-overlay/notes.pdf", result.stderr)
+        self.assertNotIn("PASS", result.stdout)
 
     def test_a_tool_run_from_another_directory_still_finds_its_overlay(self):
         self.companion.write_cache()

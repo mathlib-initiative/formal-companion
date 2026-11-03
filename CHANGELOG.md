@@ -51,7 +51,10 @@ release has something to say.
   cached PDF, checked again against the records' sha256 and `bytes`, to `<mount>/<file_name>`
   beside `overlay.config.json`; the viewer fetches it from `../<file_name>`, relative to its own
   page, and its status note names the license; `serve.py` serves the cache there. The PDF is
-  still never committed, and a config without `pdf.publish` behaves as before. `config.py`, the
+  still never committed while `site.output_root` stays ignored, and a config without
+  `pdf.publish` behaves as before. `serve.py --build-only` now checks the built site as serving
+  does, so it refuses any other PDF there, such as a cache inside `site.output_root` or a PDF
+  left under an earlier mount. `POLICY.md` section 3 records the exception. `config.py`, the
   schema, `check_generated.py`, `serve.py`, `build_site.py` and the viewer carry the same license
   list, held together by `tests/test_overlay_config.py`. The viewer now resolves the PDF's URL
   against its own page before it fetches, which sends the same request for a route. `cf overlay
@@ -2508,6 +2511,10 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `cf overlay check` and `check_generated.py` match a config's patterns against the whole
+  value, so they refuse a file name, route, path or host that ends in a newline, as the
+  schema does. `serve.py` refused such a file name, so `cf overlay check` could pass a
+  config it would then refuse.
 - The overlay's hover card. A key held with Alt, Ctrl, Meta or Shift on a
   statement's token is the browser's again. A card that keyboard focus opened
   comes back after the pointer passes over another token, and Escape or the

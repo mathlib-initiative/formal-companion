@@ -193,6 +193,12 @@ TABLE: tuple[tuple[str, dict, bool], ...] = (
     ("a file name with a directory", with_("pdf.file_name", "pdfs/notes.pdf"), False),
     ("a file name with a leading dot", with_("pdf.file_name", ".notes.pdf"), False),
     ("a file name with a space", with_("pdf.file_name", "my notes.pdf"), False),
+    ("a file name with a final newline", with_("pdf.file_name", "notes.pdf\n"), False),
+    ("a published file name with a final newline", with_("pdf", {
+        "file_name": "notes.pdf\n", "publish": {"license": "MIT"}}), False),
+    ("a route with a final newline", with_("pdf.route", "/__overlay_pdf__/notes.pdf\n"), False),
+    ("a cache dir with a final newline", with_("pdf.cache_dir", "build/overlay\n"), False),
+    ("a loopback host with a final newline", with_("serve.host", "127.0.0.1\n"), False),
     ("a route that does not start with /__", with_("pdf.route", "/pdf/notes.pdf"), False),
     ("a route with ..", with_("pdf.route", "/__overlay_pdf__/../notes.pdf"), False),
     ("a route that ends in a slash", with_("pdf.route", "/__overlay_pdf__/"), False),

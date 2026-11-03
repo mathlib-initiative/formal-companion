@@ -216,7 +216,7 @@ def _relative(value: Any, label: str, out: list[str], fallback: str) -> str:
     if not isinstance(value, str) or not value:
         out.append(f"{label}: expected a nonempty relative path")
         return fallback
-    if not _RELATIVE.search(value) or any(p.search(value) for p in _REFUSED) \
+    if not _RELATIVE.fullmatch(value) or any(p.search(value) for p in _REFUSED) \
             or str(PurePosixPath(value)) != value:
         out.append(f"{label}: path must be relative, normalised and traversal-free: "
                    f"{value!r}")
@@ -318,7 +318,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
         pdf = _keys(value["pdf"], PDF_KEYS, REQUIRED_PDF_KEYS, f"{label}.pdf", out)
         if "file_name" in pdf:
             file_name = _string(pdf["file_name"], f"{label}.pdf.file_name", out)
-            if file_name and not _FILE_NAME.search(file_name):
+            if file_name and not _FILE_NAME.fullmatch(file_name):
                 out.append(f"{label}.pdf.file_name: expected one plain file name: "
                            f"{file_name!r}")
                 file_name = ""
@@ -329,7 +329,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
         if not isinstance(route, str) or not route:
             out.append(f"{label}.pdf.route: expected a nonempty string")
             route = ""
-        elif not _ROUTE.search(route) or ".." in route:
+        elif not _ROUTE.fullmatch(route) or ".." in route:
             out.append(f"{label}.pdf.route: must start with /__, name a file and "
                        f"hold no ..: {route!r}")
             route = ""
@@ -361,7 +361,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
         serve = _keys(value["serve"], SERVE_KEYS, frozenset(), f"{label}.serve", out)
         if "host" in serve:
             host = _string(serve["host"], f"{label}.serve.host", out)
-            if host and not (_LOOPBACK.search(host) and _is_loopback(host)):
+            if host and not (_LOOPBACK.fullmatch(host) and _is_loopback(host)):
                 out.append(f"{label}.serve.host: expected a loopback address "
                            f"(127.x.y.z or ::1), got {host!r}")
                 host = DEFAULT_HOST
