@@ -137,6 +137,10 @@ lines move together or not at all.
   pipelines/<id>/             pipeline.yaml, doc.vN.json, stages/<stage>.stage-receipt.json
                               (docs/proposals/pdf-to-companion.md section 4.1; the
                               loader and the receipt writer exist, no stage does yet)
+  informalize/<id>/           informalize.yaml (committed), stages/ (I*.json receipts,
+                              approve-<gate>.json), reference-checklist.md, scope.json;
+                              library/, pdf/ and the output repository
+                              informalize/<id>/repo/ GITIGNORED (§4.2)
   ledger/                     accepted.<name>.jsonl, refuted.<name>.jsonl,
                               adjudicated.<name>.md, routed/findings.<name>.jsonl
   detect/<name>/              proxy-detection artifacts
@@ -426,6 +430,29 @@ the Claude Code session, not by `cf`. The commands emit `args` and print the
 invocation; the session runs it and hands the result back through
 `--transcribe`. `SKILL.md` §"Workflow stages" is the operator-facing version of
 this, and `references/workflow-patterns.md` holds the skeletons.
+
+### 4.2 The informalize stages
+
+Informalize runs the other way: from a Lean library at a 40-hex commit and one theorem it
+**writes** the source, an informal LaTeX text with a box per item and part, and plans from
+an informalize id rather than a companion or a sourceset
+(`docs/proposals/informalize.md`, whose section 3 is the full stage table and whose status
+line says what is built). Built so far:
+
+| stage | command | writes |
+|---|---|---|
+| I0 | `cf informalize init`, `sync [--check]`, `status` | `informalize/<id>/informalize.yaml`; the output repository `informalize/<id>/repo/` (git init, the runtime copied byte for byte into `informal/` and recorded in `informal/GENERATED.json`, `informal/informalize.json`, the project files and `LICENSE` rendered once); `stages/I0.json` |
+| I3 (part) | `cf informalize check-items`, `reference-checklist`, `approve <id> items`, `approve <id> references` | the renumbered `informal/items.json`, `informal/sections.tex` and an empty file per section, committed; `reference-checklist.md`; `stages/approve-<gate>.json` |
+
+The output repository is written under SKILL.md rule 10's second exception (the first is
+`cf overlay`'s, into a companion's `pdf-overlay/` and `annotations/`): only `cf informalize`, only into
+`informalize/<id>/repo/` when `informal/informalize.json` names the id, only the paths
+that exception lists, never through a link, with git through `cflib.gitsafe`
+(`scripts/informalize/outrepo.py`). Its item ids are printed numbers, `<section>.<n>`
+(`cflib.items.INFORMAL_ITEM_ID`, not the book grammar of §1.1), renumbered by the items
+approval only while every section file is empty and frozen from the first draft on. A
+receipt pins what its stage read and wrote and an approval what the maintainer signed, both
+by sha256, so a changed file voids it; `cf informalize status` prints only what it read.
 
 ## 5. The substrate
 

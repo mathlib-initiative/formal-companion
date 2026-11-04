@@ -38,6 +38,12 @@ registry"), and no command writes the shipped registry.
                              pipeline's records, written by `cf ingest` (S0) and
                              `cf inventory` (S1); repo/ is the generated companion,
                              its own git repository (gitignored here)
+  informalize/<id>/          an informal companion of one theorem
+                             (docs/proposals/informalize.md): informalize.yaml,
+                             stages/ (receipts and approvals), reference-checklist.md,
+                             scope.json; library/ and pdf/ (GITIGNORED, rebuilt from
+                             the host) and repo/, the output repository, its own git
+                             repository (gitignored here)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl
   detect/<name>/             proxy-detection artifacts
   reports/                   tally.<run>.json, union.<name>.json, coverage.json,
@@ -55,8 +61,8 @@ registry"), and no command writes the shipped registry.
 ```
 
 `cf init` creates `companions`, `corpus`, `detect`, `fixes`, `ledger`, `pairs`,
-`reports`, `reviews`, `runs` and `sources`. `pipelines`, `sourcesets`, `corpora`,
-`exports`, `benches` and `campaigns` appear when a command first writes one.
+`reports`, `reviews`, `runs` and `sources`. `pipelines`, `informalize`, `sourcesets`,
+`corpora`, `exports`, `benches` and `campaigns` appear when a command first writes one.
 `docs/design/stage_map.md` section 2.1 is the full version, and section 2.2 says what
 carries the source sha and the companion pin.
 

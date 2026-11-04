@@ -306,6 +306,59 @@ class WorkspacePaths:
         return self.stage_receipts_dir(pipeline_id) / (
             f"{_safe_id(stage, 'stage')}.stage-receipt.json")
 
+    # -- informalize (docs/proposals/informalize.md section 4) ---------
+    #
+    # One directory per informalize id.  repo/, library/ and pdf/ are ignored by the
+    # workspace's git (`cf init`'s .gitignore); repo/ is the output repository, a git
+    # repository of its own that only `cf informalize` writes.
+    @property
+    def informalize_root(self) -> Path:
+        return self.root / "informalize"
+
+    def informalize_dir(self, informalize_id: str) -> Path:
+        return self.informalize_root / _safe_id(informalize_id, "informalize id")
+
+    def informalize_yaml(self, informalize_id: str) -> Path:
+        return self.informalize_dir(informalize_id) / "informalize.yaml"
+
+    def informalize_repo(self, informalize_id: str) -> Path:
+        """The output repository `cf informalize init` creates."""
+        return self.informalize_dir(informalize_id) / "repo"
+
+    def informalize_library(self, informalize_id: str) -> Path:
+        """I1's copy of the library: the index, deps.json, src/ and host/."""
+        return self.informalize_dir(informalize_id) / "library"
+
+    def informalize_library_src(self, informalize_id: str) -> Path:
+        """The library's source at its commit, unpacked from `git archive`."""
+        return self.informalize_library(informalize_id) / "src"
+
+    def informalize_scope_json(self, informalize_id: str) -> Path:
+        return self.informalize_dir(informalize_id) / "scope.json"
+
+    def informalize_pdf_dir(self, informalize_id: str, commit12: str) -> Path:
+        return self.informalize_dir(informalize_id) / "pdf" / _safe_id(commit12, "commit")
+
+    def informalize_stages_dir(self, informalize_id: str) -> Path:
+        return self.informalize_dir(informalize_id) / "stages"
+
+    def informalize_receipt(self, informalize_id: str, stage: str) -> Path:
+        """``stages/<stage>.json``: ``I0``, ``I3``, ``I5-draft-<run>``, ..."""
+        return self.informalize_stages_dir(informalize_id) / f"{_safe_id(stage, 'stage')}.json"
+
+    def informalize_approval(self, informalize_id: str, gate: str) -> Path:
+        """``stages/approve-<gate>.json``, written only by `cf informalize approve`."""
+        return self.informalize_stages_dir(informalize_id) / f"approve-{_safe_id(gate, 'gate')}.json"
+
+    def informalize_reference_checklist(self, informalize_id: str) -> Path:
+        return self.informalize_dir(informalize_id) / "reference-checklist.md"
+
+    def list_informalize(self) -> list[str]:
+        if not self.informalize_root.is_dir():
+            return []
+        return sorted(p.name for p in self.informalize_root.iterdir()
+                      if p.is_dir() and (p / "informalize.yaml").exists())
+
     # -- locate (docs/proposals/wikipedia-locate.md; the layout is
     # references/locate-documents.md section 7) -------------------------
     #

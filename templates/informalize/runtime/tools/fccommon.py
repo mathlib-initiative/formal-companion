@@ -60,8 +60,8 @@ SP_PER_BP = 65536 * 72.27 / 72      # TeX's scaled points per PostScript point
 #: The environment of each kind, and the word its head prints.  The kinds, the reference
 #: sources, the roles and the id grammar below are copies: the runtime runs where cflib
 #: cannot be imported.  tests/test_informalize_runtime.py pins them to the specification's
-#: lists, and to cflib.vocab's INFORMALIZE_KINDS, REFERENCE_SOURCES and INFORMALIZE_ROLES
-#: once component 3 adds those.
+#: lists, to cflib.vocab's INFORMALIZE_KINDS, REFERENCE_SOURCES and INFORMALIZE_ROLES, and
+#: to cflib.items.INFORMAL_ITEM_ID.
 KIND_NAMES = {
     "definition": "Definition",
     "lemma": "Lemma",

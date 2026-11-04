@@ -11,7 +11,7 @@ listed is invalid and the schema gate rejects it.
 
 **Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
 verdicts, resolutions, source roles and licence classes, re-check statuses, statement-row
-provenance, annotation documents, locate) · §2 mapping tables from the five legacy vocabularies ·
+provenance, annotation documents, locate, informalize) · §2 mapping tables from the five legacy vocabularies ·
 §3 `finding_id`, the frozen rule · §4 item ids.
 
 ---
@@ -1429,6 +1429,24 @@ the HEAD it left and the git blob of each of the task's documents there).
 
 Licence classes are §1.6's `LICENCE_CLASSES`.
 
+### 1.12 Informalize — an informal companion written from a Lean library
+
+The vocabulary of `docs/proposals/informalize.md` section 5, in `cflib.vocab`'s informalize block,
+as tuples in the order the documents list them. An item's id is its printed number `<section>.<n>`
+(`cflib.items.INFORMAL_ITEM_ID`, §4), not a book item. The runtime's
+`templates/informalize/runtime/tools/fccommon.py`, which runs where `cflib` cannot be imported,
+keeps copies of the kinds, the roles, the reference sources and the id pattern, and
+`tests/test_informalize_runtime.py` pins them to these.
+
+| enum | values |
+|---|---|
+| `INFORMALIZE_KINDS` | `definition` · `lemma` · `proposition` · `theorem` · `corollary` · `example` · `remark` — an item's `kind` in `items.json`, and the environment of `fcmarkers.sty` that prints it |
+| `INFORMALIZE_ROLES` | `key` (states the item or one of its parts) · `helper` (a declaration a reader may also want) — a declaration's `role` in an item |
+| `INFORMALIZE_RELATIONS` | `exactMatch` · `broadMatch` · `narrowMatch` · `relatedMatch` — a declaration's `relation` to its item or part: the four Literature Links relations the legacy annotation format carries (§1.11's `closeMatch` is not one; a key that is not `exactMatch` says why in `departures`) |
+| `REFERENCE_SOURCES` | `docstring` · `module docstring` · `inferred` (from the work's order; printed with a dagger) · `none` — where a reference work's number came from |
+| `INFORMALIZE_PHASES` | `items` · `conventions` · `draft` · `attack` · `judge` · `edit` — the fleet phases, one tend run each, in the order they run |
+| `APPROVAL_GATES` | `items` · `references` · `proof-sheets` · `publish` — what the maintainer signs with `cf informalize approve` |
+
 ---
 
 ## 2. Mapping tables from the five legacy vocabularies
@@ -1708,3 +1726,12 @@ out-of-tree gate must reproduce it, and changing any step re-keys every passage.
   declaration and its file:line, never dropped silently. That exact string is still the one reject
   in `tao-measure-lean` (reason `no_number`, 2026-09-16), and an onboarding that reports one
   reject is telling you something true about the repo.
+
+**An informalize item is not a book item.** The informalize mode (`docs/proposals/informalize.md`
+section 5.4) writes its own text, and an item's id there is its printed number, `<section>.<n>`,
+both numbers from 1, with no space, leading zero or sub-part: `cflib.items.INFORMAL_ITEM_ID`, with
+`is_informal_item_id`, `informal_item_id(section, n)` and `split_informal_item_id`. Its kind is a
+field beside it (§1.12), and a part is a letter in a field of its own, so `Theorem 1.2(b)` is the
+item (`theorem`, `1.2`) with part `b`. It is written by a program, never typed from a book, so it
+is matched exactly and never through `clean()` or `join_key()`. The runtime's `fccommon.py` holds
+the one copy a host-side tool needs.

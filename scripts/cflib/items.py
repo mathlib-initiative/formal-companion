@@ -838,3 +838,43 @@ def source_slug(source_id: str) -> str:
 def qualified_slug(source_id: str, item: "Item | str", style: str = "dash") -> str:
     """``tao-measure-gsm126-published--exercise-1-3-19`` -- a per-source filename."""
     return source_slug(source_id) + "--" + slug(item, style=style)
+
+
+# ---------------------------------------------------------------------------
+# the informalize item id (docs/proposals/informalize.md section 5.4)
+# ---------------------------------------------------------------------------
+#
+# An informalize text is not a book the audit reads but one the fleet writes, and its
+# items are numbered by the text itself: an item's id is its printed number,
+# ``<section>.<n>``, both numbers from 1, and its kind lives beside it in items.json
+# (``definition``, ``theorem``, ...), so ``Theorem 1.2`` is the pair (``theorem``,
+# ``1.2``).  The id is strict -- no whitespace, no leading zero, no sub-part: a part is
+# its own field, a letter -- because it is written by a program, never typed from a
+# book, and it is the key of an annotation (``<kind>-<id>[-<letter>]``).  The runtime's
+# tools/fccommon.py keeps the one copy of this pattern a host-side script needs, and
+# tests/test_informalize_runtime.py pins the two together.
+
+#: ``<section>.<n>``, both positive integers written without a leading zero
+INFORMAL_ITEM_ID = re.compile(r"\A[1-9][0-9]*\.[1-9][0-9]*\Z")
+
+
+def is_informal_item_id(value: object) -> bool:
+    """Is ``value`` an informalize item id (``1.2``, never ``01.2``, ``1.2(a)`` or ``1``)?"""
+    return isinstance(value, str) and INFORMAL_ITEM_ID.match(value) is not None
+
+
+def informal_item_id(section: int, n: int) -> str:
+    """The id of item ``n`` of section ``section``: ``informal_item_id(2, 3) == "2.3"``."""
+    if isinstance(section, bool) or isinstance(n, bool) or not isinstance(section, int) \
+            or not isinstance(n, int) or section < 1 or n < 1:
+        raise ItemGrammarError(f"{section}.{n}", "an informalize item id is two numbers from 1")
+    return f"{section}.{n}"
+
+
+def split_informal_item_id(item_id: str) -> tuple[int, int]:
+    """``"2.3"`` -> ``(2, 3)``; anything else is refused, never guessed."""
+    if not is_informal_item_id(item_id):
+        raise ItemGrammarError(str(item_id), "not an informalize item id <section>.<n>",
+                               hint="both numbers from 1, with no leading zero, space or part")
+    section, _, n = item_id.partition(".")
+    return int(section), int(n)

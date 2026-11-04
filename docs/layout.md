@@ -38,7 +38,7 @@ docs/proposals/   designs: pdf-to-companion.md (the PDF-to-companion pipeline, n
                   wikipedia-locate.md (locate; its section 1 lists what is built),
                   statement-cut.md (how locate's inventory cuts passages)
                   and informalize.md (an informal companion written from a Lean
-                  library, not yet built)
+                  library; its status line says what is built)
 docs/running-an-audit.md
                   the audit's program, an onboarding transcript, the overrides
 docs/workspace.md the workspace directory model and the rules it enforces
@@ -81,6 +81,10 @@ scripts/annotations/
                   checker, id rules) is vendor/formal_companion_annotations/
 scripts/overlay/  the overlay generator behind `cf overlay`: config, export,
                   sync, annotation files and folder defaults (docs/overlay.md)
+scripts/informalize/
+                  the informalize mode behind `cf informalize`: informalize.yaml,
+                  the output repository, the runtime sync, the item table, receipts
+                  and approvals (proposals/informalize.md)
 scripts/corpus/   locate's universes of libraries and corpus.sqlite (`cf corpus`)
 scripts/locate/   locate's candidates, planner, outcomes and export
                   (`cf locate`, `cf plan-locate`, `cf tally --locate`,
@@ -98,7 +102,9 @@ templates/overlay/
 templates/informalize/
                   runtime/, copied verbatim into an informalize output repository's
                   informal/ (fcmarkers.sty, STYLE.md, the build and check tools), and
-                  project/, the templates `cf informalize init` renders once
+                  project/, the templates `cf informalize init` renders once,
+                  licenses/, the text of each open license it writes as LICENSE,
+                  and schema/, informalize.yaml's and items.json's JSON Schemas
                   (proposals/informalize.md section 7)
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local,
                   and locate-label, the bench's frozen labeler)

@@ -28,8 +28,9 @@
 # nothing else, and it is what stops the quick start rotting.
 #
 # The informalize-tex job is the one with TeX: the informalize runtime's
-# builds (tests/test_informalize_runtime.py) skip in every other job, and
-# CF_REQUIRE_TEX makes a skip a failure there.
+# builds (tests/test_informalize_runtime.py) and the build of the repository
+# `cf informalize init` renders (tests/test_informalize_cli.py) skip in every
+# other job, and CF_REQUIRE_TEX makes a skip a failure there.
 #
 # What it does NOT cover, so nobody reads green here as more than it is: the
 # baseline-backed tests (they need private corpora and skip), `cf run --execute`,
@@ -182,10 +183,13 @@ jobs:
       # amsmath, geometry and hyperref, -recommended xcolor, -extra zref, and
       # lmodern the T1 fonts the template loads.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends latexmk texlive-latex-base texlive-latex-recommended texlive-latex-extra lmodern poppler-utils
-      # One module, run as a script: it holds no test of a frozen base commit,
-      # so this job is not one of the suite jobs tests/test_base_commits.py
+      # Two modules, each run as a script: neither holds a test of a frozen base
+      # commit, so this job is not one of the suite jobs tests/test_base_commits.py
       # holds to a full history.
       - run: python tests/test_informalize_runtime.py -v
+        env:
+          CF_REQUIRE_TEX: "1"
+      - run: python tests/test_informalize_cli.py -v
         env:
           CF_REQUIRE_TEX: "1"
 

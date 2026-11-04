@@ -152,21 +152,26 @@ class TestTheRuntimeFiles(unittest.TestCase):
         self.assertEqual(list(fc.KIND_NAMES), kinds)
         self.assertEqual(list(fc.ROLES), roles)
         self.assertEqual(list(fc.REFERENCE_SOURCES), sources)
-        # and cflib.vocab's copies, once component 3 adds them
+        # and cflib's, of which these are the documented copies (CLAUDE.md section 4)
         from cflib import vocab
         for name, mine in (("INFORMALIZE_KINDS", tuple(fc.KIND_NAMES)),
                            ("INFORMALIZE_ROLES", fc.ROLES),
                            ("REFERENCE_SOURCES", fc.REFERENCE_SOURCES)):
-            if hasattr(vocab, name):
-                with self.subTest(name=name):
-                    self.assertEqual(tuple(getattr(vocab, name)), tuple(mine))
+            with self.subTest(name=name):
+                self.assertEqual(tuple(getattr(vocab, name)), tuple(mine))
 
     def test_an_item_id_is_two_numbers_from_1(self):
+        # the grammar cflib holds the table to (`approve`, `check-items`) is the one copy
+        # the runtime keeps, character for character and on every case
+        from cflib import items
+        self.assertEqual(fc.ITEM_ID.pattern, items.INFORMAL_ITEM_ID.pattern)
         for good in ("1.1", "2.10", "12.3"):
             self.assertRegex(good, fc.ITEM_ID)
-        for bad in ("0.1", "1.0", "01.2", "1.02", "1.2a", "1.2(a)", " 1.2", "1"):
+            self.assertTrue(items.is_informal_item_id(good))
+        for bad in ("0.1", "1.0", "01.2", "1.02", "1.2a", "1.2(a)", " 1.2", "1", "1.2\n"):
             with self.subTest(id=bad):
                 self.assertIsNone(fc.ITEM_ID.match(bad))
+                self.assertFalse(items.is_informal_item_id(bad))
 
     def test_the_shell_parses(self):
         for shell in ("sh", "bash"):

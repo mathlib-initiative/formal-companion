@@ -154,3 +154,26 @@ because the registry holds nothing but metadata: the entry's `download_url` and
 `licence.fetch` are removed (the edition stays identifiable by sha, which is
 what the audit needs), or the entry is deleted outright. No book text has to be
 taken down, because none was ever published here.
+
+## 7. A text the skill writes: informalize
+
+The informalize mode (`docs/proposals/informalize.md`) writes a text instead of reading
+one: an informal account of the statements a Lean library proves, in an output repository
+that `cf informalize init` creates and the maintainer publishes. Three rules hold for it.
+
+- **A reference work's numbers, never its prose.** A text may cite the item numbers of a
+  book (`reference.work` is a citation line, and `\fcref` prints a number), so a reader with
+  the book can find the same statement there. No sentence of the book is copied or closely
+  paraphrased, by a drafter or anyone else, and nothing of it is stored here or in the
+  output repository. The maintainer checks the numbers against his own copy
+  (`cf informalize reference-checklist`).
+- **The library's docstrings only under its license.** The library is read, never
+  written. Its docstrings may be adapted only when the library's own license allows it,
+  which I1 reads from its license file (or `init --library-license` states), and a private
+  library goes to a run host only with its owner's consent.
+- **The text and its PDF under one open license.** `text.license` is one of the licenses
+  `pdf.publish` admits (section 3): `Apache-2.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `CC0-1.0` or
+  `MIT`. `init` writes that license's text as the output repository's `LICENSE`; the runtime
+  copied into it keeps its own Apache-2.0 notice (`informal/LICENSE-runtime`), whatever the
+  text's license is. The license texts under `templates/informalize/licenses/` are the
+  licenses' own, copied unchanged (MIT's with its year and holder left as slots).

@@ -1,7 +1,7 @@
 # Informalize templates
 
 What `cf informalize` puts in an output repository's `informal/` (and its root), as
-`docs/proposals/informalize.md` section 7 specifies.
+`docs/proposals/informalize.md` section 7 specifies, and the two formats a person edits.
 
 ## `runtime/`: copied byte for byte
 
@@ -55,6 +55,22 @@ group holding the slot `name`.
 
 `notation.sty`, `sections/00-conventions.tex` and `gitignore` have no slot.
 
-The license texts `init` writes as the root's `LICENSE`, one for each license
-`text.license` may name, are not here yet: component 3 adds them with `init`
-(`docs/proposals/informalize.md` sections 7.1 and 11).
+## `licenses/`: the text's license
+
+`cf informalize init` writes `licenses/<text.license>.txt` as the output repository's
+`LICENSE`, one file for each license `text.license` may name (`overlay.config.OPEN_LICENSES`):
+`Apache-2.0.txt` (a copy of this repository's `LICENSE`), `CC-BY-4.0.txt`,
+`CC-BY-SA-4.0.txt`, `CC0-1.0.txt` and `MIT.txt`. Each is the license's own text, unchanged;
+only MIT's has slots, `year` (the year of `init`) and `holder` (`text.author`). The runtime
+keeps its own Apache-2.0 notice, `runtime/LICENSE-runtime`, whatever the text's license is.
+
+## `schema/`: the formats, for a reader
+
+`informalize.schema.json` (the workspace's `informalize/<id>/informalize.yaml`) and
+`items.schema.json` (`informal/items.json`) state the two hand-edited formats as JSON Schemas
+(`docs/proposals/informalize.md` sections 5.1 and 5.4). They are not copied anywhere and no
+tool reads them: `scripts/informalize/config.py` and `scripts/informalize/itemtable.py` are the
+implementation, and also check what a schema cannot (ids that match their section and run
+without gaps, a key declaration for every part, each declaration against `declarations.json`
+and the library's source). `tests/test_informalize_cli.py` holds the keys, enums and patterns
+of each schema to those modules.

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:formal-companion:informalize-items-v1",
+  "title": "informal/items.json, version 1",
+  "description": "The item table of an informalization companion, docs/proposals/informalize.md section 5.4, as a JSON Schema for a reader. The identifier above names this schema and is never fetched. The implementation is scripts/informalize/itemtable.py, which also checks what a schema cannot: ids that match their section and run from 1 without gaps, parts lettered a, b, ... in order, a key declaration for every part, a departure for every key that is not exactMatch, and every declaration against declarations.json and the library's source. Keys starting with x_ are extensions. tests/test_informalize_cli.py holds the keys, the enums and the patterns to that module.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {"^x_": {}},
+  "required": ["schema", "schema_version", "library", "reference_work", "sections", "items", "deferred", "decisions"],
+  "properties": {
+    "schema": {"const": "formal-companion/informalize-items"},
+    "schema_version": {"const": 1},
+    "library": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {"^x_": {}},
+      "required": ["commit", "declarations_sha256"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "declarations_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "reference_work": {"type": ["string", "null"]},
+    "sections": {"type": "array", "items": {"$ref": "#/$defs/section"}},
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "deferred": {"description": "Items the approval left out of version 1, as they were.", "type": "array", "items": {"type": "object"}},
+    "decisions": {"description": "The maintainer's decisions: renumberings, and {withdrawn, why} for an id withdrawn after the freeze.", "type": "array"}
+  },
+  "$defs": {
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {"^x_": {}},
+      "required": ["number", "title", "slug"],
+      "properties": {
+        "number": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "title": {"description": "LaTeX source, as the text prints it.", "type": "string", "minLength": 1},
+        "slug": {"description": "The section's file is sections/<NN>-<slug>.tex.", "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"}
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {"^x_": {}},
+      "required": ["id", "section", "kind", "title", "gist", "parts", "in_v1", "reference", "departures", "declarations"],
+      "properties": {
+        "id": {"description": "The printed number <section>.<n>.", "type": "string", "pattern": "^[1-9][0-9]*\\.[1-9][0-9]*$"},
+        "section": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "kind": {"enum": ["definition", "lemma", "proposition", "theorem", "corollary", "example", "remark"]},
+        "title": {"description": "LaTeX source, as the text prints it.", "type": "string", "minLength": 1},
+        "gist": {"type": "string"},
+        "parts": {"type": "array", "items": {"$ref": "#/$defs/part"}},
+        "in_v1": {"type": "boolean"},
+        "reference": {"$ref": "#/$defs/reference"},
+        "departures": {"type": "string"},
+        "declarations": {"type": "array", "items": {"$ref": "#/$defs/declaration"}}
+      }
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {"^x_": {}},
+      "required": ["letter", "gist", "reference"],
+      "properties": {
+        "letter": {"type": "string", "pattern": "^[a-z]$"},
+        "gist": {"type": "string"},
+        "reference": {"$ref": "#/$defs/reference"}
+      }
+    },
+    "reference": {
+      "description": "A number of the reference work, never a quotation of it.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "patternProperties": {"^x_": {}},
+      "required": ["number", "source", "declaration"],
+      "properties": {
+        "number": {"type": "string", "minLength": 1},
+        "source": {"enum": ["docstring", "module docstring", "inferred", "none"]},
+        "declaration": {"description": "The declaration whose docstring states the number; required when source is docstring.", "type": ["string", "null"]}
+      }
+    },
+    "declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {"^x_": {}},
+      "required": ["name", "module", "line", "part", "role", "relation", "junk", "hypotheses"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[^\\s.]+(?:\\.[^\\s.]+)*$"},
+        "module": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_']*(?:\\.[A-Za-z_][A-Za-z0-9_']*)*$"},
+        "line": {"description": "The keyword line, as declarations.json gives it.", "type": "integer", "minimum": 1},
+        "part": {"type": ["string", "null"], "pattern": "^[a-z]$"},
+        "role": {"enum": ["key", "helper"]},
+        "relation": {"enum": ["exactMatch", "broadMatch", "narrowMatch", "relatedMatch"]},
+        "junk": {"type": "array", "items": {"type": "string"}},
+        "hypotheses": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

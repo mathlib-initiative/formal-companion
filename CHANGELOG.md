@@ -42,6 +42,17 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **`cf informalize init | sync | status | check-items | approve | reference-checklist`**
+  (component 3 of `docs/proposals/informalize.md`): `informalize/<id>/informalize.yaml`, the
+  output repository `informalize/<id>/repo/` with the runtime, the project files and the text's
+  `LICENSE` (one text per open license, `templates/informalize/licenses/`), `sync --check`
+  against `informal/GENERATED.json`, the item table's rules and its check against
+  `declarations.json` and the library's source, the items approval that renumbers the table
+  before the first draft and freezes the ids after it, the reference checklist and its approval,
+  stage receipts and approvals pinned by sha256, the six enums in `cflib.vocab` and the item id
+  `cflib.items.INFORMAL_ITEM_ID`, and JSON Schemas of `informalize.yaml` and `items.json` for a
+  reader. SKILL.md rule 10 and its three copies gain a second exception: `cf informalize` writes
+  the repository it creates, and only that one.
 - **The informalize mode's LaTeX runtime and project templates** (`templates/informalize/`,
   component 2 of `docs/proposals/informalize.md`): the marker package `fcmarkers.sty`, the
   drafting rules, a reproducible build into a directory of its own, the boxes of every item

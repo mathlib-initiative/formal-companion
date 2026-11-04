@@ -53,7 +53,20 @@ annotation document format of `vendor/formal_companion_annotations/`;
    nowhere else; they refuse either directory when it is a symlink or resolves
    outside the companion, refuse to write through a symlinked component, and
    run no git in the companion (CLAUDE.md section 4, CONTRIBUTING.md
-   invariant 3, SKILL.md rule 10).
+   invariant 3, SKILL.md rule 10). **A second exception: the repository
+   informalize creates.** `cf informalize init` creates
+   `informalize/<id>/repo/` inside the workspace, a git repository of its own
+   that the workspace's git ignores, and stamps it: `informal/informalize.json`
+   names the id. Only `cf informalize` subcommands write there, only into a
+   repository carrying that stamp, and only these paths: `informal/`,
+   `annotations/`, `pdf-overlay/`, `site/index.html`, the workflow directory
+   `.github/workflows/`, the ignored PDF cache `.lake/overlay-pdf/`,
+   `README.md`, `LICENSE` and `.gitignore`. They refuse a `repo/` that is a
+   symlink or resolves outside `informalize/<id>/`, refuse to write through a
+   symlinked component, and run git there only through `cflib.gitsafe`. They
+   never write to the library they read. `cf overlay` keeps its own exception
+   (this rule) for that repository as for any companion
+   (`docs/proposals/informalize.md` section 1.3).
 6. **Hardening carries over**: TLS verification, HTTPS-only redirects, atomic
    writes, loopback-only binding, the CSP, no HTML-string injection, and PDF.js
    with `isEvalSupported: false`.

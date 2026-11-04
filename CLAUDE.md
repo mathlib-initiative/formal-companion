@@ -34,8 +34,9 @@ source or their owners' details into this repo.
 SKILL.md README.md CLAUDE.md CONTRIBUTING.md CHANGELOG.md POLICY.md LICENSE
 docs/design/stage_map.md   the current spec; change it in the same commit as the code
 docs/design/archive/       the design record it came from (historical)
-docs/proposals/            designs: pdf-to-companion.md (not yet built) and
+docs/proposals/            designs: pdf-to-companion.md (not yet built),
                            wikipedia-locate.md (locate; its §1 says what is built)
+                           and informalize.md (its status line says what is built)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
 vendor/              literature_links/: Literature Links 1.0.1,
@@ -66,6 +67,10 @@ scripts/corpus/      locate's universes (`cf corpus`): the host probe drivers an
                      corpus.sqlite and its read API; templates/corpus/ holds the probe
                      and its acceptance canary (references/locate-documents.md §8)
 scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
+scripts/informalize/ the informalize mode behind `cf informalize`: informalize.yaml, the
+                     output repository and the exception it is written under, the runtime
+                     sync, the item table and `check-items`, receipts and approvals
+                     (docs/proposals/informalize.md)
 scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
                      its three presets, outcomes with the derived status, and the
                      Literature Links export (references/locate-documents.md);
@@ -79,7 +84,9 @@ templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/
                      tests/ holds its node --test suites
 templates/informalize/ runtime/ is copied verbatim into an output repository's informal/
                      (fcmarkers.sty, STYLE.md, the build and check tools); project/
-                     holds the templates `cf informalize init` renders once
+                     holds the templates `cf informalize init` renders once, licenses/
+                     the text of each open license it writes as LICENSE, and schema/
+                     informalize.yaml's and items.json's JSON Schemas, for a reader
                      (docs/proposals/informalize.md section 7)
 templates/campaign/  the host-side sequencer `cf campaign render` writes
 templates/tend/      the tend root's config, faithfulness and locate (`*-locate*`)
@@ -143,7 +150,13 @@ Those two lines move together or not at all.
   where a document is written, and `tests/test_vendored_format.py` checks that
   every value the skill writes is one the format admits (containment, not
   equality). What the format does not carry (ledger verdicts, finding kinds)
-  goes under `x_` keys.
+  goes under `x_` keys. The second documented copy is the informalize runtime's:
+  `templates/informalize/runtime/tools/fccommon.py` runs in an output repository
+  and on a run host, where `cflib` cannot be imported, so it inlines the item
+  kinds, the roles, the reference sources and the informalize item id
+  (`cflib.items.INFORMAL_ITEM_ID`, the second item grammar beside the book
+  one), and `tests/test_informalize_runtime.py` pins each copy to `cflib`,
+  as `gate/verify_findings.py`'s `finding_id` is pinned.
 - **One item grammar, one namespace rule.** `scripts/cflib/items.py`. Never
   write another item regex; never let an unparseable id become a key. Parsing
   is whitespace-tolerant and produces a *reject list* callers must report. An
@@ -209,6 +222,20 @@ Those two lines move together or not at all.
   generator commit they stamp is read from THIS checkout, through
   `cflib.gitsafe`. `docs/overlay.md` rule 5 is the whole exception; widening it
   is a change to that file in the same commit.
+  **A second exception: the repository informalize creates.** `cf informalize
+  init` creates `informalize/<id>/repo/` inside the workspace, a git repository
+  of its own that the workspace's git ignores, and stamps it:
+  `informal/informalize.json` names the id. Only `cf informalize` subcommands
+  write there, only into a repository carrying that stamp, and only these
+  paths: `informal/`, `annotations/`, `pdf-overlay/`, `site/index.html`, the
+  workflow directory `.github/workflows/`, the ignored PDF cache
+  `.lake/overlay-pdf/`, `README.md`, `LICENSE` and `.gitignore`. They refuse a
+  `repo/` that is a symlink or resolves outside `informalize/<id>/`, refuse to
+  write through a symlinked component, and run git there only through
+  `cflib.gitsafe`. They never write to the library they read. `cf overlay`
+  keeps its own exception (rule 5) for this repository as for any companion.
+  `scripts/informalize/outrepo.py` is that exception in code, and
+  `docs/proposals/informalize.md` section 1.3 its wording.
 
 ## 5. Adding a command
 
@@ -292,8 +319,9 @@ The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
 reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
 and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
 `tests/test_informalize_runtime.py` builds PDFs and skips without pdflatex, latexmk,
-kpsewhich, poppler or a package of `tex_packages`; `CF_REQUIRE_TEX=1` makes that skip a
-failure, and CI's `informalize-tex` job sets it.
+kpsewhich, poppler or a package of `tex_packages`, and so does the one build test of
+`tests/test_informalize_cli.py` (without poppler's part); `CF_REQUIRE_TEX=1` makes that skip
+a failure, and CI's `informalize-tex` job sets it.
 Tests that compare this checkout with a frozen base commit skip in a checkout
 that does not hold it, such as a shallow clone; `CF_REQUIRE_BASE_COMMITS=1`
 makes that a failure (`tests/_base_commits.py`), and CI sets it and takes the

@@ -17,9 +17,8 @@ the results, tally, adjudicate adversarially, route to owners and report with
 verified numbers.
 
 **The audit is findings-only.** It stops at challenged, routed findings and a
-verified report. Authoring fix PRs, reviewing merges and camera-ready audits
-are deliberately out of scope; the extension points exist but the commands do
-not.
+verified report. Authoring fix PRs, reviewing merges and camera-ready audits are
+deliberately out of scope; the extension points exist but the commands do not.
 
 ## When to use this
 
@@ -61,12 +60,11 @@ against every source in its list; a **differential is possible exactly where
 two companions' source lists overlap**, which `cf status` prints as one line.
 
 One source in a companion's list is its **anchor source**: the edition whose
-pagination its page anchors follow. That is not always an edition the repo
-ships — a repo may commit a draft PDF for convenience and write its docstring
-anchors against the published book. Editions the repo names or bundles but is
-not audited against are recorded in `bundled_sources` with `role: reference`,
-prepared so the page map between siblings can be checked, and audited by
-nobody.
+pagination its page anchors follow. That is not always an edition the repo ships
+— a repo may commit a draft PDF for convenience and write its docstring anchors
+against the published book. Editions the repo names or bundles but is not
+audited against are recorded in `bundled_sources` with `role: reference`,
+prepared so the page map between siblings can be checked, and audited by nobody.
 
 A source need not be a PDF. A manuscript that is already text (`.txt .md
 .markdown .tex .html .htm .rst`) is a source too, located by heading path and
@@ -275,6 +273,7 @@ actually has, and is generated from the parsers themselves.
 | `review-tags <document> [--json]` | the known attribution defects a document's key links carry: items keyed only to where they sit, keys on a structure field or projection, keys borrowed from a neighbouring item or shared with no owner, book-content tag spellings a fold script hides, the document's own attribution-gap verdicts; `--keep-pattern` and `--hide-pattern` are the fold script's rules |
 | `sourceset create \| enumerate-wikiproject \| adopt \| fetch \| flag-biographies \| render \| status` | locate L1: a **sourceset** of web sources (`references/locate-documents.md` §7) — append-only manifest versions, one directory per page revision. `create --from <sourceset>` seeds a new one with another's sources and bytes and no layers (the way to a new renderer). `enumerate-wikiproject --project P` lists a WikiProject's articles at their latest revisions, flags redirects, disambiguation pages and lists, counts the rows that are no article, and resumes from its checkpoint after a failure (`--restart` starts over), `flag-biographies` flags biographies from Wikidata (P31 = Q5), `adopt --from <pins>` takes a consumer's pinned revisions, with their bytes when it holds them (a pin with only a title has its page resolved from its revision under `--execute`; a pinned page keeps its adopted revision and its page's assessment and QID; a row may carry the fixed `fetch` and the producer's `layer_sha256`, its `bytes` lies inside the pins file's directory, a source is pinned by one row, and one bad row refuses the whole file), `fetch [--source ID | --select FILE]` gets each revision's parse output once (only the named sources or pages with a selection), `render` writes the Literature Links layer, head text, reading copy and its map, sections, blocks and the deterministic finders (renderer `web-html/3`; a recorded rendering is only completed, never rewritten; a source whose layer is not its producer's `layer_sha256` is refused by name and stays refused in `state.json` `parity_refusals` until a render writes it), `status [--verify]` checks every recorded sha and reports the producer-layer counts (`--verify` counts a standing parity refusal as a problem). Nothing touches the network without `--execute` (`--fixtures <dir>` replays recorded responses) |
 | `overlay init \| sync \| check \| export` | generate a companion's `pdf-overlay/` and its Literature Links annotations, and keep both honest: `cf overlay init <companion> --source-id ID --title T` writes the config, which is committed before `export` because `export` refuses a dirty checkout (SHA is that commit), `cf overlay export <companion> --convention attribution-table --commit SHA` runs an exporter and writes one `annotations/<section>/[<item>/]<name>.json` per annotation, `cf overlay sync <companion>` copies the viewer, tools, schemas, PDF.js and the Literature Links package byte for byte and writes the annotation bundle and `GENERATED.json` (`--check` is read-only and includes the scan), and `cf overlay check <companion>` adds the curation inputs' hashes, the overlay rules and a committed `verso.json`. **The one command that writes into a companion repo**, and only under `pdf-overlay/` and `annotations/` (`docs/overlay.md` rule 5). Needs no workspace |
+| `informalize init \| sync \| status \| check-items \| approve \| reference-checklist` | the informalize mode (`docs/proposals/informalize.md`, an informal companion written from a Lean library at a commit and one theorem; components 2 and 3 of its section 11 are built): `cf informalize init <id> --library URL --commit SHA --module M --theorem T --prefix P --text-license L --title T --author A [--reference CITATION]` writes `informalize/<id>/informalize.yaml` and creates the output repository `informalize/<id>/repo/` (git, the runtime, the project files, `LICENSE`); `sync <id> [--check]` copies the runtime into `informal/` byte for byte and records it in `informal/GENERATED.json`; `status <id>` reads the receipts and approvals; `check-items <id>` holds `informal/items.json` to section 5.4 and to `declarations.json` and the library's source; `approve <id> items --by NAME --in-v1 IDS\|all` renumbers the table before the first draft and pins it, `reference-checklist <id>` lists the reference numbers for a person with the work, and `approve <id> references --by NAME` pins that list. **The second command that writes into a repository**: only its own output repository, only the paths of hard rule 10. Needs a workspace |
 
 Deleted: `cf book` — a source is discovered, and re-prepared by
 `cf sources refresh`. Out of scope in v1 (documented, not implemented): `fix`,
@@ -322,11 +321,10 @@ you use it.
 - **`TEND_TASK_ID`.** Whether the orchestrator exports it into a validation
   command is unverified here. Without it the gate's ownership check falls back
   to the weaker single-stem rule and says so in its last line — read that line
-  once per tend version (`references/runbook-server.md` §4). Either way the
-  task file is `tasks/<task-id>.yaml`, changed in its one `status:` line only,
-  to one status word, and
-  one worktree's change set is one task's: only the batched pre-merge check
-  (`--pre-merge`) admits several.
+  once per tend version (`references/runbook-server.md` §4). Either way the task
+  file is `tasks/<task-id>.yaml`, changed in its one `status:` line only, to one
+  status word, and one worktree's change set is one task's: only the batched
+  pre-merge check (`--pre-merge`) admits several.
 - **`detect-proxies --lean`** needs a `deps.json` from a built `.lake` and a
   per-source stage table a human has filled in; the generated skeleton
   deliberately counts as no table.
@@ -384,21 +382,20 @@ needs neither.
    verdicts stay `confirmed_by_human: false`.
 6. **Copyright boundary.** Source text, page images and crops stay in the
    gitignored `sources/` directory of the workspace. Never copy them into the
-   skill repo or a companion repo. The registry holds metadata and URLs only.
-   A download happens only with `--download` **and** a registry licence note
-   that permits fetching from the author's own site; nothing is ever
-   redistributed. Exports redact quotes to (page, normalized length, sha256,
-   and at most a quarter of the quote's words from each end, none at all below
-   fourteen words) by default. Quote at most a sentence or two of a source in
-   any artifact. Every source has a **licence class**, `closed` unless its
-   registry entry or web-source family names another (`open_attribution`,
-   `open_share_alike` — Wikipedia's text — or `public_domain`); an open class
-   lets an exported record quote twelve words with a citation and the licence
-   named, and changes nothing else: no class puts source text in the skill
-   repo or lets anything be redistributed. `cf export literature-links` is the
-   export that applies it, and it quotes nothing from a closed source.
-   `POLICY.md` is the whole rule and `registry/README.md` is how
-   the registry implements it.
+   skill repo or a companion repo. The registry holds metadata and URLs only. A
+   download happens only with `--download` **and** a registry licence note that
+   permits fetching from the author's own site; nothing is ever redistributed.
+   Exports redact quotes to (page, normalized length, sha256, and at most a
+   quarter of the quote's words from each end, none at all below fourteen words)
+   by default. Quote at most a sentence or two of a source in any artifact.
+   Every source has a **licence class**, `closed` unless its registry entry or
+   web-source family names another (`open_attribution`, `open_share_alike` —
+   Wikipedia's text — or `public_domain`); an open class lets an exported record
+   quote twelve words with a citation and the licence named, and changes nothing
+   else: no class puts source text in the skill repo or lets anything be
+   redistributed. `cf export literature-links` is the export that applies it,
+   and it quotes nothing from a closed source. `POLICY.md` is the whole rule and
+   `registry/README.md` is how the registry implements it.
 7. **Consent and allowlist for runs.** `cf run` refuses any host not in
    `workspace.yaml` `hosts.allowlist` and requires `--i-have-consent`, recorded
    in `run.yaml`. A run copies private Lean sources and copyrighted source text
@@ -419,9 +416,11 @@ needs neither.
     `init`, `sync` and `export`, which a person runs by name: they write under
     `<companion>/pdf-overlay/` and `<companion>/annotations/` and nowhere else,
     refuse either when it is a symlink or resolves outside the companion, and
-    run no git there
-    (`docs/overlay.md` rule 5). No other command, and no stage, writes
-    anything.
+    run no git there (`docs/overlay.md` rule 5). **A second exception: the
+    repository informalize creates**, `informalize/<id>/repo/`: only
+    `cf informalize` writes it, only while `informal/informalize.json` names
+    the id, and only as `docs/proposals/informalize.md` section 1.3 says. No
+    other command, and no stage, writes anything.
 11. **Low confidence is a refusal.** An inferred offset below 0.9, an
     undecidable anchor edition (agreement under 0.80, or a margin under 0.05
     between two editions), an adapter score under 0.5, an item table under 0.6
