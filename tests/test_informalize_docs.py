@@ -7,8 +7,10 @@ trigger eval set. Those four are what a person and a router read before any of
 this checkout does not have. Four kinds of check:
 
 * every `cf informalize` subcommand the CLI registers is in SKILL.md's command index,
-  and every one the index names is registered: the row said "components 2 to 4" while
-  three more had landed, which is the failure this catches;
+  every one the index names is registered, none of the registered ones sits in the
+  row's "not implemented" tail, and the range of components the row and
+  `docs/status.md` call built is the same range: the row said "components 2 to 4"
+  while three more had landed, and nothing noticed;
 * what `docs/status.md` calls built is a command, and what it calls not implemented is
   not one -- so the page cannot go on promising `cf informalize apply` after it lands,
   or keep calling it missing;
@@ -102,9 +104,23 @@ class TestTheCommandIndexIsThisCheckout(unittest.TestCase):
             clause = clause[clause.rindex("—") + 1:]
         for name in sorted(self.built):
             with self.subTest(subcommand=name):
-                self.assertNotIn(f"`{name}`", clause,
-                                 f"the index row calls `cf informalize {name}` not "
-                                 f"implemented, and this checkout has it")
+                # either spelling: the row writes `apply` as `cf informalize apply`
+                self.assertIsNone(
+                    re.search(rf"`(?:cf informalize )?{re.escape(name)}`", clause),
+                    f"the index row calls `cf informalize {name}` not "
+                    f"implemented, and this checkout has it")
+
+    def test_the_component_range_agrees_with_the_status_page(self):
+        """The range is what went stale last time, and two documents carry it."""
+        pattern = r"[Cc]omponents (\S+) to (\S+) of"
+        section = read("docs/status.md").split("\n## Informalization\n", 1)[1]
+        row = re.search(pattern, self.index_row())
+        page = re.search(pattern, section.split("\n## ", 1)[0])
+        self.assertIsNotNone(row, "SKILL.md's index row gives no component range")
+        self.assertIsNotNone(page, "docs/status.md gives no component range")
+        self.assertEqual(row.groups(), page.groups(),
+                         "SKILL.md and docs/status.md disagree about which "
+                         "components of the specification are built")
 
     def test_a_subcommand_the_index_names_as_built_exists(self):
         """An unbuilt one may be named, but only where the text says it is absent."""
