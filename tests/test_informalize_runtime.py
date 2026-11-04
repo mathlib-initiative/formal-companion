@@ -156,9 +156,35 @@ class TestTheRuntimeFiles(unittest.TestCase):
         from cflib import vocab
         for name, mine in (("INFORMALIZE_KINDS", tuple(fc.KIND_NAMES)),
                            ("INFORMALIZE_ROLES", fc.ROLES),
+                           ("INFORMALIZE_RELATIONS", fc.RELATIONS),
                            ("REFERENCE_SOURCES", fc.REFERENCE_SOURCES)):
             with self.subTest(name=name):
                 self.assertEqual(tuple(getattr(vocab, name)), tuple(mine))
+        self.assertIn("`relation` is a Literature Links relation: "
+                      + ", ".join(f"`{r}`" for r in fc.RELATIONS[:-1])
+                      + f" or `{fc.RELATIONS[-1]}`", flat)
+
+    def test_the_item_rules_are_one_copy(self):
+        """tools/fcitems.py holds the item table's rules for the gate and for `check-items`
+        (section 8.3 rule 4): the skill imports them, and its name patterns are copies of
+        informalize.config's."""
+        sys.path.insert(0, str(SKILL / "scripts"))
+        try:
+            from informalize import config, itemtable, runtime
+        finally:
+            sys.path.remove(str(SKILL / "scripts"))
+        rules = runtime.fcitems()
+        self.assertEqual(Path(rules.__file__).resolve(), (TOOLS / "fcitems.py").resolve())
+        for name in ("items_problems", "declarations_problems", "keyword_problem",
+                     "check_table", "SourceTree", "KEYWORDS"):
+            with self.subTest(name=name):
+                self.assertIs(getattr(itemtable, name), getattr(rules, name))
+        for name in ("COMMIT_PATTERN", "MODULE_PATTERN", "DECLARATION_PATTERN"):
+            with self.subTest(pattern=name):
+                self.assertEqual(getattr(rules, name), getattr(config, name))
+        # its vocabulary is fccommon's, the one copy the test above pins
+        self.assertEqual(Path(rules.fc.__file__).resolve(),
+                         (TOOLS / "fccommon.py").resolve())
 
     def test_an_item_id_is_two_numbers_from_1(self):
         # the grammar cflib holds the table to (`approve`, `check-items`) is the one copy

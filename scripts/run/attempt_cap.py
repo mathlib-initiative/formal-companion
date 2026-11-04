@@ -44,6 +44,14 @@ change set.  The turn machine keeps genuine rejections at or under its review
 rounds less one, below the cap, so this is the backstop; a task whose state names
 no snapshot (none was ever reviewed) is capped as before.
 
+**An informalize run** (a task manifest of schema ``cf-informalize-task/1``,
+docs/proposals/informalize.md section 8.1) has no UNRESOLVED document to write: its tasks
+write text and documents of their own.  At the cap the worker side puts back every path
+the attempts changed, as above, and commits the task file alone with its merge-base lines
+and ``status: complete``; the reviewer side approves exactly that change set, which the
+informalize gate admits while the task's counter is at the cap, and the harvest counts the
+task as capped with its files as they were.
+
 The harvest receipt counts these documents apart from the worker's own
 ``unresolved`` ones.  Standard library only: it runs on the run host.
 """
@@ -80,6 +88,9 @@ AUDIT_STATE = "state.json"
 LOCATE_ATTEMPT_CAP = 3
 DOCUMENT_SCHEMA = "cf-locate/1"
 LOCATE_INVENTORY = "locate-inventory"
+#: an informalize task manifest's schema (``scripts/informalize/plan.py`` TASK_SCHEMA; a
+#: test pins the two): such a task is capped with its files as they were
+INFORMALIZE_TASK_SCHEMA = "cf-informalize-task/1"
 
 #: COPIED from ``cflib.gitsafe`` (SAFE_CONFIG / SAFE_ENV) for the reason
 #: ``gate/verify_findings.py`` copies them: no cflib on the host.  The worktree
@@ -620,6 +631,8 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 1
     manifests, worktree = Path(args.manifests), Path(args.worktree)
+    if is_informalize(manifests, args.task):
+        return _informalize_cap(args, worktree, count)
     best = best_snapshot(root, args.task) if audited() else None
     if best is not None:
         return _audited_cap(args, root, manifests, worktree, best, count)
@@ -668,6 +681,84 @@ def _audited_cap(args, root: Path, manifests: Path, worktree: Path, best: dict,
                           "notes": f"approved mechanically: task {args.task} is at the attempt "
                                    f"cap ({count} genuine rejections) and holds exactly round "
                                    f"{best['round']}'s reviewed snapshot"}))
+        return 0
+    return EXIT_NOT_CAPPED
+
+
+# --------------------------------------------------------------------------- #
+# the informalize form
+# --------------------------------------------------------------------------- #
+
+def is_informalize(manifests: Path, task: str) -> bool:
+    """Is ``task``'s manifest an informalize task's?"""
+    try:
+        return load_manifest(manifests, task).get("schema") == INFORMALIZE_TASK_SCHEMA
+    except (OSError, ValueError):
+        return False
+
+
+def write_informal_capped(worktree: Path, task: str, base: str = "main") -> list[str]:
+    """Put back every path the attempts changed and commit the task file alone, with its
+    merge-base lines and ``status: complete``; returns the paths committed."""
+    base_commit = merge_base(worktree, base)
+    task_rel = f"tasks/{task}.yaml"
+    before = _at(worktree, base_commit, task_rel)
+    if before is None:
+        raise RuntimeError(f"{task_rel} is not on {base}")
+    restore_outside(worktree, base_commit, {task_rel})
+    (worktree / task_rel).write_text(complete_task_file(before), encoding="utf-8")
+    added = _git(worktree, "add", "--", task_rel)
+    if added.returncode != 0:
+        raise RuntimeError(f"git add failed: {added.stderr.strip()[:300]}")
+    staged = _git(worktree, "diff", "--cached", "--quiet")
+    if staged.returncode != 0:
+        done = _git(worktree, "commit", "-q", "-m",
+                    f"Attempt cap: task {task} ends with its files as they were")
+        if done.returncode != 0:
+            raise RuntimeError(f"git commit failed: {done.stderr.strip()[:300]}")
+    return [task_rel]
+
+
+def is_informal_capped(worktree: Path, task: str, base: str = "main") -> bool:
+    """Does the worktree change nothing since the merge base but its task file's status?"""
+    try:
+        base_commit = merge_base(worktree, base)
+        changed = change_set(worktree, base_commit)
+    except (OSError, RuntimeError):
+        return False
+    task_rel = f"tasks/{task}.yaml"
+    if not set(changed) <= {task_rel} or any(s == "D" for s in changed.values()):
+        return False
+    if task_rel in changed:
+        before = _at(worktree, base_commit, task_rel)
+        try:
+            after = (worktree / task_rel).read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return before is not None and complete_task_file(before) == after
+    return True
+
+
+def _informalize_cap(args, worktree: Path, count: int) -> int:
+    if args.cmd == "worker":
+        try:
+            paths = write_informal_capped(worktree, args.task, args.base)
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"attempt_cap: could not end task {args.task} at the cap: {exc}",
+                  file=sys.stderr)
+            return 1
+        print(json.dumps({"schema_version": 1, "status": "completed",
+                          "summary": f"attempt cap: {count} genuine reviewer rejections; the task "
+                                     f"ends with its files as they were (written by the bridge, "
+                                     f"no agent call)",
+                          "files_changed": paths,
+                          "notes": "informalize attempt cap; counted as capped at harvest"}))
+        return 0
+    if is_informal_capped(worktree, args.task, args.base):
+        print(json.dumps({"schema_version": 1, "verdict": "approve",
+                          "notes": f"approved mechanically: task {args.task} is at the attempt cap "
+                                   f"({count} genuine rejections) and changes nothing but its "
+                                   f"task file's status"}))
         return 0
     return EXIT_NOT_CAPPED
 

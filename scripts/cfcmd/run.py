@@ -94,6 +94,12 @@ def run(args) -> int:
 
     if args.show_status:
         return _status(workspace, args, data)
+    if data.get("mode") == "informalize":
+        # cf plan-informalize (docs/proposals/informalize.md section 8.1) plans it; sending it
+        # (the entrypoint from repo/ and tasks/, the library's source, the informalize gate's
+        # self-check, the watchdog) is component 5b of that file's section 11
+        raise CfError(f"run {args.run_id!r} is an informalize run, which cf run does not send "
+                      "yet", hint="docs/proposals/informalize.md section 11, component 5b")
     planned_host = data.get("host") if isinstance(data.get("host"), dict) else {}
     if manifest.is_locate(data) and (args.local or planned_host.get("kind") == "local"):
         # Before the local branch, which creates runs/<id>/self-gate/ and then

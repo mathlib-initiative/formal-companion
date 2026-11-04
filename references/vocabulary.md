@@ -1446,6 +1446,16 @@ keeps copies of the kinds, the roles, the reference sources and the id pattern, 
 | `REFERENCE_SOURCES` | `docstring` · `module docstring` · `inferred` (from the work's order; printed with a dagger) · `none` — where a reference work's number came from |
 | `INFORMALIZE_PHASES` | `items` · `conventions` · `draft` · `attack` · `judge` · `edit` — the fleet phases, one tend run each, in the order they run |
 | `APPROVAL_GATES` | `items` · `references` · `proof-sheets` · `publish` — what the maintainer signs with `cf informalize approve` |
+| `INFORMALIZE_SEVERITIES` | `wrong` (a reader infers something false or misses a hypothesis) · `imprecise` (ambiguous) · `style` — an attack finding's `severity` |
+| `INFORMALIZE_DIRECTIONS` | `lean-first` · `tex-first` — the two attackers of a section: from each key declaration to the text, or from the text to the Lean |
+| `INFORMALIZE_RULINGS` | `real` · `not_real` — a judge's ruling on a finding |
+| `INFORMALIZE_ACTIONS` | `fixed` · `out_of_scope` (with a request for the editor) · `none` (for `not_real`) — what the judge did |
+| `INFORMALIZE_ANSWERS` | `done` · `declined` — the editor's answer to a request |
+
+The gate, `scripts/gate/verify_informal.py`, runs on the host without `cflib` and keeps copies of
+those five, of `INFORMALIZE_ATTEMPT_CAP` (3, the genuine rejections after which a fleet task ends
+with its files as they were) and of `INFORMALIZE_COPY_RUN_WORDS` (12, the run of words shared with
+the library's docstrings that it refuses as copied); `tests/test_informalize_fleet.py` pins them.
 
 ---
 

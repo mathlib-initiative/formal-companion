@@ -71,8 +71,9 @@ scripts/informalize/ the informalize mode behind `cf informalize`: informalize.y
                      output repository and the exception it is written under, the runtime
                      sync, the item table and `check-items`, receipts and approvals, the
                      library's build (`library.py`; `library_host.sh` and `library_host.py`
-                     run on the host beside locate's drivers, with no cflib) and the scope
-                     (docs/proposals/informalize.md)
+                     run on the host beside locate's drivers, with no cflib), the scope, and
+                     the fleet's planner (`plan.py`, behind `cf plan-informalize`), whose
+                     gate is scripts/gate/verify_informal.py (docs/proposals/informalize.md)
 scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
                      its three presets, outcomes with the derived status, and the
                      Literature Links export (references/locate-documents.md);
@@ -156,10 +157,13 @@ Those two lines move together or not at all.
   goes under `x_` keys. The second documented copy is the informalize runtime's:
   `templates/informalize/runtime/tools/fccommon.py` runs in an output repository
   and on a run host, where `cflib` cannot be imported, so it inlines the item
-  kinds, the roles, the reference sources and the informalize item id
-  (`cflib.items.INFORMAL_ITEM_ID`, the second item grammar beside the book
-  one), and `tests/test_informalize_runtime.py` pins each copy to `cflib`,
-  as `gate/verify_findings.py`'s `finding_id` is pinned.
+  kinds, the roles, the relations, the reference sources and the informalize
+  item id (`cflib.items.INFORMAL_ITEM_ID`, the second item grammar beside the
+  book one), and `tests/test_informalize_runtime.py` pins each copy to `cflib`,
+  as `gate/verify_findings.py`'s `finding_id` is pinned. The informalize gate,
+  `gate/verify_informal.py`, likewise inlines the fleet documents' enums
+  (`INFORMALIZE_SEVERITIES` and its four siblings, the phases, the attempt cap),
+  and `tests/test_informalize_fleet.py` pins those.
 - **One item grammar, one namespace rule.** `scripts/cflib/items.py`. Never
   write another item regex; never let an unparseable id become a key. Parsing
   is whitespace-tolerant and produces a *reject list* callers must report. An
@@ -323,8 +327,9 @@ reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
 and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
 `tests/test_informalize_runtime.py` builds PDFs and skips without pdflatex, latexmk,
 kpsewhich, poppler or a package of `tex_packages`, and so does the one build test of
-`tests/test_informalize_cli.py` (without poppler's part); `CF_REQUIRE_TEX=1` makes that skip
-a failure, and CI's `informalize-tex` job sets it.
+`tests/test_informalize_cli.py` (without poppler's part) and the fleet's phases that build in
+`tests/test_e2e_informalize_synthetic.py`; `CF_REQUIRE_TEX=1` makes that skip a failure, and
+CI's `informalize-tex` job sets it.
 Tests that compare this checkout with a frozen base commit skip in a checkout
 that does not hold it, such as a shallow clone; `CF_REQUIRE_BASE_COMMITS=1`
 makes that a failure (`tests/_base_commits.py`), and CI sets it and takes the
@@ -370,3 +375,14 @@ bad documents refused under the rule they break, then harvest, the locate
 tally, the Literature Links export and the bench. Run it with `python3
 tests/e2e/locate_synthetic/driver.py [--keep <dir>]`; the suite runs it as
 `tests/test_e2e_locate_synthetic.py`.
+
+`tests/e2e/informalize_synthetic/driver.py` is the same for the informalize fleet: an
+informalize id over a fake library, each phase planned with `cf plan-informalize`, its
+contributions written in worktrees of an entrypoint made as `cf run` makes one, and judged by
+the staged gate as the run host runs it (a copy of the planned `gate/`, `python3 -I`, PATH and
+HOME alone); good contributions pass, bad ones are refused under the rule they break, and a
+task at the attempt cap is ended by `attempt_cap.py` and admitted. Between phases it does by
+hand what harvesting and applying a run will do (not implemented yet: component 5b of
+`docs/proposals/informalize.md`). The phases that build need TeX.
+Run it with `python3 tests/e2e/informalize_synthetic/driver.py [--keep <dir>]`; the suite
+runs it as `tests/test_e2e_informalize_synthetic.py`.

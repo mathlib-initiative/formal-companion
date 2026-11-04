@@ -91,35 +91,56 @@ def template_files() -> dict[str, bytes]:
 
 #: the module name the runtime's fccommon.py is imported under here
 FCCOMMON_MODULE = "informalize_runtime_fccommon"
+#: and its fcitems.py, the rules of items.json and declarations.json (section 5.4)
+FCITEMS_MODULE = "informalize_runtime_fcitems"
 
 
-def fccommon():
-    """The runtime's own `tools/fccommon.py`, imported once from this checkout, without bytecode.
+def _tool_module(name: str, file_name: str, siblings: dict | None = None):
+    """A runtime tool imported once from this checkout, without bytecode, its siblings as
+    given and `sys.path` as it was.
 
-    Its `load_config` is the rule a written `informalize.json` must pass and its
-    `DEFAULT_BOXES` the figures it holds, so neither is restated here.  The flag is set
-    around the import, since a module writes its `.pyc` while it is compiled, before its
-    own first line runs; and the module is registered before it runs, as `dataclass`
-    looks its module up by name.
+    The flag is set around the import, since a module writes its `.pyc` while it is
+    compiled, before its own first line runs; the module is registered before it runs, as
+    `dataclass` looks its module up by name; a tool puts its own directory on `sys.path` to
+    import a sibling, so `siblings` (``{import name: module}``) are registered under their
+    import names first, when nothing holds the name, and `sys.path` is put back after.
     """
-    if FCCOMMON_MODULE in sys.modules:
-        return sys.modules[FCCOMMON_MODULE]
-    path = runtime_root() / TOOLS / "fccommon.py"
-    spec = importlib.util.spec_from_file_location(FCCOMMON_MODULE, path)
+    if name in sys.modules:
+        return sys.modules[name]
+    path = runtime_root() / TOOLS / file_name
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:                  # pragma: no cover
         raise CfError(f"{path} cannot be imported", hint="this is not a formal-companion checkout")
     module = importlib.util.module_from_spec(spec)
-    saved = sys.dont_write_bytecode
+    saved, saved_path = sys.dont_write_bytecode, list(sys.path)
     sys.dont_write_bytecode = True
-    sys.modules[FCCOMMON_MODULE] = module
+    sys.modules[name] = module
+    for alias, sibling in (siblings or {}).items():
+        sys.modules.setdefault(alias, sibling)
     try:
         spec.loader.exec_module(module)
     except BaseException:
-        del sys.modules[FCCOMMON_MODULE]
+        del sys.modules[name]
         raise
     finally:
         sys.dont_write_bytecode = saved
+        sys.path[:] = saved_path
     return module
+
+
+def fccommon():
+    """The runtime's own `tools/fccommon.py`.
+
+    Its `load_config` is the rule a written `informalize.json` must pass and its
+    `DEFAULT_BOXES` the figures it holds, so neither is restated here.
+    """
+    return _tool_module(FCCOMMON_MODULE, "fccommon.py")
+
+
+def fcitems():
+    """The runtime's own `tools/fcitems.py`: the rules of items.json and declarations.json
+    and the keyword check, which `informalize.itemtable` and the gate both use."""
+    return _tool_module(FCITEMS_MODULE, "fcitems.py", {"fccommon": fccommon()})
 
 
 def config_document(cfg: dict, previous: dict | None) -> dict:

@@ -58,10 +58,10 @@ DEFAULT_BOXES = {"res_dpi": 288, "ink_level": 224, "pad_bp": 3.0, "frame_bp": 4.
 SP_PER_BP = 65536 * 72.27 / 72      # TeX's scaled points per PostScript point
 
 #: The environment of each kind, and the word its head prints.  The kinds, the reference
-#: sources, the roles and the id grammar below are copies: the runtime runs where cflib
-#: cannot be imported.  tests/test_informalize_runtime.py pins them to the specification's
-#: lists, to cflib.vocab's INFORMALIZE_KINDS, REFERENCE_SOURCES and INFORMALIZE_ROLES, and
-#: to cflib.items.INFORMAL_ITEM_ID.
+#: sources, the roles, the relations and the id grammar below are copies: the runtime runs
+#: where cflib cannot be imported.  tests/test_informalize_runtime.py pins them to the
+#: specification's lists, to cflib.vocab's INFORMALIZE_KINDS, REFERENCE_SOURCES,
+#: INFORMALIZE_ROLES and INFORMALIZE_RELATIONS, and to cflib.items.INFORMAL_ITEM_ID.
 KIND_NAMES = {
     "definition": "Definition",
     "lemma": "Lemma",
@@ -73,6 +73,7 @@ KIND_NAMES = {
 }
 REFERENCE_SOURCES = ("docstring", "module docstring", "inferred", "none")
 ROLES = ("key", "helper")
+RELATIONS = ("exactMatch", "broadMatch", "narrowMatch", "relatedMatch")
 
 ITEM_ID = re.compile(r"\A[1-9][0-9]*\.[1-9][0-9]*\Z")
 _JOB = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")

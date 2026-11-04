@@ -1333,6 +1333,27 @@ REFERENCE_SOURCES = ("docstring", "module docstring", "inferred", "none")
 INFORMALIZE_PHASES = ("items", "conventions", "draft", "attack", "judge", "edit")
 #: what the maintainer signs with `cf informalize approve` (section 13)
 APPROVAL_GATES = ("items", "references", "proof-sheets", "publish")
+#: The fleet's documents (section 8.2).  scripts/gate/verify_informal.py, which runs on a
+#: host where cflib cannot be imported, keeps copies of these five and of the attempt cap,
+#: and tests/test_informalize_fleet.py pins them to these.
+#: an attack finding's ``severity``: a reader infers something false or misses a hypothesis,
+#: the text is ambiguous, or it breaks a style rule
+INFORMALIZE_SEVERITIES = ("wrong", "imprecise", "style")
+#: the two attackers of a section: from each key declaration to the text, or the other way
+INFORMALIZE_DIRECTIONS = ("lean-first", "tex-first")
+#: a judge's ruling on a finding, and what it did about it
+INFORMALIZE_RULINGS = ("real", "not_real")
+INFORMALIZE_ACTIONS = ("fixed", "out_of_scope", "none")
+#: the editor's answer to a judge's request
+INFORMALIZE_ANSWERS = ("done", "declined")
+#: the genuine reviewer rejections after which a fleet task ends with its files as they
+#: were (``attempt_cap.py``'s informalize form, section 8.1): the locate cap's number
+INFORMALIZE_ATTEMPT_CAP = 3
+#: the gate's limit on one TeX build, in seconds (section 8.3 rule 2)
+INFORMALIZE_BUILD_TIMEOUT = 600
+#: the shortest run of words a text file shares with the library's docstrings and comments
+#: that the gate refuses as copied (section 8.3 rule 9)
+INFORMALIZE_COPY_RUN_WORDS = 12
 
 
 def check(value: str, allowed: Iterable[str], field: str) -> str:

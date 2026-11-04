@@ -9,5 +9,8 @@ license `init` renders once (`project`), the item table's rules and `check-items
 (`approve`).  Component 4 adds the Lean side: stage I1's two ends on the operator's
 machine (`library`) and its host script with the helper it calls there
 (`library_host.sh`, `library_host`, which import no cflib), and stage I2, the theorem's
-closure (`scope`).  `scripts/cfcmd/informalize.py` is the command.
+closure (`scope`).  `scripts/cfcmd/informalize.py` is the command.  Component 5a adds
+the fleet's planner (`plan`, behind `scripts/cfcmd/plan_informalize.py`), whose gate is
+`scripts/gate/verify_informal.py`; the item table's rules it shares with that gate are the
+runtime's `tools/fcitems.py`, which `itemtable` imports.
 """

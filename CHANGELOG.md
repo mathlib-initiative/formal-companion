@@ -42,6 +42,23 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+
+- **`cf plan-informalize`** (component 5a of `docs/proposals/informalize.md`, its section 8):
+  one tend run per fleet phase (`items`, `conventions`, `draft`, `attack`, `judge`, `edit`),
+  planned from the output repository's HEAD and, for `judge` and `edit`, a harvested
+  `--from-run`; its gate, `scripts/gate/verify_informal.py`, runs out of tree with the
+  runtime beside it as `tex/` and nine rules: the task's owned paths, the build with the
+  gate's own `build_pdf.sh` and a lint against forged `.aux` records, `check_items.py
+  --aux-only --strict`, the item table, the hypotheses, the attack, ruling and edit
+  documents, and no run of 12 words copied from the library's docstrings. The prompts, the
+  tend config and the task file are templates (`templates/prompts/informalize-*.md.tmpl`,
+  `templates/tend/config-informalize.yaml.tmpl`, `templates/tasks/informalize.yaml.tmpl`).
+  The agentbox bridge gains a second switch for this gate (a read-only reviewer git, a
+  `--findings` gate entry, the tamper guard), `attempt_cap.py` an informalize form, and
+  `verify_findings.py` the orchestrator lookup both gates use. The item table's rules moved
+  to the runtime's `tools/fcitems.py`, which `informalize.itemtable` imports.
+  `tests/e2e/informalize_synthetic/driver.py` runs every phase on a fake library with the
+  staged gate run as the host runs it.
 - **`cf informalize build-command | fetch-library | scope`** (component 4 of
   `docs/proposals/informalize.md`, its section 6): the Lean side, with no Lean on the
   operator's machine. `build-command` copies the host drivers into `library/to-host/` and

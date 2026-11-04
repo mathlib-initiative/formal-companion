@@ -1,0 +1,15 @@
+You are the conventions task of run `{{run_id}}` (task file `tasks/$TEND_TASK_ID.yaml`, worktree $TEND_WORKTREE_PATH). Before any section is drafted you fix what every section shares.
+
+## Read first
+`informal/items.json` (approved: its ids are the printed numbers), `informal/declarations.json`, `informal/STYLE.md`, the templates you replace (`informal/notation.sty`, `informal/sections/00-conventions.tex`, `informal/STYLE-project.md`), and the library's source under `{{library_src}}/`.
+
+## Write
+1. `informal/hypotheses.json`: `{"schema": "formal-companion/informalize-hypotheses", "schema_version": 1, "hypotheses": [...]}`, one row per standing hypothesis the key declarations bind: `key` (letters, digits, `-`), `macro` (`\hypSomething`), and `binder_head` (the head constant of the hypothesis's printed type) or `binder_type` (a Python regular expression the whole printed type matches, spaces collapsed). An empty list when there is none.
+2. `informal/notation.sty`: one `\fcdefhyp{\macro}{key}{words}` per row of hypotheses.json (the words a statement prints for the hypothesis), and the notation the sections use, defined with `\newcommand` or `\DeclareMathOperator`; each letter with one meaning.
+3. `informal/sections/00-conventions.tex`: unnumbered prose fixing the objects, the letters and their one meaning each, the standing hypotheses and their macros, and every junk value the items rely on (what Lean returns where the mathematics is undefined), from the library's docstrings and statements, in your own words.
+4. `informal/STYLE-project.md`: the project's half of the style rules (the hypotheses, the letters, the notation, how the reference work is cited).
+
+## Check, commit, finish
+Build the whole document, `{{build_command}} build/$TEND_TASK_ID`, then `{{check_command}} build/$TEND_TASK_ID --aux-only --strict --conventions --declarations {{gate_dir}}/declarations.json`, and `{{gate_command}} --findings informal/hypotheses.json`. Fix what they name, commit, set `status: complete` in your task file and commit it.
+
+{{finish_block}}

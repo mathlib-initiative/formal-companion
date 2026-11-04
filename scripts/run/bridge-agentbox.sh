@@ -76,6 +76,11 @@
 # $ROOT/contracts/, the needs_review ledger $ROOT/needs-review.jsonl, and the tamper
 # guard around each reviewer call ($ROOT/tamper.jsonl; references/locate-documents.md
 # section 9). The faithfulness pipeline's bridge is what it was.
+# AN INFORMALIZE RUN is one whose CF_GATE_CMD is the informalize gate (verify_informal.py;
+# docs/proposals/informalize.md section 8.1). The second switch beside the locate test turns
+# on three of a locate run's settings for it: the reviewer's read-only git, a gate entry
+# limited to --findings, and the tamper guard around each reviewer call. Locate's revision
+# prompt and its review records stay locate's.
 # Claude's JSON envelope is KEPT, outside the worktree, under $ROOT/usage/ (one file
 # per call), for the spend watchdog and the cost cross-check; the counter is
 # $ROOT/attempts/<task-id>.json.
@@ -101,13 +106,20 @@ ERR="$ROOT/agentbox-$ROLE.err"
 BINDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOCATE=0
 case "${CF_GATE_CMD:-}" in *"/verify_locate.py --"*) LOCATE=1 ;; esac
+INFORMAL=0
+case "${CF_GATE_CMD:-}" in *"/verify_informal.py --"*) INFORMAL=1 ;; esac
+# the tamper guard around a reviewer call: an unaudited locate turn's, or an informalize turn's
+GUARDED=0
 # the records of review_record.py: an unaudited locate turn of a known task
 RECORD=0
 if [ "$LOCATE" = 1 ] && [ -z "${CF_AUDIT_RULE:-}" ] && [ -n "${TEND_TASK_ID:-}" ]; then
   RECORD=1
 fi
+if [ "$RECORD" = 1 ] || { [ "$INFORMAL" = 1 ] && [ -n "${TEND_TASK_ID:-}" ]; }; then
+  GUARDED=1
+fi
 HELPERS="agent_call.py normalize_result.py"
-[ "$LOCATE" = 1 ] && HELPERS="$HELPERS review_record.py"
+{ [ "$LOCATE" = 1 ] || [ "$INFORMAL" = 1 ]; } && HELPERS="$HELPERS review_record.py"
 for helper in $HELPERS; do
   [ -r "$BINDIR/$helper" ] || {
     echo "bridge-agentbox: missing helper $BINDIR/$helper (cf run ships it beside the bridge)" >&2
@@ -207,7 +219,8 @@ fi
 GATE_TOOL=""
 case "${CF_GATE_CMD:-}" in
   "" | *,*) ;;    # unset, or a path an --allowedTools list cannot carry anyway
-  *"/verify_locate.py --"*) GATE_TOOL=",Bash(${CF_GATE_CMD} --findings:*)" ;;
+  *"/verify_locate.py --"* | *"/verify_informal.py --"*)
+    GATE_TOOL=",Bash(${CF_GATE_CMD} --findings:*)" ;;
   *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;   # verify_findings.py: unchanged
 esac
 if [ "$ROLE" = reviewer ]; then
@@ -218,7 +231,7 @@ if [ "$ROLE" = reviewer ]; then
   # Bash(git:*) admitted checkout, commit and config, and tend merges the worktree's
   # HEAD (the tamper guard below undoes whatever gets past the list).
   REVIEWER_DEFAULT="Read,Glob,Grep,Bash(git:*)$GATE_TOOL"
-  if [ "$LOCATE" = 1 ]; then
+  if [ "$LOCATE" = 1 ] || [ "$INFORMAL" = 1 ]; then
     REVIEWER_DEFAULT="Read,Glob,Grep,Bash(git diff:*),Bash(git show:*),Bash(git log:*),Bash(git status:*)$GATE_TOOL"
   fi
   TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-$REVIEWER_DEFAULT}}"
@@ -292,6 +305,8 @@ if [ "$RECORD" = 1 ] && [ "$ROLE" = reviewer ]; then
 
 $BLOCK"
   fi
+fi
+if [ "$GUARDED" = 1 ] && [ "$ROLE" = reviewer ]; then
   BEFORE="$(python3 "$BINDIR/review_record.py" fingerprint --worktree "$PWD" 2>>"$ERR")" \
     || BEFORE=""
 fi

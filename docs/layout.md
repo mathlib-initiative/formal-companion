@@ -85,8 +85,9 @@ scripts/informalize/
                   the informalize mode behind `cf informalize`: informalize.yaml,
                   the output repository, the runtime sync, the item table, receipts
                   and approvals, the library's build on the host (library_host.sh and
-                  library_host.py run there, with no cflib) and the scope
-                  (proposals/informalize.md)
+                  library_host.py run there, with no cflib), the scope and the
+                  fleet's planner, plan.py (`cf plan-informalize`), whose gate is
+                  scripts/gate/verify_informal.py (proposals/informalize.md)
 scripts/corpus/   locate's universes of libraries and corpus.sqlite (`cf corpus`)
 scripts/locate/   locate's candidates, planner, outcomes and export
                   (`cf locate`, `cf plan-locate`, `cf tally --locate`,
@@ -103,7 +104,8 @@ templates/overlay/
                   viewer, its tools and schemas, PDF.js), and tests/ (its node suites)
 templates/informalize/
                   runtime/, copied verbatim into an informalize output repository's
-                  informal/ (fcmarkers.sty, STYLE.md, the build and check tools), and
+                  informal/ (fcmarkers.sty, STYLE.md, the build and check tools, and
+                  fcitems.py, the item table's rules the gate shares), and
                   project/, the templates `cf informalize init` renders once,
                   licenses/, the text of each open license it writes as LICENSE,
                   and schema/, informalize.yaml's and items.json's JSON Schemas

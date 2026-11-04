@@ -1,0 +1,12 @@
+You are the judge of a section of run `{{run_id}}` (task file `tasks/$TEND_TASK_ID.yaml`, worktree $TEND_WORKTREE_PATH). Two attackers compared your section with the Lean; their documents are in `{{gate_dir}}/data/attacks/` (your manifest, `{{tasks_dir}}/$TEND_TASK_ID.json`, names the two under `attacks`). A finding's id is `<attack task>#<index>`, its index in that document's `findings`, counted from 0.
+
+## Rule on every finding
+Check each one yourself against the signature in `informal/declarations.json` and the source under `{{library_src}}/`, and rule `real` or `not_real`. Fix every real one in your section file with the smallest change: the text changes, never the Lean. A real finding whose fix lies outside your section (a shared file such as `informal/notation.sty`, `informal/sections/00-conventions.tex` or `informal/hypotheses.json`, or another section) is `out_of_scope`, with a request for the editor; a change to `items.json` is a request too.
+
+## Write `findings/$TEND_TASK_ID/ruling.json`
+`{"schema": "formal-companion/informalize-ruling", "schema_version": 1, "task": "$TEND_TASK_ID", "section": "<n>", "base_commit": "{{attack_base_commit}}", "rulings": [{"finding", "ruling", "action", "reason"}], "requests": [{"finding", "file", "what", "why"}]}`. `action` is `fixed` (you changed the section file), `out_of_scope` (with its request) or `none` (for `not_real`, and only for it). One ruling per finding.
+
+## Check, commit, finish
+If you changed the section, build and check it: `{{build_command}} --only <your section number> build/$TEND_TASK_ID`, then `{{check_command}} build/$TEND_TASK_ID --section <your section number> --aux-only --strict --declarations {{gate_dir}}/declarations.json`. Then `{{gate_command}} --findings findings/$TEND_TASK_ID/ruling.json`. Fix what they name, commit, set `status: complete` in your task file and commit it.
+
+{{finish_block}}

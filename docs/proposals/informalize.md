@@ -1,15 +1,18 @@
 # Informalize: an informal companion written from a Lean library
 
-**Status: specification, 2026-11-03. Components 2, 3 and 4 of section 11 are built: the
+**Status: specification, 2026-11-03. Components 2, 3, 4 and 5a of section 11 are built: the
 LaTeX runtime and the project templates under `templates/informalize/`; `cf informalize
 init`, `sync`, `status`, `check-items`, `approve` and `reference-checklist` with the formats
 of section 5 they read and write, the vocabulary and the rule exception of section 1.3
-(`scripts/informalize/`); and the Lean side, `cf informalize build-command`, `fetch-library`
+(`scripts/informalize/`); the Lean side, `cf informalize build-command`, `fetch-library`
 and `scope` with `scripts/informalize/library_host.sh` and the driver's `LIBRARY_CACHE`
-option (section 6). These are not implemented yet: `cf informalize apply`,
-`cf informalize pdf-command`, `cf informalize fetch-pdf`, `cf informalize overlay`,
-`cf informalize check-site`, `cf plan-informalize` and `cf export informal-markers`, and paths
-into this repository written in *italics* do not exist yet. Section 11 lists the components
+option (section 6); and the fleet's first half (section 8): `cf plan-informalize`, the gate
+`scripts/gate/verify_informal.py`, the prompts, the tend config, the bridge's second switch,
+the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`. These
+are not implemented yet: `cf run`'s and `cf harvest`'s informalize support (component 5b),
+`cf informalize apply`, `cf informalize pdf-command`, `cf informalize fetch-pdf`,
+`cf informalize overlay`, `cf informalize check-site` and `cf export informal-markers`, and
+paths into this repository written in *italics* do not exist yet. Section 11 lists the components
 in the order they land; a component whose code shows this file wrong changes it in the same
 commit and says so in its message.**
 
@@ -407,7 +410,8 @@ not a key, and the table names the generating declaration as the key instead.
 `check-items` checks a provisional table until the first items approval and a numbered one
 from then on, and writes nothing;
 `templates/informalize/schema/items.schema.json` states the shape as a JSON Schema for a
-reader, and `scripts/informalize/itemtable.py` is the implementation.
+reader, and the runtime's `tools/fcitems.py`, which `scripts/informalize/itemtable.py` imports, is
+the implementation.
 
 `cf informalize reference-checklist <id>` writes `reference-checklist.md`: per `in_v1` item
 and part with a reference, the id, kind, title, the number, its source and the declaration
@@ -668,6 +672,7 @@ Apache License 2.0, travels with it as `LICENSE-runtime`, whatever license the t
 | `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check |
 | `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py`; an edge through ink is judged at `res_dpi`, a stroke touching ink only reported; ink outside an item's boxes is fatal |
 | `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts` |
+| `tools/fcitems.py` | the pilot's item verifier | the rules of `items.json` and `declarations.json` and the keyword check (section 5.4), which `cf informalize check-items` and the gate (section 8.3 rule 4) share |
 | `LICENSE-runtime` | (new) | this repository's `LICENSE`, the Apache License 2.0 the other runtime files are under |
 
 The tools are standard-library Python and POSIX shell, run from the output repository's
@@ -816,34 +821,54 @@ cf plan-informalize <id> --phase <phase> [--sections all|N,M|touched] [--from-ru
 
 writes one tend run per phase, planned from the output repository's HEAD. `cf plan-run`
 cannot host it: it is scoped to a companion and a source, which is why locate has its own
-planner too. It refuses unless the items approval pins the current `items.json` and the
-references approval's list is the one derived from it (every phase after `items`), the
-conventions phase was applied (phases after it), and the output repository is clean.
-`--run-id` defaults to `<id>-<phase>-<n>`, `n` one more than the phase's last planned run.
+planner too (`scripts/informalize/plan.py` and `scripts/cfcmd/plan_informalize.py`). It
+refuses unless the scope is there (I1's `library/src/` and I2's `scope.json`), the output
+repository is clean and its runtime is this checkout's (`sync --check`, so the agents build
+with the tools the gate checks with), and, for every phase after `items`, the items approval
+pins the current `items.json`, the references approval's list is the one derived from it, and
+`informalize.json` carries I1's `source_date_epoch`, which every build needs; and for the
+phases after `conventions`, that phase was applied (`stages/I4.json`). Every refusal comes
+before anything is written. `--run-id` defaults to `<id>-<phase>-<n>`, `n` one more than the
+phase's last planned run; a harvested run is never planned again.
 `--from-run` names the harvested run whose findings a phase reads: the attack run for
-`judge`, the judge run for `edit`; `--phase judge` refuses when a section file differs from
-the attack run's `base_commit`. `--sections touched` is every section whose file was changed
-by a judge or edit run applied since that section's last attack run, and every section when
-such a run changed a conventions file (`notation.sty`, `hypotheses.json` or
-`sections/00-conventions.tex`), which every section reads.
+`judge`, the judge run for `edit`. It must be an informalize run of the same id and phase
+with a harvest receipt (`corpus/<run>/RECEIPT.json`), and its task documents are read from
+`corpus/<run>/<task>/<name>.json`, where `cf harvest` lands them (section 8.5).
+`--phase judge` refuses when a section file differs from the attack run's `base_commit`, and
+plans a judge task only for a section whose attack documents hold a finding (its default
+`--sections`); `--phase edit` refuses a judge run that made no request. `--phase draft`
+refuses a section that is drafted already (a drafted section changes through attack, judge
+and edit), and `attack` and `judge` one that is still empty. `--sections touched` (attack
+only) is every section whose file, or a conventions file every section reads
+(`notation.sty`, `hypotheses.json` or `sections/00-conventions.tex`), changed since the
+base commit of the last harvested attack run that covered it, and every section no attack run
+covered.
 
 It writes `runs/<run-id>/` as `cf plan-locate` does, through `plan.make_tend_root`
-(`scripts/plan/make_tend_root.py`) with *templates/tend/config-informalize.yaml.tmpl*:
+(`scripts/plan/make_tend_root.py`) with `templates/tend/config-informalize.yaml.tmpl`:
 
 - `run.yaml` with an `informalize:` block (`id`, `phase`, `sections`, `base_commit`,
   `from_run`, `paths` from each task to its owned paths, and `library` with its commit and
   the sha256 of its source), the budget (`--max-cost`), consent, the model and the caps;
-- `repo/`: the files of the output repository at `base_commit` (`git archive`), which
-  become the entrypoint's first commit, beside `tasks/`;
-- `data/`: `scope.json`, and the `--from-run` findings (`attacks/`, `rulings/`);
-- `tasks/<task>.yaml` and `prompts/`, from *templates/tasks/informalize.yaml.tmpl* and
-  *templates/prompts/informalize-*.md.tmpl*;
-- `tend-root/` with `gate/`: *scripts/gate/verify_informal.py*, `verify_findings.py` (whose
-  `changed_entries` it uses; the check of those paths against `gate/tasks/<task>.json` is its
-  own, as `verify_locate.py`'s is), `tex/` (the runtime at the plan's commit),
-  `declarations.json`, `hypotheses.json`, `tasks/<task>.json` and `gate.json` pinning the
-  sha256 of each; and `bin/` with the bridge helpers locate's root gets
-  (`tend_root.LOCATE_BIN_HELPERS`), `watchdog.py` among them.
+- `repo/`: the files of the output repository at `base_commit`, read from git's objects
+  through `cflib.gitsafe` (a link or a submodule there is refused), which become the
+  entrypoint's first commit, beside `tasks/`;
+- `data/`: `scope.json`, and the `--from-run` findings (`attacks/<task>.json`,
+  `rulings/<task>.json`);
+- `tasks/<task>.yaml` and `prompts/`, from `templates/tasks/informalize.yaml.tmpl` and
+  `templates/prompts/informalize-*.md.tmpl` (one system prompt per role, the phase's worker
+  prompt and one reviewer prompt);
+- `gate.json` (the host's paths) and `gate.local.json` (this machine's);
+- `tend-root/` with `gate/`: `scripts/gate/verify_informal.py`, `verify_findings.py` (whose
+  `changed_entries` and `task_from_orchestrator` it uses; the check of those paths against
+  `gate/tasks/<task>.json` is its own, as `verify_locate.py`'s is), `tex/` (the runtime of
+  this checkout, `templates/informalize/runtime/`), `declarations.json`, `hypotheses.json`
+  (once the conventions phase wrote one), `data/` (as above, which the workers read there),
+  `tasks/<task>.json` and `gate.json`, which pins the sha256 of every other file and of the
+  base commit's `items.json`, section files and conventions files (`base_files`), names the
+  library's source on the host (`<remote_root>/library-src/`), and holds the attempt cap,
+  the build limit and the copy bound of section 8.3; and `bin/` with the bridge helpers
+  locate's root gets (`tend_root.LOCATE_BIN_HELPERS`), `watchdog.py` among them.
 
 Caps: `--workers` and `--reviewers` (else `caps.workers` and `caps.reviewers`) set the
 tend limits that `cf run --stage raise` applies after the 1/1 smoke test; `--max-cost` (else
@@ -862,14 +887,15 @@ agents' usage envelopes and drains the root at the cap, from the first task on.
 The tend config is locate's shape: `validation_commands` run the gate with
 `--changed-files --base main`, `pre_merge_validation_commands` add `--pre-merge`,
 `merge_validation_worktree: true`, `seed_worktree_build: false`, `batched_merge: true`, and
-the caps. Component 5a stages in the wrappers what locate's planner stages
-(`tend_root.wrapper_env`), for this gate:
+the caps. The planner stages in the wrappers what locate's planner stages
+(`tend_root.wrapper_env`), for this gate (`informalize.plan.wrapper_env`):
 
 - in both: `CF_TASK_MANIFESTS` (the gate's `tasks/`), `CF_MERGE_TARGET` `main`,
   `CF_AGENT_TIMEOUT`, `CF_ATTEMPT_CAP` 3, and `CF_FINDINGS_GLOB` per phase
   (`findings/$TEND_TASK_ID/*.json` for attack and judge, `findings/edit/*.json` for edit,
-  and a glob that matches nothing for items, conventions and draft, so a worker that wrote no
-  result file there is `needs_review`);
+  and a glob that matches nothing for items, conventions and draft,
+  `findings/.no-result-file/*.json`, so a worker that wrote no result file there is
+  `needs_review`);
 - in the worker's: `CF_EXTRA_TOOLS` entries for the gate's own copies of
   `tex/tools/build_pdf.sh` and `tex/tools/check_items.py`, so every agent builds with the
   runtime the gate checks against, into `build/<task>/` at its worktree's root (ignored by
@@ -880,13 +906,14 @@ the caps. Component 5a stages in the wrappers what locate's planner stages
 The bridge (`scripts/run/bridge-agentbox.sh`) gives a reviewer read-only git, a gate entry
 limited to `--findings` and the tamper guard (`review_record.py guard`) only when
 `CF_GATE_CMD` is the locate gate; under any other gate the reviewer gets `Bash(git:*)` with
-`acceptEdits` and no guard, and tend merges the HEAD it leaves. Component 5a adds a second
-switch beside that test, on for `verify_informal.py`, that turns on those three and leaves
-locate's revision prompt and review records to locate. At the cap, `attempt_cap.py`'s
-informalize form puts back every path the attempts changed, as locate's does, and commits
-the task file alone with `status: complete`; the reviewer side approves exactly that, the
-gate admits that change set when the task's counter (`<tend-root>/attempts/`) is at the cap,
-harvest counts the task as capped, and its files stay as they were.
+`acceptEdits` and no guard, and tend merges the HEAD it leaves. A second switch beside that
+test, on for `verify_informal.py`, turns on those three and leaves locate's revision prompt
+and review records to locate. At the cap, `attempt_cap.py`'s informalize form (a task
+manifest of schema `cf-informalize-task/1`) puts back every path the attempts changed, as
+locate's does, and commits the task file alone with `status: complete`; the reviewer side
+approves exactly that, the gate admits that change set when the task's counter
+(`<tend-root>/attempts/`, `gate.json`'s `attempts_dir`) is at the cap, harvest (component 5b)
+counts the task as capped, and its files stay as they were.
 
 `cf run <run-id>` then works as for any run (preflight, transfer, verify, smoke, raise,
 monitor, stop), with four changes (component 5b): the gate it verifies is
@@ -905,7 +932,7 @@ so no phase relies on `depends_on`.
 | `conventions` | `conventions`, one | `informal/notation.sty`, `informal/sections/00-conventions.tex`, `informal/STYLE-project.md`, `informal/hypotheses.json` |
 | `draft` | `draft-NN`, one per section | `informal/sections/NN-<slug>.tex` |
 | `attack` | `attack-lean-NN` and `attack-tex-NN` per section | `findings/<task>/attack.json` only |
-| `judge` | `judge-NN`, one per section | `informal/sections/NN-<slug>.tex`, `findings/<task>/ruling.json` |
+| `judge` | `judge-NN`, one per section with a finding | `informal/sections/NN-<slug>.tex`, `findings/<task>/ruling.json` |
 | `edit` | `edit`, one | the conventions files, the section files the judge run's requests name, `findings/edit/edit.json`, `findings/edit/items-proposal.json` |
 
 - **items.** Reads the scope, `declarations.json`, the library's source and the reference
@@ -960,9 +987,11 @@ Attack, ruling and edit documents:
  "requests": []}
 ```
 
-`base_commit` is the run's: the commit of the output repository whose text the document
-quotes or rules on. A judge run has its attack run's, since an attack run's apply commits
-nothing (section 8.5). A finding's id is `<attack task>#<index>`. `action` is `fixed`,
+`base_commit` is the commit of the output repository whose text the document quotes or rules
+on: an attack document carries its run's, and a ruling its attack run's (a judge run records
+it as `attack_base_commit`), since an attack run's apply commits nothing (section 8.5) and the
+planner holds the judged section files to it. A finding's id is `<attack task>#<index>`, its
+index counted from 0. `action` is `fixed`,
 `out_of_scope` (with a request `{finding, file, what, why}` naming a shared file or another
 section) or `none` (for `not_real`). The editor's `edit.json` is
 `{task, answers: [{finding, status, reason}]}` and `items-proposal.json` is
@@ -973,26 +1002,36 @@ section) or `none` (for `not_real`). The editor's `edit.json` is
 The gate runs out of tree, from the planned `gate/`, with `python3 -I` and nothing but the
 standard library and its sibling files. Rules, each refusal naming its number:
 
-1. **Changed files**: only the task's owned paths (section 8.2) and its task file's status
-   line, read with `verify_findings.changed_entries`; the task id as `verify_locate.py`
-   finds it (`--task-id`, `$TEND_TASK_ID`, else `orchestrator.sqlite`, else one task per
-   change set), which component 5a moves into `verify_findings.py` for both gates;
-   `--pre-merge` admits several tasks' paths. A refusal here builds nothing.
-2. **Build**: the gate extracts `informal/` from the contribution's HEAD (`git archive`,
-   with its pinned git) into a scratch directory, never the worktree's own files, and builds
+1. **Changed files**: only the task's owned paths (section 8.2, its manifest's `paths`) and
+   its task file's status line, read with `verify_findings.changed_entries`; nothing deleted
+   and no link; every path of the manifest's `required` written. The task id is
+   `--task-id`, `$TEND_TASK_ID`, else `orchestrator.sqlite`
+   (`verify_findings.task_from_orchestrator`, moved there from `verify_locate.py` for both
+   gates), else the one task the change set's paths belong to; `--pre-merge` admits several
+   tasks' paths. A change set that is the task file's status alone is admitted only while the
+   task's counter is at the attempt cap (section 8.1), and then nothing else is checked. A
+   refusal here builds nothing.
+2. **Build**: the gate reads `informal/` at the contribution's HEAD from git's objects
+   (`git ls-tree` and `git cat-file --batch`, with the pinned git: no filter runs, and a link
+   is refused) into a scratch directory, never the worktree's own files, and builds
    it with the gate's own copy of the runtime's `build_pdf.sh`, which builds with the
    `fcmarkers.sty` beside its `tools/`, whatever `informal/` holds (`-norc`,
    `-no-shell-escape`, `openin_any=p`, section 7.3), a 10-minute limit: `--only <section>`
-   for draft and judge, the whole document for conventions and edit. The gate starts the
+   for draft and judge (a judge that changed no text builds nothing), the whole document
+   for conventions and edit. The gate starts the
    build in a session of its own (`start_new_session=True`) and at the limit sends SIGTERM
    to that process group, which `build_pdf.sh` passes on to latexmk's own group before it
    removes its lock; SIGKILL follows only if the script has not ended within a few seconds.
    A LaTeX error, an undefined control sequence, an `fcmarkers` error, or a build that read
    or wrote a file of its build directory it may not (section 7.3) refuses. The `.aux`
    records are only as good as the source: a section can forge any of them with
-   `\makeatletter\immediate\write\@auxout{...}`, so component 5a adds a lint of the section
-   files to this rule (no `\makeatletter`, control sequence holding `@`, `\write`,
-   `\openout`, `\def`, `\csname` or `\input`). The gate prints the error messages alone,
+   `\makeatletter\immediate\write\@auxout{...}`, so the rule lints every `.tex` and `.sty`
+   file the task changed, `notation.sty` among them, before the build: no `\makeatletter`,
+   control sequence holding `@`, file operation (`\immediate`, `\write`, `\openout`,
+   `\openin`, `\read`), `\def` (`\edef`, `\gdef`, `\xdef`), `\let`, `\renewcommand`,
+   `\catcode`, `\csname`, `\expandafter`, `\input` or `\include`, or raw PDF or position
+   command (`\special`, `\pdfliteral`, `\zsavepos`), outside a comment; `\newcommand`, which
+   cannot redefine a marker command, and `\label` stay. The gate prints the error messages alone,
    never the input lines TeX shows around them, since its output reaches the reviewer and the
    reworking worker.
 3. **Aux checks**: the gate's `check_items.py --aux-only --strict` on that build, for the
@@ -1000,28 +1039,48 @@ standard library and its sibling files. Rules, each refusal naming its number:
    `fcmarkers` error, no multiply defined label, a `\fcdefhyp` for every key of
    `hypotheses.json`); in a section build an undefined reference into another section is
    allowed.
-4. **Items** (phase `items`): `items.json` validates (section 5.4) and passes `check-items`
-   against the gate's `declarations.json` and the library's source. The rules are written
-   once: `scripts/informalize/itemtable.py` imports `cflib`, which the gate cannot carry, so
-   component 5a moves its pure rules (the table's and `declarations.json`'s rules, the
-   keyword check, the source reader and their patterns) into the runtime's `tools/`, adds
-   the relations to the copies `tests/test_informalize_runtime.py` pins, and has
-   `itemtable.py` import them from there, as `runtime.py` imports `fccommon.load_config`.
-5. **Conventions**: `hypotheses.json` validates and each key has its `\fcdefhyp`.
+4. **Items** (phase `items`): `items.json` validates as a provisional table (section 5.4)
+   and passes `check-items` against the gate's `declarations.json` and the library's source;
+   `items-review.md` is not empty. The rules are written once: they are the runtime's
+   `tools/fcitems.py` (the table's and `declarations.json`'s rules, the keyword check, the
+   source reader and their patterns, with the relations among the copies
+   `tests/test_informalize_runtime.py` pins), which `scripts/informalize/itemtable.py`
+   imports through `informalize.runtime.fcitems`, as it imports `fccommon`.
+5. **Conventions**: `hypotheses.json` validates and each key has its
+   `\fcdefhyp{<macro>}{<key>}` in `notation.sty` (in the edit phase, when it changed).
 6. **Attack**: the document validates; its `base_commit` is the run's; every finding's item
-   and part are in the section; its `quote` occurs verbatim in the section's file at
-   `base_commit`; every name in `declarations` is in `declarations.json`; `checked_items` is
-   every `in_v1` item of the section.
-7. **Judge**: every finding of the section's two attack documents (`data/attacks/`) has one
-   ruling; its `base_commit` is the run's; `fixed` only when the section file changed;
-   `out_of_scope` only with a request.
-8. **Edit**: `items.json` unchanged; every request of the judge run answered; a changed
-   section is one a request names; `items-proposal.json`, when present, validates.
+   and part are an `in_v1` item and part of the section; its `quote` occurs verbatim in the
+   section's file, which is the base commit's (`gate.json`'s `base_files`); every name in
+   `declarations` is in `declarations.json`; `checked_items` is every `in_v1` item of the
+   section; its `direction` is the one the task id names.
+7. **Judge**: every finding of the section's attack documents (`data/attacks/`) has exactly
+   one ruling; the ruling's `base_commit` is the attack run's; `none` exactly for `not_real`;
+   `fixed` only when the section file changed; `out_of_scope` only with a request, a request
+   only for such a finding, and never for the judge's own section file.
+8. **Edit**: `items.json` unchanged (it is no task's path, so rule 1 refuses a change too);
+   every request of the judge run answered once; a changed section is one a request names;
+   `items-proposal.json`, when present, names items of the table, with `from`, `to` and
+   `why`.
+9. **Copying**: no run of 12 words (`copy_run_words`, `vocab.INFORMALIZE_COPY_RUN_WORDS`) of
+   a `.tex` file the task wrote, its comments, math and control sequences left out, occurs in
+   a docstring or comment of the library's source files of the declarations its items list
+   (every `in_v1` item's, for conventions and edit). The reference work's text is never on
+   the host, so this is the one copying that can be detected there: a library docstring
+   sometimes quotes the work, and a verbatim run is copying, not the adapting section 1.2
+   allows.
 
-`--findings` checks only a task's own JSON documents (rules 6–8 without the build), which is
-what the reviewer runs and what `cf harvest` re-runs at home; as `verify_locate.py` does, the
-gate refuses `--changed-files` or `--pre-merge` beside it, so the reviewer's `--findings` entry
-runs nothing else. `--self-check` is the verify stage's. The reviewer is an LLM with the diff
+`--findings` checks only a task's own documents, read from the worktree's files (rules 4 to
+8 without the change set or the build): `informal/items.json` in the items phase,
+`informal/hypotheses.json` in the conventions phase, `findings/<task>/<name>.json` in the
+attack, judge and edit phases; it is what a worker and the reviewer run, and what
+`cf harvest` re-runs at home, where a directory that is no git repository is read from disk.
+As `verify_locate.py` does, the gate refuses `--changed-files` or `--pre-merge` beside it, so
+the reviewer's `--findings` entry runs nothing else. `--self-check` is the verify stage's: the
+imports, every pinned file, the task manifests, the library's source and, in a phase that
+builds, pdflatex, latexmk, kpsewhich, every file of `tex_packages` and the pdfTeX version.
+Exit 0 passes, 1 is a verdict with its `VALIDATION FAILED` list, and 3 is the gate's own
+failure (a moved pinned file, a missing sibling or program, a refused command line), which
+is never a finding of the worker's; every call appends a line to the gate log. The reviewer is an LLM with the diff
 and the gate's output; it refuses what the brief forbids that no rule can see (the reference
 work's prose, asides, a letter with two meanings), and it never approves a change the gate
 refused.
@@ -1183,8 +1242,8 @@ network, and no Claude attribution anywhere.
 5. The fleet: (a) `verify_informal.py`, `cf plan-informalize`, the prompts, the tend config,
    the bridge's second switch and the informalize form of `attempt_cap.py` (section 8.1),
    and a synthetic end-to-end driver that runs the gate as the host does (a copy of `gate/`,
-   `python3 -I`, a bare environment); (b) `cf run` (with the watchdog it starts),
-   `cf harvest` and `cf informalize apply`.
+   `python3 -I`, a bare environment), `tests/e2e/informalize_synthetic/driver.py` (built);
+   (b) `cf run` (with the watchdog it starts), `cf harvest` and `cf informalize apply`.
 6. I6: `pdf-command | fetch-pdf` and `canonical_pdf.sh`.
 7. I7: the exporter, the two `scripts/overlay/` changes,
    `cf informalize overlay | check-site`, the site and workflow templates.

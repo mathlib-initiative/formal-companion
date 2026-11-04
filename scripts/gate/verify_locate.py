@@ -187,7 +187,6 @@ import stat
 import sys
 import time
 import unicodedata
-import urllib.parse
 from collections import Counter
 from typing import Any, Callable, Iterable
 
@@ -528,16 +527,8 @@ class GateBroken(Exception):
 
 
 def ro_uri(path: pathlib.Path, *, immutable: bool = True) -> str:
-    """A read-only SQLite URI for ``path``, with the path percent-quoted.
-
-    Unquoted, a ``?`` or ``#`` in a directory name cuts the query string off --
-    SQLite then opens the truncated path READ-WRITE and creates an empty file --
-    and a ``%xx`` decodes to another path.  ``immutable=1`` (the default) is for
-    a database nobody writes while the gate reads it; tend's live
-    ``orchestrator.sqlite`` is opened without it (:func:`_open_orchestrator`).
-    """
-    return ("file:" + urllib.parse.quote(str(pathlib.Path(path).resolve()))
-            + ("?mode=ro&immutable=1" if immutable else "?mode=ro"))
+    """A read-only SQLite URI for ``path`` (``verify_findings.ro_uri``, which both gates use)."""
+    return vf.ro_uri(path, immutable=immutable)
 
 
 # --------------------------------------------------------------------------- #
@@ -4646,111 +4637,14 @@ def validate_document(path: pathlib.Path, name: str, task_id: str, cfg: GateConf
 # rule 7: the change set, and whose task it is
 # --------------------------------------------------------------------------- #
 
-_PATH_COLUMN = re.compile(r"(?:^|_)(?:worktree(?:_path|_dir)?|path|cwd|directory)$", re.I)
-_TASK_COLUMN = re.compile(r"task(?:_?id)?$", re.I)
-
-
-#: what the ownership line adds when orchestrator.sqlite could only be read immutably
-#: while a ``-wal`` lay beside it
-IMMUTABLE_NOTE = "read immutably: rows in its -wal may be missing"
-
-
-def _open_orchestrator(db_path: pathlib.Path) -> tuple[sqlite3.Connection, str]:
-    """``(connection, note)``: a read-only connection to tend's LIVE database.
-
-    tend keeps ``orchestrator.sqlite`` in WAL mode, and a row it has committed
-    sits in ``-wal`` until a checkpoint copies it into the main file.  An
-    ``immutable=1`` open reads the main file alone, so it missed every worktree
-    tend had created since the last checkpoint -- on a live run, nearly all of
-    them, and the gate fell back to the single-stem rule (field defect G1).
-    ``mode=ro`` reads the WAL through the shared-memory index, takes no write
-    lock and never blocks the writer.
-
-    ``immutable=1`` is the fallback only where it is complete or the only read
-    there is: when no ``-wal`` lies beside the database (the main file holds
-    every committed row), or when its directory cannot be written (no ``-shm``
-    can be made there, so ``mode=ro`` cannot read the WAL at all) -- and then,
-    with a ``-wal`` present, ``note`` is :data:`IMMUTABLE_NOTE`, which the
-    ownership line carries.  Any other failure of the ``mode=ro`` read (a
-    busy timeout, a damaged file) is raised: an immutable read there would
-    silently miss the very rows G1 was about.
-    """
-    try:
-        con = sqlite3.connect(ro_uri(db_path, immutable=False), uri=True, timeout=5.0)
-    except sqlite3.Error as exc:
-        con, error = None, exc
-    if con is not None:
-        try:
-            con.execute("SELECT count(*) FROM sqlite_master").fetchone()
-            return con, ""
-        except sqlite3.Error as exc:
-            con.close()
-            error = exc
-    wal = db_path.with_name(db_path.name + "-wal").exists()
-    if wal and os.access(db_path.parent, os.W_OK):
-        raise sqlite3.Error(f"it did not open read-only ({error}), and an immutable read "
-                            f"would miss the rows in its -wal")
-    return sqlite3.connect(ro_uri(db_path), uri=True), (IMMUTABLE_NOTE if wal else "")
+#: where tend's orchestrator.sqlite names a worktree's task: verify_findings' lookup, which
+#: the informalize gate shares (docs/proposals/informalize.md section 8.3 rule 1)
+IMMUTABLE_NOTE = getattr(vf, "IMMUTABLE_NOTE", "")
 
 
 def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path) -> tuple[str, str]:
-    """``(task id, how)`` recovered from tend's ``orchestrator.sqlite``, or ``('', why not)``.
-
-    tend's schema is NOT known to this repository, so this is a defensive
-    lookup, never a parse of a documented shape: every table with a
-    worktree-path-like column and a task-id-like column is asked for rows whose
-    path is this worktree, and the answer counts only when exactly one task id
-    comes back.  A recorded path is this worktree when it is the same spelling
-    or resolves to the same directory: tend records the path it was configured
-    with, while the gate is handed the resolved working directory, and the two
-    differ wherever a component is a symlink (``/var`` -> ``/private/var`` on
-    macOS, a symlinked home on a host).  The database is opened read-only
-    through :func:`_open_orchestrator`, so the lookup can neither write it nor
-    wait on tend's lock, and it sees what tend committed to its WAL.  The schema
-    is an ASSUMPTION to verify on the host after every tend upgrade
-    (references/runbook-server.md names the same check for ``TEND_TASK_ID``).
-    """
-    if db_path is None or not db_path.is_file():
-        return "", "no orchestrator.sqlite"
-    resolved = str(worktree.resolve())
-    candidates = {str(worktree), resolved}
-    suffix = "/" + worktree.resolve().name
-    found: set[str] = set()
-    try:
-        con, note = _open_orchestrator(db_path)
-    except sqlite3.Error as exc:
-        return "", f"orchestrator.sqlite will not open ({exc})"
-    try:
-        tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
-        for table in tables:
-            columns = [r[1] for r in con.execute(f'PRAGMA table_info("{table.replace(chr(34), "")}")')]
-            paths = [c for c in columns if _PATH_COLUMN.search(c)]
-            tasks = [c for c in columns if _TASK_COLUMN.fullmatch(c)]
-            for pcol in paths:
-                for tcol in tasks:
-                    p = f'"{pcol.replace(chr(34), "")}"'
-                    # The rows spelled like this worktree, or ending in its name
-                    # (substr, not LIKE: a worktree name may hold `_` or `%`);
-                    # which of the latter is this worktree is decided by resolving.
-                    q = (f'SELECT DISTINCT {p}, "{tcol.replace(chr(34), "")}" FROM '
-                         f'"{table.replace(chr(34), "")}" WHERE {p} IN '
-                         f'({",".join("?" * len(candidates))}) '
-                         f"OR substr(rtrim({p}, '/'), ?) = ?")
-                    for path, value in con.execute(q, [*sorted(candidates), -len(suffix), suffix]):
-                        if value in (None, "") or not isinstance(path, str):
-                            continue
-                        if path in candidates or os.path.realpath(path) == resolved:
-                            found.add(str(value))
-    except sqlite3.Error as exc:
-        return "", f"orchestrator.sqlite could not be read ({exc})"
-    finally:
-        con.close()
-    read = f"orchestrator.sqlite ({note})" if note else "orchestrator.sqlite"
-    if len(found) == 1:
-        return found.pop(), read
-    if found:
-        return "", f"{read} names {len(found)} tasks for this worktree"
-    return "", f"{read} names no task for this worktree"
+    """``(task id, how)`` from tend's ``orchestrator.sqlite``: ``verify_findings.task_from_orchestrator``."""
+    return vf.task_from_orchestrator(db_path, worktree)
 
 
 def _classify(path: str) -> tuple[str, str, str] | None:
