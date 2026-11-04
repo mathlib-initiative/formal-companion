@@ -143,6 +143,14 @@ def config_document(cfg: dict, previous: dict | None) -> dict:
     }
 
 
+def record_source_date_epoch(repo: OutputRepo, cfg: dict, epoch: int) -> bool:
+    """Write `informalize.json` with I1's `source_date_epoch`, the time of the commit `cfg`
+    names (`cf informalize fetch-library`); False when it already held it."""
+    document = config_document(cfg, _json(repo.read_bytes(STAMP)))
+    document["source_date_epoch"] = epoch
+    return repo.write(STAMP, config_bytes(document))
+
+
 def config_bytes(document: dict) -> bytes:
     """The bytes of a configuration, after the runtime's own loader accepted it."""
     raw = (json.dumps(document, indent=2, ensure_ascii=False) + "\n").encode("utf-8")

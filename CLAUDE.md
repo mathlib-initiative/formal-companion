@@ -69,7 +69,9 @@ scripts/corpus/      locate's universes (`cf corpus`): the host probe drivers an
 scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
 scripts/informalize/ the informalize mode behind `cf informalize`: informalize.yaml, the
                      output repository and the exception it is written under, the runtime
-                     sync, the item table and `check-items`, receipts and approvals
+                     sync, the item table and `check-items`, receipts and approvals, the
+                     library's build (`library.py`; `library_host.sh` and `library_host.py`
+                     run on the host beside locate's drivers, with no cflib) and the scope
                      (docs/proposals/informalize.md)
 scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
                      its three presets, outcomes with the derived status, and the
@@ -114,7 +116,8 @@ Those two lines move together or not at all.
 - No network in library code. The only exceptions are the errata fetcher
   (curl, raw HTML kept, never a summarising fetch), an explicit
   `cf onboard --download` of a PDF the author publishes himself, the
-  run/harvest commands (ssh/rsync to an allowlisted host), and the Wikipedia
+  run/harvest commands and `cf informalize fetch-library --execute --i-have-consent`
+  (ssh/rsync to an allowlisted host), and the Wikipedia
   fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — `scripts/sources/wikinet.py`,
   the one module that may reach Wikipedia: curl, the raw bytes kept, one fixed
   parameter set, each revision fetched once, and only under an explicit

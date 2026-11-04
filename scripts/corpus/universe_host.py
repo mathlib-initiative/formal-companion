@@ -46,6 +46,10 @@ The last two name the workspace with `WORKSPACE=<id>`, a built checkout under
 (docs/proposals/wikipedia-locate.md section 2.3: core packages are libraries of
 their own, pinned from Mathlib's toolchain and lake manifest). `options` are
 `KEY=VALUE` pairs separated by `;`; the keys are `OPTION_DEFAULTS` below.
+`LIBRARY_CACHE=0` skips a library's own `<library>/scripts/lake-cache-get.sh`, which may
+download and run a tool; 1, the default, runs it and stops on its failure
+(docs/proposals/informalize.md section 6.1, where a one-library build writes 0
+unless its settings opt in).  It changes no index, so it is no part of `spec`.
 
 Subcommands (all print to stdout; failures go to stderr with exit status 2)::
 
@@ -109,6 +113,7 @@ OPTION_DEFAULTS = {
     "LINK_FAMILY": "1",           # 0: never hard-link Mathlib-family packages into this library
     "WORKSPACE": "",              # core, package-in-workspace: the built checkout libs/<id> probed in
     "PACKAGE": "",                # package-in-workspace: the package's name in its lake-manifest
+    "LIBRARY_CACHE": "1",         # 0: never run the library's own scripts/lake-cache-get.sh
 }
 #: a Lake package name, as `.lake/packages/<name>` spells its directory
 _PACKAGE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}")
@@ -192,8 +197,9 @@ class Entry:
                 raise UniverseError(f"{where}: {key} must be a positive integer")
         if self.options["MAX_PARALLEL"] and not self.options["MAX_PARALLEL"].isdigit():
             raise UniverseError(f"{where}: MAX_PARALLEL must be a positive integer")
-        if self.options["LINK_FAMILY"] not in ("0", "1"):
-            raise UniverseError(f"{where}: LINK_FAMILY is 0 or 1")
+        for key in ("LINK_FAMILY", "LIBRARY_CACHE"):
+            if self.options[key] not in ("0", "1"):
+                raise UniverseError(f"{where}: {key} is 0 or 1")
         for key in ("BUILD_TARGETS", "MODULE_PREFIXES"):
             for item in (i for i in self.options[key].split(",") if i):
                 if not _MODULE_RE.fullmatch(item):

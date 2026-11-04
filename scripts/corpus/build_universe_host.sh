@@ -34,7 +34,8 @@
 #   4. when nothing was linked: `lake exe cache get` for a Mathlib-dependent package (or
 #      Mathlib itself), and the library's own published olean cache when it ships
 #      scripts/lake-cache-get.sh (TauCeti), with RUNNER_TEMP and LAKE_CACHE_DIR under
-#      <ATLAS_ROOT>;
+#      <ATLAS_ROOT> -- unless the line says LIBRARY_CACHE=0, since such a script may
+#      download and run a tool: it is then skipped, and the log says so;
 #   5. `lake build <targets>` (skipped when `lake build --no-build <targets>` already passes);
 #      a workspace that fetched its own family packages becomes a donor;
 #   6. probe_host.sh with the expanded roots, SHARD_COUNT shards, then universe-entry.json;
@@ -553,7 +554,9 @@ build_and_probe() {
       heavy lake exe cache get >>"$lg" 2>&1 || heavy lake exe cache get >>"$lg" 2>&1 \
         || fail "lake exe cache get failed twice (see $lg)"
     fi
-    if [ -f "$dir/scripts/lake-cache-get.sh" ]; then
+    if [ -f "$dir/scripts/lake-cache-get.sh" ] && [ "$OPT_LIBRARY_CACHE" != 1 ]; then
+      step "skip scripts/lake-cache-get.sh, the library's own olean cache (LIBRARY_CACHE=0)"
+    elif [ -f "$dir/scripts/lake-cache-get.sh" ]; then
       ensure_space 60 "the published olean cache of $id"
       local rt=$tmp_root/$id
       mkdir -p "$rt" "$dir/.lake/cache"

@@ -261,6 +261,7 @@ NAMED = (
     ("scripts/cflib/workspace.py", "Workspace.check_host", "Workspace.check_host"),
     ("scripts/corpus/universe_host.py", "OPTION_DEFAULTS", "universe_host.OPTION_DEFAULTS"),
     ("scripts/corpus/ingest.py", "CANARY", "corpus.ingest.CANARY"),
+    ("scripts/corpus/ingest.py", "check_index", "corpus.ingest.check_index"),
     ("scripts/run/manifest.py", "READONLY_CHMOD", "manifest.READONLY_CHMOD"),
     ("scripts/cflib/gitsafe.py", "run", "cflib.gitsafe"),
     ("vendor/formal_companion_annotations/ids.py", "item_label_id", "ids.item_label_id"),
@@ -317,9 +318,8 @@ class TestTheDriversItRuns(unittest.TestCase):
         for option in ("BUILD_TARGETS", "MODULE_PREFIXES"):
             with self.subTest(option=option):
                 self.assertIn(option, OPTION_DEFAULTS)
-        # LIBRARY_CACHE arrives with component 4, and must keep today's default.
-        if "LIBRARY_CACHE" in OPTION_DEFAULTS:
-            self.assertEqual(OPTION_DEFAULTS["LIBRARY_CACHE"], "1")
+        # LIBRARY_CACHE arrived with component 4, and keeps today's default.
+        self.assertEqual(OPTION_DEFAULTS["LIBRARY_CACHE"], "1")
 
     def test_the_drivers_it_ships_are_the_ones_probe_command_copies(self):
         from cfcmd.corpus import DRIVERS

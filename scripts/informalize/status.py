@@ -81,13 +81,16 @@ def _items(workspace, informalize_id: str) -> str:
 
 
 def next_step(workspace, informalize_id: str) -> str:
-    """The next command, from what is there.  Several are not implemented yet:
-    build-command and scope (component 4) and `cf plan-informalize` (5a)."""
+    """The next command, from what is there.  `cf plan-informalize` (component 5a) is
+    not implemented yet."""
     paths = workspace.paths
     if stages.read_receipt(paths, informalize_id, "I0") is None:
         return f"cf informalize sync {informalize_id}"
     if not paths.informalize_library_src(informalize_id).is_dir():
-        return f"cf informalize build-command {informalize_id} (stage I1)"
+        if paths.informalize_library_to_host(informalize_id).is_dir():
+            return (f"cf informalize fetch-library {informalize_id} --host <host> --execute "
+                    "--i-have-consent, once the host's library/host/DONE holds 0 (stage I1)")
+        return f"cf informalize build-command {informalize_id} --host <host> (stage I1)"
     table = approve.Table(workspace, informalize_id)
     if not (table.repo.root / approve.DECLARATIONS).is_file():
         return f"cf informalize scope {informalize_id} (stage I2)"

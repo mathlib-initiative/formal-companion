@@ -1,26 +1,35 @@
 """cf informalize -- an informal companion written from a Lean library.
 
 New code (CLAUDE.md section 5 is the contract for adding a command), implementing
-component 3 of docs/proposals/informalize.md section 11; the stages are its section 3:
+components 3 and 4 of docs/proposals/informalize.md section 11; the stages are its
+section 3:
 
     cf informalize init <id> --library URL --commit SHA --module M --theorem T --prefix P \\
         --text-license Apache-2.0 --title T --author A [--reference "<citation line>"]
     cf informalize sync <id> [--check]
     cf informalize status <id>
+    cf informalize build-command <id> --host H [--min-free-gb 60] [--lean-threads 16]
+    cf informalize fetch-library <id> --host H --execute --i-have-consent
+    cf informalize scope <id>
     cf informalize check-items <id>
     cf informalize approve <id> items --by <name> --in-v1 <ids|all>
     cf informalize reference-checklist <id>
     cf informalize approve <id> references --by <name>
 
 `init` and `sync` write `informalize/<id>/informalize.yaml`, the output repository
-`informalize/<id>/repo/` and the I0 receipt; `approve <id> items` writes the renumbered
-table, `sections.tex` and the empty section files there and commits them.  Those are the
-only writes into a repository, under the exception docs/proposals/informalize.md section
-1.3 words (SKILL.md rule 10).  The other subcommands of section 3 (build-command,
-fetch-library, scope, apply, pdf-command, fetch-pdf, overlay, check-site) are later
-components' and not implemented yet.
+`informalize/<id>/repo/` and the I0 receipt; `fetch-library` writes `informal/
+informalize.json`'s `source_date_epoch`, `scope` writes `informal/declarations.json`, and
+`approve <id> items` writes the renumbered table, `sections.tex` and the empty section
+files, each committed.  Those are the only writes into a repository, under the exception
+docs/proposals/informalize.md section 1.3 words (SKILL.md rule 10).  `build-command` runs
+nothing: it writes what the host needs into `library/to-host/` and prints the lines that
+copy it there and start the library's build; `fetch-library --execute` is the mode's one
+use of ssh and rsync (CLAUDE.md section 3).  The other subcommands of section 3 (apply,
+pdf-command, fetch-pdf, overlay, check-site) are later components' and not implemented yet.
 """
 from __future__ import annotations
+
+import shlex
 
 from cflib import log
 from cflib.errors import CfError
@@ -29,7 +38,8 @@ from cflib.workspace import from_args
 from overlay.config import OPEN_LICENSES
 
 from informalize import approve as gates
-from informalize import bootstrap, config, status
+from informalize import bootstrap, config, library, status
+from informalize import scope as scope_mod
 
 
 def register(subparsers) -> None:
@@ -83,6 +93,35 @@ def register(subparsers) -> None:
     sta = sub.add_parser("status", help="settings, repository, receipts, items and approvals")
     sta.add_argument("id")
 
+    bc = sub.add_parser("build-command",
+                        help="stage I1: write library/to-host/ (the drivers and the library list) "
+                             "and print the lines that copy it to the host and start the build; "
+                             "runs nothing")
+    bc.add_argument("id")
+    bc.add_argument("--host", required=True, help="a host of workspace.yaml hosts.allowlist")
+    bc.add_argument("--min-free-gb", type=int, default=library.DEFAULT_MIN_FREE_GB,
+                    metavar="GB",
+                    help="the host's disk floor in GiB, which the build never goes below "
+                         f"(default {library.DEFAULT_MIN_FREE_GB}; the driver's own 450 is "
+                         "for whole universes)")
+    bc.add_argument("--lean-threads", type=int, default=library.DEFAULT_LEAN_THREADS,
+                    metavar="N", help="LEAN_NUM_THREADS of the build and the dump (default "
+                                      f"{library.DEFAULT_LEAN_THREADS})")
+
+    fl = sub.add_parser("fetch-library",
+                        help="stage I1: copy the host's build outputs back into library/, check "
+                             "them, unpack the library's source, write the I1 receipt")
+    fl.add_argument("id")
+    fl.add_argument("--host", required=True, help="the host build-command named")
+    fl.add_argument("--execute", action="store_true",
+                    help="run ssh and rsync; without it, print what would run")
+    fl.add_argument("--i-have-consent", action="store_true",
+                    help="say that the host's owner agreed to the build (recorded in the receipt)")
+
+    sc = sub.add_parser("scope", help="stage I2: the theorem's dependency closure inside the "
+                                      "library; writes scope.json and informal/declarations.json")
+    sc.add_argument("id")
+
     chk = sub.add_parser("check-items", help="check informal/items.json against "
                                              "declarations.json and the library's source")
     chk.add_argument("id")
@@ -106,8 +145,9 @@ def run(args) -> int:
     command = getattr(args, "informalize_command", None)
     if not command:
         raise CfError("say which informalize subcommand to run",
-                      hint="cf informalize init | sync | status | check-items | approve | "
-                           "reference-checklist (`cf informalize --help`)")
+                      hint="cf informalize init | sync | status | build-command | "
+                           "fetch-library | scope | check-items | approve | reference-checklist "
+                           "(`cf informalize --help`)")
     return _DISPATCH[command](args)
 
 
@@ -124,8 +164,8 @@ def _init(args) -> int:
     if result.yaml_written:
         log.ok(f"wrote {workspace.paths.informalize_yaml(args.id)}")
     bootstrap.report(result)
-    log.info(f"next: cf informalize status {args.id}; then stage I1, the library build on the "
-             "host (component 4)")
+    log.info(f"next: cf informalize build-command {args.id} --host <host> (stage I1, the "
+             "library's build on the host)")
     return 0
 
 
@@ -155,6 +195,67 @@ def _status(args) -> int:
     width = max(len(label) for label, _ in rows)
     for label, value in rows:
         log.info(f"  {label.ljust(width)} : {value}")
+    return 0
+
+
+def _build_command(args) -> int:
+    workspace = from_args(args)
+    built = library.build_command(workspace, args.id, args.host, min_free_gb=args.min_free_gb,
+                                  lean_threads=args.lean_threads)
+    for line in built.lines:
+        print(line)
+    log.ok(f"wrote {built.to_host}: {len(built.files) - 1} driver files, "
+           f"{library.LIBRARY_LIST} and {library.COMMAND_FILE} (the lines above); nothing ran")
+    return 0
+
+
+def _fetch_library(args) -> int:
+    workspace = from_args(args)
+    result = library.fetch_library(workspace, args.id, args.host, execute=args.execute,
+                                   consent=args.i_have_consent)
+    if not args.execute:
+        log.info(f"dry run: fetch-library {args.id} would run, then check what came back:")
+        for argv in result.commands:
+            print("  " + " ".join(shlex.quote(a) for a in argv))
+        log.info("pass --execute --i-have-consent to run them")
+        return 0
+    facts = result.facts
+    log.ok(f"fetched {workspace.paths.informalize_library(args.id)}: HEAD "
+           f"{facts['commit'][:12]}, {facts['index']['declarations']} declarations in "
+           f"{facts['index']['modules']} modules, canary passed on Lean "
+           f"{facts['canary']['lean_version']} ({facts['canary']['form']} form), "
+           f"{facts['deps']['repo_constants']} constants dumped, "
+           f"{facts['source']['files']} source files")
+    theorem = facts["theorem"]
+    log.info(f"  {theorem['name']}: non-standard axioms "
+             f"{', '.join(theorem['nonstandard_axioms']) or 'none'}")
+    log.info(f"  library license {facts['license']['spdx']} ({facts['license']['method']})"
+             + ("; written into informalize.yaml" if result.license_written else ""))
+    if result.commit:
+        log.info(f"  committed {result.commit[:12]}: informal/informalize.json's source date")
+    if facts["source"]["links_skipped"]:
+        log.warn(f"{len(facts['source']['links_skipped'])} link(s) of the archive were not "
+                 f"unpacked: {', '.join(facts['source']['links_skipped'][:5])}")
+    log.info(f"next: cf informalize scope {args.id}")
+    return 0
+
+
+def _scope(args) -> int:
+    workspace = from_args(args)
+    result = scope_mod.scope(workspace, args.id)
+    counts = result.counts
+    log.ok(f"wrote {result.scope_path}: {counts['members']} declarations, "
+           f"{counts['type_only']} of them reached through types alone, depth at most "
+           f"{counts['max_depth']} ({counts['walked_through']} generated or private constants "
+           "walked through)")
+    log.info("  by kind: " + ", ".join(f"{k} {v}" for k, v in counts["by_kind"].items()))
+    log.info("  informal/declarations.json "
+             + (f"committed {result.commit[:12]}" if result.commit else "unchanged"))
+    if counts["unsigned"]:
+        log.warn(f"{len(counts['unsigned'])} declaration(s) have no printed signature: "
+                 + ", ".join(counts["unsigned"][:5]))
+    log.info(f"next: the items phase (stage I3), `cf plan-informalize {args.id} --phase items`, "
+             "which component 5a builds and is not implemented yet")
     return 0
 
 
@@ -203,6 +304,9 @@ _DISPATCH = {
     "init": _init,
     "sync": _sync,
     "status": _status,
+    "build-command": _build_command,
+    "fetch-library": _fetch_library,
+    "scope": _scope,
     "check-items": _check_items,
     "approve": _approve,
     "reference-checklist": _reference_checklist,

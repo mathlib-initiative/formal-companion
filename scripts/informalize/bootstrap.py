@@ -86,6 +86,19 @@ def _differences(old: object, new: dict, prefix: str = "") -> list[str]:
     return out
 
 
+def keep_discovered_license(existing: object, settings: dict) -> dict:
+    """`settings` with the library license stage I1 read from the license file, when its
+    flags name none: a second `init` with the same flags is then the same settings."""
+    old = existing.get("library") if isinstance(existing, dict) else None
+    new = settings["library"]
+    if not isinstance(old, dict) or new.get("license") is not None \
+            or old.get("license_method") is not None or not old.get("license") \
+            or any(old.get(k) != new.get(k) for k in ("url", "commit")):
+        return settings
+    kept = {**settings, "library": {**new, "license": old["license"]}}
+    return kept if not config.problems(kept) else settings
+
+
 def _check_new_repo(repo: OutputRepo, settings: dict) -> None:
     """A repository `init` may create or take up again: absent, empty, its own, or one
     whose first `init` stopped before the stamp, holding nothing init would not write."""
@@ -159,6 +172,7 @@ def init(workspace, settings: dict, *, force: bool = False) -> Result:
         if not force:
             raise
         existing = UNREADABLE                   # --force replaces a file that does not parse
+    settings = keep_discovered_license(existing, settings)
     changed = existing is not None and existing != settings
     if changed and not force:
         raise CfError(f"{yaml_path} exists with other settings: "

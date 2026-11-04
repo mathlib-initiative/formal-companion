@@ -333,6 +333,15 @@ class WorkspacePaths:
         """The library's source at its commit, unpacked from `git archive`."""
         return self.informalize_library(informalize_id) / "src"
 
+    def informalize_library_to_host(self, informalize_id: str) -> Path:
+        """What `cf informalize build-command` copies to the host: the drivers, the
+        one-line library list and the printed lines."""
+        return self.informalize_library(informalize_id) / "to-host"
+
+    def informalize_scope(self, informalize_id: str) -> Path:
+        """I2's closure of the theorem (`cf informalize scope`)."""
+        return self.informalize_dir(informalize_id) / "scope.json"
+
     def informalize_stages_dir(self, informalize_id: str) -> Path:
         return self.informalize_dir(informalize_id) / "stages"
 

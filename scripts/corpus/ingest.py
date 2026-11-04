@@ -1232,12 +1232,39 @@ def ingest(universe: Universe, library_id: str, source: Path, out_dir: Path, *,
     return manifest
 
 
-def check_canary(universe: Universe, source: Path) -> dict:
-    """Ingest a canary probe index and record whether its toolchain passes.
+def check_index(source: Path, *, library_id: str, commit: str, toolchain: str) -> dict:
+    """The checks :func:`ingest` makes of a probe index before it reads a record, without a
+    universe: the index's header and manifest name ``library_id``, ``commit`` and the Lean
+    of ``toolchain``, agree, and say the probed checkout was clean; and the bytes and the
+    record counts are the ones the probe wrote.
 
-    The four declarations of templates/corpus/canary/ must each be decided as
-    :data:`CANARY` says.  A missing one fails the canary: the probe that cannot
-    see a declaration cannot classify it.  ``universe`` is changed in memory.
+    For a single library built and probed outside any universe (the informalize mode's
+    stage I1, docs/proposals/informalize.md section 6.1).  Returns the index's sha256, its
+    declaration and module counts and the toolchain it names.
+    """
+    source = Path(source)
+    index = _index_file(source)
+    header = read_header(index)
+    if header.get("schema") != PROBE_SCHEMA:
+        raise CfError(f"{index.name} has schema {header.get('schema')!r}, not the probe's "
+                      f"{PROBE_SCHEMA}")
+    manifest, _sha = _source_manifest(source)
+    if not manifest:
+        raise CfError(f"no manifest.json beside {index.name}",
+                      hint="probe_merge.py writes one; copy the whole output directory")
+    found = _check_identity({"commit": commit, "toolchain": toolchain}, library_id, header,
+                            manifest, published=False)
+    scan = _scan(index)
+    digest = _check_whole(index, header, manifest, scan, published=False)
+    return {"index_sha256": digest, "declarations": scan["declarations"],
+            "modules": scan["modules"], "toolchain": found, "lean_version": lean_version(found)}
+
+
+def canary_cases(source: Path) -> dict:
+    """How a canary probe index decides the four declarations of templates/corpus/canary/.
+
+    Each must be decided as :data:`CANARY` says.  A missing one fails the canary: the
+    probe that cannot see a declaration cannot classify it.  Records nothing.
     """
     source = Path(source)
     index = _index_file(source)
@@ -1258,8 +1285,16 @@ def check_canary(universe: Universe, source: Path) -> dict:
         result = ({"proof_status": record["proof_status"], "statement": record["statement"]}
                   if record else None)
         cases[name] = {"expected": want, "got": result, "ok": result == want}
-    passed = all(case["ok"] for case in cases.values())
-    universe.record_canary(toolchain=toolchain, passed=passed, cases=cases,
-                           index_sha256=sha256_file(index), checked=state_mod.now())
-    return {"toolchain": toolchain, "lean_version": lean_version(toolchain), "passed": passed,
-            "cases": cases}
+    return {"toolchain": toolchain, "lean_version": lean_version(toolchain),
+            "passed": all(case["ok"] for case in cases.values()), "cases": cases,
+            "index_sha256": sha256_file(index)}
+
+
+def check_canary(universe: Universe, source: Path) -> dict:
+    """Ingest a canary probe index and record whether its toolchain passes
+    (:func:`canary_cases`).  ``universe`` is changed in memory."""
+    result = canary_cases(source)
+    universe.record_canary(toolchain=result["toolchain"], passed=result["passed"],
+                           cases=result["cases"], index_sha256=result["index_sha256"],
+                           checked=state_mod.now())
+    return {key: result[key] for key in ("toolchain", "lean_version", "passed", "cases")}

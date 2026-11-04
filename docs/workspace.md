@@ -41,9 +41,11 @@ registry"), and no command writes the shipped registry.
   informalize/<id>/          an informal companion of one theorem
                              (docs/proposals/informalize.md): informalize.yaml,
                              stages/ (receipts and approvals), reference-checklist.md,
-                             scope.json; library/ and pdf/ (GITIGNORED, rebuilt from
-                             the host) and repo/, the output repository, its own git
-                             repository (gitignored here)
+                             scope.json; library/ (GITIGNORED: to-host/, what
+                             build-command sends the host, and the build's outputs,
+                             index, dump and source fetch-library brings back), pdf/
+                             (GITIGNORED, rebuilt from the host) and repo/, the output
+                             repository, its own git repository (gitignored here)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl
   detect/<name>/             proxy-detection artifacts
   reports/                   tally.<run>.json, union.<name>.json, coverage.json,

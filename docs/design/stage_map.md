@@ -442,6 +442,8 @@ line says what is built). Built so far:
 | stage | command | writes |
 |---|---|---|
 | I0 | `cf informalize init`, `sync [--check]`, `status` | `informalize/<id>/informalize.yaml`; the output repository `informalize/<id>/repo/` (git init, the runtime copied byte for byte into `informal/` and recorded in `informal/GENERATED.json`, `informal/informalize.json`, the project files and `LICENSE` rendered once); `stages/I0.json` |
+| I1 | `cf informalize build-command`, then `scripts/informalize/library_host.sh` on the host by hand, then `fetch-library --execute --i-have-consent` | `informalize/<id>/library/to-host/` (the drivers copied, `library.tsv`, the printed lines); after the fetch `library/{host,index,deps.json,src}` (the build's outputs, the probe's index, DumpDeps' dump, the source read-only), checked before they replace the last fetch; `library.license` in `informalize.yaml`; `informal/informalize.json`'s `source_date_epoch`, committed; `stages/I1.json` |
+| I2 | `cf informalize scope` | `informalize/<id>/scope.json` (the theorem's closure over DumpDeps' type and value dependencies inside the library, generated and private constants walked through, proof statuses re-decided); `informal/declarations.json`, committed; `stages/I2.json` |
 | I3 (part) | `cf informalize check-items`, `reference-checklist`, `approve <id> items`, `approve <id> references` | the renumbered `informal/items.json`, `informal/sections.tex` and an empty file per section, committed; `reference-checklist.md`; `stages/approve-<gate>.json` |
 
 The output repository is written under SKILL.md rule 10's second exception (the first is

@@ -84,7 +84,9 @@ scripts/overlay/  the overlay generator behind `cf overlay`: config, export,
 scripts/informalize/
                   the informalize mode behind `cf informalize`: informalize.yaml,
                   the output repository, the runtime sync, the item table, receipts
-                  and approvals (proposals/informalize.md)
+                  and approvals, the library's build on the host (library_host.sh and
+                  library_host.py run there, with no cflib) and the scope
+                  (proposals/informalize.md)
 scripts/corpus/   locate's universes of libraries and corpus.sqlite (`cf corpus`)
 scripts/locate/   locate's candidates, planner, outcomes and export
                   (`cf locate`, `cf plan-locate`, `cf tally --locate`,
