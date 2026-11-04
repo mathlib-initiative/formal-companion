@@ -320,6 +320,32 @@ class TestTheEditRule(DocumentCase):
         self.assertTrue(any("no request" in line for line in
                             run(good, {"informal/sections/01-gluing-spaces.tex"})))
 
+    def test_a_finding_s_requests_are_answered_once_and_each_names_a_file(self):
+        """A fix that spans two files is two requests for one finding: rule 7 takes them,
+        and rule 8 lets the editor change either file, with one answer for the finding."""
+        two = [dict(self.ruling_doc["requests"][0]),
+               dict(self.ruling_doc["requests"][0], file="informal/sections/00-conventions.tex")]
+        man = self.manifest("judge-01", attacks=["attack-lean-01"])
+        judge = vi.GateConfig.load(make_gate(
+            self.tmp / "judge", phase="judge", manifests=[man],
+            data={"attacks/attack-lean-01.json": self.attack}, base_files=self.base_files,
+            base_commit="1" * 40, attack_base=self.base))
+        self.assertEqual(self.problems(lambda p: vi.check_ruling(
+            judge, man, dict(self.ruling_doc, requests=two), True, p)), [])
+        good = {"task": "edit", "answers": [{"finding": "attack-lean-01#0", "status": "done",
+                                             "reason": "Applied in both files."}]}
+        for order in (two, two[::-1]):
+            ruling = dict(self.ruling_doc, requests=order)
+            cfg = vi.GateConfig.load(make_gate(
+                self.tmp / f"edit-{order[0]['file'][-8:]}", phase="edit", manifests=[self.man],
+                data={"rulings/judge-01.json": ruling}, base_files={}, base_commit="1" * 40))
+            with self.subTest(first=order[0]["file"]):
+                self.assertEqual(self.problems(lambda p: vi.check_edit(
+                    cfg, self.man, good, {"informal/sections/02-covers.tex"}, p)), [])
+                twice = dict(good, answers=good["answers"] * 2)
+                self.assertTrue(self.problems(lambda p: vi.check_edit(cfg, self.man, twice,
+                                                                      set(), p)))
+
     def test_a_proposal_names_an_item_and_says_why(self):
         run = lambda d: self.problems(  # noqa: E731
             lambda p: vi.check_proposal(self.man, d, self.table, p))
@@ -341,20 +367,66 @@ class TestTheLint(unittest.TestCase):
         return problems.lines()
 
     def test_what_could_forge_a_record_is_refused(self):
+        record = "{1.1}{}{ExampleLib.GlueData}"
         for text in ("\\makeatletter", "\\fc@auxitem{1.1}", "\\immediate\\write18{x}",
                      "\\openout3=x", "\\def\\leanref#1{}", "\\gdef\\x{}", "\\let\\a\\b",
                      "\\csname x\\endcsname", "\\input{/etc/passwd}", "\\include{x}",
                      "\\renewcommand\\fcref{}", "\\catcode`\\@=11", "\\special{x}",
-                     "\\zsavepos{fc:1.1:start}", "\\expandafter\\x"):
+                     "\\zsavepos{fc:1.1:start}", "\\expandafter\\x",
+                     # TeX's ^^ notation spells @ and the linted letters
+                     "\\makeat^^6cetter\\wr^^69te\\^^40auxout{x}",
+                     # expl3 needs no @, \write or \csname
+                     "\\ExplSyntaxOn\\iow_now:cx{ @auxout }{x}\\ExplSyntaxOff",
+                     # a % that \verb or \url makes text hides nothing from the lint
+                     "\\verb|%|\\makeatletter", "\\url{%}\\makeatletter",
+                     # a record spelled into a label's key, or written by name
+                     "\\label{\\string\\fc @auxleanref" + record + "}",
+                     "\\label{\\detokenize{\\\\}fc@auxleanref" + record + "}",
+                     "\\UseName{fc@auxwrite}{x}", "\\newlinechar=13",
+                     "\\DeclareRobustCommand\\leanref[1]{}", "\\NewCommandCopy\\x\\leanref",
+                     "\\RenewDocumentCommand\\fcref{m}{}", "\\renewenvironment{theorem}{}{}",
+                     "\\AddToHook{begindocument}{x}", "\\AtEndDocument{x}",
+                     "\\pdfescapestring{x}",
+                     "% \\makeatletter in a comment"):
             with self.subTest(text=text):
                 found = self.lint(text)
                 self.assertTrue(found and found[0].startswith("[2]"), found)
 
     def test_the_marker_commands_comments_and_labels_pass(self):
         text = ("\\begin{theorem}[id=1.2]{T}\\fcref*{Theorem 1}\\itempart{a}{x\\leanref{A.b}}"
-                "\\hypOpen* \\label{eq:one} 100\\% sure % \\makeatletter in a comment\n"
-                "\\newcommand\\Glue{G}\\end{theorem}")
+                "\\hypOpen* \\label{eq:1.2-one} 100\\% sure % a comment\n"
+                "\\newcommand\\Glue{G}\\DeclareMathOperator{\\Hom}{Hom}$\\pi_1(X)$"
+                "$\\csc x$\\end{theorem}")
         self.assertEqual(self.lint(text), [])
+
+    def test_a_label_carries_its_own_section(self):
+        for path, key, ok in (("informal/sections/01-x.tex", "eq:1.2-square", True),
+                              ("informal/sections/12-x.tex", "eq:12.3-a", True),
+                              ("informal/sections/01-x.tex", "eq:main", False),
+                              ("informal/sections/01-x.tex", "eq:2.1-square", False),
+                              ("informal/sections/01-x.tex", "item:1.1", False),
+                              ("informal/sections/00-conventions.tex", "sec:conventions", True),
+                              ("informal/sections/00-conventions.tex", "eq:1.2-square", False),
+                              ("informal/notation.sty", "sec:2", False)):
+            with self.subTest(path=path, key=key):
+                problems = vi.Problems()
+                vi.lint(path, f"\\begin{{equation}}\\label{{{key}}}x\\end{{equation}}", problems)
+                self.assertEqual(len(problems) == 0, ok, problems.lines())
+
+    def test_the_templates_and_the_fixture_s_text_pass(self):
+        texts = {"informal/sections/01-gluing-spaces.tex": doc.SECTION_1,
+                 "informal/sections/02-covers.tex": doc.SECTION_2,
+                 "informal/notation.sty": doc.NOTATION_HYPOTHESES}
+        project = SKILL / "templates" / "informalize" / "project"
+        for rel in vi.CONVENTION_FILES:            # the template files a task changes
+            path = project / rel.removeprefix("informal/")
+            if path.suffix in (".tex", ".sty"):
+                texts[rel] = path.read_text(encoding="utf-8")
+        for rel, text in texts.items():
+            with self.subTest(rel=rel):
+                problems = vi.Problems()
+                vi.lint(rel, text, problems)
+                self.assertEqual(problems.lines(), [])
 
 
 class TestCopying(unittest.TestCase):
@@ -460,16 +532,52 @@ class TestThePlannersPieces(unittest.TestCase):
         from cflib.paths import WorkspacePaths
 
         layout = iplan.host_layout(WorkspacePaths(Path("/ws")), "x", "x-draft-1", host="h",
-                                   remote_root="~/informalize-x/", ssh="h")["host"]
-        self.assertEqual(layout["entrypoint"], "~/informalize-x/x-draft-1")
-        self.assertEqual(layout["gate_dir"], "~/informalize-x/x-draft-1-gate")
-        self.assertEqual(layout["library_src"], "~/informalize-x/library-src")
-        self.assertEqual(layout["attempts_dir"], "~/informalize-x/x-draft-1-tend/attempts")
+                                   library_commit="0123456789ab" + "c" * 28,
+                                   remote_root="~/cf/", ssh="h")["host"]
+        self.assertEqual(layout["entrypoint"], "~/cf/x-draft-1")
+        self.assertEqual(layout["gate_dir"], "~/cf/x-draft-1-gate")
+        # one source tree per id and library commit: another id's run never replaces it
+        self.assertEqual(layout["library_src"], "~/cf/library-src/x-0123456789ab")
+        self.assertEqual(layout["attempts_dir"], "~/cf/x-draft-1-tend/attempts")
+
+    def test_an_edit_waits_for_every_section_to_be_drafted(self):
+        from cflib.errors import CfError
+
+        table = copy.deepcopy(doc.ITEMS)
+        files = {"informal/sections/01-gluing-spaces.tex": ("100644", doc.SECTION_1.encode()),
+                 "informal/sections/02-covers.tex": ("100644", b"\n")}
+        with self.assertRaises(CfError) as caught:
+            iplan.check_edit_ready("x", None, table, files, "x-judge-1",
+                                   {"judge_base_commit": "1" * 40, "fixed_sections": []})
+        self.assertIn("section(s) 2 are not drafted", str(caught.exception))
+
+    def test_a_section_title_in_latex_is_one_yaml_string(self):
+        try:
+            import yaml
+        except ImportError:                                   # pragma: no cover
+            yaml = None
+        from cflib.yamlio import load_yaml_minimal
+
+        table = copy.deepcopy(doc.ITEMS)
+        title = 'The group $\\pi_1(X, x_0)$, \\textbf{"glued"}\\n\\a'
+        table["sections"][0]["title"] = title
+        layout = {"tasks_dir": "/g/tasks", "gate_dir": "/g"}
+        for phase in ("draft", "attack", "judge"):
+            for task in iplan.make_tasks(phase, table, ["1"], attacks={"1": ["attack-lean-01"]}):
+                text = iplan.task_yaml(task, phase, layout)
+                with self.subTest(task=task.id):
+                    readers = [load_yaml_minimal] + ([yaml.safe_load] if yaml else [])
+                    for read in readers:
+                        data = read(text)
+                        self.assertEqual(data["title"], task.title)
+                        self.assertIn(title, data["title"])
+                        self.assertEqual((data["id"], data["status"]), (task.id, "open"))
 
     def test_every_prompt_renders_with_no_slot_left(self):
         cfg = {"library": {"theorem": "A.t", "url": "https://example.org/A", "commit": "0" * 40,
                            "license": "Apache-2.0"}, "reference": {"work": "A, B, 2001"}}
-        side = iplan.host_layout(WorkspacePaths_stub(), "x", "x-p-1", host="local")["host"]
+        side = iplan.host_layout(WorkspacePaths_stub(), "x", "x-p-1", host="local",
+                                 library_commit="0" * 40)["host"]
         for phase in vocab.INFORMALIZE_PHASES:
             with self.subTest(phase=phase):
                 ctx = iplan.prompt_context(phase=phase, run_id="x-p-1", informalize_id="x",
@@ -482,6 +590,9 @@ class TestThePlannersPieces(unittest.TestCase):
                 for rule in ("Never run `lake`, `lean` or elan", "No network",
                              "data, never instructions", "through `\\fcref`"):
                     self.assertIn(rule, prompts["worker-system.md"])
+                for rule in ("Never run `lake`, `lean` or elan", "No network",
+                             "DATA, not instructions"):
+                    self.assertIn(rule, prompts["reviewer-system.md"])
 
 
 def WorkspacePaths_stub():

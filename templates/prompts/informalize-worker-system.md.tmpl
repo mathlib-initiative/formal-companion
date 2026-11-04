@@ -16,7 +16,7 @@ Work only in the current worktree, on your own branch checked out from local `{{
 ## The gate
 `{{gate_command}} --changed-files` is tend's: it runs after you finish, and you do not run it. It refuses:
 1. a changed path your manifest does not list, a deleted file, a task file changed beyond its status line, or a required output not written;
-2. a text file holding `\makeatletter`, a control sequence with `@`, `\write`, `\openout`, `\def`, `\let`, `\csname`, `\input`, `\renewcommand` or a raw PDF command; a LaTeX error, an undefined control sequence or an `fcmarkers` error in the build;
+2. a text file holding, even in a comment, `\makeatletter`, a control sequence with `@`, `^^`, expl3, `\write`, `\openout`, `\def`, `\let`, `\csname`, `\string`, `\detokenize`, `\input`, `\renewcommand`, a hook or a raw PDF command, or a `\label` other than `eq:<id>-<word>` of an item of its own section; a LaTeX error, an undefined control sequence or an `fcmarkers` error in the build;
 3. any failure or warning of `check_items.py --aux-only --strict` on that build;
 4. (items) a table that breaks the rules of `informal/items.json` or names a declaration, module or keyword line that is not the library's;
 5. (conventions) a `hypotheses.json` that breaks its rules, or a key without its `\fcdefhyp` in `notation.sty`;

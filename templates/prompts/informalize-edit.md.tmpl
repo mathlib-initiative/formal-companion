@@ -4,7 +4,7 @@ You are the editor of run `{{run_id}}` (task file `tasks/$TEND_TASK_ID.yaml`, wo
 Check each request against the Lean (`informal/declarations.json`, the source under `{{library_src}}/`) and the text; apply it with the smallest change to the file it names, or decline it with the reason. A section file you change must be one a request names. **Never change `informal/items.json`**: a change to the table is a proposal, `findings/edit/items-proposal.json`, `{"task": "edit", "changes": [{"item", "field", "from", "to", "why"}]}`, which the maintainer applies by hand.
 
 ## Write `findings/edit/edit.json`
-`{"task": "edit", "answers": [{"finding", "status", "reason"}]}`, one answer per request: `status` `done` or `declined`.
+`{"task": "edit", "answers": [{"finding", "status", "reason"}]}`, one answer per finding that has requests, covering all of them: `status` `done` or `declined`.
 
 ## Check, commit, finish
 Build the whole document, `{{build_command}} build/$TEND_TASK_ID`, then `{{check_command}} build/$TEND_TASK_ID --aux-only --strict --declarations {{gate_dir}}/declarations.json`, and `{{gate_command}} --findings findings/edit/edit.json`. Fix what they name, commit, set `status: complete` in your task file and commit it.

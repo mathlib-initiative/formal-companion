@@ -836,7 +836,12 @@ with a harvest receipt (`corpus/<run>/RECEIPT.json`), and its task documents are
 `corpus/<run>/<task>/<name>.json`, where `cf harvest` lands them (section 8.5).
 `--phase judge` refuses when a section file differs from the attack run's `base_commit`, and
 plans a judge task only for a section whose attack documents hold a finding (its default
-`--sections`); `--phase edit` refuses a judge run that made no request. `--phase draft`
+`--sections`); `--phase edit` refuses a judge run that made no request, a section with an
+`in_v1` item that is still empty (the edit build is the whole document's, and the editor owns
+no section it could fill), and a judge run that is not applied: its `base_commit` must be an
+ancestor of HEAD and every section file a judge fixed must differ from it, or the editor
+would work on the text the judges found and one of the two applies would be refused.
+`--phase draft`
 refuses a section that is drafted already (a drafted section changes through attack, judge
 and edit), and `attack` and `judge` one that is still empty. `--sections touched` (attack
 only) is every section whose file, or a conventions file every section reads
@@ -866,7 +871,9 @@ It writes `runs/<run-id>/` as `cf plan-locate` does, through `plan.make_tend_roo
   (once the conventions phase wrote one), `data/` (as above, which the workers read there),
   `tasks/<task>.json` and `gate.json`, which pins the sha256 of every other file and of the
   base commit's `items.json`, section files and conventions files (`base_files`), names the
-  library's source on the host (`<remote_root>/library-src/`), and holds the attempt cap,
+  library's source on the host (`<remote_root>/library-src/<id>-<commit>/`, the library
+  commit's first 12 hex digits, so that a run of another id or another commit on the same
+  host never replaces the tree under a live one), and holds the attempt cap,
   the build limit and the copy bound of section 8.3; and `bin/` with the bridge helpers
   locate's root gets (`tend_root.LOCATE_BIN_HELPERS`), `watchdog.py` among them.
 
@@ -920,9 +927,9 @@ monitor, stop), with four changes (component 5b): the gate it verifies is
 `verify_informal.py --self-check` (imports, the pinned sha256s, kpsewhich of `tex_packages`,
 the pdfTeX version); the entrypoint's first commit is `repo/` plus `tasks/`; the smoke stage
 starts the watchdog above; and `--include-sources` ships `library/src/` read-only (`manifest.READONLY_CHMOD`) to
-`<remote_root>/library-src/`, checked by tree digest, which the workers read. One phase is
-one run: whether a dependent task's worktree sees a dependency's merged files is not known,
-so no phase relies on `depends_on`.
+`<remote_root>/library-src/<id>-<commit>/`, checked by tree digest, which the workers read.
+One phase is one run: whether a dependent task's worktree sees a dependency's merged files
+is not known, so no phase relies on `depends_on`.
 
 ### 8.2 Phases, tasks and owned paths
 
@@ -993,8 +1000,9 @@ it as `attack_base_commit`), since an attack run's apply commits nothing (sectio
 planner holds the judged section files to it. A finding's id is `<attack task>#<index>`, its
 index counted from 0. `action` is `fixed`,
 `out_of_scope` (with a request `{finding, file, what, why}` naming a shared file or another
-section) or `none` (for `not_real`). The editor's `edit.json` is
-`{task, answers: [{finding, status, reason}]}` and `items-proposal.json` is
+section, one request per file when a fix spans several) or `none` (for `not_real`). The
+editor's `edit.json` is `{task, answers: [{finding, status, reason}]}`, one answer per finding
+with requests, covering all of them, and `items-proposal.json` is
 `{task, changes: [{item, field, from, to, why}]}`.
 
 ### 8.3 `verify_informal.py`
@@ -1019,19 +1027,35 @@ standard library and its sibling files. Rules, each refusal naming its number:
    `-no-shell-escape`, `openin_any=p`, section 7.3), a 10-minute limit: `--only <section>`
    for draft and judge (a judge that changed no text builds nothing), the whole document
    for conventions and edit. The gate starts the
-   build in a session of its own (`start_new_session=True`) and at the limit sends SIGTERM
-   to that process group, which `build_pdf.sh` passes on to latexmk's own group before it
-   removes its lock; SIGKILL follows only if the script has not ended within a few seconds.
+   build in a process group of its own that stays in the gate's session (`process_group=0`,
+   never a session of its own, which tend's sweep of a stopped validation would not reach),
+   and at the limit sends SIGTERM to that group, which `build_pdf.sh` passes on to latexmk's
+   own group before it removes its lock; SIGKILL follows only if the script has not ended
+   within a few seconds. A SIGTERM or SIGINT to the gate stops the build the same way, and
+   removes the scratch directory, before the gate exits.
    A LaTeX error, an undefined control sequence, an `fcmarkers` error, or a build that read
    or wrote a file of its build directory it may not (section 7.3) refuses. The `.aux`
    records are only as good as the source: a section can forge any of them with
    `\makeatletter\immediate\write\@auxout{...}`, so the rule lints every `.tex` and `.sty`
-   file the task changed, `notation.sty` among them, before the build: no `\makeatletter`,
-   control sequence holding `@`, file operation (`\immediate`, `\write`, `\openout`,
-   `\openin`, `\read`), `\def` (`\edef`, `\gdef`, `\xdef`), `\let`, `\renewcommand`,
-   `\catcode`, `\csname`, `\expandafter`, `\input` or `\include`, or raw PDF or position
-   command (`\special`, `\pdfliteral`, `\zsavepos`), outside a comment; `\newcommand`, which
-   cannot redefine a marker command, and `\label` stay. The gate prints the error messages alone,
+   file the task changed, `notation.sty` among them, before the build, comments included
+   (a `\verb`, a `\url` or a verbatim environment makes a `%` text, and TeX runs what
+   follows it): no `\makeatletter`, control sequence holding `@`, `^^` character notation,
+   expl3 (`\ExplSyntaxOn`, `\ProvidesExplPackage`), file operation (`\immediate`,
+   `\write`, `\openout`, `\openin`, `\read`), `\def` (`\edef`, `\gdef`, `\xdef`), `\let`,
+   redefinition or copy (`\renewcommand`, `\renewenvironment`, `\DeclareRobustCommand`,
+   `\RenewDocumentCommand`, `\DeclareDocumentCommand`, `\NewCommandCopy` and their kin,
+   etoolbox's `\patchcmd` and `\csdef` families), hook (`\AddToHook`, `\AtBeginDocument`,
+   `\AtEndDocument`), catcode or line-character setting (`\catcode`, `\newlinechar`,
+   `\escapechar`), name or string built from text (`\csname`, `\UseName`, `\ExpandArgs`,
+   `\expandafter`, `\string`, `\detokenize`, `\unexpanded`, `\meaning`), `\input` or
+   `\include`, or raw PDF or position command (`\special`, any `\pdf...`, `\zsavepos`);
+   and a `\label` key is letters, digits and `:._-`, in a numbered section's file
+   `eq:<id>-<word>` of one of its items (`STYLE.md`) and elsewhere never a numbered
+   section's form, so no two sections share a label when the whole document is built (each
+   section's own build catches a label it defines twice). `\newcommand`, which cannot
+   redefine a marker command, and `\DeclareMathOperator` stay. The lint is a list of what is
+   refused, not of what is allowed: what it cannot see, such as text a section typesets
+   and then hides, is the reviewer's to refuse. The gate prints the error messages alone,
    never the input lines TeX shows around them, since its output reaches the reviewer and the
    reworking worker.
 3. **Aux checks**: the gate's `check_items.py --aux-only --strict` on that build, for the
@@ -1058,7 +1082,8 @@ standard library and its sibling files. Rules, each refusal naming its number:
    `fixed` only when the section file changed; `out_of_scope` only with a request, a request
    only for such a finding, and never for the judge's own section file.
 8. **Edit**: `items.json` unchanged (it is no task's path, so rule 1 refuses a change too);
-   every request of the judge run answered once; a changed section is one a request names;
+   every finding the judge run made requests for answered once, the answer covering all of
+   its requests; a changed section is one a request names;
    `items-proposal.json`, when present, names items of the table, with `from`, `to` and
    `why`.
 9. **Copying**: no run of 12 words (`copy_run_words`, `vocab.INFORMALIZE_COPY_RUN_WORDS`) of
@@ -1074,6 +1099,9 @@ standard library and its sibling files. Rules, each refusal naming its number:
 `informal/hypotheses.json` in the conventions phase, `findings/<task>/<name>.json` in the
 attack, judge and edit phases; it is what a worker and the reviewer run, and what
 `cf harvest` re-runs at home, where a directory that is no git repository is read from disk.
+At home `--root` is the run's planned `repo/` (the base commit's files, so rule 6 reads the
+base table and section text there) and each document is named where the harvest landed it;
+a document outside `--root` is checked as `findings/<its folder>/<its name>`.
 As `verify_locate.py` does, the gate refuses `--changed-files` or `--pre-merge` beside it, so
 the reviewer's `--findings` entry runs nothing else. `--self-check` is the verify stage's: the
 imports, every pinned file, the task manifests, the library's source and, in a phase that
@@ -1095,13 +1123,15 @@ never write or closely paraphrase the reference work's prose, and cite its numbe
 through `\fcref`; adapt the library's docstrings only under its license; plain English, name
 every object, no letter with two meanings, number an equation only when it is cited, no
 asides, no notes about the drafting process in the text. Context comes from `items.json`,
-`declarations.json`, `data/` and the library's source under `<remote_root>/library-src/`,
+`declarations.json`, `data/` and the library's source under
+`<remote_root>/library-src/<id>-<commit>/`,
 never from pasted reports.
 
 ### 8.5 Harvest and apply
 
 `cf harvest <run> --execute --i-have-consent` lands the findings and the cost as for any run
-(`corpus/<run>/`, `RECEIPT.json`, the gate re-run with `--findings`) and, for an informalize
+(`corpus/<run>/`, `RECEIPT.json`, the gate re-run with `--findings`, its `--root` the run's
+`repo/` as section 8.3 says) and, for an informalize
 run (component 5b), the entrypoint's `main` as a git bundle, `corpus/<run>/entrypoint.bundle`,
 with the files of the run's owned paths unpacked under `corpus/<run>/tree/` and listed with
 their sha256 in `tree.json` beside the bundle's head and `base_commit`. It writes nothing in
@@ -1294,9 +1324,10 @@ cf informalize check-items svk-tauceti
 
 The first `cf run` is the dry run. The smoke stage's tend run at limits 1/1 confirms the
 model id, TeX inside the agent sandbox, that an agent in the sandbox can read
-`<remote_root>/library-src/` outside its worktree, and the gate on the host; with one task it
-is the whole phase. The maintainer reads `repo/informal/items-review.md` and, after the
-approval has renumbered the table, checks the reference numbers against his copy of Hatcher:
+`<remote_root>/library-src/<id>-<commit>/` outside its worktree, and the gate on the host;
+with one task it is the whole phase. The maintainer reads `repo/informal/items-review.md`
+and, after the approval has renumbered the table, checks the reference numbers against his
+copy of Hatcher:
 
 ```sh
 cf informalize approve svk-tauceti items --by "<the maintainer>" --in-v1 all
@@ -1392,7 +1423,8 @@ after the publish approval.
    this way.
 3. **tend 0.1.0 and sandbox unknowns**: whether `TEND_TASK_ID` reaches the validation
    command, whether the agent sandbox lets latexmk run, and whether an agent can read
-   `<remote_root>/library-src/` outside its worktree. The smoke test reads all three.
+   `<remote_root>/library-src/<id>-<commit>/` outside its worktree. The smoke test reads all
+   three.
 4. **A shared box**: sessions per user across every root, other users' fleets, disk. The caps
    and `--min-free-gb` are the controls.
 5. **Quality.** LLM reviewers approve almost everything; the gates are mechanical, the

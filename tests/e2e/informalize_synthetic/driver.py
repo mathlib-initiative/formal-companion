@@ -369,6 +369,9 @@ class Pipeline:
         wt1 = self.worktree("draft", "draft-01")
         self.write(wt1 / "informal/sections/01-gluing-spaces.tex", doc.SECTION_1)
         self.complete(wt1, "draft-01")
+        # an ignored link the worktree holds and HEAD does not: what merges is HEAD, so it
+        # is neither built nor refused
+        os.symlink("/etc/hosts", wt1 / "informal" / "stray.pdf")
         self.passes("draft", wt1, "draft-01")
         wt2 = self.worktree("draft", "draft-02")
         self.write(wt2 / "informal/sections/02-covers.tex", doc.SECTION_2)
@@ -400,12 +403,39 @@ class Pipeline:
                                                                         "$V$ be subsets"))
         self.complete(bad, "draft-01")
         self.refused("draft", bad, 9, "a docstring copied", task="draft-01")
-        # a section that writes its own record: rule 2's lint
+        # a section that writes its own record: rule 2's lint, whatever the spelling; each
+        # forgery stands in for the \leanref it drops, which check_items would refuse
         bad = self.worktree("draft", "draft-01", "draft-forged")
         self.write(bad / "informal/sections/01-gluing-spaces.tex",
                    doc.SECTION_1 + "\n\\makeatletter\\immediate\\write\\@auxout{x}\n")
         self.complete(bad, "draft-01")
         self.refused("draft", bad, 2, "a section that writes the .aux", task="draft-01")
+        record = "{1.1}{}{ExampleLib.GlueData}"
+        forgeries = {
+            "carets": "\\makeat^^6cetter\\imm^^65diate\\wr^^69te\\^^40auxout{\\string"
+                      "\\fc^^40auxleanref" + record + "}",
+            "expl3": "\\ExplSyntaxOn\\iow_now:cx{ @auxout }{\\token_to_str:c{fc @auxleanref}"
+                     + record + "}\\ExplSyntaxOff",
+            "verb": "\\verb|%|\\makeatletter\\immediate\\write\\@auxout{\\string\\fc@auxleanref"
+                    + record + "}\\makeatother\n",
+            "url": "\\url{%}\\makeatletter\\immediate\\write\\@auxout{\\string\\fc@auxleanref"
+                   + record + "}\\makeatother\n",
+            "label": "\\label{\\string\\fc @auxleanref" + record + "}",
+        }
+        dropped = doc.SECTION_1.replace("\\leanref{ExampleLib.GlueData}", "")
+        for name, forgery in forgeries.items():
+            bad = self.worktree("draft", "draft-01", f"draft-forged-{name}")
+            self.write(bad / "informal/sections/01-gluing-spaces.tex",
+                       dropped.replace("\\end{definition}", forgery + "\\end{definition}", 1))
+            self.complete(bad, "draft-01")
+            self.refused("draft", bad, 2, f"a record forged with {name}", task="draft-01")
+        # a label another section may also define: rule 2 (the whole build would refuse it)
+        bad = self.worktree("draft", "draft-01", "draft-label")
+        self.write(bad / "informal/sections/01-gluing-spaces.tex", doc.SECTION_1.replace(
+            "\\end{definition}", "\\begin{equation}\\label{eq:main}x\\end{equation}"
+                                 "\\end{definition}", 1))
+        self.complete(bad, "draft-01")
+        self.refused("draft", bad, 2, "a label of no section's form", task="draft-01")
         # draft-01 changing section 2's file: rule 1
         bad = self.worktree("draft", "draft-01", "draft-trespass")
         self.write(bad / "informal/sections/01-gluing-spaces.tex", doc.SECTION_1)
@@ -469,8 +499,22 @@ class Pipeline:
         self.refused("attack", bad, 1, "an attacker that edits the section", task="attack-tex-01")
         self.merge("attack", *docs)
         self.harvest("attack")
+        # the harvest's re-check at home: no worktree, --root the run's planned repo/ (the
+        # base commit's informal/), each document where the harvest landed it
+        corpus = self.paths.corpus_run_dir(self.runs["attack"])
+        self.passes("attack", self.run_dir("attack") / "repo", "",
+                    *[a for task in docs for a in ("--findings",
+                                                    str(corpus / task / "attack.json"))])
 
     def judge(self) -> None:
+        # a section that moved since the attack run: its findings quote another text
+        path = self.repo / "informal/sections/01-gluing-spaces.tex"
+        self.write(path, path.read_text(encoding="utf-8") + "\nOne more sentence.\n")
+        self.git(self.repo, "commit", "-qam", "a change after the attack run")
+        code, text = self.plan("judge", "--from-run", self.runs["attack"], ok=False)
+        check(code != 0 and "differs from the attack run's base commit" in text,
+              f"a judge run was planned on a section that moved:\n{text}")
+        self.git(self.repo, "reset", "-q", "--hard", "HEAD~1")
         self.plan("judge", "--from-run", self.runs["attack"])
         planned = json.loads((self.run_dir("judge") / "gate.local.json").read_text(encoding="utf-8"))
         check(planned["attack_base_commit"] == self.base("attack"),
@@ -510,7 +554,16 @@ class Pipeline:
         self.refused("judge", bad, 7, "fixed without a change", task="judge-01")
         self.merge("judge", "judge-01")
         self.harvest("judge")
+        code, text = self.plan("edit", "--from-run", self.runs["judge"], ok=False)
+        check(code != 0 and "is not applied" in text,
+              f"an edit run was planned before its judge run was applied:\n{text}")
         self.apply("judge")
+        # the judge's fix touched section 1 alone, so the next attack run covers it alone
+        code, text = self.cf("plan-informalize", ID, "--phase", "attack", "--sections",
+                             "touched", "--max-cost", "300", "--run-id", "touched-check")
+        tasks = sorted(p.stem for p in self.paths.tasks_dir("touched-check").glob("*.yaml"))
+        check(tasks == ["attack-lean-01", "attack-tex-01"],
+              f"--sections touched chose {tasks}, not section 1's attackers")
 
     def edit(self) -> None:
         self.plan("edit", "--from-run", self.runs["judge"])
@@ -551,6 +604,10 @@ class Pipeline:
         task = "draft-01" if phase == "draft" else "items"
         # from the entrypoint's first commit, where the task is still open
         first = self.git(self.entrypoint(phase), "rev-list", "--max-parents=0", "HEAD").split()[0]
+        # below the cap, the task file's status alone is no contribution: rule 1
+        alone = self.worktree(phase, task, "status-only", start=first)
+        self.complete(alone, task)
+        self.refused(phase, alone, 1, "a task file alone below the cap", task=task)
         wt = self.worktree(phase, task, "capped", start=first)
         self.write(wt / "README.md", "an attempt that strayed\n")
         self.git(wt, "commit", "-qam", "stray")

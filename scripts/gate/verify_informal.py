@@ -21,10 +21,12 @@ The rules, each refusal naming its number:
 2. **Build** -- `informal/` at the contribution's HEAD, read blob by blob with the pinned
    git (no filter runs, a link is refused), built in a scratch directory with the gate's
    own `build_pdf.sh` (`--only <section>` for draft and judge, the whole document for
-   conventions and edit) under a time limit, in a session of its own that is stopped as
-   a group; and a lint of the text files: no `\\makeatletter`, control sequence holding
-   `@`, `\\write`, `\\openout`, `\\def`, `\\csname`, `\\input` or their kin, with which a
-   section could forge the records the checks read.
+   conventions and edit) under a time limit, in a process group of its own in the gate's
+   session, stopped as a group at the limit or when the gate is stopped; and a lint of the
+   text files, comments included: no `\\makeatletter`, control sequence holding `@`, `^^`,
+   expl3, `\\write`, `\\openout`, `\\def`, `\\csname`, `\\string`, `\\input` or their kin,
+   with which a section could forge the records the checks read, and a `\\label` key only
+   of its own section's form.
 3. **Aux checks** -- the gate's `check_items.py --aux-only --strict` on that build, against
    the gate's `declarations.json` (`--conventions` in the conventions phase).
 4. **Items** -- `items.json` keeps section 5.4's rules and passes `check-items` against the
@@ -39,16 +41,19 @@ The rules, each refusal naming its number:
 7. **Judge** -- every finding of the section's attack documents has one ruling; the
    ruling's `base_commit` is its attack run's; `fixed` only when the section file changed;
    `out_of_scope` only with a request, and a request only for such a finding.
-8. **Edit** -- every request of the judge run answered once, `done` or `declined` with a
-   reason; a changed section file is one a request names; `items-proposal.json`, when
-   present, keeps its shape.
+8. **Edit** -- every finding the judge run made requests for answered once, `done` or
+   `declined` with a reason (one answer covers all of a finding's requests); a changed
+   section file is one a request names; `items-proposal.json`, when present, keeps its
+   shape.
 9. **Copying** -- no run of `copy_run_words` words of a text file the task wrote occurs in
    a docstring or comment of the library's source files of the items it covers: the one
    way the reference work's prose, which the library's docstrings sometimes quote, can be
    detected here.
 
 `--findings DOC` checks a task's own JSON documents alone (rules 6 to 8 without the
-change set or the build): the reviewer's call, and the harvest's at home.  `--self-check`
+change set or the build), with `informal/` read from `--root`: the reviewer's call in the
+worktree, and the harvest's at home with `--root` at the run's planned `repo/` (the base
+commit's files) and each document where the harvest landed it.  `--self-check`
 is the verify stage's: the imports, the pins, the task manifests, the library's source
 and, for a phase that builds, TeX and every package of `tex_packages`.
 
@@ -133,21 +138,38 @@ MAX_TEXT_CHARS = 2000
 #: seconds the build script gets to stop latexmk and remove its lock after SIGTERM
 STOP_GRACE = 10
 
-#: rule 2's lint of a text file: control sequences with which a section could write an .aux
-#: record itself, open a file, or redefine what the records are written by
+#: rule 2's lint of a text file, comments included (a `\verb`, a `\url` or a verbatim
+#: environment makes a `%` text, and TeX runs what follows it): control sequences with which
+#: a section could write an .aux record itself, open a file, spell a name or a backslash the
+#: lint cannot see, or redefine what the records are written by.  It is a list of what is
+#: refused, not of what is allowed; the reviewer reads the rest.
 LINT = (
     (re.compile(r"\\makeatletter(?![A-Za-z])"), "\\makeatletter"),
     (re.compile(r"\\[A-Za-z]*@[A-Za-z@]*"), "a control sequence holding @"),
+    (re.compile(r"\^\^"), "TeX's ^^ character notation"),
+    (re.compile(r"\\(?:ExplSyntaxOn|ProvidesExpl(?:Package|Class|File))(?![A-Za-z])"),
+     "expl3 syntax"),
     (re.compile(r"\\(?:immediate|write|openout|closeout|openin|read|newwrite|newread)"
                 r"(?![A-Za-z])"), "a file operation"),
     (re.compile(r"\\[egx]?def(?![A-Za-z])"), "\\def"),
-    (re.compile(r"\\(?:let|futurelet|renewcommand|catcode|uccode|lccode|csname|expandafter"
-                r"|scantokens)(?![A-Za-z])"), "a redefinition or a constructed name"),
+    (re.compile(r"\\(?:let|futurelet|renewcommand|renewenvironment|DeclareRobustCommand"
+                r"|(?:Renew|Declare)Document(?:Command|Environment)"
+                r"|(?:New|Renew|Declare)(?:Command|Environment)Copy"
+                r"|AddToHook(?:Next)?|AtBeginDocument|AtEndDocument"
+                r"|(?:patch|preto|appto)cmd|cs(?:use|[egx]?def|let(?:cs)?)|letcs"
+                r"|catcode|uccode|lccode|newlinechar|endlinechar|escapechar"
+                r"|csname|ifcsname|UseName|ExpandArgs|expandafter|scantokens"
+                r"|string|detokenize|unexpanded|meaning)(?![A-Za-z])"),
+     "a redefinition, a hook, a catcode, or a name or string built from text"),
     (re.compile(r"\\(?:input|include|InputIfFileExists|IfFileExists|openin)(?![A-Za-z])"),
      "an \\input"),
-    (re.compile(r"\\(?:special|pdfliteral|pdfobj|pdfannot|pdfximage|pdfsavepos|zsavepos"
-                r")(?![A-Za-z])"), "a raw PDF or position command"),
+    (re.compile(r"\\(?:special|pdf[A-Za-z]*|zsavepos)(?![A-Za-z])"),
+     "a raw PDF or position command"),
 )
+#: a `\label` key a text file may write: letters, digits and `:._-`; in a numbered section's
+#: file `eq:<id>-<word>` of one of its items (STYLE.md), so no two sections share a label
+LABEL = re.compile(r"\\label(?![A-Za-z])\s*(?:\{([A-Za-z0-9][A-Za-z0-9:._-]*)\})?")
+NUMBERED_LABEL = re.compile(r"(?:eq|sec):[0-9]|item:")
 
 
 class GateBroken(Exception):
@@ -606,15 +628,31 @@ def strip_comments(text: str) -> str:
 
 
 def lint(path: str, text: str, problems: Problems) -> None:
-    code = strip_comments(text)
+    """Rule 2's lint of one text file, its comments included, and its `\\label` keys."""
     for pattern, what in LINT:
-        found = pattern.search(code)
+        found = pattern.search(text)
         if found:
-            line = code.count("\n", 0, found.start()) + 1
+            line = text.count("\n", 0, found.start()) + 1
             problems.add(2, f"{path}:{line}", f"holds {what} ({found.group(0)[:40]}): a text file "
                                               f"of the informal companion uses the marker "
                                               f"package's commands and notation.sty's, and "
-                                              f"writes, reads or redefines nothing")
+                                              f"writes, reads or redefines nothing (a comment "
+                                              f"is read too)")
+    numbered = re.match(r"informal/sections/0*([1-9][0-9]*)-", path)
+    for found in LABEL.finditer(text):
+        key = found.group(1)
+        if key is None:
+            why = "is not letters, digits and :._- in braces"
+        elif numbered and not re.match(rf"eq:{numbered.group(1)}\.[1-9][0-9]*-", key):
+            why = f"is not eq:<id>-<word> of an item of section {numbered.group(1)} (STYLE.md)"
+        elif not numbered and NUMBERED_LABEL.match(key):
+            why = "is the form of a numbered section's label"
+        else:
+            continue
+        line = text.count("\n", 0, found.start()) + 1
+        shown = key if key is not None else text[found.end():found.end() + 40]
+        problems.add(2, f"{path}:{line}", f"the \\label key {shown!r} {why}, so that no two "
+                                          f"sections share a label in the whole document")
 
 
 def _error_lines(text: str, limit: int = 20) -> list[str]:
@@ -642,32 +680,42 @@ def write_tree(files: dict[str, bytes], dest: pathlib.Path, prefix: str = "infor
         path.write_bytes(data)
 
 
-def run_limited(argv: list[str], cwd: pathlib.Path, timeout: int) -> tuple[int | None, str]:
-    """``(exit, output)`` of a program run in a session of its own; ``None`` at the limit.
+def stop_group(proc: subprocess.Popen) -> None:
+    """SIGTERM to the program's process group, which `build_pdf.sh` passes on to latexmk's
+    own group before it removes its lock; SIGKILL only if the group has not ended within
+    :data:`STOP_GRACE` seconds."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=STOP_GRACE)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait()
 
-    At the limit the whole process group gets SIGTERM, which `build_pdf.sh` passes on to
-    latexmk's own group before it removes its lock, and SIGKILL only if the group has not
-    ended within :data:`STOP_GRACE` seconds.
+
+def run_limited(argv: list[str], cwd: pathlib.Path, timeout: int) -> tuple[int | None, str]:
+    """``(exit, output)`` of a program run in a process group of its own; ``None`` at the limit.
+
+    The group stays in the gate's session, which tend sweeps when it stops a validation (a
+    detached session would escape it).  At the limit, and when the gate itself is stopped
+    (:func:`on_signal` unwinds through here), the group is stopped by :func:`stop_group`.
     """
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(argv, cwd=str(cwd), stdout=out, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True)
+                                stdin=subprocess.DEVNULL, process_group=0)
+        code: int | None = None
         try:
-            code: int | None = proc.wait(timeout=timeout)
+            code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            code = None
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except OSError:
-                pass
-            try:
-                proc.wait(timeout=STOP_GRACE)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except OSError:
-                    pass
-                proc.wait()
+            pass
+        finally:
+            if code is None:
+                stop_group(proc)
         out.seek(0)
         return code, out.read().decode("utf-8", "replace")
 
@@ -994,13 +1042,15 @@ def check_ruling(cfg: GateConfig, manifest: dict, doc: Any, section_changed: boo
             problems.add(7, rel, f"finding {fid} is out_of_scope without a request")
 
 
-def judge_requests(cfg: GateConfig, manifest: dict) -> dict[str, dict]:
-    """``{finding id: request}`` of the judge run (`data/rulings/`)."""
-    out: dict[str, dict] = {}
+def judge_requests(cfg: GateConfig, manifest: dict) -> dict[str, list[dict]]:
+    """``{finding id: [request, ...]}`` of the judge run (`data/rulings/`): rule 7 lets a
+    finding whose fix spans files carry a request per file, and the planner gives the editor
+    every file any of them names."""
+    out: dict[str, list[dict]] = {}
     for name in manifest.get("rulings") or []:
         for req in cfg.data_document("rulings", name).get("requests") or []:
             if isinstance(req, dict) and isinstance(req.get("finding"), str):
-                out[req["finding"]] = req
+                out.setdefault(req["finding"], []).append(req)
     return out
 
 
@@ -1029,17 +1079,18 @@ def check_edit(cfg: GateConfig, manifest: dict, doc: Any, changed_sections: set[
             _unknown(where, row, ("finding", "status", "reason"), 8, problems)
             fid = row.get("finding")
             if fid not in requests:
-                problems.add(8, where, f"finding {fid!r} is no request of the judge run")
+                problems.add(8, where, f"finding {fid!r} has no request of the judge run")
             elif fid in seen:
-                problems.add(8, where, f"request {fid} is answered twice")
+                problems.add(8, where, f"finding {fid} is answered twice (one answer covers "
+                                       f"all of its requests)")
             seen.add(str(fid))
             if row.get("status") not in ANSWERS:
                 problems.add(8, where, f"status is not one of {', '.join(ANSWERS)}")
             if not _text(row.get("reason")):
                 problems.add(8, where, "reason is not text")
         for fid in sorted(set(requests) - seen):
-            problems.add(8, rel, f"request {fid} is not answered")
-    named = {str(r.get("file")) for r in requests.values()}
+            problems.add(8, rel, f"the request of finding {fid} is not answered")
+    named = {str(r.get("file")) for reqs in requests.values() for r in reqs}
     for path in sorted(changed_sections or ()):
         if path not in named:
             problems.add(8, path, "is a section file no request of the judge run names")
@@ -1246,9 +1297,10 @@ PHASE_DOCUMENTS = {"items": ("informal/items.json", 4), "conventions": ("informa
 
 def run_findings(cfg: GateConfig, documents: list[pathlib.Path], root: pathlib.Path,
                  problems: Problems) -> int:
-    """Rules 4 to 8 on named documents alone, read from the worktree's files; the number
-    checked.  The items task's table and the conventions task's hypotheses are checked with
-    the other files of `informal/` as they lie on disk."""
+    """Rules 4 to 8 on named documents alone; the number checked.  `informal/` is read from
+    ``root`` as it lies on disk: the worktree, or at home the run's planned `repo/`, beside
+    which the harvested documents are named by their own paths (a document outside ``root``
+    is `findings/<its folder>/<its name>`)."""
     files, _refused = disk_files(root, ("informal/",))
     for doc_path in documents:
         path = doc_path if doc_path.is_absolute() else root / doc_path
@@ -1420,6 +1472,18 @@ def check_command_line(args: argparse.Namespace, here: pathlib.Path = HERE) -> N
                                f"gate: a gate directory runs with its own gate.json only")
 
 
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+def on_signal(signum: int, _frame: Any) -> None:
+    """SIGTERM or SIGINT (tend stopping a validation): unwind, so that a running build's
+    group is stopped and the scratch directory removed before the gate exits; a second
+    signal does not cut that short."""
+    for each in STOP_SIGNALS:
+        signal.signal(each, signal.SIG_IGN)
+    raise SystemExit(128 + signum)
+
+
 def _broken(message: str) -> int:
     print(f"FAIL: {message} — the gate could not run: this is not a finding of yours",
           file=sys.stderr)
@@ -1480,6 +1544,11 @@ def _main(argv: list[str] | None = None) -> int:
     else:
         task_id = os.environ.get("TEND_TASK_ID", "")
         task_id_from = "$TEND_TASK_ID" if task_id else None
+    for signum in STOP_SIGNALS:
+        try:
+            signal.signal(signum, on_signal)
+        except ValueError:        # an in-process caller off the main thread: nothing to stop
+            pass
     result = run_gate(cfg, root=pathlib.Path(args.root).resolve(),
                       findings=[pathlib.Path(f) for f in args.findings],
                       changed_files=args.changed_files, base=args.base, task_id=task_id,

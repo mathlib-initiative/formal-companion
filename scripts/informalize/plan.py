@@ -31,6 +31,7 @@ again writes the same files.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -198,6 +199,13 @@ def make_tasks(phase: str, table: dict | None, sections: list[str], *,
     return out
 
 
+def quoted(text: str) -> str:
+    """``text`` escaped for the inside of a YAML double-quoted scalar (JSON's escapes, which YAML
+    reads): a task's title holds its section's title, LaTeX source, whose backslashes and quote
+    marks are kept as written."""
+    return json.dumps(text, ensure_ascii=False)[1:-1]
+
+
 def task_yaml(task: Task, phase: str, layout: dict) -> str:
     """The tend task file of one task."""
     lines = [f"Phase `{phase}` of the informalize run. Your manifest is "
@@ -216,7 +224,8 @@ def task_yaml(task: Task, phase: str, layout: dict) -> str:
                   + ", ".join(f"`{layout['gate_dir']}/data/rulings/{r}.json`" for r in task.rulings)
                   + "."]
     lines += ["", "Commit what you write, and set `status: complete` here when it is done."]
-    ctx = {"task_id": task.id, "title": task.title, "priority": "high", "summary": task.summary,
+    ctx = {"task_id": task.id, "title": quoted(task.title), "priority": "high",
+           "summary": quoted(task.summary),
            "description": "\n".join(("  " + line) if line.strip() else "" for line in lines)}
     text = render_file(templates_dir() / "tasks" / "informalize.yaml.tmpl", ctx)
     return text if text.endswith("\n") else text + "\n"
@@ -435,8 +444,14 @@ def choose_sections(spec: str | None, phase: str, table: dict, *, paths: Workspa
 # where things are
 # --------------------------------------------------------------------------- #
 
+def library_dir(informalize_id: str, library_commit: str) -> str:
+    """The library's source on the host, under the remote root: one folder per id and commit,
+    so a run of another id, or of this one at another commit, never replaces it."""
+    return f"library-src/{informalize_id}-{library_commit[:12]}"
+
+
 def host_layout(paths: WorkspacePaths, informalize_id: str, run_id: str, *, host: str,
-                remote_root: str = "", ssh: str = "") -> dict[str, dict]:
+                library_commit: str, remote_root: str = "", ssh: str = "") -> dict[str, dict]:
     """The run host's paths and this machine's mirror of each."""
     rd = paths.run_dir(run_id)
     tend = rd / "tend-root"
@@ -456,7 +471,8 @@ def host_layout(paths: WorkspacePaths, informalize_id: str, run_id: str, *, host
         remote = {"kind": "remote", "remote_root": root, "ssh": ssh or host,
                   "entrypoint": f"{root}/{run_id}", "tend_root": tend_r, "gate_dir": gate,
                   "prompts_dir": f"{tend_r}/prompts", "tasks_dir": f"{gate}/tasks",
-                  "library_src": f"{root}/library-src", "log_dir": f"{tend_r}/gate-log",
+                  "library_src": f"{root}/{library_dir(informalize_id, library_commit)}",
+                  "log_dir": f"{tend_r}/gate-log",
                   "orchestrator_db": f"{tend_r}/orchestrator.sqlite",
                   "attempts_dir": f"{tend_r}/attempts"}
     for side in (local, remote):
@@ -668,6 +684,7 @@ def _phase_inputs(workspace, informalize_id: str, phase: str, from_run: str | No
                       "attack_base_commit": str(block.get("base_commit") or "")}
     requests: list[dict] = []
     rulings: list[str] = []
+    fixed: list[str] = []
     for task in tasks:
         doc = corpus_document(paths, from_run, task, "ruling.json")
         if doc is None:
@@ -675,12 +692,43 @@ def _phase_inputs(workspace, informalize_id: str, phase: str, from_run: str | No
         data[f"rulings/{task}.json"] = doc
         rulings.append(task)
         requests += [r for r in doc.get("requests") or [] if isinstance(r, dict)]
+        actions = [r.get("action") for r in doc.get("rulings") or [] if isinstance(r, dict)]
+        if "fixed" in actions:
+            fixed.append(str(doc.get("section") or ""))
     if not requests:
         raise CfError(f"judge run {from_run} made no request: there is nothing for an editor",
                       hint="plan --phase attack --sections touched next")
     sections = set(section_paths(table or {}).values())
     files = sorted({str(r.get("file")) for r in requests if str(r.get("file")) in sections})
-    return data, {"rulings": rulings, "request_files": files}
+    return data, {"rulings": rulings, "request_files": files, "fixed_sections": fixed,
+                  "judge_base_commit": str(block.get("base_commit") or "")}
+
+
+def check_edit_ready(informalize_id: str, repo: OutputRepo, table: dict,
+                     files: dict[str, tuple[str, bytes]], from_run: str, facts: dict) -> None:
+    """Refuse an edit run the whole document's build cannot pass, or that would undo its judge
+    run (section 8.1): every section with an `in_v1` item drafted, and the judge run applied
+    (its base commit an ancestor of HEAD, and each section file a judge fixed changed since)."""
+    where = section_paths(table)
+    empty = [n for n in where if section_items(table, n)
+             and not files.get(where[n], ("", b""))[1].strip()]
+    if empty:
+        raise CfError(f"section(s) {', '.join(empty)} are not drafted, and the edit phase builds "
+                      f"the whole document", hint=f"plan --phase draft --sections "
+                                                  f"{','.join(empty)} first")
+    base = facts["judge_base_commit"]
+    ancestor = subprocess.run(gitsafe.argv(repo.root, "merge-base", "--is-ancestor", base, "HEAD"),
+                              env=gitsafe.env(repo.root), capture_output=True, check=False)
+    old = tree_at(repo.root, base) if ancestor.returncode == 0 else {}
+    unapplied = [where[n] for n in facts["fixed_sections"] if n in where
+                 and old.get(where[n]) == files.get(where[n])]
+    if ancestor.returncode != 0 or unapplied:
+        raise CfError(f"judge run {from_run} is not applied: " + (
+                      f"{unapplied[0]} is the text its judge fixed" if unapplied else
+                      f"HEAD does not descend from its base commit {base[:12]}"),
+                      hint=f"apply it first (`cf informalize apply {informalize_id} --run "
+                           f"{from_run}`, component 5b, not implemented yet): the editor works on "
+                           "the judges' fixes")
 
 
 def plan(workspace, informalize_id: str, phase: str, *, sections: str | None = None,
@@ -727,6 +775,8 @@ def plan(workspace, informalize_id: str, phase: str, *, sections: str | None = N
             raise CfError(f"{moved[0]} differs from the attack run's base commit "
                           f"{attack_base[:12]}: the findings quote another text",
                           hint="attack the section again (--phase attack --sections touched)")
+    if phase == "edit":
+        check_edit_ready(informalize_id, repo, table, files, from_run, facts)
     tasks = make_tasks(phase, table, chosen, attacks=facts.get("attacks"),
                        rulings=facts.get("rulings"), request_files=facts.get("request_files"))
     run_id = run_id or next_run_id(paths, informalize_id, phase)
@@ -755,6 +805,7 @@ def plan(workspace, informalize_id: str, phase: str, *, sections: str | None = N
     else:
         resolved = manifest_mod.resolve_host(workspace, host)
     layouts = host_layout(paths, informalize_id, run_id, host=host,
+                          library_commit=cfg["library"]["commit"],
                           remote_root=resolved["remote_root"], ssh=resolved["ssh"])
     warnings: list[str] = []
     if host != LOCAL and not consent:
@@ -863,7 +914,8 @@ def write_run_yaml(workspace, *, run_id: str, informalize_id: str, phase: str,
         "host": {"name": host, "kind": host_side["kind"],
                  "remote_root": host_side["remote_root"], "ssh": host_side["ssh"] or None},
         "remote": {"entrypoint": run_id, "tend_root": f"{run_id}-tend",
-                   "gate": f"{run_id}-gate", "library_src": "library-src"},
+                   "gate": f"{run_id}-gate",
+                   "library_src": library_dir(informalize_id, library["commit"])},
         "consent": {"given": bool(consent), "flag": "--i-have-consent",
                     "at": now() if consent else None,
                     "note": "cf run refuses to start a remote run without this"},

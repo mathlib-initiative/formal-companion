@@ -92,7 +92,8 @@ templates/informalize/ runtime/ is copied verbatim into an output repository's i
                      informalize.yaml's and items.json's JSON Schemas, for a reader
                      (docs/proposals/informalize.md section 7)
 templates/campaign/  the host-side sequencer `cf campaign render` writes
-templates/tend/      the tend root's config, faithfulness and locate (`*-locate*`)
+templates/tend/      the tend root's config, faithfulness, locate (`*-locate*`) and
+                     informalize (`*-informalize*`)
 templates/  workflows/  tests/  .github/workflows/
 ```
 
