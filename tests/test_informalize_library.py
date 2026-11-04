@@ -204,8 +204,10 @@ def write_tar(path: Path, files: dict[str, str], *, links: dict[str, str] | None
 def write_host(root: Path, *, commit: str = doc.COMMIT, done: str = "0", form: str = "plain",
                files: dict[str, str] | None = None, decls: list[dict] | None = None,
                deps: dict | None = None, canary: list[dict] | None = None,
-               head: str | None = None, state_commit: str | None = None) -> Path:
-    """What library_host.sh leaves under `<root>/library/` when it has run."""
+               head: str | None = None, state_commit: str | None = None,
+               to_host: Path | None = None) -> Path:
+    """What library_host.sh leaves under `<root>/library/` when it has run the drivers and
+    the library list of `to_host` (build-command's `library/to-host/`)."""
     files = source_files(form) if files is None else files
     lib = root / "library"
     host = lib / "host"
@@ -213,6 +215,9 @@ def write_host(root: Path, *, commit: str = doc.COMMIT, done: str = "0", form: s
     (host / "license").mkdir(parents=True, exist_ok=True)
     (host / "logs").mkdir(parents=True, exist_ok=True)
     (host / "DONE").write_text(f"{done}\n", encoding="utf-8")
+    if to_host is not None:
+        (host / "drivers.json").write_text(json.dumps(library_host.digest(
+            to_host / "drivers", to_host / library.LIBRARY_LIST)), encoding="utf-8")
     (host / "commit").write_text(f"{head or commit}\n", encoding="utf-8")
     (host / "commit-time").write_text("1700000000\n", encoding="utf-8")
     (host / "lean-toolchain").write_text(TOOLCHAIN + "\n", encoding="utf-8")
@@ -387,12 +392,28 @@ class TestTheCanary(unittest.TestCase):
 
     def test_the_helper_runs_alone_under_python_dash_i(self):
         root = scratch(self)
-        source_tree(root, source_files("module"))
+        index = scratch(self)
+        write_probe(index, records(), library=LIB, commit=doc.COMMIT, modules=MODULES)
         tool = SKILL / "scripts" / "informalize" / "library_host.py"
-        got = subprocess.run([sys.executable, "-I", str(tool), "module-form", "--checkout",
-                              str(root), "--module", MODULE], capture_output=True, text=True,
-                             env={"PATH": "/usr/bin:/bin"})
+
+        def form(files=None):
+            if files is not None:
+                source_tree(root, files)
+            return subprocess.run([sys.executable, "-I", str(tool), "module-form", "--checkout",
+                                   str(root), "--index", str(index / "index.jsonl")],
+                                  capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+        got = form(source_files("plain"))
+        self.assertEqual((got.returncode, got.stdout.strip()), (0, "plain"), got.stderr)
+        # the theorem's file is plain, another module of the index is not: the module form
+        mixed = source_files("plain")
+        mixed["ExampleLib/Topology/Glue/Defs.lean"] = "module\n\n" + mixed[
+            "ExampleLib/Topology/Glue/Defs.lean"]
+        got = form(mixed)
         self.assertEqual((got.returncode, got.stdout.strip()), (0, "module"), got.stderr)
+        (root / "ExampleLib/Topology/Glue/Defs.lean").unlink()
+        got = form()
+        self.assertEqual(got.returncode, 2)
+        self.assertIn("does not hold", got.stderr)
         got = subprocess.run([sys.executable, "-I", str(tool), "slug", "--toolchain", "x y"],
                              capture_output=True, text=True)
         self.assertEqual(got.returncode, 2)
@@ -426,6 +447,22 @@ class TestTheHostScriptKeepsTheDriversRules(unittest.TestCase):
         for name in ("cenv", "heavy"):
             with self.subTest(function=name):
                 self.assertEqual(function(self.text, name), function(driver, name))
+
+    def test_the_lines_the_pilot_learned_are_there(self):
+        text = self.text
+        self.assertIn('ulimit -n 65536 || fail 5 ', text)
+        self.assertLess(text.index('ulimit -n 65536'), text.index('heavy bash "$dump"'))
+        self.assertIn('--timeout "$DUMP_TIMEOUT"', text)
+        # a stale DONE goes once the lock is held and before anything runs; what ran is
+        # recorded under the trap that writes DONE
+        lock, stale = text.index("flock -n 8 ||"), text.index('rm -f "$host_dir/DONE"')
+        trap = text.index("trap 'rc=$?; printf")
+        self.assertLess(lock, stale)
+        self.assertLess(stale, trap)
+        self.assertLess(trap, text.index('digest --drivers "$drivers" --list "$universe"'))
+        self.assertLess(trap, text.index('bash "$driver" "$universe" "$lib"'))
+        self.assertIn('archive --format=tar -o "$host_dir/src.tar.partial" "$commit" -- '
+                      "'*.lean'", text)
 
     def test_it_copies_the_license_files_the_mac_reads(self):
         loop = re.search(r"for name in (.*?); do", self.text, re.S).group(1)
@@ -504,7 +541,9 @@ class TestTheClosure(unittest.TestCase):
         for row in none_at_all["repo_constants"]:
             if row["kind"] == "theorem" and row["name"] != THEOREM:
                 row["value_deps"] = []
-        twice = dict(deps, repo_constants=deps["repo_constants"] + deps["repo_constants"][-1:])
+        twice = copy.deepcopy(deps)
+        twice["repo_constants"].append(dict(twice["repo_constants"][-1], module=MODULE,
+                                            type_deps=["False"]))
         sorry = dict(self.records)
         sorry[THEOREM] = dict(sorry[THEOREM], nonstandard_axioms=["sorryAx"],
                               proof_status="statement_only")
@@ -517,7 +556,7 @@ class TestTheClosure(unittest.TestCase):
             "under prefix 'Other'": dict(deps=bad_prefix),
             "not among the constants": dict(deps=no_theorem),
             "proof's body was not loaded": dict(deps=no_bodies),
-            "twice": dict(deps=twice),
+            "twice with different types": dict(deps=twice),
             "rests on sorryAx": dict(records_=sorry),
             "not in ExampleLib.Topology.Glue.Basic": dict(records_=moved),
             "not a public declaration": dict(records_=missing),
@@ -536,6 +575,25 @@ class TestTheClosure(unittest.TestCase):
         with self.assertRaises(CfError) as caught:
             self.compute(deps=stated_as_def)
         self.assertIn("for any of the library's", caught.exception.message)
+
+    def test_a_constant_two_modules_realized_is_one(self):
+        deps = deps_doc()
+        lemma = "ExampleLib.glue_map.congr_simp"
+        deps["repo_constants"][0]["value_deps"].append(lemma)
+        for module, used in ((DEFS, "ExampleLib.cover_mono"), (MODULE, "ExampleLib.unused")):
+            deps["repo_constants"].append({
+                "name": lemma, "module": module, "kind": "theorem", "instance": False,
+                "structure": False, "projection": False, "type_deps": ["ExampleLib.glue_map"],
+                "value_deps": [used]})
+        members, _entries, counts = self.compute(deps=deps)
+        by_name = {m["name"]: m for m in members}
+        # the second copy's dependency is kept too, one level below the theorem
+        self.assertEqual((by_name["ExampleLib.unused"]["depth"],
+                          by_name["ExampleLib.unused"]["reach"]), (1, "value"))
+        self.assertEqual(len(members), 5)
+        self.assertEqual(counts["repeated_rows"], 1)
+        self.assertEqual(scope_mod.constants(deps)[lemma]["value_deps"],
+                         ["ExampleLib.cover_mono", "ExampleLib.unused"])
 
     def test_two_public_records_of_one_name_are_refused(self):
         root = scratch(self)
@@ -571,7 +629,7 @@ class _Workspace(unittest.TestCase):
             os.environ.pop(name, None)
         base = scratch(self)
         self.root = base / "ws"
-        self.host = base / "hostroot"
+        self.host = base / f"informalize-{ID}"
         self.host.mkdir()
         code, out, err = cf("init", str(self.root), "--no-git", "-q")
         self.assertEqual(code, 0, out + err)
@@ -600,6 +658,13 @@ class _Workspace(unittest.TestCase):
 
     def commits(self) -> int:
         return int(self.git("rev-list", "--count", "HEAD").strip())
+
+    def write_host(self, **kwargs) -> Path:
+        """The host folder after a job that ran what build-command wrote here."""
+        to_host = self.paths.informalize_library_to_host(ID)
+        if not (to_host / library.LIBRARY_LIST).is_file():
+            self.cf("informalize", "build-command", ID, "--host", HOST)
+        return write_host(self.host, to_host=to_host, **kwargs)
 
     def fetch(self, *extra: str, code: int = 0, fake: FakeHost | None = None) -> str:
         fake = fake or FakeHost()
@@ -631,7 +696,7 @@ class TestBuildCommand(_Workspace):
         self.assertEqual(len(start), 1)
         self.assertIn(f"cd {self.host} && mkdir -p library/host && setsid -f env "
                       'ATLAS_ROOT="$PWD/library" MIN_FREE_GB=60 LEAN_THREADS=16 bash '
-                      "drivers/scripts/informalize/library_host.sh library.tsv > "
+                      "drivers/scripts/informalize/library_host.sh library.tsv >> "
                       "library/host/library_host.log 2>&1 < /dev/null", start[0])
         script = (to_host / "build-command.sh").read_text(encoding="utf-8")
         self.assertIn(start[0], script)
@@ -659,6 +724,35 @@ class TestBuildCommand(_Workspace):
         self.assertIn("remote_root", self.cf("informalize", "build-command", ID, "--host", HOST,
                                              code=2))
 
+    def test_the_host_folder_is_this_ids_own(self):
+        def with_root(entry_root, shared=None):
+            ws = Workspace.load(self.root, validate=False)
+            ws.data["hosts"][HOST].pop("remote_root", None)
+            ws.data["hosts"].pop("remote_root", None)
+            if entry_root is not None:
+                ws.data["hosts"][HOST]["remote_root"] = entry_root
+            if shared is not None:
+                ws.data["hosts"]["remote_root"] = shared
+            ws.save()
+        # the workspace-wide root, or none at all (the home), is never used
+        for shared in ("~/locate-smoke", None):
+            with self.subTest(shared=shared):
+                with_root(None, shared)
+                out = self.cf("informalize", "build-command", ID, "--host", HOST, code=2)
+                self.assertIn(f"sets no remote_root for {HOST} itself", out)
+                self.assertNotIn("rsync", out)
+        # another run's root, the home spelled absolute, another id's folder
+        for root in ("~/locate-smoke", "/home/tester", "~/informalize-other-thm"):
+            with self.subTest(root=root):
+                with_root(root)
+                out = self.cf("informalize", "build-command", ID, "--host", HOST, code=2)
+                self.assertIn(f"its last part must be informalize-{ID}", out)
+                self.assertIn(f"must be informalize-{ID}",
+                              self.fetch(code=2))
+        with_root(f"~/runs/informalize-{ID}")
+        out = self.cf("informalize", "build-command", ID, "--host", HOST)
+        self.assertIn(f'cd "$HOME"/runs/informalize-{ID} && ', out)
+
     def test_status_names_the_next_step(self):
         self.assertIn(f"cf informalize build-command {ID} --host <host>",
                       self.cf("informalize", "status", ID))
@@ -671,7 +765,7 @@ class TestFetchLibrary(_Workspace):
 
     def setUp(self):
         super().setUp()
-        write_host(self.host)
+        self.write_host()
 
     def test_a_dry_run_runs_nothing(self):
         fake = FakeHost()
@@ -718,6 +812,11 @@ class TestFetchLibrary(_Workspace):
         self.assertEqual(checks["source"]["links_skipped"], ["README"])
         self.assertEqual(checks["consent"]["host"], HOST)
         self.assertIn("library/index/index.jsonl", receipt["outputs"])
+        ran = json.loads((lib / "host" / "drivers.json").read_text(encoding="utf-8"))
+        self.assertIn(f"drivers/{library.HOST_SCRIPT}", ran)
+        self.assertEqual(receipt["inputs"], {
+            "informalize.yaml": receipt["inputs"]["informalize.yaml"],
+            **{f"library/to-host/{name}": sha for name, sha in ran.items()}})
         self.cf("informalize", "sync", ID, "--check")
         # a second fetch of the same files changes nothing
         self.fetch("--execute", "--i-have-consent")
@@ -735,6 +834,49 @@ class TestFetchLibrary(_Workspace):
         self.assertIn("status '3'", out)
         self.assertIn("library_host.log", out)
 
+    def test_a_failed_job_is_named_before_anything_else_is_copied(self):
+        shutil.rmtree(self.host / "library")
+        self.write_host(done="1")
+        (self.host / "library" / "deps.json").unlink()
+        shutil.rmtree(self.host / "library" / "index")
+        fake = FakeHost()
+        out = self.fetch("--execute", "--i-have-consent", code=2, fake=fake)
+        self.assertIn("status '1'", out)
+        self.assertIn("library_host.log", out)
+        self.assertEqual([argv[0] for argv in fake.calls], ["ssh", "rsync"])
+
+    def test_drivers_other_than_the_ones_that_ran_are_refused(self):
+        to_host = self.paths.informalize_library_to_host(ID)
+        script = to_host / "drivers" / "scripts" / "informalize" / "library_host.sh"
+        script.write_text(script.read_text(encoding="utf-8") + "# changed since\n")
+        out = self.fetch("--execute", "--i-have-consent", code=2)
+        self.assertIn("not what the host job ran: 1 file(s) differ "
+                      "(drivers/scripts/informalize/library_host.sh)", out)
+        self.assertFalse(self.paths.informalize_library_src(ID).exists())
+        (self.host / "library" / "host" / "drivers.json").unlink()
+        self.assertIn("no host/drivers.json", self.fetch("--execute", "--i-have-consent",
+                                                         code=2))
+
+    def test_a_dual_licensed_library_takes_one_of_its_licenses_by_hand(self):
+        mit = (LICENSES / "MIT.txt").read_text(encoding="utf-8")
+        shutil.rmtree(self.host / "library")
+        self.write_host(files={k: v for k, v in source_files().items() if k != "LICENSE"})
+        license_dir = self.host / "library" / "host" / "license"
+        (license_dir / "LICENSE-APACHE").write_text(APACHE, encoding="utf-8")
+        (license_dir / "LICENSE-MIT").write_text(mit, encoding="utf-8")
+        out = self.fetch("--execute", "--i-have-consent", code=2)
+        self.assertIn("name Apache-2.0, MIT, so pick the one", out)
+        self.assertIn("--library-license", out)
+        self.init("--library-license", "BSD-3-Clause", "--force")
+        self.assertIn("name Apache-2.0, MIT, informalize.yaml says BSD-3-Clause",
+                      self.fetch("--execute", "--i-have-consent", code=2))
+        self.init("--library-license", "MIT", "--force")
+        self.fetch("--execute", "--i-have-consent")
+        block = self.receipt("I1")["checks"]["license"]
+        self.assertEqual((block["spdx"], block["method"], block["named"]),
+                         ("MIT", "manual", ["Apache-2.0", "MIT"]))
+        self.assertEqual(read_yaml(self.paths.informalize_yaml(ID))["library"]["license"], "MIT")
+
     def test_a_failed_check_leaves_the_last_fetch_in_place(self):
         self.fetch("--execute", "--i-have-consent")
         src = self.paths.informalize_library_src(ID)
@@ -751,13 +893,18 @@ class TestFetchLibrary(_Workspace):
         broken_canary[0] = dict(broken_canary[0], proof_status="proved", nonstandard_axioms=[])
         mit = (LICENSES / "MIT.txt").read_text(encoding="utf-8")
         no_theorem = [r for r in records() if r["name"] != THEOREM]
+        no_bodies = deps_doc()
+        no_bodies["repo_constants"][0]["value_deps"] = []
         cases = {
             "the canary failed": dict(canary=broken_canary),
             "driver's state says": dict(state_commit="e" * 40),
             "dump of root module": dict(deps=dict(deps_doc(), root_module=DEFS)),
             "0 public records": dict(decls=no_theorem),
-            "does not open with `module`": dict(files=source_files("plain"), form="module"),
-            "opens with `module`": dict(files=source_files("module"), form="plain"),
+            "none of the 2 module files the index names opens": dict(
+                files=source_files("plain"), form="module"),
+            "1 of the 2 module files the index names open": dict(
+                files=source_files("module"), form="plain"),
+            "proof's body was not loaded": dict(deps=no_bodies),
             "license is not known": dict(files={**source_files(), "LICENSE": "All mine."}),
             "not in src.tar": dict(files={k: v for k, v in source_files().items()
                                           if not k.endswith("Defs.lean")}),
@@ -765,18 +912,18 @@ class TestFetchLibrary(_Workspace):
         for needle, kwargs in cases.items():
             with self.subTest(needle=needle):
                 shutil.rmtree(self.host / "library")
-                write_host(self.host, **kwargs)
+                self.write_host(**kwargs)
                 out = self.fetch("--execute", "--i-have-consent", code=2)
                 self.assertIn(needle, out)
         shutil.rmtree(self.host / "library")
-        write_host(self.host, files={**source_files(), "LICENSE": mit})
+        self.write_host(files={**source_files(), "LICENSE": mit})
         self.init("--library-license", "Apache-2.0", "--force")
-        self.assertIn("names MIT, informalize.yaml says Apache-2.0",
+        self.assertIn("name MIT, informalize.yaml says Apache-2.0",
                       self.fetch("--execute", "--i-have-consent", code=2))
 
     def test_a_manual_license_stands_when_the_file_names_none(self):
         shutil.rmtree(self.host / "library")
-        write_host(self.host, files={**source_files(), "LICENSE": "All mine."})
+        self.write_host(files={**source_files(), "LICENSE": "All mine."})
         self.init("--library-license", "LicenseRef-Mine", "--force")
         self.fetch("--execute", "--i-have-consent")
         settings_ = read_yaml(self.paths.informalize_yaml(ID))
@@ -796,7 +943,7 @@ class TestScope(_Workspace):
 
     def setUp(self):
         super().setUp()
-        write_host(self.host)
+        self.write_host()
 
     def test_it_needs_a_current_i1(self):
         self.assertIn("stage I1 has not run", self.cf("informalize", "scope", ID, code=2))
@@ -889,6 +1036,7 @@ case "$1 $2" in
   "build "*) mkdir -p .lake/build; exit 0 ;;
 esac
 if [ "$1 $2 $3" = "env lean --run" ]; then
+  echo "nofile $(ulimit -n)" >> "$HOME/lake.log"
   out=$(sed -n 's/.*IO.FS.writeFile "\([^"]*\)".*/\1/p' "$4" | head -n 1)
   exec cp "$HOME/deps.json" "$out"
 fi
@@ -915,7 +1063,8 @@ class TestTheHostScriptEndToEnd(_Workspace):
             (lib_root / rel).write_text(text, encoding="utf-8")
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
-               "GIT_AUTHOR_DATE": "@1700000000 +0000", "GIT_COMMITTER_DATE": "@1700000000 +0000",
+               # two dates, so that the committer time is the one recorded
+               "GIT_AUTHOR_DATE": "@1600000000 +0000", "GIT_COMMITTER_DATE": "@1700000000 +0000",
                "GIT_CONFIG_NOSYSTEM": "1"}
         for argv in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "pin"],
                      ["remote", "add", "origin", URL]):
@@ -947,7 +1096,8 @@ class TestTheHostScriptEndToEnd(_Workspace):
         self.stub(bindir, "elan", "exit 0")
         self.stub(bindir, "ionice", 'shift; exec "$@"')
         self.stub(bindir, "flock", "exit 0")
-        self.stub(bindir, "timeout", 'while [ "${1#-}" != "$1" ]; do shift; done; shift; exec "$@"')
+        self.stub(bindir, "timeout", 'echo "timeout $*" >> "$HOME/timeout.log"\n'
+                                     'while [ "${1#-}" != "$1" ]; do shift; done; shift; exec "$@"')
         self.stub(bindir, "df", 'echo " Avail"; for a in "$@"; do case "$a" in -*) ;; '
                                 '*) echo " 9999G";; esac; done')
         for tool, target in (("python3", sys.executable), ("git", shutil.which("git")),
@@ -961,7 +1111,8 @@ class TestTheHostScriptEndToEnd(_Workspace):
                     decls=canary_records())
         (home / "deps.json").write_text(json.dumps(deps_doc()), encoding="utf-8")
         env = {"HOME": str(home), "USER": "tester", "PATH": f"{bindir}:/usr/bin:/bin",
-               "ATLAS_ROOT": str(atlas), "MIN_FREE_GB": "60", "LEAN_THREADS": "16"}
+               "ATLAS_ROOT": str(atlas), "MIN_FREE_GB": "60", "LEAN_THREADS": "16",
+               "DUMP_TIMEOUT": "777"}
         proc = subprocess.run([self.bash, "drivers/scripts/informalize/library_host.sh",
                                "library.tsv"], cwd=self.host, env=env, capture_output=True,
                               text=True, timeout=300)
@@ -980,11 +1131,18 @@ class TestTheHostScriptEndToEnd(_Workspace):
         self.assertFalse((atlas / "libs" / LIB / ".lake" / "library-cache-ran").exists())
         self.assertIn("LIBRARY_CACHE=0", (host / "logs" / f"{LIB}.log").read_text())
         with tarfile.open(host / "src.tar") as tar:
-            self.assertIn("ExampleLib/Topology/Glue/Basic.lean", tar.getnames())
-            self.assertNotIn(".lake", " ".join(tar.getnames()))
+            files = [m.name for m in tar.getmembers() if m.isfile()]
+        # the .lean files only: no license, lakefile, script or agent instructions
+        self.assertEqual(sorted(files), sorted(p for _m, p in MODULES))
+        self.assertEqual(json.loads((host / "drivers.json").read_text()),
+                         library_host.digest(to_host / "drivers", to_host / "library.tsv"))
         lake = (home / "lake.log").read_text()
         self.assertIn(f"lake build {MODULE}", lake)
         self.assertIn("lake env lean --run", lake)
+        # the dump ran with the open-file limit raised and under its own timeout
+        nofile = re.search(r"^nofile (\S+)$", lake, re.M).group(1)
+        self.assertTrue(nofile == "unlimited" or int(nofile) >= 65536, nofile)
+        self.assertIn("timeout 777 lake env lean --run", (home / "timeout.log").read_text())
 
         out = self.fetch("--execute", "--i-have-consent")
         self.assertIn("canary passed on Lean 4.34.0 (plain form)", out)

@@ -4,30 +4,40 @@ New code, for docs/proposals/informalize.md section 6.1 (stage I1 on the run hos
 `scripts/informalize/library_host.sh` builds one library, probes it, checks the probe's
 acceptance canary on the library's toolchain and dumps the dependencies; this file holds
 what it needs parsed or rendered, as `scripts/corpus/universe_host.py` does for the
-universe driver.  The operator's side imports `module_form` from here too, so the rule
-that picks the canary's form is defined once.
+universe driver.  The operator's side imports `library_form` and `digest` from here too,
+so the rule that picks the canary's form and the record of what ran are defined once.
 
 Standard library only, and it imports nothing from `cflib`: it is copied to the run host
 beside the drivers, where `cflib` is not on the path (CLAUDE.md section 4, "the gate runs
 out of tree").  Subcommands (each prints one line; a failure goes to stderr, exit 2)::
 
-    module-form   --checkout D --module M     module | plain
+    module-form   --checkout D --index I      module | plain
     render-canary --dir D --toolchain T --form module|plain
     slug          --toolchain T
+    digest        --drivers D --list L        {"drivers/<path>": sha256, ..., "<list>": sha256}
 
 **The canary's form.**  templates/corpus/canary/ is rendered with the module system's
 header (`module`, `public section` ... `end`) or with none.  Under the module system a
 theorem's proof body is private, which is the case the canary's `hiddenSorry` exists
-for, so the form follows the library: `module` when the theorem's own source file opens
-with the `module` command, `plain` otherwise (a toolchain without the module system
-cannot build the other form, and a library that does not use it never hides a body).
+for, so the form follows the library: `module` when any module file the probe's index
+names opens with the `module` command (a library part-way through moving to the module
+system hides the bodies of those modules), `plain` otherwise (a toolchain without the
+module system cannot build the other form, and a library that does not use it never hides
+a body).
+
+**What ran.**  `digest` records the sha256 of every driver and of the library list as the
+job reads them, which fetch-library compares with the `library/to-host/` it copied from.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Iterable
 
 if __package__:
     from corpus import probe_merge as _names
@@ -96,6 +106,55 @@ def module_form(text: str) -> str:
     return "module" if first_command(text) == "module" else "plain"
 
 
+def library_form(texts: Iterable[str]) -> str:
+    """The canary's form for a library whose module files hold `texts`: `module` when any
+    of them opens with the `module` command, else `plain`."""
+    return "module" if any(module_form(text) == "module" for text in texts) else "plain"
+
+
+def index_module_paths(index: Path) -> list[str]:
+    """The source paths of the module records of a probe's `index.jsonl`, each relative."""
+    out = []
+    with open(index, encoding="utf-8") as handle:
+        for line in handle:
+            record = json.loads(line) if line.strip() else None
+            if not isinstance(record, dict) or record.get("record") != "module":
+                continue
+            path = record.get("path")
+            pure = PurePosixPath(path) if isinstance(path, str) else None
+            if pure is None or pure.is_absolute() or ".." in pure.parts:
+                raise HostError(f"{index} names the module file {path!r}, not a relative path")
+            out.append(path)
+    if not out:
+        raise HostError(f"{index} names no module")
+    return sorted(set(out))
+
+
+def _sha256(path: Path) -> str:
+    digest_ = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest_.update(block)
+    return digest_.hexdigest()
+
+
+def digest(drivers: Path, library_list: Path) -> dict[str, str]:
+    """The sha256 of every ordinary file under `drivers`, as `drivers/<path>`, and of the
+    library list, by its name: the keys `cf informalize build-command` writes them under in
+    `library/to-host/`.  Python's byte-code caches, which running the drivers may write
+    beside them, and links are left out."""
+    out = {}
+    for parent, names, files in os.walk(drivers):
+        names[:] = [n for n in names if n != "__pycache__"]
+        for name in files:
+            path = Path(parent) / name
+            if name.endswith(".pyc") or path.is_symlink() or not path.is_file():
+                continue
+            out[f"drivers/{path.relative_to(drivers).as_posix()}"] = _sha256(path)
+    out[library_list.name] = _sha256(library_list)
+    return dict(sorted(out.items()))
+
+
 def module_source(checkout: Path, module: str) -> Path:
     """The source file of `module` in a checkout, as Lake names it."""
     if not _names.module_ok(module):
@@ -131,28 +190,38 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("module-form")
     p.add_argument("--checkout", required=True, type=Path)
-    p.add_argument("--module", required=True)
+    p.add_argument("--index", required=True, type=Path)
     p = sub.add_parser("render-canary")
     p.add_argument("--dir", required=True, type=Path)
     p.add_argument("--toolchain", required=True)
     p.add_argument("--form", required=True)
     p = sub.add_parser("slug")
     p.add_argument("--toolchain", required=True)
+    p = sub.add_parser("digest")
+    p.add_argument("--drivers", required=True, type=Path)
+    p.add_argument("--list", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "module-form":
-            source = module_source(args.checkout, args.module)
-            if not source.is_file():
-                raise HostError(f"{args.module} has no source file {source}")
-            print(module_form(source.read_text(encoding="utf-8", errors="replace")))
+            texts = []
+            for path in index_module_paths(args.index):
+                source = args.checkout / path
+                if source.is_symlink() or not source.is_file():
+                    raise HostError(f"the index names {path}, which {args.checkout} does not hold")
+                texts.append(source.read_text(encoding="utf-8", errors="replace"))
+            print(library_form(texts))
         elif args.command == "render-canary":
             print(" ".join(render_canary(args.dir, args.toolchain, args.form)))
+        elif args.command == "digest":
+            if not args.drivers.is_dir() or not args.list.is_file():
+                raise HostError(f"no drivers folder {args.drivers} or library list {args.list}")
+            print(json.dumps(digest(args.drivers, args.list), sort_keys=True))
         else:
             if not TOOLCHAIN.match(args.toolchain):
                 raise HostError(f"{args.toolchain!r} is not an elan toolchain")
             print(slug(args.toolchain))
         return 0
-    except (HostError, _names.ProbeError, OSError) as error:
+    except (HostError, _names.ProbeError, OSError, ValueError) as error:
         print(f"library_host: {error}", file=sys.stderr)
         return 2
 

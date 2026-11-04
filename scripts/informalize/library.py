@@ -12,9 +12,11 @@ machine:
   job there detached -- and prints those lines.  It runs nothing: building a third party's
   library on a shared host is the operator's act, after the box owner's consent.
 * **fetch-library** asks the host whether the job wrote `library/host/DONE`, copies
-  `library/host/`, `deps.json` and the index back into `library/.incoming/`, checks them
-  (:func:`check_fetched`), unpacks the source archive there, and only then puts each in its
-  place under `library/`, so a fetch that fails a check leaves the previous one as it was.
+  `library/host/` back into `library/.incoming/` and stops there unless DONE holds 0, then
+  copies `deps.json` and the index, checks them (:func:`check_fetched`, which also holds
+  `to-host/` to what the job recorded it ran), unpacks the source archive there, and only
+  then puts each in its place under `library/`, so a fetch that fails a check leaves the
+  previous one as it was.
   It writes the library's license into `informalize.yaml` when the license file names one,
   the commit's time into `informal/informalize.json` (committed), and the I1 receipt.
 
@@ -148,6 +150,35 @@ class RemoteRoot:
         return tail if self.home else f"/{tail}"
 
 
+def host_folder(workspace, host_name: str, informalize_id: str) -> tuple[dict, RemoteRoot]:
+    """The host's connection facts (`run.manifest.resolve_host`) and this id's folder on it.
+
+    The folder is `hosts.<host>.remote_root` as that host's own entry sets it, and its last
+    part is `informalize-<id>`.  The workspace-wide `hosts.remote_root` and the default (the
+    operator's home) are never used, so the folder is never the home, another run's root or
+    another informalize id's (section 2)."""
+    host = manifest.resolve_host(workspace, host_name)
+    hosts = workspace.hosts if isinstance(workspace.hosts, dict) else {}
+    entry = hosts.get(host_name)
+    if not isinstance(entry, dict):
+        entries = hosts.get("entries")
+        entry = entries.get(host_name) if isinstance(entries, dict) else None
+    own = (entry.get("remote_root") or entry.get("root")) if isinstance(entry, dict) else None
+    want = f"informalize-{informalize_id}"
+    hint = (f"set hosts.{host_name}.remote_root in workspace.yaml to this id's own folder, "
+            f"e.g. ~/{want}")
+    if not own:
+        raise CfError(f"workspace.yaml sets no remote_root for {host_name} itself",
+                      hint=hint + "; the workspace-wide hosts.remote_root and the default (your "
+                                  "home on the host) are not used")
+    remote = RemoteRoot(str(own))
+    if remote.rest.rsplit("/", 1)[-1] != want:
+        raise CfError(f"hosts.{host_name}.remote_root {own!r} is not the folder of "
+                      f"{informalize_id}: its last part must be {want}",
+                      hint=hint + ", never the home, another run's root or another id's")
+    return host, remote
+
+
 def library_id(cfg: dict) -> str:
     """The library's id in the universe line: `<id>-lib` (section 5.1)."""
     return f"{cfg['id']}-lib"
@@ -224,8 +255,7 @@ def build_command(workspace, informalize_id: str, host_name: str, *,
         raise CfError(f"--min-free-gb {min_free_gb!r} is not a whole number of GiB")
     if isinstance(lean_threads, bool) or not isinstance(lean_threads, int) or lean_threads < 1:
         raise CfError(f"--lean-threads {lean_threads!r} is not a positive number")
-    host = manifest.resolve_host(workspace, host_name)
-    remote = RemoteRoot(host["remote_root"])
+    host, remote = host_folder(workspace, host_name, informalize_id)
     fields = universe_fields(cfg)
     _check_home(workspace, informalize_id)
     to_host = workspace.paths.informalize_library_to_host(informalize_id)
@@ -255,7 +285,7 @@ def _command_lines(cfg: dict, host: dict, remote: RemoteRoot, to_host: Path, min
     ssh = shlex.quote(host["ssh"])
     start = (f"cd {remote.shell()} && mkdir -p library/host && setsid -f env "
              f'ATLAS_ROOT="$PWD/library" MIN_FREE_GB={min_free_gb} LEAN_THREADS={lean_threads} '
-             f"bash drivers/{HOST_SCRIPT} {LIBRARY_LIST} > library/host/library_host.log 2>&1 "
+             f"bash drivers/{HOST_SCRIPT} {LIBRARY_LIST} >> library/host/library_host.log 2>&1 "
              "< /dev/null")
     watch = (f"tail -n 20 {remote.shell('library/host/library_host.log')}; "
              f"cat {remote.shell('library/host/DONE')}")
@@ -395,28 +425,52 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def check_fetched(incoming: Path, cfg: dict) -> dict:
-    """Every check section 6.1 makes of a fetched library, on `library/.incoming/` (whose
-    `host/src.tar` it unpacks into `src/`); the facts the I1 receipt records.
-
-    Refused: a job that did not end with 0; a checkout whose HEAD, or whose driver state,
-    is not the commit; an index that is not whole or not the library's at the commit and
-    toolchain; a canary that failed or ran on another toolchain, or in a form the theorem's
-    module does not use; a dump of another module or prefix; a theorem the index does not
-    hold; an index whose module files the archive does not hold; and a license file that
-    names no license, or another than a manual one.
-    """
-    library = cfg["library"]
-    commit, module, theorem = library["commit"], library["module"], library["theorem"]
-    lib = library_id(cfg)
-    host = incoming / "host"
+def check_done(host: Path) -> None:
+    """Refuse a fetched `host/` whose job did not end with 0, naming its log."""
     done = _text(host / "DONE", "host/DONE").strip()
     if done != "0":
         raise CfError(f"the host job ended with status {done!r}, not 0",
                       hint=f"read {host / 'library_host.log'} (the step that failed, and the log "
                            "it names), then run the printed lines of build-command again")
+
+
+def drivers_problems(host: Path, to_host: Path) -> list[str]:
+    """Is `to-host/` what the host job ran?  `host/drivers.json` holds the sha256 of every
+    driver and of the library list as the job read them (`library_host.py digest`)."""
+    ran = _json(host / "drivers.json", "host/drivers.json")
+    if not isinstance(ran, dict) or not all(isinstance(v, str) for v in ran.values()):
+        return ["host/drivers.json is not a map of file to sha256"]
+    if not (to_host / LIBRARY_LIST).is_file():
+        return [f"there is no {to_host / LIBRARY_LIST}: build-command was not run in this "
+                "workspace, so nothing says what the host job should have run"]
+    here = library_host.digest(to_host / "drivers", to_host / LIBRARY_LIST)
+    differ = sorted(k for k in ran.keys() | here.keys() if ran.get(k) != here.get(k))
+    if differ:
+        return [f"library/to-host/ is not what the host job ran: {len(differ)} file(s) differ ("
+                + ", ".join(differ[:5]) + "); build-command was run again since, from "
+                "another checkout or with other settings: run its printed lines again"]
+    return []
+
+
+def check_fetched(incoming: Path, cfg: dict, to_host: Path) -> dict:
+    """Every check section 6.1 makes of a fetched library, on `library/.incoming/` (whose
+    `host/src.tar` it unpacks into `src/`); the facts the I1 receipt records.
+
+    Refused: a job that did not end with 0; drivers or a library list other than
+    `to_host`'s; a checkout whose HEAD, or whose driver state, is not the commit; an index
+    that is not whole or not the library's at the commit and toolchain; a canary that
+    failed or ran on another toolchain, or in a form the library's modules do not call for;
+    a dump of another module or prefix, or one without the proofs' bodies; a theorem the
+    index does not hold; an index whose module files the archive does not hold; and license
+    files that name no license, more than one, or not a manual one.
+    """
+    library = cfg["library"]
+    commit, module, theorem = library["commit"], library["module"], library["theorem"]
+    lib = library_id(cfg)
+    host = incoming / "host"
+    check_done(host)
     facts: dict[str, Any] = {"done": 0}
-    problems: list[str] = []
+    problems: list[str] = drivers_problems(host, to_host)
     head = _text(host / "commit", "host/commit").strip()
     if head != commit:
         problems.append(f"the host checkout's HEAD is {head[:12]!r}, not the commit "
@@ -456,7 +510,8 @@ def check_fetched(incoming: Path, cfg: dict) -> dict:
                         f"{lean_version(toolchain)}")
 
     deps = _json(incoming / "deps.json", "deps.json")
-    problems += deps_problems(deps, cfg)
+    found = deps_problems(deps, cfg)
+    problems += found or [p for p in [bodies_problem(deps, theorem)] if p]
     deps = deps if isinstance(deps, dict) else {}
     facts["deps"] = {"root_module": deps.get("root_module"),
                      "module_prefix": deps.get("module_prefix"),
@@ -475,13 +530,22 @@ def check_fetched(incoming: Path, cfg: dict) -> dict:
     source = incoming / "src"
     facts["source"] = {"src_tar_sha256": sha256_file(host / "src.tar"),
                        **unpack_source(host / "src.tar", source)}
-    missing = sorted(str(m.get("path")) for m in index_records(incoming / "index" / "index.jsonl",
-                                                               "module")
-                     if isinstance(m.get("path"), str)
-                     and not _plain_file(source, m["path"]))
+    module_paths = sorted({m["path"] for m in index_records(incoming / "index" / "index.jsonl",
+                                                            "module")
+                           if isinstance(m.get("path"), str)})
+    missing = [p for p in module_paths if not _plain_file(source, p)]
     if missing:
         problems.append(f"{len(missing)} module file(s) the index names are not in src.tar: "
                         + ", ".join(missing[:5]))
+    texts = [(source / p).read_text(encoding="utf-8", errors="replace")
+             for p in module_paths if p not in missing]
+    if form != library_host.library_form(texts):
+        opening = sum(library_host.module_form(text) == "module" for text in texts)
+        problems.append(f"the canary ran in the {form} form, but "
+                        + (f"{opening} of the {len(module_paths)} module files the index names "
+                           "open" if opening else
+                           f"none of the {len(module_paths)} module files the index names opens")
+                        + " with `module`")
     try:
         theorem_file = library_host.module_source(source, module)
     except library_host.HostError as exc:
@@ -490,11 +554,6 @@ def check_fetched(incoming: Path, cfg: dict) -> dict:
         if not _plain_file(source, theorem_file.relative_to(source).as_posix()):
             problems.append(f"src.tar holds no {theorem_file.relative_to(source)}, the source "
                             f"of {module}")
-        elif library_host.module_form(theorem_file.read_text(encoding="utf-8",
-                                                             errors="replace")) != form:
-            problems.append(f"the canary ran in the {form} form, but {module} "
-                            + ("opens" if form == "plain" else "does not open")
-                            + " with `module`")
 
     license_block, license_problem = _license(host / "license", cfg)
     facts["license"] = license_block
@@ -523,6 +582,23 @@ def deps_problems(deps: Any, cfg: dict) -> list[str]:
     return []
 
 
+def bodies_problem(deps: dict, theorem: str) -> str | None:
+    """Did the dump read the proofs' bodies?  Not when the theorem's `value_deps` are empty,
+    or those of every theorem of the library's modules (a module-system library the dump
+    could not read): the scope would silently shrink to the closure through types.  Checked
+    by fetch-library, before anything is replaced, and by scope."""
+    rows = [r for r in deps.get("repo_constants") or [] if isinstance(r, dict)]
+    own = [r for r in rows if r.get("name") == theorem]
+    if own and not any(r.get("value_deps") for r in own):
+        return (f"deps.json records no value dependency of {theorem}: its proof's body was not "
+                "loaded")
+    theorems = [r for r in rows if r.get("kind") == "theorem"]
+    if theorems and not any(r.get("value_deps") for r in theorems):
+        return (f"deps.json records no value dependency for any of the library's "
+                f"{len(theorems)} theorems: the proofs' bodies were not loaded")
+    return None
+
+
 def _plain_file(root: Path, relative: str) -> bool:
     """Is `relative` an ordinary file under `root`, reached through no link?"""
     pure = PurePosixPath(relative)
@@ -537,7 +613,11 @@ def _plain_file(root: Path, relative: str) -> bool:
 
 
 def _license(directory: Path, cfg: dict) -> tuple[dict, str | None]:
-    """The library's license from its license files, against a manual one."""
+    """The library's license from its license files, against a manual one.
+
+    Files that name two licenses (a dual-licensed library's LICENSE-APACHE and LICENSE-MIT)
+    name none on their own; a manual license that is one of them stands, and the receipt
+    records every license the files name."""
     library = cfg["library"]
     files: dict[str, str | None] = {}
     if directory.is_dir():
@@ -546,18 +626,20 @@ def _license(directory: Path, cfg: dict) -> tuple[dict, str | None]:
                 files[path.name] = license_of(path.read_text(encoding="utf-8", errors="replace"))
     named = sorted({spdx for spdx in files.values() if spdx})
     manual = library.get("license_method") == "manual"
-    block = {"spdx": None, "method": "manual" if manual else "license file", "files": files}
+    block = {"spdx": None, "method": "manual" if manual else "license file", "named": named,
+             "files": files}
     if manual:
         block["spdx"] = library.get("license")
-        if named and named != [library.get("license")]:
-            return block, (f"the license file names {', '.join(named)}, informalize.yaml says "
+        if named and library.get("license") not in named:
+            return block, (f"the license files name {', '.join(named)}, informalize.yaml says "
                            f"{library.get('license')} (set by hand); one of them is wrong")
         return block, None
     if len(named) == 1:
         block["spdx"] = named[0]
         return block, None
     why = ("there is no license file at the library's root" if not files else
-           f"its license files name {', '.join(named)}" if named else
+           f"its license files name {', '.join(named)}, so pick the one this companion "
+           "follows" if named else
            f"no row of the license table matches {', '.join(files)}")
     return block, (f"the library's license is not known: {why}; name it with "
                    f"`cf informalize init {cfg['id']} --library-license <SPDX id> --force` "
@@ -584,8 +666,7 @@ def fetch_library(workspace, informalize_id: str, host_name: str, *, execute: bo
     Without `execute` it only says what it would run."""
     paths = workspace.paths
     cfg = config.load(paths, informalize_id, sessions=config.session_limit(workspace))
-    host = manifest.resolve_host(workspace, host_name)
-    remote = RemoteRoot(host["remote_root"])
+    host, remote = host_folder(workspace, host_name, informalize_id)
     library = _check_home(workspace, informalize_id)
     incoming = library / INCOMING
     commands = fetch_commands(cfg, host, remote, incoming)
@@ -613,13 +694,16 @@ def fetch_library(workspace, informalize_id: str, host_name: str, *, execute: bo
     if incoming.exists():
         _remove(incoming)
     incoming.mkdir(parents=True)
-    for argv in copies:
+    for number, argv in enumerate(copies):
         done = run(argv)
         if done.returncode != 0:
             raise CfError(f"{argv[0]} exited {done.returncode}: "
                           f"{(done.stderr or done.stdout or '').strip()[:300]}",
                           hint=f"the command was: {' '.join(shlex.quote(a) for a in argv)}")
-    facts = check_fetched(incoming, cfg)
+        if number == 0:
+            # host/ came first: a job that failed left no dump or index to copy
+            check_done(incoming / "host")
+    facts = check_fetched(incoming, cfg, paths.informalize_library_to_host(informalize_id))
     for name in FETCHED:
         target = library / name
         if target.exists() or target.is_symlink():
@@ -651,13 +735,15 @@ def _record_license(paths, cfg: dict, spdx: str | None) -> bool:
 
 
 def _write_receipt(workspace, informalize_id: str, facts: dict) -> Path:
+    """The I1 receipt: its inputs are informalize.yaml and what the host job ran, as it
+    recorded it in `host/drivers.json` (equal to `to-host/`'s, which fetch checked)."""
     home = workspace.paths.informalize_dir(informalize_id)
     to_host = workspace.paths.informalize_library_to_host(informalize_id)
     inputs = {"informalize.yaml": sha256_file(home / "informalize.yaml")}
-    if to_host.is_dir():
-        for path in sorted(to_host.rglob("*")):
-            if path.is_file() and not path.is_symlink():
-                inputs[path.relative_to(home).as_posix()] = sha256_file(path)
+    ran = json.loads((workspace.paths.informalize_library(informalize_id) / "host"
+                      / "drivers.json").read_text(encoding="utf-8"))
+    prefix = to_host.relative_to(home).as_posix()
+    inputs.update({f"{prefix}/{name}": sha for name, sha in sorted(ran.items())})
     outputs = {}
     for relative in ("library/index/index.jsonl", "library/index/manifest.json",
                      "library/deps.json", "library/host/src.tar", "library/host/lean-toolchain",

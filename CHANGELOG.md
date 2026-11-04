@@ -47,13 +47,15 @@ release has something to say.
   operator's machine. `build-command` copies the host drivers into `library/to-host/` and
   prints the lines that start `scripts/informalize/library_host.sh` on the host, which runs
   the universe driver on one library line, the probe's canary on the library's toolchain (in
-  the module system's form when the theorem's module uses it) and DumpDeps, and collects the
-  results with `git archive` of the source; `fetch-library` brings them back under consent,
-  checks them (HEAD, a whole index through the new `corpus.ingest.check_index`, the canary, the
-  dump, the archive, the license file against a table of SPDX fingerprints) before they
-  replace the last fetch, and records the commit's time for the PDF build; `scope` writes the
-  theorem's exact closure over DumpDeps' type and value dependencies and
-  `informal/declarations.json`. The universe line gains `LIBRARY_CACHE` (default 1, today's
+  the module system's form when a module of the library uses it) and DumpDeps, and collects
+  the results with `git archive` of the source's `.lean` files and the sha256 of the drivers it
+  ran; `fetch-library` brings them back under consent from the host folder
+  `hosts.<host>.remote_root`, which must be `informalize-<id>`, and checks them (the drivers
+  against `to-host/`, HEAD, a whole index through the new `corpus.ingest.check_index`, the
+  canary, the dump and its proof bodies, the archive, the license files against a table of
+  SPDX fingerprints) before they replace the last fetch, and records the commit's time for the
+  PDF build; `scope` writes the theorem's exact closure over DumpDeps' type and value
+  dependencies (a constant two modules realized is one) and `informal/declarations.json`. The universe line gains `LIBRARY_CACHE` (default 1, today's
   behaviour; 0 skips `<library>/scripts/lake-cache-get.sh`), and the disk floor of a
   one-library build is `--min-free-gb` (default 60), not the driver's 450.
 - **`cf informalize init | sync | status | check-items | approve | reference-checklist`**

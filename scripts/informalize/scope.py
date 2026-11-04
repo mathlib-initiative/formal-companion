@@ -14,6 +14,8 @@ index does not record, or records only as private, is walked through but not lis
 costs nothing in a member's `depth`.  Every listed member's proof status is re-decided
 from the probe's own fields by `corpus.ingest.decide` (`cflib.vocab.decide_proof_status`),
 never copied, and two public records of one name are refused, as `cf corpus ingest` does.
+A name DumpDeps lists twice, a constant two modules realized alike, is one constant
+(:func:`constants`), and the receipt counts the repeated rows.
 
 What it refuses: an I1 that is missing or whose files moved since; a dump of another
 module or prefix; a theorem missing from either file, in another module, or resting on a
@@ -64,9 +66,16 @@ class Closure:
 
 
 def constants(deps: dict) -> dict[str, dict]:
-    """DumpDeps' `repo_constants` by name, each with its two dependency lists."""
+    """DumpDeps' `repo_constants` by name, each with its two dependency lists.
+
+    DumpDeps writes a row for every module that holds a constant, and a constant Lean
+    realizes on demand (`congr_simp`, `eq_1`, `eq_def`) can be held by two modules that both
+    realized it; Lean keeps one copy at import (the probe indexes it where Lean kept it).
+    Such rows are one constant: one row is kept, with the union of their `value_deps`.  Rows
+    of one name whose `type_deps` differ are refused: no environment holds two such
+    constants."""
     out: dict[str, dict] = {}
-    twice: list[str] = []
+    clash: list[str] = []
     for row in deps["repo_constants"]:
         name = row.get("name") if isinstance(row, dict) else None
         lists = [row.get(k) for k in ("type_deps", "value_deps")] if isinstance(row, dict) else []
@@ -74,12 +83,19 @@ def constants(deps: dict) -> dict[str, dict]:
                 isinstance(v, list) and all(isinstance(d, str) for d in v) for v in lists):
             raise CfError(f"deps.json: a constant that is not a name with two dependency lists: "
                           f"{str(row)[:120]}", hint="fetch the library again (stage I1)")
-        if name in out:
-            twice.append(name)
-        out[name] = row
-    if twice:
-        raise CfError(f"deps.json lists {len(twice)} constant(s) twice: "
-                      + ", ".join(sorted(set(twice))[:_SHOWN]))
+        seen = out.get(name)
+        if seen is None:
+            out[name] = row
+        elif set(seen["type_deps"]) != set(row["type_deps"]):
+            clash.append(name)
+        else:
+            out[name] = dict(seen, value_deps=list(dict.fromkeys([*seen["value_deps"],
+                                                                   *row["value_deps"]])))
+    if clash:
+        raise CfError(f"deps.json lists {len(set(clash))} constant(s) twice with different "
+                      "types: " + ", ".join(sorted(set(clash))[:_SHOWN]),
+                      hint="two modules cannot both hold a constant of one name and two types; "
+                           "fetch the library again (stage I1)")
     return out
 
 
@@ -158,17 +174,11 @@ def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.So
     if axioms:
         raise CfError(f"{theorem} rests on {', '.join(axioms)}: an unproved chain is not "
                       "informalized", hint="pick a commit at which the theorem is proved")
-    if not graph[theorem]["value_deps"]:
-        raise CfError(f"deps.json records no value dependency of {theorem}: its proof's body "
-                      "was not loaded", hint="the dump could not read the module's bodies (a "
-                                             "module-system library?); the scope would shrink "
-                                             "to the closure through types")
-    theorems = [row for row in graph.values() if row.get("kind") == "theorem"]
-    if theorems and not any(row["value_deps"] for row in theorems):
-        raise CfError(f"deps.json records no value dependency for any of the library's "
-                      f"{len(theorems)} theorems: the proofs' bodies were not loaded",
-                      hint="the dump could not read the modules' bodies; the scope would "
-                           "shrink to the closure through types")
+    unloaded = library.bodies_problem({"repo_constants": list(graph.values())}, theorem)
+    if unloaded:
+        raise CfError(unloaded, hint="the dump could not read the modules' bodies (a "
+                                     "module-system library?); the scope would shrink to the "
+                                     "closure through types")
     closure = walk(graph, theorem, set(records))
     names = sorted(n for n in closure.depth if n in records)
     members, entries, problems, unsigned = [], [], [], []
@@ -206,6 +216,7 @@ def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.So
     counts = {
         "members": len(members),
         "walked_through": len(closure.depth) - len(members),
+        "repeated_rows": len(deps["repo_constants"]) - len(graph),
         "type_only": sum(1 for m in members if m["reach"] == "type"),
         "max_depth": max(m["depth"] for m in members),
         "by_kind": dict(sorted(Counter(m["kind"] for m in members).items())),

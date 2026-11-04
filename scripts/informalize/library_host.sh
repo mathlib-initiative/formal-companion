@@ -9,7 +9,9 @@
 # prints it), and scripts/detect/dump_deps.sh (DumpDeps). `cf informalize build-command`
 # copies the drivers to the host with their layout and prints the line that starts this
 # script detached; `cf informalize fetch-library` brings back what it collects. It never
-# edits the library's sources, and it writes only under $ATLAS_ROOT.
+# edits the library's sources. It writes under $ATLAS_ROOT, except what the tools keep in the
+# operator's home on the host: Mathlib's download cache (~/.cache/mathlib), which the driver's
+# `lake exe cache get` fills, and the toolchains elan installs (~/.elan).
 #
 # Usage, from the host folder (the workspace's remote_root):
 #   ATLAS_ROOT=$PWD/library [MIN_FREE_GB=60] [LEAN_THREADS=16] \
@@ -21,10 +23,13 @@
 #   BUILD_TARGETS=<module>;MODULE_PREFIXES=<prefix>;LIBRARY_CACHE=0
 #
 # Steps:
+#   0. host/drivers.json: the sha256 of every driver and of the library list this run reads
+#      (library_host.py digest), which fetch-library compares with what it copied;
 #   1. the universe driver on that line (its state is $ATLAS_ROOT/state/<list>/, <list> the
 #      file's name without .tsv; its index $ATLAS_ROOT/index/<id>@<commit12>/);
 #   2. the canary for the clone's lean-toolchain, in $ATLAS_ROOT/canary/<version>/, in the
-#      module system's form when the theorem's module opens with `module` (library_host.py);
+#      module system's form when a module file the index names opens with `module`
+#      (library_host.py);
 #   3. dump_deps.sh in the built checkout, writing $ATLAS_ROOT/deps.json outside it, with the
 #      open-file limit raised here (the driver's ended with the driver), in the drivers' clean
 #      environment under nice and ionice, LEAN_NUM_THREADS from LEAN_THREADS;
@@ -35,14 +40,16 @@
 #        state/ logs/        the driver's state and logs for the list
 #        canary/             the canary's index.jsonl and manifest.json; canary-form
 #        canary.log dump_deps.log
-#        src.tar             `git archive` of the commit (no .lake: it is not tracked)
+#        src.tar             `git archive` of the commit's .lean files (no .lake: it is not
+#                            tracked; nothing else, so no file an agent would read as
+#                            instructions)
 #   5. host/DONE, holding the exit status, written last -- on a failure too.
 #
 # Environment: ATLAS_ROOT (required, absolute); MIN_FREE_GB, LEAN_THREADS and NICE_LEVEL,
 # which the universe driver reads too (defaults 450, 24 and 10 there and here; the printed
 # line passes 60 and 16); DUMP_TIMEOUT, seconds for the dependency dump (default 900).
 # Exit status: 0 done; the driver's own status when it fails (1, or 3 at the disk floor);
-# 2 bad arguments; 4 the canary; 5 the dump; 6 the collection.
+# 2 bad arguments; 4 the canary; 5 the dump; 6 the collection (drivers.json included).
 set -uo pipefail
 umask 022
 
@@ -141,6 +148,10 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# 0. what this run reads, which fetch-library holds library/to-host/ to
+py "$tool" digest --drivers "$drivers" --list "$universe" >"$host_dir/drivers.json" \
+  || fail 6 "could not record the drivers' sha256 in $host_dir/drivers.json"
+
 mapfile -t ids < <(py "$helper" ids --universe "$universe")
 [ "${#ids[@]}" -eq 1 ] || die "$universe must list exactly one library; it lists ${#ids[@]}"
 lib=${ids[0]}
@@ -167,8 +178,8 @@ rc=$?
 # 2. the acceptance canary on the library's toolchain
 toolchain=$(tr -d '[:space:]' <"$checkout/lean-toolchain") || fail 4 "no lean-toolchain in $checkout"
 slug=$(py "$tool" slug --toolchain "$toolchain") || fail 4 "lean-toolchain says '$toolchain', not a toolchain"
-form=$(py "$tool" module-form --checkout "$checkout" --module "$module") \
-  || fail 4 "could not read the source of $module in $checkout"
+form=$(py "$tool" module-form --checkout "$checkout" --index "$index_dir/index.jsonl") \
+  || fail 4 "could not read the module files the index of $lib names in $checkout"
 canary=$ATLAS_ROOT/canary/$slug
 log "2. the canary of $toolchain ($form form) in $canary"
 rm -rf -- "$canary" && mkdir -p "$canary" && cp -R "$canary_templates/." "$canary/" \
@@ -210,7 +221,8 @@ collect() {
   cp "$canary/index/index.jsonl" "$canary/index/manifest.json" "$host_dir/canary/" || return 1
   printf '%s\n' "$form" >"$host_dir/canary-form" || return 1
   rm -f "$host_dir/src.tar" "$host_dir/src.tar.partial"
-  g -C "$checkout" archive --format=tar -o "$host_dir/src.tar.partial" "$commit" || return 1
+  g -C "$checkout" archive --format=tar -o "$host_dir/src.tar.partial" "$commit" -- '*.lean' \
+    || return 1
   mv -f "$host_dir/src.tar.partial" "$host_dir/src.tar"
 }
 collect || fail 6 "could not collect the outputs into $host_dir"

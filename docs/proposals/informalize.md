@@ -103,8 +103,12 @@ The no-network list of `CLAUDE.md` section 3 gains `cf informalize fetch-library
 The operator's machine runs no `lake`, `lean` or elan. The host needs no formal-companion
 checkout: `cf run` ships the gate and the bridges (`scripts/run/manifest.py`), and
 `build-command` and `pdf-command` print the rsync of the drivers they run. The host folder is
-the workspace's `hosts.<host>.remote_root`, one per informalize id (section 12 uses
-`~/informalize-<id>`), never another run's root.
+the workspace's `hosts.<host>.remote_root` as that host's own entry sets it, and its last part
+is `informalize-<id>` (section 12 uses `~/informalize-<id>`): `build-command` and
+`fetch-library` refuse a host entry without one (the workspace-wide `hosts.remote_root` and the
+default, the operator's home, are not used) and a folder of any other name, so it is never the
+home, another run's root or another id's. `workspace.yaml` holds one `remote_root` per host, so
+a second informalize id on the same host needs that entry changed first.
 
 ## 3. The stages
 
@@ -134,11 +138,12 @@ informalize/<id>/
                             and build-command.sh, the lines it printed
     index/                  the probe's index.jsonl and manifest.json
     deps.json               DumpDeps' constants with type_deps and value_deps
-    src/                    the library's source at the commit, from git archive (no .lake),
-                            read-only
-    host/                   what library_host.sh collected (section 6.1): DONE, logs,
-                            lean-toolchain, lake-manifest.json, the license files, the commit
-                            and its time, the driver's state, the canary's index, src.tar
+    src/                    the library's .lean files at the commit, from git archive (no
+                            .lake), read-only
+    host/                   what library_host.sh collected (section 6.1): DONE, logs, the
+                            drivers' sha256, lean-toolchain, lake-manifest.json, the license
+                            files, the commit and its time, the driver's state, the canary's
+                            index, src.tar
     .incoming/              a fetch in progress, or one that failed a check (kept for a look)
   scope.json              I2
   pdf/<commit12>/         I6 (ignored): the canonical PDF, pdf-receipt.json, proof-sheets/
@@ -491,18 +496,21 @@ prints:
 ssh -n $HOST 'mkdir -p <remote_root>/library/host'
 rsync -a --delete <workspace>/informalize/<id>/library/to-host/drivers/ $HOST:<remote_root>/drivers/
 rsync -a <workspace>/informalize/<id>/library/to-host/library.tsv $HOST:<remote_root>/library.tsv
-ssh -n $HOST 'cd <remote_root> && mkdir -p library/host && setsid -f env ATLAS_ROOT="$PWD/library" MIN_FREE_GB=60 LEAN_THREADS=16 bash drivers/scripts/informalize/library_host.sh library.tsv > library/host/library_host.log 2>&1 < /dev/null'
+ssh -n $HOST 'cd <remote_root> && mkdir -p library/host && setsid -f env ATLAS_ROOT="$PWD/library" MIN_FREE_GB=60 LEAN_THREADS=16 bash drivers/scripts/informalize/library_host.sh library.tsv >> library/host/library_host.log 2>&1 < /dev/null'
 ```
 
 followed by comments: the line that watches the job, the `fetch-library` that brings it back,
-and the line that removes the build once it is fetched. The `mkdir` comes first because
-rsync creates only the last directory of its target, and the shell opens the log before the
-job starts. `ssh -n` and `setsid -f` keep the ssh call from hanging on the detached job. The
-host folder is spelled for the host's shell (`~/x` and `$HOME/x` as `"$HOME"/x`) and for
-rsync (relative to the home); a `remote_root` with anything but letters, digits, `.`, `_`,
-`-` and `/`, under `~` or absolute, is refused, so nothing printed needs quoting there.
-Copying the drivers rather than naming them in this checkout pins what ran: the I1 receipt
-records the sha256 of every file of `to-host/`.
+and the line that removes the build once it is fetched. The `mkdir` comes first because rsync
+creates only the last directory of its target, and the shell opens the log before the job
+starts; it appends (`>>`), so a second start while a job runs, which the lock then turns away,
+leaves the running job's log whole. `ssh -n` and `setsid -f` keep the ssh call from hanging on
+the detached job. The host folder is spelled for the host's shell (`~/x` and `$HOME/x` as
+`"$HOME"/x`) and for rsync (relative to the home); a `remote_root` with anything but letters,
+digits, `.`, `_`, `-` and `/`, under `~` or absolute, is refused, so nothing printed needs
+quoting there. Copying the drivers rather than naming them in this checkout pins what ran: the
+job records the sha256 of every driver and of `library.tsv` as it read them, fetch-library
+refuses a `to-host/` that differs (`build-command` run again since, from another checkout or
+with other settings), and the I1 receipt records those sha256.
 
 The drivers are those `cf corpus probe-command` copies (`build_universe_host.sh`,
 `probe_host.sh`, `probe_merge.py`, `universe_host.py`, `probe.lean.tmpl`), the canary
@@ -517,8 +525,13 @@ against the driver's own parser before it is written:
 
 `library_host.sh` refuses a list of more than one line, a ref that is not a commit, more than
 one root or one prefix, and an `ATLAS_ROOT` that is not absolute; it holds a lock, so one run
-at a time touches `host/`, and writes only under `<remote_root>/library/`:
+at a time touches `host/`, and writes under `<remote_root>/library/`, apart from what the
+tools keep in the operator's home on the host: Mathlib's download cache (`~/.cache/mathlib`,
+which the driver's `lake exe cache get` fills) and the toolchains elan installs (`~/.elan`).
+It:
 
+0. records in `library/host/drivers.json` the sha256 of every file under `drivers/` (Python's
+   byte-code caches left out) and of `library.tsv` (`library_host.py digest`);
 1. runs `scripts/corpus/build_universe_host.sh` on that line, which clones, checks out the
    commit and checks HEAD, raises the open-file limit, fetches the Mathlib cache, builds the
    module and runs the probe (`templates/corpus/probe.lean.tmpl`) over every module of the
@@ -527,10 +540,12 @@ at a time touches `host/`, and writes only under `<remote_root>/library/`:
    `$ATLAS_ROOT/index/<id>-lib@<commit12>/`;
 2. renders and runs the acceptance canary for the clone's `lean-toolchain`, as
    `cf corpus probe-command --canary` prints it, in `$ATLAS_ROOT/canary/<version>/`: in the
-   module system's form (`module`, `public section` ... `end`) when the theorem's module
-   opens with the `module` command, since a module-system library hides its proofs' bodies
-   and the canary's hidden `sorry` is that case, and without the header otherwise (a toolchain
-   without the module system could not build that form);
+   module system's form (`module`, `public section` ... `end`) when any module file the index
+   names opens with the `module` command, since a module-system library hides its proofs'
+   bodies and the canary's hidden `sorry` is that case (a library part-way through moving to
+   the module system hides those modules' bodies, whatever the theorem's own file does), and
+   without the header otherwise (a toolchain without the module system could not build that
+   form);
 3. runs `scripts/detect/dump_deps.sh` with `--root-module <module> --module-prefix <prefix>`
    in the built checkout, writing `library/deps.json` outside it, the way the driver's
    `heavy` runs a tool: the driver's open-file limit ended with the driver, so
@@ -542,11 +557,13 @@ at a time touches `host/`, and writes only under `<remote_root>/library/`:
    `commit` (HEAD) and `commit-time` (its committer time in seconds); the driver's state and
    logs for the list (`state/`, `logs/`); the canary's index (`canary/`) and its form
    (`canary-form`), beside `canary.log` and `dump_deps.log`; and `src.tar`, `git archive
-   <commit>` of the source, through git with `cflib.gitsafe`'s pins and every content filter
-   blanked, as the driver runs it;
+   <commit> -- '*.lean'`, the commit's Lean files and nothing else (the checks and the
+   drafters need only those, and a library's other files, its agent instructions among them,
+   never reach `library/src/`), through git with `cflib.gitsafe`'s pins and every content
+   filter blanked, as the driver runs it;
 5. writes `library/host/DONE` holding its exit status, last, on a failure too (0 done; the
    driver's own status when it fails, 3 at the disk floor; 2 bad arguments; 4 the canary; 5
-   the dump; 6 the collection).
+   the dump; 6 the collection, `drivers.json` included).
 
 The universe line takes a new option, `LIBRARY_CACHE`, in `universe_host.OPTION_DEFAULTS`:
 `1`, the default, keeps today's behaviour for locate's universes (the driver runs
@@ -560,31 +577,37 @@ The universe line takes a new option, `LIBRARY_CACHE`, in `universe_host.OPTION_
 
 `cf informalize fetch-library <id> --host <host>` prints what it would run. With `--execute
 --i-have-consent` it asks the host whether `library/host/DONE` is there (`ssh -n <host> test
--f ...`; absent, the job is running or never started, and it stops), copies `library/host/`,
-`deps.json` and the index directory (without the probe's `work/`) into
-`library/.incoming/` with `rsync --no-links`, and checks them there: `DONE` is 0; `commit` and
-the driver's state name the commit, the state at `indexed`; the index is whole and the
+-f ...`; absent, the job is running or never started, and it stops), copies `library/host/`
+into `library/.incoming/` with `rsync --no-links` and stops there unless `DONE` holds 0,
+naming `library_host.log` (a job that failed left no dump or index to copy), then copies
+`deps.json` and the index directory (without the probe's `work/`) beside it, and checks them
+there: `drivers.json` equals the sha256 of `to-host/`'s drivers and `library.tsv`; `commit`
+and the driver's state name the commit, the state at `indexed`; the index is whole and the
 library's at the commit, by the checks `cf corpus ingest` makes (`corpus.ingest.check_index`:
-the header's and the manifest's library, commit and Lean version, a clean probed checkout,
-the manifest's sha256 and counts); the canary's index gives `corpus.ingest.CANARY`'s four
-answers, on the library's Lean version, in the form the theorem's module calls for;
-`deps.json` names the module and the prefix (and, since no `--package` is passed, the module
-as its package); the theorem is one public record of the index; `src.tar` unpacks into
-`src/` read-only (absolute paths, `..` and devices refused; a link is never made, but listed
-in the receipt, so a module behind one has no file, which section 6.2 refuses), and holds every
-module file the index names; and the license files match one SPDX id of a fixed table of
-license fingerprints (Apache-2.0, MIT, BSD-3-Clause, BSD-2-Clause, ISC, MPL-2.0, Unlicense,
-CC0-1.0, CC-BY-4.0, CC-BY-SA-4.0: phrases each text holds, and phrases it does not; the GPL
-family is not in it, since its text does not say which version applies), which becomes
+the header's and the manifest's library, commit and Lean version, a clean probed checkout, the
+manifest's sha256 and counts); the canary's index gives `corpus.ingest.CANARY`'s four answers,
+on the library's Lean version, in the form the index's module files call for; `deps.json`
+names the module and the prefix (and, since no `--package` is passed, the module as its
+package), and records the proofs' bodies (section 6.2's empty-`value_deps` refusal, made here
+before anything is replaced); the theorem is one public record of the index; `src.tar` unpacks
+into `src/` read-only (absolute paths, `..` and devices refused; a link is never made, but
+listed in the receipt, so a module behind one has no file, which section 6.2 refuses), and
+holds every module file the index names; and the license files match one SPDX id of a fixed
+table of license fingerprints (Apache-2.0, MIT, BSD-3-Clause, BSD-2-Clause, ISC, MPL-2.0,
+Unlicense, CC0-1.0, CC-BY-4.0, CC-BY-SA-4.0: phrases each text holds, and phrases it does not;
+the GPL family is not in it, since its text does not say which version applies), which becomes
 `library.license` (else the command stops and names `init --library-license`). A manual
-license stands when no file names one, and is refused when a file names another; a later
-`init` with the same flags keeps a license I1 found. Only when every check passes does it put
-`host/`, `index/`, `deps.json` and `src/` in place under `library/`; a failed check leaves the
-previous fetch as it was and `.incoming/` for a look. It writes `source_date_epoch` into
-`informalize.json` and commits it, and the I1 receipt: its inputs are `informalize.yaml` and `to-host/`, its outputs the index, its
-manifest, `deps.json`, `src.tar`, `lean-toolchain`, `lake-manifest.json`, the canary's index and
-`informalize.json`, and its checks every fact above with the consent (host, operator). A second
-fetch of the same files changes nothing.
+license stands when no file names one, or when the files name several (a dual-licensed
+library's `LICENSE-APACHE` and `LICENSE-MIT`) and it is one of them; it is refused when the
+files name others only. The receipt lists every license the files name. A later `init` with
+the same flags keeps a license I1 found. Only when every check passes does it put `host/`,
+`index/`, `deps.json` and `src/` in place under `library/`; a failed check leaves the previous
+fetch as it was and `.incoming/` for a look. It writes `source_date_epoch` into
+`informalize.json` and commits it, and the I1 receipt: its inputs are `informalize.yaml` and
+the sha256 of the drivers and `library.tsv` the job recorded (`to-host/`'s, by the check
+above), its outputs the index, its manifest, `deps.json`, `src.tar`, `lean-toolchain`,
+`lake-manifest.json`, the canary's index and `informalize.json`, and its checks every fact
+above with the consent (host, operator). A second fetch of the same files changes nothing.
 
 ### 6.2 I2: the scope
 
@@ -594,23 +617,31 @@ receipt is there, names the commit `informalize.yaml` does, and still pins every
 of modules with the library's prefix (`repo_constants`); a constant the probe does not index
 (an auxiliary lemma, a matcher, a constructor) or indexes as private is walked through but not
 listed, and adds nothing to a member's depth. The scope is every other walked constant the
-index records, the theorem included. As `cf corpus ingest` does (`scripts/corpus/ingest.py`),
-each member's `proof_status` is re-decided with `cflib.vocab.decide_proof_status`, never copied
-from the probe (a record that contradicts itself is refused), and two public records with one
-name are refused. It refuses when the theorem is missing from either file or is declared in
-another module than `library.module`, when its `nonstandard_axioms` are not empty (`sorryAx`
-included: an unproved chain is not informalized), when `deps.json`'s root module or prefix
-disagree with `informalize.yaml` (no `--package` is passed, so its package is the root
-module), or when the theorem's `value_deps` are empty, or those of every theorem of the
-library's modules: the proofs' bodies were not loaded (a module-system library the dump could
-not read), and the scope would silently shrink to the closure through types. It also refuses a
-member whose file `library/src/` does not hold, or holds with fewer lines than the index's
-range: the index and the archive are then not one tree, and the drafters and the cards read the
-statement there. It writes `scope.json` and `repo/informal/declarations.json` (section 5.3),
-both deterministic, commits the latter, and writes the I2 receipt (inputs the index,
-`deps.json` and `src.tar`; outputs the two files; checks the counts, among them how many members
-were reached through types alone). It warns when `items.json` was drafted against another
-`declarations.json`, which `check-items` then refuses.
+index records, the theorem included. A private declaration is therefore never a member, an
+item or a `\leanref`, however much of the proof it carries (a library that builds its proof
+from private lemmas has only the public statements on the chain in its scope); the probe
+records none unless `PROBE_INCLUDE_PRIVATE=1`, which I1 does not pass. DumpDeps writes a row
+for every module that holds a constant, and a constant Lean realizes on demand (`congr_simp`,
+`eq_1`, `eq_def`) can be held by two modules that realized it alike, of which Lean keeps one:
+such rows are one constant, with the union of their `value_deps`, and the receipt counts the
+repeated rows; rows of one name whose `type_deps` differ are refused. As `cf corpus ingest`
+does (`scripts/corpus/ingest.py`), each member's `proof_status` is re-decided with
+`cflib.vocab.decide_proof_status`, never copied from the probe (a record that contradicts
+itself is refused), and two public records with one name are refused. It refuses when the
+theorem is missing from either file or is declared in another module than `library.module`,
+when its `nonstandard_axioms` are not empty (`sorryAx` included: an unproved chain is not
+informalized), when `deps.json`'s root module or prefix disagree with `informalize.yaml` (no
+`--package` is passed, so its package is the root module), or when the theorem's `value_deps`
+are empty, or those of every theorem of the library's modules: the proofs' bodies were not
+loaded (a module-system library the dump could not read), and the scope would silently shrink
+to the closure through types. It also refuses a member whose file `library/src/` does not
+hold, or holds with fewer lines than the index's range: the index and the archive are then not
+one tree, and the drafters and the cards read the statement there. It writes `scope.json` and
+`repo/informal/declarations.json` (section 5.3), both deterministic, commits the latter, and
+writes the I2 receipt (inputs the index, `deps.json` and `src.tar`; outputs the two files;
+checks the counts, among them how many members were reached through types alone). It warns
+when `items.json` was drafted against another `declarations.json`, which `check-items` then
+refuses.
 
 ## 7. The LaTeX runtime
 
