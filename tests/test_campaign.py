@@ -1359,15 +1359,15 @@ class TestCfRunForLocate(WorkspaceCase):
 
     def test_a_recorded_cap_is_a_precondition(self):
         with self.assertRaises(CfError) as caught:
-            manifest.check_budget_cap(self.ws, self.run_doc, None, False, locate=True)
+            manifest.check_budget_cap(self.ws, self.run_doc, None, False, recorded_cap="locate")
         self.assertIn("spend cap", str(caught.exception))
         with self.assertRaises(CfError):
-            manifest.check_budget_cap(self.ws, self.run_doc, None, True, locate=True)
+            manifest.check_budget_cap(self.ws, self.run_doc, None, True, recorded_cap="locate")
         # a workspace-wide ceiling is not a recorded one
         self.ws.data["budget"] = {"max_cost_usd": 100}
         with self.assertRaises(CfError):
-            manifest.check_budget_cap(self.ws, self.run_doc, None, False, locate=True)
-        budget = manifest.check_budget_cap(self.ws, self.run_doc, 25.0, False, locate=True)
+            manifest.check_budget_cap(self.ws, self.run_doc, None, False, recorded_cap="locate")
+        budget = manifest.check_budget_cap(self.ws, self.run_doc, 25.0, False, recorded_cap="locate")
         self.assertEqual(budget["max_cost"], 25.0)
         out = io.StringIO()
         with redirect_stdout(out), redirect_stderr(out), self.assertRaises(CfError) as caught:
@@ -1478,13 +1478,13 @@ class TestCfRunForLocate(WorkspaceCase):
     def test_a_given_cap_must_agree_with_the_recorded_one(self):
         doc = dict(self.run_doc, budget={"currency": "USD", "max_cost": 10})
         with self.assertRaises(CfError) as caught:
-            manifest.check_budget_cap(self.ws, doc, 25.0, False, locate=True)
+            manifest.check_budget_cap(self.ws, doc, 25.0, False, recorded_cap="locate")
         self.assertIn("--max-cost 25 differs", str(caught.exception))
         self.assertIn("budget.max_cost 10", str(caught.exception))
         self.assertEqual(manifest.check_budget_cap(self.ws, doc, 10.0, False,
-                                                   locate=True)["max_cost"], 10.0)
+                                                   recorded_cap="locate")["max_cost"], 10.0)
         self.assertEqual(manifest.check_budget_cap(self.ws, doc, None, False,
-                                                   locate=True)["max_cost"], 10.0)
+                                                   recorded_cap="locate")["max_cost"], 10.0)
 
     def cf_run(self, *extra) -> str:
         out = io.StringIO()

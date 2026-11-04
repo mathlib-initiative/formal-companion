@@ -1149,13 +1149,24 @@ never from pasted reports.
   block also says which of them the run WROTE, against the base commit's bytes
   (`gate.json`'s `base_files`); a path those pins do not name counts as written. `tree/`
   holds no finding, and the receipt's findings listing leaves it out by name
-  (`harvest.files.NON_FINDING_DIRS`);
+  (`harvest.files.NON_FINDING_DIRS`). An entrypoint that holds none of the owned paths is
+  a `--from` that named the wrong directory, and the harvest is not complete;
+- the entrypoint's **own change set**, so that "is every changed path owned?" is a
+  question with an answer: one `ssh` asks what its first commit (the tree the transfer
+  committed) and `HEAD` differ in, and a name in it that no task owns, outside `findings/`
+  and `tasks/`, is `informalize.unowned` and the harvest is not complete. That is what
+  sees a file changed on the host by something other than a task — a gate escape, an edit
+  on the box, a merge that skipped `pre_merge_validation_commands`. An entrypoint that is
+  no git repository says so in the block (`host_changed_note`) and nothing is refused;
 - the gate re-run with `--findings` over what landed: the run's own staged `gate/`, copied
   beside its `gate.local.json` and run out of tree with `python3 -I` as the host runs it.
   Its `--root` is the run's planned `repo/` (the base commit's files, so rule 6 reads the
   text the attackers quoted) and each document is named where the harvest landed it; for
   the items and the conventions phase, whose one document is a file of `informal/`, the
-  root is `tree/` instead, where the harvest put it;
+  root is `tree/` instead, where the harvest put it; a `draft` task writes neither, so
+  there is no document to re-read at home and the gate block is a pass with `files: 0` and
+  a `note` saying its contributions were gated on the host over the change set. For every
+  other phase an empty document list is a refusal (an empty corpus is not a clean one);
 - a phase whose fleet writes no document under `findings/` at all (`items`, `conventions`,
   `draft`) has no findings directory on the host: nothing is listed or transferred there,
   and the harvest is its files, its gate and its receipt.
@@ -1165,8 +1176,8 @@ state is written for it.
 
 **Not built yet.** `cf informalize apply <id> --run <run>` checks that the output
 repository's HEAD is the
-run's `base_commit` (else: plan again); that every changed path is owned by a task of the
-run; and that `tree/` is what the receipt records. Then it copies in the changed paths under
+run's `base_commit` (else: plan again); that the harvest found no `unowned` path; and that
+`tree/` is what the receipt records. Then it copies in the changed paths under
 `informal/`, and only those: `findings/` and the task files stay in `corpus/<run>/`, and any
 other path is refused. It commits them with the message
 `Informalize <phase> (<run>): <n> files` and writes the phase's receipt. An attack run

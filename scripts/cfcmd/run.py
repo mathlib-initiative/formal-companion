@@ -397,12 +397,16 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
 
     tasks = manifest.task_count(Path(workspace.root), args.run_id, data)
     locate = manifest.is_locate(data)
-    if locate and args.no_budget_cap:
-        raise CfError("--no-budget-cap does not apply to a locate run",
-                      hint="a recorded spend cap is a precondition: the shard's watchdog drains "
+    # A locate run and an informalize phase are both PLANNED with a mandatory cap,
+    # because the watchdog drains the run at the one run.yaml records: the recorded
+    # cap is what is sent, and --no-budget-cap has nothing to acknowledge.
+    recorded_cap = "locate" if locate else "informalize" if manifest.is_informalize(data) else ""
+    if recorded_cap and args.no_budget_cap:
+        raise CfError(f"--no-budget-cap does not apply to a {recorded_cap} run",
+                      hint="a recorded spend cap is a precondition: the watchdog drains "
                            "the root at it; record one with --max-cost")
     budget = manifest.check_budget_cap(workspace, data, args.max_cost, args.no_budget_cap,
-                                       locate=locate)
+                                       recorded_cap=recorded_cap)
     disk = manifest.disk_budget(entries, tasks, host)
     concurrency = _concurrency(workspace, data, args)
 

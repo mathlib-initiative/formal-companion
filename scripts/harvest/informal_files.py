@@ -28,6 +28,17 @@ the output repository.  A landed path those pins do not name -- one the base
 commit does not hold, and ``items-review.md``, which they never name -- counts
 as written by the run rather than as unchanged, so nothing the fleet wrote is
 left behind by a file the harvest could not tell apart.
+
+Fetching the owned paths alone would make "is every changed path owned?" a
+question with no content: everything brought home is owned by construction.  So
+the entrypoint is asked for its own change set too -- what its first commit (the
+tree the transfer committed) and ``HEAD`` differ in -- and a name in it that no
+task owns, outside ``findings/`` and ``tasks/``, is ``unowned`` and fails the
+receipt.  That is the only thing here that can see a file changed on the host by
+something other than a task: a gate escape, an edit on the box, a merge that
+skipped the pre-merge check.  An entrypoint that is no git repository (a
+directory a harvest was pointed at by hand) says so in the block and is no
+failure.
 """
 from __future__ import annotations
 
@@ -37,8 +48,8 @@ import subprocess
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from cflib import hashing
-from cflib.errors import CfError
+from cflib import gitsafe, hashing
+from harvest.harvest import _run
 
 #: where the files land under ``corpus/<run>/``.  A directory, so the receipt's
 #: findings listing (``harvest/files.py``) never counts ``informal/items.json``
@@ -51,6 +62,20 @@ FINDINGS_PHASES = ("attack", "judge", "edit")
 #: path that is absent prints nothing and is no error (the `if` keeps the loop's
 #: exit status 0), and the names are the plan's own, quoted for the host's shell
 REMOTE_SHAS = 'cd {path} && for f in {names}; do if test -f "$f"; then shasum -a 256 "$f"; fi; done'
+#: the entrypoint's own change set: every path its first commit and ``HEAD``
+#: differ in.  The first commit is the transfer's (``run/remote.py``: the output
+#: repository at the base commit plus ``tasks/``), so this is everything the run
+#: changed there, whoever changed it.  Locally the two reads go through
+#: ``cflib.gitsafe``, which is how this skill reads a tree it did not write; the
+#: host's copy is the shell the transfer's own git steps are written in
+#: (``run/remote.py``).
+ROOT_COMMIT = ("rev-list", "--max-parents=0", "HEAD")
+REMOTE_CHANGED = ('cd {path} && base="$(git rev-list --max-parents=0 HEAD | tail -n 1)" '
+                  '&& git diff --name-only "$base" HEAD')
+#: directories of the entrypoint that hold no file of the output repository: the
+#: documents (reconciled by the findings rsync) and tend's task files, whose
+#: ``status:`` line every worker sets.  A change anywhere else belongs to a task.
+NOT_THE_REPOSITORY = ("findings/", "tasks/")
 
 
 def block_of(run: Mapping | None) -> dict:
@@ -96,36 +121,57 @@ def entrypoint_of(source: Mapping, run: Mapping | None) -> str:
 
     A phase that writes findings is harvested from ``<entrypoint>/findings``, so
     the entrypoint is its parent; one that writes none has no findings directory
-    on the host at all and is harvested from the entrypoint itself.
+    on the host at all and is harvested from the entrypoint itself.  The last
+    component is dropped only when it IS ``findings``: an operator who points a
+    findings phase at the entrypoint (its fleet merged no document, so there is
+    no findings directory to name) meant the entrypoint, and stripping a
+    component there fetched the run's files from its parent.
     """
     path = str(source.get("path") or "").rstrip("/")
-    if writes_findings(run) or path.rsplit("/", 1)[-1] == "findings":
+    if path.rsplit("/", 1)[-1] == "findings":
         return path.rsplit("/", 1)[0] if "/" in path else "."
     return path
 
 
-def _rsync_argv(source: Mapping, entrypoint: str, rel: str, dest: Path) -> list[str]:
-    """A plain copy of one file the host was asked about first (its sha256)."""
-    remote = f"{entrypoint}/{rel}"
+def _rsync_argv(source: Mapping, entrypoint: str, dest: Path) -> list[str]:
+    """One copy of every path the host was asked about first, its names on stdin.
+
+    ``--files-from=-``: one rsync, and so one ssh, for the whole owned set
+    rather than one per path (a draft phase over twenty sections was twenty
+    round trips), and no name of the plan's goes through the remote shell.
+    """
+    remote = f"{entrypoint}/"
     if source.get("kind") == "remote":
         remote = f"{source['host']}:{remote}"
-    return ["rsync", "-a", "--no-links", remote, str(dest)]
+    return ["rsync", "-a", "--no-links", "--files-from=-", remote, str(dest) + "/"]
+
+
+def _names_stdin(paths: Sequence[str]) -> str:
+    return "".join(f"{rel}\n" for rel in paths)
 
 
 def list_commands(source: Mapping, entrypoint: str, paths: Sequence[str],
                   dest: Path) -> list[dict]:
     """The commands a remote fetch runs, for the dry run to print."""
-    if source.get("kind") != "remote" or not paths:
+    if source.get("kind") != "remote":
         return []
+    host = source["host"]
+    changed = ["ssh", host, REMOTE_CHANGED.format(path=shlex.quote(entrypoint))]
+    out = [{"title": "the entrypoint's own change set (its first commit against main), so a "
+                     "path no task owns is seen", "argv": changed,
+            "shell": " ".join(shlex.quote(a) for a in changed)}]
+    if not paths:
+        return out
     names = " ".join(shlex.quote(p) for p in paths)
-    ls = ["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(entrypoint), names=names)]
-    out = [{"title": f"the sha256 of each of the {len(paths)} path(s) this run's tasks own "
-                     f"(the expectation)", "argv": ls,
-            "shell": " ".join(shlex.quote(a) for a in ls)}]
-    for rel in paths:
-        argv = _rsync_argv(source, entrypoint, rel, Path(dest) / rel)
-        out.append({"title": f"the run's {rel}", "argv": argv,
-                    "shell": " ".join(shlex.quote(a) for a in argv)})
+    ls = ["ssh", host, REMOTE_SHAS.format(path=shlex.quote(entrypoint), names=names)]
+    out.append({"title": f"the sha256 of each of the {len(paths)} path(s) this run's tasks own "
+                         f"(the expectation)", "argv": ls,
+                "shell": " ".join(shlex.quote(a) for a in ls)})
+    argv = _rsync_argv(source, entrypoint, Path(dest))
+    stdin = _names_stdin(paths)
+    out.append({"title": f"the run's {len(paths)} owned path(s)", "argv": argv, "stdin": stdin,
+                "shell": "printf '%s\\n' " + " ".join(shlex.quote(p) for p in paths) + " | "
+                         + " ".join(shlex.quote(a) for a in argv)})
     return out
 
 
@@ -139,13 +185,8 @@ def _remote_shas(source: Mapping, entrypoint: str, paths: Sequence[str]) -> dict
     """
     names = " ".join(shlex.quote(p) for p in paths)
     argv = ["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(entrypoint), names=names)]
-    proc = subprocess.run(argv, text=True, capture_output=True)
-    if proc.returncode != 0:
-        raise CfError(f"could not list the run's own files on the host "
-                      f"({proc.returncode}): {proc.stderr.strip()[:300]}",
-                      hint="command was: " + " ".join(shlex.quote(a) for a in argv))
     wanted, out = set(paths), {}
-    for line in proc.stdout.split("\n"):
+    for line in _run(argv, "listing the run's own files on the host").split("\n"):
         digest, _, name = line.partition("  ")
         name = name.strip()
         if len(digest) == 64 and name in wanted:
@@ -159,39 +200,76 @@ def _local_shas(entrypoint: str, paths: Sequence[str]) -> dict[str, str]:
             if (root / rel).is_file() and not (root / rel).is_symlink()}
 
 
+def host_change_set(source: Mapping, entrypoint: str) -> tuple[list[str], str]:
+    """``(paths, note)``: what the entrypoint's main changed since its first commit.
+
+    The note is non-empty when there is no change set to read -- the entrypoint
+    is no git repository, or git would not answer -- and then the list is empty
+    and nothing is refused on its account.  A harvest pointed at a plain
+    directory of documents (a test's, a hand-made one) is that case; a run host's
+    entrypoint always has one, because the transfer committed it.
+    """
+    if source.get("kind") == "remote":
+        argv = ["ssh", source["host"], REMOTE_CHANGED.format(path=shlex.quote(entrypoint))]
+        proc = subprocess.run(argv, text=True, capture_output=True)
+    else:
+        base = gitsafe.run(entrypoint, ROOT_COMMIT)
+        roots = [line.strip() for line in base.stdout.split("\n") if line.strip()]
+        if base.returncode != 0 or not roots:
+            return [], (f"{entrypoint} has no first commit to read a change set from, so no "
+                        f"path outside the run's owned ones was checked")
+        proc = gitsafe.run(entrypoint, ("diff", "--name-only", roots[-1], "HEAD"))
+    if proc.returncode != 0:
+        return [], (f"the change set of {entrypoint} could not be read ({proc.returncode}): "
+                    f"{proc.stderr.strip()[:200]}")
+    return sorted({line.strip() for line in proc.stdout.split("\n") if line.strip()}), ""
+
+
+def unowned(changed: Sequence[str], owned: Sequence[str]) -> list[str]:
+    """The changed paths no task of the run owns, outside findings/ and tasks/."""
+    mine = set(owned)
+    return [rel for rel in changed
+            if rel not in mine and not rel.startswith(NOT_THE_REPOSITORY)]
+
+
 def fetch(source: Mapping, entrypoint: str, paths: Sequence[str], dest: Path, *,
           base_files: Mapping[str, str] | None = None) -> dict:
     """Copy the owned paths the entrypoint holds into *dest*, and reconcile.
 
     Returns the receipt's ``informalize`` block: what was expected (the host's
     own listing), what landed with its sha256 and bytes, which of those the run
-    changed against ``base_files``, and the ``missing`` and ``sha_mismatched``
-    names that make the harvest incomplete.
+    changed against ``base_files``, the ``unowned`` names the entrypoint changed
+    that no task owns, and the ``missing`` and ``sha_mismatched`` names.  Each
+    of those three lists makes the harvest incomplete, and so does an entrypoint
+    that holds none of the paths the run's tasks own: that is a ``--from`` that
+    named the wrong directory, not a phase that wrote nothing.
     """
     dest = Path(dest)
     paths = list(paths)
     block: dict = {"entrypoint": entrypoint, "tree": str(dest), "owned": paths,
                    "paths": {}, "expected": [], "absent": [], "missing": [],
-                   "sha_mismatched": [], "changed": []}
+                   "sha_mismatched": [], "changed": [], "host_changed": [], "unowned": []}
+    host_changed, note = host_change_set(source, entrypoint)
+    block["host_changed"] = host_changed
+    block["unowned"] = unowned(host_changed, paths)
+    if note:
+        block["host_changed_note"] = note
     if not paths:
-        block["ok"] = True
+        block["ok"] = not block["unowned"]
         return block
     expected = (_remote_shas(source, entrypoint, paths) if source.get("kind") == "remote"
                 else _local_shas(entrypoint, paths))
     block["expected"] = sorted(expected)
     block["absent"] = [rel for rel in paths if rel not in expected]
     base = {str(k): str(v) for k, v in dict(base_files or {}).items()}
+    if expected and source.get("kind") == "remote":
+        # one rsync for the whole set, its names on stdin: see :func:`_rsync_argv`
+        _run(_rsync_argv(source, entrypoint, dest), "copying the run's own files from the host",
+             stdin=_names_stdin(sorted(expected)))
     for rel in sorted(expected):
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        if source.get("kind") == "remote":
-            argv = _rsync_argv(source, entrypoint, rel, target)
-            proc = subprocess.run(argv, text=True, capture_output=True)
-            if proc.returncode != 0:
-                raise CfError(f"could not copy {rel} from the host ({proc.returncode}): "
-                              f"{proc.stderr.strip()[:300]}",
-                              hint="command was: " + " ".join(shlex.quote(a) for a in argv))
-        else:
+        if source.get("kind") != "remote":
             shutil.copy2(Path(entrypoint) / rel, target)
         if not target.is_file():
             block["missing"].append(rel)
@@ -209,7 +287,8 @@ def fetch(source: Mapping, entrypoint: str, paths: Sequence[str], dest: Path, *,
         block["paths"][rel] = row
         if digest != expected[rel]:
             block["sha_mismatched"].append(rel)
-    block["ok"] = not block["missing"] and not block["sha_mismatched"]
+    block["ok"] = not (block["missing"] or block["sha_mismatched"] or block["unowned"]
+                       or not expected)
     return block
 
 
@@ -223,12 +302,22 @@ def describe(block: Mapping | None) -> list[str]:
              f"landed in {block.get('tree')}, {len(changed)} written by the run"
              + (f" ({', '.join(changed[:8])})" if changed else "")]
     for key, what in (("missing", "MISSING (the host listed them and they did not land)"),
-                      ("sha_mismatched", "SHA MISMATCH (not the bytes the host listed)")):
+                      ("sha_mismatched", "SHA MISMATCH (not the bytes the host listed)"),
+                      ("unowned", "UNOWNED (the entrypoint changed them and no task of this "
+                                  "run owns them)")):
         names = list(block.get(key) or [])
         if names:
             lines.append(f"  informalize: {len(names)} {what}: {', '.join(names[:8])}")
+    owned = list(block.get("owned") or [])
     absent = list(block.get("absent") or [])
-    if absent:
+    if owned and not block.get("expected"):
+        lines.append(f"  informalize: the entrypoint {block.get('entrypoint')} holds NONE of "
+                     f"the {len(owned)} path(s) this run's tasks own; is --from the run's "
+                     f"entrypoint?")
+    elif absent:
         lines.append(f"  informalize: {len(absent)} owned path(s) the entrypoint does not "
                      f"hold: {', '.join(absent[:8])}")
+    note = block.get("host_changed_note")
+    if note:
+        lines.append(f"  informalize: {note}")
     return lines

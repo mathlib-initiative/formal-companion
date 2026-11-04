@@ -938,8 +938,12 @@ def write_run_yaml(workspace, *, run_id: str, informalize_id: str, phase: str,
             "base_commit": base_commit, "from_run": from_run,
             "attack_base_commit": attack_base,
             "paths": {t.id: list(t.paths) for t in tasks},
+            # the digest of exactly what the transfer will send: `cf run` walks it
+            # again with the same excludes and warns when the two differ, so a
+            # walk with other arguments here warned about every phase forever
             "library": {"commit": library["commit"],
-                        "src_sha256": manifest_mod.tree_digest(src)["sha256"]},
+                        "src_sha256": manifest_mod.tree_digest(
+                            src, manifest_mod.SOURCE_EXCLUDES)["sha256"]},
             "agent_timeout": agent_timeout, "skill_commit": skill,
             "gate_files": dict(sorted(staged.items())),
             "agents": dict(sorted(agents.items())),

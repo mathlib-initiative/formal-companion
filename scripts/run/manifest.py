@@ -948,41 +948,48 @@ def disk_budget(entries: list[dict], tasks: int, host: dict) -> dict:
 
 
 def check_budget_cap(workspace, run: dict, max_cost: float | None,
-                     no_budget_cap: bool, *, locate: bool = False) -> dict:
+                     no_budget_cap: bool, *, recorded_cap: str = "") -> dict:
     """Resolve the spend ceiling, or refuse to plan a run without one.
 
     the design critique: "No budget gate ... run.yaml carries a billing-path
     field but no max_cost".  With agentbox the only enforceable cap is
     gateway-side, so the cap recorded here is what the operator must also set at
     the gateway; tend's own --max-cost counts tend-agent sessions only.
+
+    ``recorded_cap`` names the mode whose PLANNER records a mandatory cap --
+    ``locate`` and ``informalize``, each planned with one because a watchdog
+    drains the run at it.  For those the recorded cap wins: a ``--max-cost`` that
+    disagrees with it is refused rather than sent, and ``--no-budget-cap`` does
+    not apply.
     """
     run_budget = _as_dict(run.get("budget"))
     budget = _as_dict(getattr(workspace, "budget", {}))
     currency = str(run_budget.get("currency") or budget.get("currency") or "USD")
     value = max_cost
-    if locate:
-        # A locate run's cap is a precondition, not a default (proposal section 6):
-        # the watchdog drains at the cap recorded in run.yaml, so a workspace-wide
-        # ceiling the run never recorded would leave it with nothing to drain at,
-        # and no flag acknowledges running without one.
+    if recorded_cap:
+        # The cap is a precondition, not a default (the locate proposal's section 6,
+        # docs/proposals/informalize.md section 8.1): the watchdog drains at the cap
+        # recorded in run.yaml, so a workspace-wide ceiling the run never recorded
+        # would leave it with nothing to drain at, and no flag acknowledges running
+        # without one.
         recorded = run_budget.get("max_cost")
         if value is not None and recorded is not None and float(value) != float(recorded):
             # The campaign, the sequencer and the shard's watchdog all read the
             # cap run.yaml records; sending at another one would raise tend's
             # ceiling past the cap the watchdog drains at, or below it.
             raise CfError(
-                f"--max-cost {float(value):g} differs from the spend cap this locate run "
-                f"records (budget.max_cost {float(recorded):g} in its run.yaml)",
+                f"--max-cost {float(value):g} differs from the spend cap this {recorded_cap} "
+                f"run records (budget.max_cost {float(recorded):g} in its run.yaml)",
                 hint="drop --max-cost to send it at the recorded cap, or re-plan it with "
-                     "`cf plan-locate ... --max-cost <usd>`")
+                     "--max-cost <usd> (`cf plan-locate`, `cf plan-informalize`)")
         if value is None and recorded is not None:
             value = float(recorded)
         if value is None or value <= 0:
             raise CfError(
-                "a locate run needs a spend cap recorded in its run.yaml (budget.max_cost) or "
-                "given as --max-cost, which cf run records",
-                hint="--no-budget-cap does not apply to locate: the per-shard watchdog drains "
-                     "the root at that cap")
+                f"a {recorded_cap} run needs a spend cap recorded in its run.yaml "
+                f"(budget.max_cost) or given as --max-cost, which cf run records",
+                hint=f"--no-budget-cap does not apply to {recorded_cap}: the watchdog drains "
+                     f"the root at that cap")
         no_budget_cap = False
     if value is None:
         for source in (run_budget, budget):

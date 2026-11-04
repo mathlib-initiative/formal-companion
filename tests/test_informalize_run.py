@@ -70,6 +70,8 @@ class PhaseCase(unittest.TestCase):
     """One synthetic informalize id with a phase planned for an allowlisted host."""
 
     phase = "items"
+    #: what this phase needs on the `cf plan-informalize` command line beyond the caps
+    plan_args: tuple[str, ...] = ()
 
     def setUp(self):
         self.driver = load_driver()
@@ -80,7 +82,7 @@ class PhaseCase(unittest.TestCase):
                                   encoding="utf-8")
         self.prepare()
         self.pipe.plan(self.phase, "--workers", "1", "--reviewers", "1",
-                       "--host", "testbox", "--i-have-consent")
+                       "--host", "testbox", "--i-have-consent", *self.plan_args)
         self.run_id = self.pipe.runs[self.phase]
         self.run_dir = self.pipe.run_dir(self.phase)
         self.data = self.read_yaml(self.run_dir / "run.yaml")
@@ -249,6 +251,111 @@ class TestTheItemsHarvest(PhaseCase):
                         receipt["gate"]["problems"])
 
 
+class TestTheDraftHarvest(PhaseCase):
+    """The phase that writes the text: no findings document, and none to re-gate at home.
+
+    A draft task's output is its section's `.tex`, which the gate judges on the run host
+    over the change set; `verify_informal.py --findings` has no mode that reads one.  An
+    empty document list here is the phase's shape, so the gate block is a pass with a
+    note -- the "empty corpus is not a clean one" refusal would have made every draft
+    harvest exit 1 (the phase that needs TeX, which is why no test saw it).
+    """
+
+    phase = "draft"
+    plan_args = ("--sections", "all")
+
+    def prepare(self) -> None:
+        pipe = self.pipe
+        pipe.items()
+        informal = pipe.repo / "informal"
+        pipe.write_json(informal / "hypotheses.json", doc.HYPOTHESES)
+        notation = informal / "notation.sty"
+        marker = "% Standing hypotheses (one \\fcdefhyp per key of hypotheses.json).\n"
+        notation.write_text(notation.read_text(encoding="utf-8").replace(
+            marker, marker + doc.NOTATION_HYPOTHESES), encoding="utf-8")
+        pipe.git(pipe.repo, "add", "-A")
+        pipe.git(pipe.repo, "commit", "-qm", "the conventions")
+        stages.write_receipt(pipe.paths, self.driver.ID, "I4", inputs={}, outputs={},
+                             checks={"synthetic": True}, runs=["by hand"])
+
+    def sections(self) -> dict[str, str]:
+        """``{task: its one owned section file}``, the planner's own record."""
+        return {task: paths[0]
+                for task, paths in sorted(self.data["informalize"]["paths"].items())}
+
+    def merged(self) -> Path:
+        """The entrypoint with each draft task's section merged into main."""
+        for text, (task, rel) in zip((doc.SECTION_1, doc.SECTION_2),
+                                     sorted(self.sections().items())):
+            wt = self.pipe.worktree(self.phase, task)
+            self.pipe.write(wt / rel, text)
+            self.pipe.complete(wt, task)
+        self.pipe.merge(self.phase, *sorted(self.sections()))
+        return self.pipe.entrypoint(self.phase)
+
+    def receipt(self) -> dict:
+        return json.loads((self.pipe.paths.corpus_run_dir(self.run_id) / "RECEIPT.json")
+                          .read_text(encoding="utf-8"))
+
+    def test_the_sections_land_and_the_gate_has_no_document_to_re_read(self):
+        entrypoint = self.merged()
+        code, text = self.pipe.cf("harvest", self.run_id, "--from", str(entrypoint))
+        self.assertEqual(code, 0, text)
+        receipt = self.receipt()
+        self.assertTrue(receipt["complete"], receipt)
+        block = receipt["informalize"]
+        self.assertEqual(block["owned"], sorted(self.sections().values()))
+        self.assertEqual(sorted(block["changed"]), block["owned"])
+        for rel in block["owned"]:
+            self.assertTrue((self.pipe.paths.corpus_run_dir(self.run_id) / "tree" / rel)
+                            .is_file(), rel)
+        gate = receipt["gate"]
+        self.assertTrue(gate["ok"], gate)
+        self.assertEqual(gate["files"], 0)
+        self.assertEqual(gate["problems"], [])
+        self.assertNotIn("broken", gate)
+        self.assertIn("no document", gate["note"])
+
+    def test_a_path_the_entrypoint_changed_that_no_task_owns_is_refused(self):
+        entrypoint = self.merged()
+        # a hand edit on the box, outside every task's manifest: the harvest fetches
+        # only owned paths, so the entrypoint's own change set is what sees it
+        self.pipe.write(entrypoint / "informal" / "preamble.tex", "% edited by hand\n")
+        self.pipe.git(entrypoint, "add", "-A")
+        self.pipe.git(entrypoint, "commit", "-qm", "a hand edit")
+        code, text = self.pipe.cf("harvest", self.run_id, "--from", str(entrypoint), ok=False)
+        self.assertNotEqual(code, 0)
+        receipt = self.receipt()
+        self.assertFalse(receipt["complete"])
+        self.assertEqual(receipt["informalize"]["unowned"], ["informal/preamble.tex"])
+        self.assertIn("informal/preamble.tex", receipt["informalize"]["host_changed"])
+        self.assertIn("UNOWNED", text)
+
+    def test_the_task_files_and_the_findings_are_not_unowned(self):
+        self.merged()
+        code, text = self.pipe.cf("harvest", self.run_id, "--from",
+                                  str(self.pipe.entrypoint(self.phase)))
+        self.assertEqual(code, 0, text)
+        block = self.receipt()["informalize"]
+        # `complete` set `status: complete` in each task file: tend's, not a task's output
+        self.assertTrue(any(p.startswith("tasks/") for p in block["host_changed"]),
+                        block["host_changed"])
+        self.assertEqual(block["unowned"], [])
+
+    def test_a_from_that_is_not_the_entrypoint_is_not_a_complete_harvest(self):
+        self.merged()
+        elsewhere = self.pipe.entrypoint(self.phase).parent
+        code, text = self.pipe.cf("harvest", self.run_id, "--from", str(elsewhere), ok=False)
+        self.assertNotEqual(code, 0)
+        receipt = self.receipt()
+        self.assertFalse(receipt["complete"])
+        block = receipt["informalize"]
+        self.assertEqual(block["expected"], [])
+        self.assertEqual(block["absent"], block["owned"])
+        self.assertFalse(block["ok"])
+        self.assertIn("holds NONE of", text)
+
+
 class TestTheAttackHarvest(PhaseCase):
     """A phase whose documents land as findings: the gate reads them against the base text."""
 
@@ -350,12 +457,40 @@ class TestTheOwnedPaths(unittest.TestCase):
             {**source, "path": "/srv/cf/run-1/findings"}, self.block("attack", {})),
             "/srv/cf/run-1")
 
-    def test_the_remote_listing_asks_for_one_path_at_a_time(self):
-        run = self.block("draft", {"draft-01": ["informal/sections/01-a.tex"]})
+    def test_the_fetch_is_a_change_set_a_listing_and_one_rsync(self):
+        run = self.block("draft", {"draft-01": ["informal/sections/01-a.tex",
+                                                "informal/sections/02-b.tex"]})
         steps = informal_files.list_commands({"kind": "remote", "host": "h"}, "/srv/cf/r",
                                              informal_files.owned_paths(run), Path("/tmp/t"))
-        self.assertIn("shasum -a 256", steps[0]["shell"])
-        self.assertIn("informal/sections/01-a.tex", steps[-1]["shell"])
+        self.assertEqual(len(steps), 3, [s["title"] for s in steps])
+        self.assertIn("git diff --name-only", steps[0]["shell"])
+        self.assertIn("shasum -a 256", steps[1]["shell"])
+        # one transfer for the whole owned set, its names on stdin: not one ssh per path
+        self.assertEqual(steps[2]["shell"].count("rsync"), 1)
+        self.assertIn("--files-from=-", steps[2]["shell"])
+        self.assertEqual(steps[2]["stdin"],
+                         "informal/sections/01-a.tex\ninformal/sections/02-b.tex\n")
+
+    def test_a_change_set_is_asked_for_even_when_the_tasks_own_no_file(self):
+        steps = informal_files.list_commands({"kind": "remote", "host": "h"}, "/srv/cf/r",
+                                             [], Path("/tmp/t"))
+        self.assertEqual(len(steps), 1)
+        self.assertIn("git diff --name-only", steps[0]["shell"])
+
+    def test_only_findings_at_the_end_of_a_from_is_stripped(self):
+        run = self.block("judge", {"judge-01": ["findings/judge-01/ruling.json"]})
+        source = {"kind": "remote", "host": "h", "path": "/srv/cf/run-1/findings"}
+        self.assertEqual(informal_files.entrypoint_of(source, run), "/srv/cf/run-1")
+        # a judge run whose fleet merged no document has no findings/ to name, and
+        # --from <entrypoint> means the entrypoint, not its parent
+        self.assertEqual(informal_files.entrypoint_of({**source, "path": "/srv/cf/run-1"}, run),
+                         "/srv/cf/run-1")
+
+    def test_what_the_entrypoint_changed_outside_a_task_is_unowned(self):
+        owned = ["informal/items.json"]
+        changed = ["findings/attack-01/attack.json", "informal/items.json",
+                   "informal/preamble.tex", "tasks/items.yaml"]
+        self.assertEqual(informal_files.unowned(changed, owned), ["informal/preamble.tex"])
 
     def test_a_file_that_did_not_land_as_the_host_holds_it_is_not_complete(self):
         receipt = harvest_mod.build_receipt(

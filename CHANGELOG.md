@@ -53,11 +53,14 @@ release has something to say.
   the staged tend config is checked against that gate. The harvest brings the files of the
   tasks' owned paths home beside the documents, into `corpus/<run>/tree/`, with the host's
   own sha256 as the expectation -- a path that was listed and did not land, or landed with
-  another sha256, makes the receipt incomplete -- records which of them the run wrote
-  against `gate.json`'s `base_files`, and re-runs the run's own staged gate with
-  `--findings` over what landed (`--root` the planned `repo/`, or `tree/` for the items and
-  conventions phases). A phase that writes no findings document is harvested from the
-  entrypoint alone. `corpus/<run>/tree/` holds no finding: the receipt's listing leaves it
+  another sha256, makes the receipt incomplete, and so does an entrypoint holding none of
+  them -- records which of them the run wrote against `gate.json`'s `base_files`, and
+  re-runs the run's own staged gate with `--findings` over what landed (`--root` the
+  planned `repo/`, or `tree/` for the items and conventions phases; a draft task writes no
+  document to re-read at home, so that gate block is a pass with a note). It also reads the
+  entrypoint's own change set -- its first commit against `HEAD` -- so a path changed on
+  the host that no task owns is `informalize.unowned` and the harvest is not complete. A
+  phase that writes no findings document is harvested from the entrypoint alone. `corpus/<run>/tree/` holds no finding: the receipt's listing leaves it
   out (`harvest.files.NON_FINDING_DIRS`). `cf informalize apply` and the watchdog `cf run`
   is to start are the rest of component 5b and are not implemented yet; the synthetic
   driver now harvests each of its runs with `cf harvest` and applies by hand.

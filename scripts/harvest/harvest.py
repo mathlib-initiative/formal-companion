@@ -64,8 +64,8 @@ def parse_source(spec: str) -> dict:
     return {"kind": "local", "path": str(Path(spec).resolve())}
 
 
-def _run(argv: Sequence[str], what: str) -> str:
-    proc = subprocess.run(list(argv), text=True, capture_output=True)
+def _run(argv: Sequence[str], what: str, stdin: str | None = None) -> str:
+    proc = subprocess.run(list(argv), text=True, capture_output=True, input=stdin)
     if proc.returncode != 0:
         raise CfError(f"{what} failed ({proc.returncode}): {proc.stderr.strip()[:300]}",
                       hint="command was: " + " ".join(shlex.quote(a) for a in argv))
