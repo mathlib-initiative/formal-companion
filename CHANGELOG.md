@@ -43,6 +43,25 @@ release has something to say.
 
 ### Added
 
+- **`cf export informal-markers`** (the exporter of component 7 of
+  `docs/proposals/informalize.md`, its section 10): an informalization companion's PDF, box
+  by box, as one annotation document, so the existing overlay export turns it into
+  Literature Links annotations. It reads the output repository at a pinned commit -- the
+  four files `informal/informalize.json`, `items.json`, `declarations.json` and
+  `markers.json` -- the canonical PDF those markers were measured on and the library's
+  source for the snippets, and refuses a PDF with another sha256 or an `informal/` that
+  changed since the markers' `source_commit`. The document's `companion` is the **library**
+  at its own commit, since every Lean end is made from it: one item per part and per item
+  without parts (`ids.item_label_id`, one location per box), one link per `\leanref` the
+  build recorded there with the role and relation `items.json` gives it, a snippet cut by
+  `adapters.leansnippets` and a destination at the declaration's keyword line on the
+  library's git host. Two changes in `scripts/overlay/` come with it: `overlay.export`
+  records `export.commit` as the checkout's HEAD and, for a document whose companion is
+  another repository, `export.lean` `{repo, commit}`; and `shards.section_of` puts an item
+  whose `section` is one number into that folder, where it went to `other/`. `cf informalize
+  overlay`, which runs the export and writes the site, is the rest of component 7 and is
+  not implemented yet: until then the overlay's own `init`, `export`, `sync` and `check` are
+  run by name and the config's fields are set by hand (`docs/exporters.md` section 8).
 - **`cf run` and `cf harvest` carry an informalize phase** (part of component 5b of
   `docs/proposals/informalize.md`, its sections 8.1 and 8.5): the existing commands, not a
   second path. The transfer sends the run's `repo/` into the entrypoint, where `tasks/`

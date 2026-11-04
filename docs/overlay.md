@@ -361,7 +361,7 @@ cf overlay check <companion>
   "annotations": {
     "directory": "annotations",
     "extension": "org.mathlib-initiative.formal-companion.overlay",
-    "export": {"convention": "attribution-table", "commit": "<companion commit>", "source_id": "..."},
+    "export": {"convention": "attribution-table", "commit": "<the checkout's HEAD>", "source_id": "..."},
     "inputs": [{"path": "<curation file>", "sha256": "..."}],
     "count": 1085,
     "manifest_sha256": "<sha256 of `sha256sum` lines of the files, `_defaults.json` included, sorted by path>",
@@ -381,6 +381,12 @@ annotation per line, in path order, folder defaults applied.
 `"released": false`).
 `export` and `inputs` appear when `cf overlay export` wrote the files; with
 `export`, `check` and `check_generated.py` require a non-empty `inputs`.
+`export.commit` is the checkout's HEAD in full: for a convention whose
+companion IS the checkout that is the document's `companion.commit`, and for
+one whose companion is another repository (`informal-markers`, whose companion
+is the Lean library its text is about, `docs/exporters.md` section 8) the
+export's report names it and `export.lean` is `{repo, commit}` of that
+library, which the object ends point into.
 
 ## 7. The annotation files
 
@@ -426,8 +432,9 @@ on the record:
   (body, fields, constructors) up to 60 lines (docs/exporters.md section 1).
 
 The section folder is the item number's first two parts (`1.2.7` is `1.2`);
-otherwise the item's section or a cluster locator's `Section N.M`; otherwise
-`other` (a two-part number may be an equation's). An item with one record is
+otherwise the item's section, as `N.M` or as one number, or a cluster
+locator's `Section N.M`; otherwise `other` (a two-part number may be an
+equation's). An item with one record is
 a file `<item>__<role>__<declaration>.json`, or `<item>.json` for a record
 that links nothing; an item with several is a folder `<item>/` of
 `<role>__<declaration>.json` files. Every character outside `[A-Za-z0-9._-]`

@@ -277,8 +277,9 @@ def report_warnings(counts: dict) -> list[str]:
     out = [f"{rel} is not read; it can be deleted" for rel in counts.get("ignored_inputs") or []]
     unlocated = counts.get("snippets_unlocated") or []
     if unlocated:
-        out.append(f"no snippet for {len(unlocated)} of the ids the refinement lists (not in the Lean file "
-                   f"the ledger names): {', '.join(unlocated[:5])}" + (", …" if len(unlocated) > 5 else ""))
+        out.append(f"no snippet for {len(unlocated)} of the ids it links (not in the Lean file the "
+                   f"document names for them): {', '.join(unlocated[:5])}"
+                   + (", …" if len(unlocated) > 5 else ""))
     return out
 
 

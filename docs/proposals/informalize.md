@@ -8,11 +8,13 @@ of section 5 they read and write, the vocabulary and the rule exception of secti
 and `scope` with `scripts/informalize/library_host.sh` and the driver's `LIBRARY_CACHE`
 option (section 6); and the fleet's first half (section 8): `cf plan-informalize`, the gate
 `scripts/gate/verify_informal.py`, the prompts, the tend config, the bridge's second switch,
-the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`; and of
-component 5b, `cf run` sends a phase and `cf harvest` brings one home (section 8.5). These
+the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`; of
+component 5b, `cf run` sends a phase and `cf harvest` brings one home (section 8.5); and of
+component 7, the exporter `cf export informal-markers` with the two `scripts/overlay/`
+changes of section 10. These
 are not implemented yet: the watchdog `cf run` starts at the smoke stage (section 8.1),
 `cf informalize apply`, `cf informalize pdf-command`, `cf informalize fetch-pdf`,
-`cf informalize overlay`, `cf informalize check-site` and `cf export informal-markers`, and
+`cf informalize overlay` and `cf informalize check-site`, and
 paths into this repository written in *italics* do not exist yet. Section 11 lists the components
 in the order they land; a component whose code shows this file wrong changes it in the same
 commit and says so in its message.**
@@ -1215,7 +1217,7 @@ input list is what shows which package moved.
 
 ## 10. Annotations, the overlay and publishing (I7)
 
-**The exporter.** *scripts/annotations/export/informal_markers.py*, which is
+**The exporter.** `scripts/annotations/export/informal_markers.py`, which is
 `cf export informal-markers`, joins `cf export`'s conventions and
 `overlay.export.CONVENTIONS` (and the test in `tests/test_overlay_cli.py` that pins that
 list). It reads the output repository at a clean commit (`common.pinned_checkout`), the four
@@ -1228,8 +1230,9 @@ vendored checker accepts in canonical form:
 
 - `companion` is the **library** (`repo` from `library.url`, `commit` the library's), because
   `overlay.shards` makes every Lean end from `companion.repo` at `companion.commit`;
-- one `pdf` source: `title` the text's title (`text.title`), the release URL, sha256, bytes,
-  page count, `id` the informalize id;
+- one `pdf` source: `title` the text's title (`--source-title`, which `cf informalize
+  overlay` takes from `text.title`; no file of the output repository carries it), the
+  release URL, sha256, bytes, page count, `id` the informalize id;
 - one item per item without parts and one per part (`sub` the letter), `id_source: label`,
   so its id is `<kind>-<id>[-<letter>]` (`ids.item_label_id`); locations are
   `PdfRegionSelector`s from the markers' boxes (normalized, top-left origin), one per box;
@@ -1245,15 +1248,17 @@ vendored checker accepts in canonical form:
   and the fragment `L<line>`;
 - provenance with `actor: agent`, `method: agent_annotation` (the format's method list,
   `ANNOTATION_PROVENANCE_METHODS`, is closed), `tool.name` `cf informalize`, and
-  `confirmed_by_human` true when the items approval pins the exported `items.json`;
+  `confirmed_by_human` true (`--items-approved`) when the items approval pins the exported
+  `items.json`;
 - in its report, `counts.inputs`: the four `informal/` files, so `GENERATED.json` records
   them and a stale export fails the companion's CI.
 
 Two changes in `scripts/overlay/` come with it: `overlay.export.export` records
 `export.commit` as the checkout's HEAD in full (for the two existing conventions that is
-the document's companion commit, so nothing they record changes) and, when the document's
+the document's companion commit, so nothing they record changes; for this one the export's
+report names it, since `cf overlay` runs no git in the companion) and, when the document's
 companion is another repository, `export.lean: {repo, commit}`; `shards.section_of` puts an
-item whose `section` is one number into that folder, which today goes to `other/`.
+item whose `section` is one number into that folder.
 
 **`cf informalize overlay <id> --pdf-url <url>`** refuses without the proof-sheets
 approval at the current PDF's sha256, then, in the output repository:

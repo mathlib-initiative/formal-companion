@@ -12,9 +12,11 @@ document; this module adds what they deliberately refuse to do, because
    defaults (`overlay.shards`, `overlay.defaults`), and check every file with
    the vendored `literature_links` scan;
 3. only then record the files (their count and manifest sha256) in
-   `pdf-overlay/GENERATED.json`, with the export, its commit and the sha256 of
-   every curation input it read, so the companion's CI can tell a stale export
-   without the skill, and replace the files in `<companion>/annotations/`.
+   `pdf-overlay/GENERATED.json`, with the export, the commit it read, the Lean
+   repository its ends point into when that is another one (:func:`_export_record`)
+   and the sha256 of every curation input it read, so the companion's CI can tell
+   a stale export without the skill, and replace the files in
+   `<companion>/annotations/`.
 
 A failed export, conversion or scan leaves the companion untouched.  The
 writes follow rule 5: `annotations/` and `pdf-overlay/GENERATED.json`, through
@@ -25,6 +27,7 @@ from __future__ import annotations
 import collections
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,10 +52,12 @@ __all__ = ["CONVENTIONS", "ExportResult", "export", "run_cf_export"]
 #: The `cf export` subcommands that write an annotation document.  `site-pages`
 #: writes a page manifest, which is an INPUT to one of these, not a document;
 #: `tests/test_overlay_cli.py` pins this set against the live `cf export` tree.
-CONVENTIONS = ("attribution-table", "docstring-tags")
+CONVENTIONS = ("attribution-table", "docstring-tags", "informal-markers")
 
 #: What a failed export prints back, at most.
 TAIL = 600
+#: A commit the record may carry as the export's: the checkout's HEAD, in full.
+FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass
@@ -108,6 +113,27 @@ def _inputs(root: Path, report: dict, doc: dict) -> list[dict]:
         path = root.joinpath(*pure.parts)
         if path.is_file() and not path.is_symlink() and Path(os.path.realpath(path)).is_relative_to(root):
             out.append({"path": rel, "sha256": overlay_sync.digest(path.read_bytes())})
+    return out
+
+
+def _export_record(doc: dict, report: dict, commit: str, convention: str, source_id: str) -> dict:
+    """The `export` block: the commit exported, the convention, the source, and the Lean.
+
+    Its ``commit`` is the checkout's HEAD in full.  For a convention whose
+    companion IS the checkout that is the document's `companion.commit`; for
+    one whose companion is another repository -- `informal-markers`, whose
+    companion is the library the Lean ends point into -- the report names it
+    (``counts.checkout_commit``, since `cf overlay` runs no git in the
+    companion) and the library goes in ``lean``, so the record still says
+    which bytes were exported and what they link to.
+    """
+    companion = doc.get("companion") or {}
+    head = (report.get("counts") or {}).get("checkout_commit")
+    head = head if isinstance(head, str) and FULL_COMMIT.fullmatch(head) else None
+    out = {"commit": head or companion.get("commit") or commit,
+           "convention": convention, "source_id": source_id}
+    if head and companion.get("repo") and companion.get("commit") != head:
+        out["lean"] = {"repo": companion["repo"], "commit": companion.get("commit")}
     return out
 
 
@@ -239,8 +265,7 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
     block = {
         "count": len(conversion.files),
         "directory": overlay_sync.ANNOTATIONS_DIRNAME,
-        "export": {"commit": (doc.get("companion") or {}).get("commit") or commit,
-                   "convention": convention, "source_id": source["id"]},
+        "export": _export_record(doc, report, commit, convention, source["id"]),
         "extension": overlay_shards.NAMESPACE,
         "inputs": inputs,
         "manifest_sha256": overlay_sync.manifest_sha256(wanted),

@@ -1,0 +1,652 @@
+"""`cf export informal-markers`: an informalization companion's boxes as annotations.
+
+New code, testing scripts/annotations/export/informal_markers.py and the two
+changes in scripts/overlay/ that come with it (`overlay.export`'s record of
+the export's commit and the library, and `shards.section_of`), for section 10
+of docs/proposals/informalize.md.
+
+The fixture is the synthetic output repository the runtime's tests use
+(tests/_informalize_doc.py): two sections, five items in version 1, six parts,
+one helper declaration.  Its `markers.json` is written here rather than built,
+since a build needs TeX and poppler, and the PDF is a few bytes whose sha256
+the markers name -- nothing reads inside it.  The library's source is a
+hundred lines with each fake declaration on the line `declarations.json` gives
+it, so the snippets are cut from a real file.
+"""
+from __future__ import annotations
+
+# The first import, before anything reads HOME (see tests/_hermetic.py).
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
+import argparse
+import copy
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SKILL = HERE.parent
+SCRIPTS = SKILL / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import _informalize_doc as doc                                     # noqa: E402
+import cf as cf_main                                               # noqa: E402
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
+from cflib import vocab as cf_vocab                                # noqa: E402
+from formal_companion_annotations import ids                       # noqa: E402
+from formal_companion_annotations import validate as V             # noqa: E402
+from annotations.export import common, informal_markers            # noqa: E402
+from overlay import export as overlay_export                       # noqa: E402
+from overlay import shards                                         # noqa: E402
+
+NS = shards.NAMESPACE
+PDF_URL = "https://example.org/releases/pdf-v1/example-thm.pdf"
+SOURCE_PATH = "ExampleLib/Topology/Glue/Basic.lean"
+#: each fake declaration's keyword line, at the line tests/_informalize_doc.py gives it
+SOURCE_LINES = {
+    12: "structure GlueData (X : Type*) [TopologicalSpace X] where",
+    13: "  left : Set X",
+    30: "def glue_map {X : Type*} [TopologicalSpace X] (U V : Set X) : Glued X :=",
+    31: "  Glued.mk U V",
+    40: "theorem glue_theorem {X : Type*} [TopologicalSpace X] (U V : Set X)",
+    41: "    (hU : IsOpen U) (hV : IsOpen V) : IsPushout U V := by",
+    52: "theorem glue_surjective {X : Type*} [TopologicalSpace X] (U V : Set X)",
+    53: "    (hU : IsOpen U) (hV : IsOpen V) : Surjective (glue_map U V) := by",
+    60: "theorem cover_mono {X : Type*} {U V W : Set X} (h : U ⊆ V) : Covers V W := by",
+    66: "theorem cover_univ {X : Type*} (U : Set X) : Covers Set.univ U := by",
+    72: "theorem glue_card {X : Type*} [TopologicalSpace X] {U V : Set X} : True := by",
+    80: "theorem chain_long (n : ℕ) : chain n := by",
+    90: "theorem chain_short (n : ℕ) : chain (n + 1) → chain n := by",
+}
+
+
+# ---------------------------------------------------------------------------
+# the fixture
+# ---------------------------------------------------------------------------
+
+def library_source() -> str:
+    """One hundred lines of ExampleLib, each declaration on its own line, in a namespace."""
+    lines = [f"-- line {n}" for n in range(1, 101)]
+    lines[0] = "namespace ExampleLib"
+    for number, text in SOURCE_LINES.items():
+        lines[number - 1] = text
+    lines[99] = "end ExampleLib"
+    return "\n".join(lines) + "\n"
+
+
+def markers(source_commit: str, pdf_sha256: str) -> dict:
+    """A `markers.json` for the fixture: one box per item and part, two pages.
+
+    The boxes are the ones `extract_markers.py` would write, laid out by hand;
+    a part's `decls` are the `\\leanref`s the section files put in it, so part
+    (b) of 1.2 names the helper as well as its key.
+    """
+    entries: list[dict] = []
+    page, y = 1, 0.1
+    for item in doc.ITEMS["items"]:
+        if not item["in_v1"]:
+            continue
+        iid, letters = item["id"], [p["letter"] for p in item["parts"]]
+        own = [d["name"] for d in item["declarations"]] if not letters else []
+        entries.append({"id": iid, "kind": item["kind"], "label": f"item:{iid}", "number": iid,
+                        "section": item["section"], "title": item["title"],
+                        "parts": [f"{iid}({c})" for c in letters], "decls": own,
+                        "boxes": [[page, 0.1, round(y, 3), 0.7, 0.05]]})
+        y += 0.08
+        for c in letters:
+            named = [d["name"] for d in item["declarations"] if d["part"] == c]
+            # the drafter put the helper in the part whose text uses it
+            named += [d["name"] for d in item["declarations"]
+                      if d["role"] == "helper" and d["part"] is None and c == letters[-1]]
+            entries.append({"id": f"{iid}({c})", "parent": iid, "part": c,
+                            "label": f"item:{iid}:{c}", "number": f"{iid}({c})", "decls": named,
+                            "boxes": [[page, 0.1, round(y, 3), 0.7, 0.03]]})
+            y += 0.08
+        if y > 0.75:
+            page, y = page + 1, 0.1
+    return {"schema": "formal-companion/informalize-markers", "schema_version": 1,
+            "job": doc.JOB, "source_commit": source_commit, "pdf_sha256": pdf_sha256,
+            "pages": page, "page_size_pt": [612.0, 792.0],
+            "boxes_config": dict(doc.CONFIG["boxes"]),
+            "box_format": "[page, x, y, w, h]; page 1-based; fractions of the page from the "
+                          "top left",
+            "entries": entries}
+
+
+def git(root: Path, *args: str) -> str:
+    env = dict(os.environ, GIT_AUTHOR_NAME="T", GIT_AUTHOR_EMAIL="t@e.invalid",
+               GIT_COMMITTER_NAME="T", GIT_COMMITTER_EMAIL="t@e.invalid",
+               GIT_AUTHOR_DATE="2026-09-01T12:00:00Z", GIT_COMMITTER_DATE="2026-09-01T12:00:00Z",
+               GIT_CONFIG_NOSYSTEM="1")
+    done = subprocess.run(["git", "-C", str(root), *args], env=env, capture_output=True,
+                          text=True)
+    if done.returncode != 0:                                 # pragma: no cover - a broken fixture
+        raise AssertionError(f"git {' '.join(args)}: {done.stderr}")
+    return done.stdout.strip()
+
+
+class Fixture:
+    """An output repository at a commit, its canonical PDF and the library's source."""
+
+    def __init__(self, root: Path, *, items: dict | None = None):
+        self.root = root
+        self.repo = root / "repo"
+        doc.write_repo(self.repo, items=items)
+        self.src = root / "library-src"
+        (self.src / SOURCE_PATH).parent.mkdir(parents=True)
+        (self.src / SOURCE_PATH).write_text(library_source(), encoding="utf-8")
+        self.pdf = root / f"{doc.JOB}.pdf"
+        self.pdf.write_bytes(b"%PDF-1.5\n% the canonical PDF of the fixture\n%%EOF\n")
+        self.pdf_sha256 = common.sha256_bytes(self.pdf.read_bytes())
+        git(root, "init", "-q", str(self.repo))
+        self.commit("the text")
+        self.write_markers(markers(self.head, self.pdf_sha256))
+        self.commit("the canonical PDF's markers")
+
+    def commit(self, message: str) -> str:
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", message)
+        self.head = git(self.repo, "rev-parse", "HEAD")
+        return self.head
+
+    def write_markers(self, document: dict) -> None:
+        doc.write_json(self.repo / "informal" / "markers.json", document)
+
+    def markers(self) -> dict:
+        return json.loads((self.repo / "informal" / "markers.json").read_text(encoding="utf-8"))
+
+    def export(self, **extra):
+        options = {"pdf": self.pdf, "pdf_url": PDF_URL, "library_src": self.src,
+                   "source_title": doc.SLOTS["title"], "items_approved": True}
+        options.update(extra)
+        return informal_markers.export(self.repo, options.pop("commit", self.head), **options)
+
+
+def scratch(case: unittest.TestCase) -> Path:
+    root = Path(tempfile.mkdtemp(prefix="cf-informal-markers-",
+                                 dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
+    case.addCleanup(shutil.rmtree, root, ignore_errors=True)
+    return root
+
+
+def by_id(document: dict, array: str) -> dict[str, dict]:
+    return {record["id"]: record for record in document.get(array, [])}
+
+
+# ---------------------------------------------------------------------------
+# the document
+# ---------------------------------------------------------------------------
+
+class TestTheDocument(unittest.TestCase):
+    """One export of the fixture, read record by record."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp(prefix="cf-informal-markers-",
+                                         dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
+        cls.fixture = Fixture(cls.root)
+        cls.doc, cls.report = cls.fixture.export()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def test_it_validates_canonically_and_raises_no_warning(self):
+        text = V.canonical_dumps(V.canonicalize(copy.deepcopy(self.doc)))
+        checked = V.check(V.loads(text), text=text, canonical=True, lints=common.LINTS)
+        self.assertEqual(checked.problems, [])
+        self.assertEqual(checked.warnings, [])
+        self.assertEqual(self.report.problems, [])
+        self.assertEqual(self.doc["profiles"], {"site": "1.0"})
+
+    def test_the_companion_is_the_library_at_its_own_commit(self):
+        """The Lean ends are made from companion.repo at companion.commit (docs/overlay.md section 7)."""
+        self.assertEqual(self.doc["companion"]["repo"], "example.org/lean-libs/ExampleLib")
+        self.assertEqual(self.doc["companion"]["commit"], doc.COMMIT)
+        self.assertEqual(self.doc["companion"]["name"], "ExampleLib")
+        self.assertIn("informal-markers", self.doc["companion"]["generator"])
+        self.assertEqual(self.doc["companion"]["generated_at"], "2026-09-01T12:00:00Z")
+
+    def test_the_source_is_the_canonical_pdf_at_the_release_url(self):
+        (source,) = self.doc["sources"]
+        self.assertEqual(source["kind"], "pdf")
+        self.assertEqual(source["id"], doc.JOB)
+        self.assertEqual(source["title"], doc.SLOTS["title"])
+        self.assertEqual(source["url"], PDF_URL)
+        self.assertEqual(source["sha256"], self.fixture.pdf_sha256)
+        self.assertEqual(source["bytes"], self.fixture.pdf.stat().st_size)
+        self.assertEqual(source["physical_page_count"], self.fixture.markers()["pages"])
+        self.assertEqual(source["page_size"], {"width_pt": 612.0, "height_pt": 792.0})
+        self.assertEqual(source["printed_page_offset"], 0)
+
+    def test_one_item_per_part_and_per_item_without_parts(self):
+        items = by_id(self.doc, "items")
+        self.assertEqual(sorted(items), [
+            "corollary-2.3", "definition-1.1", "example-2.2-a", "example-2.2-b",
+            "lemma-2.1-a", "lemma-2.1-b", "theorem-1.2-a", "theorem-1.2-b"])
+        self.assertNotIn("theorem-1.2", items, "an item with parts is boxed around them")
+        self.assertNotIn("remark-2.4", items, "an item out of version 1 is in no PDF box")
+        self.assertEqual(items["theorem-1.2-a"]["id"], ids.item_label_id("theorem", "1.2", "a"))
+        self.assertEqual({k: v for k, v in items["theorem-1.2-a"].items() if k != "coverage"},
+                         {"id": "theorem-1.2-a", "id_source": "label", "form": "numbered",
+                          "source": doc.JOB, "kind": "Theorem", "number": "1.2", "sub": "a",
+                          "section": "1"})
+        self.assertEqual(items["definition-1.1"]["title"], "Gluing data")
+        self.assertNotIn("sub", items["definition-1.1"])
+        self.assertEqual({i["coverage"] for i in items.values()}, {"formalized"})
+
+    def test_one_location_per_box_of_the_markers(self):
+        boxes = {e["id"]: e["boxes"] for e in self.fixture.markers()["entries"]}
+        locations = [loc for loc in self.doc["locations"] if loc["items"] == ["theorem-1.2-a"]]
+        (page, x, y, w, h), = boxes["1.2(a)"]
+        self.assertEqual(len(locations), 1)
+        (selector,) = locations[0]["target"]["selector"]
+        self.assertEqual(locations[0]["target"]["source"], doc.JOB)
+        self.assertEqual(selector["type"], "PdfRegionSelector")
+        self.assertEqual(selector["page"], page)
+        self.assertEqual(selector["coordinate_space"]["origin"], "top_left")
+        self.assertEqual(selector["coordinate_space"]["units"], "normalized")
+        self.assertEqual(selector["rect"], {"x0": x, "y0": y, "x1": round(x + w, 9),
+                                            "y1": round(y + h, 9)})
+        self.assertEqual(len(self.doc["locations"]), sum(len(b) for b in boxes.values())
+                         - len(boxes["1.2"]) - len(boxes["2.1"]) - len(boxes["2.2"]))
+
+    def test_one_link_per_leanref_with_the_table_s_role_and_relation(self):
+        links = by_id(self.doc, "links")
+        self.assertEqual(sorted(links), [
+            "corollary-2.3/key/ExampleLib.glue_card",
+            "definition-1.1/key/ExampleLib.GlueData",
+            "example-2.2-a/key/ExampleLib.chain_long",
+            "example-2.2-b/key/ExampleLib.chain_short",
+            "lemma-2.1-a/key/ExampleLib.cover_mono",
+            "lemma-2.1-b/key/ExampleLib.cover_univ",
+            "theorem-1.2-a/key/ExampleLib.glue_theorem",
+            "theorem-1.2-b/helper/ExampleLib.glue_map",
+            "theorem-1.2-b/key/ExampleLib.glue_surjective"])
+        self.assertEqual(links["theorem-1.2-a/key/ExampleLib.glue_theorem"], {
+            "id": "theorem-1.2-a/key/ExampleLib.glue_theorem", "item": "theorem-1.2-a",
+            "declaration": "ExampleLib.glue_theorem", "role": "key", "relation": "exact",
+            "provenance": informal_markers.PROVENANCE_ID})
+        helper = links["theorem-1.2-b/helper/ExampleLib.glue_map"]
+        self.assertEqual((helper["role"], helper["relation"]), ("helper", "related"))
+
+    def test_a_declaration_carries_its_snippet_and_its_line_on_the_library_s_host(self):
+        declarations = by_id(self.doc, "declarations")
+        self.assertEqual(declarations["ExampleLib.glue_theorem"], {
+            "id": "ExampleLib.glue_theorem", "id_source": "name",
+            "name": "ExampleLib.glue_theorem", "kind": "theorem",
+            "module": "ExampleLib.Topology.Glue.Basic", "file": SOURCE_PATH, "line": 40,
+            "private": False, "anonymous": False})
+        (snippet,) = [s for s in self.doc["snippets"]
+                      if s["declaration"] == "ExampleLib.glue_theorem"]
+        self.assertEqual(snippet["line"], 40)
+        self.assertEqual(snippet["text"], SOURCE_LINES[40] + "\n" + SOURCE_LINES[41])
+        (destination,) = [d for d in self.doc["destinations"]
+                          if d["declaration"] == "ExampleLib.glue_theorem"]
+        self.assertEqual(destination, {
+            "id": "other:ExampleLib.glue_theorem", "declaration": "ExampleLib.glue_theorem",
+            "site": "other", "resolution": "exact", "fragment": "L40",
+            "href": f"https://example.org/lean-libs/ExampleLib/blob/{doc.COMMIT}/{SOURCE_PATH}"})
+        self.assertEqual(self.report.counts["snippets_unlocated"], [])
+
+    def test_the_provenance_is_the_fleet_s_and_names_the_four_files_it_read(self):
+        (provenance,) = self.doc["provenance"]
+        self.assertEqual(provenance["actor"], "agent")
+        self.assertEqual(provenance["method"], "agent_annotation")
+        self.assertIs(provenance["confirmed_by_human"], True)
+        self.assertEqual(provenance["tool"]["name"], "cf informalize")
+        read = [row["path"] for row in self.report.counts["inputs"]]
+        self.assertEqual(read, ["informal/declarations.json", "informal/informalize.json",
+                                "informal/items.json", "informal/markers.json"])
+        self.assertEqual(provenance["inputs"], self.report.counts["inputs"])
+        for row in self.report.counts["inputs"]:
+            raw = (self.fixture.repo / row["path"]).read_bytes()
+            self.assertEqual(row["sha256"], common.sha256_bytes(raw))
+
+    def test_without_the_items_approval_nobody_confirmed_the_links(self):
+        document, report = self.fixture.export(items_approved=False)
+        (provenance,) = document["provenance"]
+        self.assertIs(provenance["confirmed_by_human"], False)
+        self.assertIn("items_approval", report.counts)
+
+    def test_the_report_says_what_the_format_cannot_carry(self):
+        document, report = self.fixture.export()
+        self.assertEqual(report.counts["checkout_commit"], self.fixture.head)
+        self.assertEqual(report.counts["library"],
+                         {"repo": "example.org/lean-libs/ExampleLib", "commit": doc.COMMIT})
+        self.assertEqual(report.counts["links_by_role"], {"helper": 1, "key": 8})
+        self.assertEqual(report.counts["items_with_parts"], 3)
+        self.assertEqual(len(document["links"]), 9)
+
+    def test_a_junk_value_and_a_leanref_outside_a_part_are_reported(self):
+        items = copy.deepcopy(doc.ITEMS)
+        for item in items["items"]:
+            if item["id"] == "1.1":
+                item["declarations"][0]["junk"] = ["the rank is 0 on an empty space"]
+        root = scratch(self)
+        fixture = Fixture(root, items=items)
+        document = fixture.markers()
+        for entry in document["entries"]:
+            if entry["id"] == "1.2":
+                entry["decls"] = ["ExampleLib.glue_map"]
+        fixture.write_markers(document)
+        fixture.commit("a leanref in the item's own text")
+        _, report = fixture.export()
+        self.assertEqual(report.lossy["link.junk"]["count"], 1)
+        self.assertEqual(report.lossy["markers.leanrefs_outside_a_part"]["count"], 1)
+        self.assertEqual(report.problems, [])
+
+
+# ---------------------------------------------------------------------------
+# what it refuses
+# ---------------------------------------------------------------------------
+
+class TestItRefusesInputsThatDisagree(unittest.TestCase):
+    """An input that disagrees with another stops the export; nothing is written."""
+
+    def setUp(self):
+        self.fixture = Fixture(scratch(self))
+
+    def refusal(self, **extra) -> str:
+        with self.assertRaises(common.ExportError) as caught:
+            self.fixture.export(**extra)
+        return caught.exception.message
+
+    def test_a_pdf_the_markers_were_not_measured_on(self):
+        other = self.fixture.root / "other.pdf"
+        other.write_bytes(b"%PDF-1.5\n% another build\n")
+        self.assertIn("markers.json was measured on", self.refusal(pdf=other))
+
+    def test_a_checkout_that_is_not_at_the_pinned_commit(self):
+        self.assertIn("not at the pinned", self.refusal(commit="0" * 40))
+
+    def test_a_dirty_checkout(self):
+        (self.fixture.repo / "informal" / "sections" / "01-gluing-spaces.tex").write_text(
+            "\\begin{definition}[id=1.1]{Gluing data}\\leanref{ExampleLib.GlueData}\\end{definition}\n",
+            encoding="utf-8")
+        self.assertIn("uncommitted changes", self.refusal())
+
+    def test_text_that_changed_since_the_pdf_was_built(self):
+        path = self.fixture.repo / "informal" / "sections" / "02-covers.tex"
+        path.write_text(path.read_text(encoding="utf-8") + "\n% a later edit\n", encoding="utf-8")
+        head = self.fixture.commit("an edit after the build")
+        message = self.refusal(commit=head)
+        self.assertIn("informal/ changed since the PDF was built", message)
+        self.assertIn("informal/sections/02-covers.tex", message)
+
+    def test_a_second_markers_commit_is_not_a_change_of_the_text(self):
+        """Only markers.json itself may differ from the commit the PDF was built from."""
+        self.fixture.write_markers(dict(self.fixture.markers(), x_note="re-extracted"))
+        head = self.fixture.commit("markers again")
+        document, _ = self.fixture.export(commit=head)
+        self.assertEqual(len(document["items"]), 8)
+
+    def test_a_leanref_to_a_declaration_the_scope_does_not_hold(self):
+        document = self.fixture.markers()
+        for entry in document["entries"]:
+            if entry["id"] == "1.1":
+                entry["decls"] = ["ExampleLib.not_in_the_scope"]
+        self.fixture.write_markers(document)
+        head = self.fixture.commit("a leanref outside declarations.json")
+        self.assertIn("is not in informal/declarations.json", self.refusal(commit=head))
+
+    def test_a_box_that_leaves_its_page(self):
+        document = self.fixture.markers()
+        document["entries"][0]["boxes"] = [[1, 0.5, 0.1, 0.7, 0.05]]
+        self.fixture.write_markers(document)
+        head = self.fixture.commit("a box off the page")
+        self.assertIn("is not a fraction of page 1", self.refusal(commit=head))
+
+    def test_a_box_on_a_page_the_pdf_does_not_have(self):
+        document = self.fixture.markers()
+        document["entries"][0]["boxes"] = [[99, 0.1, 0.1, 0.7, 0.05]]
+        self.fixture.write_markers(document)
+        head = self.fixture.commit("a box past the last page")
+        self.assertIn("is not a page of the", self.refusal(commit=head))
+
+    def test_markers_and_items_that_describe_another_item(self):
+        document = self.fixture.markers()
+        document["entries"][0]["title"] = "Something else"
+        self.fixture.write_markers(document)
+        head = self.fixture.commit("a title the table does not give")
+        self.assertIn("items.json", self.refusal(commit=head))
+
+    def test_an_items_table_drafted_against_another_library_commit(self):
+        items = copy.deepcopy(doc.ITEMS)
+        items["library"]["commit"] = "f" * 40
+        fixture = Fixture(scratch(self), items=items)
+        with self.assertRaises(common.ExportError) as caught:
+            fixture.export()
+        self.assertIn("drafted against library commit", caught.exception.message)
+
+    def test_a_pdf_url_that_is_not_https(self):
+        self.assertIn("is not an https URL", self.refusal(pdf_url="http://example.org/a.pdf"))
+
+    def test_an_output_repository_with_no_markers(self):
+        (self.fixture.repo / "informal" / "markers.json").unlink()
+        head = self.fixture.commit("no markers")
+        self.assertIn("informal/markers.json is not a file", self.refusal(commit=head))
+
+    def test_a_box_whose_leanrefs_are_all_helpers_states_none_of_it(self):
+        """Invariant I5: a record with links and no key link carries a class that excludes one."""
+        document = self.fixture.markers()
+        for entry in document["entries"]:
+            if entry["id"] == "2.3":
+                entry["decls"] = ["ExampleLib.glue_map"]
+        self.fixture.write_markers(document)
+        head = self.fixture.commit("a box with a helper alone")
+        exported, report = self.fixture.export(commit=head)
+        (item,) = [i for i in exported["items"] if i["id"] == "corollary-2.3"]
+        self.assertEqual(item["coverage"], "support_only")
+        self.assertEqual(report.bent["item.coverage_from_helpers"]["count"], 1)
+        text = V.canonical_dumps(V.canonicalize(copy.deepcopy(exported)))
+        self.assertEqual(V.check(V.loads(text), text=text, canonical=True).problems, [])
+
+    def test_a_key_declaration_that_no_box_names(self):
+        document = self.fixture.markers()
+        for entry in document["entries"]:
+            if entry["id"] == "2.3":
+                entry["decls"] = []
+        self.fixture.write_markers(document)
+        head = self.fixture.commit("a box with no leanref")
+        _, report = self.fixture.export(commit=head)
+        self.assertEqual(len(report.problems), 2, report.problems)
+        self.assertTrue(any("names no declaration" in p for p in report.problems))
+        self.assertTrue(any("ExampleLib.glue_card" in p for p in report.problems))
+
+
+# ---------------------------------------------------------------------------
+# the overlay carries it
+# ---------------------------------------------------------------------------
+
+class TestTheOverlayCarriesIt(unittest.TestCase):
+    """`overlay.shards` converts the document, and `overlay.export` records the two commits."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp(prefix="cf-informal-markers-",
+                                         dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
+        cls.fixture = Fixture(cls.root)
+        cls.doc, cls.report = cls.fixture.export()
+        cls.conversion = shards.convert(cls.doc, source_id=doc.JOB)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def test_every_record_converts_and_passes_the_literature_links_scan(self):
+        self.assertEqual(self.conversion.problems, [])
+        self.assertEqual(self.conversion.counts["records"], 9)
+        self.assertEqual(shards.scan_problems(shards.file_bytes(self.conversion)), [])
+
+    def test_a_section_folder_per_section_of_the_text(self):
+        """`shards.section_of`: an item whose section is one number goes to that folder."""
+        self.assertEqual(sorted({path.split("/")[0] for path in self.conversion.files}),
+                         ["1", "2"])
+        self.assertIn("1/definition-1.1__key__ExampleLib.GlueData.json", self.conversion.files)
+        self.assertEqual(sorted(p for p in self.conversion.files if p.startswith("1/theorem-1.2-b")),
+                         ["1/theorem-1.2-b/helper__ExampleLib.glue_map.json",
+                          "1/theorem-1.2-b/key__ExampleLib.glue_surjective.json"])
+
+    def test_the_card_shows_the_box_the_statement_and_the_line(self):
+        record = self.conversion.files["1/theorem-1.2-a__key__ExampleLib.glue_theorem.json"]
+        (subject,) = record["subject"]
+        (end,) = record["object"]
+        self.assertEqual(subject["uri"], PDF_URL)
+        self.assertEqual(subject["title"], "Theorem 1.2(a)")
+        self.assertEqual(subject["location"]["page"], 1)
+        self.assertEqual(record["relation"], "exactMatch")
+        self.assertEqual(record["status"], "formalized")
+        self.assertEqual(end["uri"], "https://example.org/lean-libs/ExampleLib")
+        self.assertEqual(end["version"], doc.COMMIT)
+        self.assertEqual(end["location"], {"declaration": "ExampleLib.glue_theorem",
+                                           "module": "ExampleLib.Topology.Glue.Basic"})
+        extension = end["extensions"][NS]
+        self.assertEqual(extension["snippet"]["line"], 40)
+        self.assertEqual(extension["destination"]["fragment"], "L40")
+        self.assertTrue(extension["destination"]["href"].endswith(
+            f"/blob/{doc.COMMIT}/{SOURCE_PATH}"))
+
+    def test_an_item_whose_title_the_card_shows(self):
+        record = self.conversion.files["1/definition-1.1__key__ExampleLib.GlueData.json"]
+        self.assertEqual(record["subject"][0]["title"], "Definition 1.1 (Gluing data)")
+
+    def test_the_export_record_names_the_checkout_and_the_library(self):
+        record = overlay_export._export_record(                  # noqa: SLF001 - its own test
+            self.doc, {"counts": self.report.counts}, self.fixture.head[:12],
+            "informal-markers", doc.JOB)
+        self.assertEqual(record, {"commit": self.fixture.head, "convention": "informal-markers",
+                                  "source_id": doc.JOB,
+                                  "lean": {"repo": "example.org/lean-libs/ExampleLib",
+                                           "commit": doc.COMMIT}})
+
+    def test_a_convention_whose_companion_is_the_checkout_records_what_it_always_did(self):
+        document = {"companion": {"repo": "git.example.invalid/owner/notes", "commit": "a" * 40}}
+        self.assertEqual(
+            overlay_export._export_record(document, {}, "a" * 12, "attribution-table", "notes"),
+            {"commit": "a" * 40, "convention": "attribution-table", "source_id": "notes"})
+
+    def test_it_is_a_convention_of_cf_overlay_export(self):
+        self.assertIn("informal-markers", overlay_export.CONVENTIONS)
+
+
+# ---------------------------------------------------------------------------
+# the command
+# ---------------------------------------------------------------------------
+
+class TestTheCommand(unittest.TestCase):
+    def setUp(self):
+        self.fixture = Fixture(scratch(self))
+
+    def cli(self, *args: str) -> tuple[int, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cf_main.cli(list(args))
+        return code, out.getvalue() + err.getvalue()
+
+    def test_it_writes_the_document_and_the_report(self):
+        out = self.fixture.root / "document.json"
+        report = self.fixture.root / "report.json"
+        code, text = self.cli("export", "informal-markers", str(self.fixture.repo),
+                              "--commit", self.fixture.head, "--pdf", str(self.fixture.pdf),
+                              "--pdf-url", PDF_URL, "--library-src", str(self.fixture.src),
+                              "--source-title", doc.SLOTS["title"], "--items-approved",
+                              "--out", str(out), "--report", str(report))
+        self.assertEqual(code, 0, text)
+        document = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(document["companion"]["commit"], doc.COMMIT)
+        self.assertEqual(len(document["items"]), 8)
+        counts = json.loads(report.read_text(encoding="utf-8"))["counts"]
+        self.assertEqual(counts["checkout_commit"], self.fixture.head)
+        self.assertEqual(V.canonical_dumps(V.canonicalize(copy.deepcopy(document))),
+                         out.read_text(encoding="utf-8"))
+
+    def test_it_refuses_a_pdf_or_a_library_source_that_is_not_there(self):
+        for flag, value in (("--pdf", self.fixture.root / "none.pdf"),
+                            ("--library-src", self.fixture.root / "none")):
+            with self.subTest(flag=flag):
+                arguments = {"--pdf": str(self.fixture.pdf), "--library-src": str(self.fixture.src)}
+                arguments[flag] = str(value)
+                code, text = self.cli("export", "informal-markers", str(self.fixture.repo),
+                                      "--commit", self.fixture.head, "--pdf-url", PDF_URL,
+                                      "--out", str(self.fixture.root / "d.json"),
+                                      *sum(([k, v] for k, v in arguments.items()), []))
+                self.assertEqual(code, 2, text)
+                self.assertIn(flag, text)
+                self.assertFalse((self.fixture.root / "d.json").exists())
+
+    def test_the_parser_defaults_to_the_site_kind_the_exporter_writes(self):
+        parser = argparse.ArgumentParser(prog="cf")
+        subparsers = parser.add_subparsers(dest="command")
+        cf_main.discover_commands(subparsers)
+        for action in subparsers.choices["export"]._actions:     # noqa: SLF001 - no public API
+            if isinstance(action, argparse._SubParsersAction):   # noqa: SLF001
+                child = action.choices["informal-markers"]
+                self.assertEqual(child.get_default("site_name"), informal_markers.SITE)
+                return
+        self.fail("cf export has no informal-markers subcommand")
+
+
+class TestCfOverlayExportRunsIt(unittest.TestCase):
+    """The convention end to end, through `cf overlay export`: a real `cf export` child."""
+
+    def test_it_writes_the_annotation_files_and_records_both_commits(self):
+        fixture = Fixture(scratch(self))
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cf_main.cli(["overlay", "init", str(fixture.repo), "--source-id", doc.JOB,
+                                "--title", doc.SLOTS["title"], "-q"])
+        self.assertEqual(code, 0, out.getvalue() + err.getvalue())
+        head = fixture.commit("the overlay config")
+        with redirect_stdout(out), redirect_stderr(err):
+            result = overlay_export.export(
+                fixture.repo, convention="informal-markers", commit=head,
+                extra=["--pdf", str(fixture.pdf), "--pdf-url", PDF_URL,
+                       "--library-src", str(fixture.src), "--source-title", doc.SLOTS["title"],
+                       "--items-approved"])
+        self.assertEqual(result.sections, {"1": 4, "2": 5})
+        self.assertEqual(result.warnings, [])
+        record = json.loads((fixture.repo / "pdf-overlay" / "GENERATED.json")
+                            .read_text(encoding="utf-8"))["annotations"]
+        self.assertEqual(record["export"], {
+            "commit": head, "convention": "informal-markers", "source_id": doc.JOB,
+            "lean": {"repo": "example.org/lean-libs/ExampleLib", "commit": doc.COMMIT}})
+        self.assertEqual([row["path"] for row in record["inputs"]],
+                         ["informal/declarations.json", "informal/informalize.json",
+                          "informal/items.json", "informal/markers.json"])
+        self.assertEqual(record["count"], 9)
+        written = sorted(p.relative_to(fixture.repo).as_posix()
+                         for p in (fixture.repo / "annotations").rglob("*.json"))
+        self.assertIn("annotations/1/definition-1.1__key__ExampleLib.GlueData.json", written)
+        self.assertIn("annotations/_defaults.json", written)
+        # and the rest of the overlay is reused as it stands
+        for argv in (["overlay", "sync", str(fixture.repo)],
+                     ["overlay", "check", str(fixture.repo)]):
+            with self.subTest(command=argv[1]), redirect_stdout(out), redirect_stderr(err):
+                self.assertEqual(cf_main.cli(argv), 0, out.getvalue() + err.getvalue())
+
+
+class TestTheRelationsAreTheOnesThatConvertBack(unittest.TestCase):
+    def test_every_relation_of_the_item_table_is_written_as_the_token_shards_reads(self):
+        self.assertEqual(sorted(informal_markers.RELATION_TOKENS),
+                         sorted(cf_vocab.INFORMALIZE_RELATIONS))
+        for relation, token in informal_markers.RELATION_TOKENS.items():
+            with self.subTest(relation=relation):
+                self.assertEqual(shards.RELATIONS[token], relation)
+
+
+if __name__ == "__main__":                                       # pragma: no cover
+    unittest.main()

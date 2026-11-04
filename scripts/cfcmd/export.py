@@ -13,6 +13,9 @@ writes the document in canonical form beside a report of what did not fit.
         --xref <xref.json> --site-pages <pages.json> [--site <rendered site>] --out <doc.json>
     cf export docstring-tags <checkout> --commit <sha> --source-id <id> --source-title <title> \\
         --source-revision <edition stamp> --out <doc.json>        # no PDF, no site
+    cf export informal-markers <output repository> --commit <sha> --pdf <the canonical PDF> \\
+        --pdf-url <its release URL> --library-src <the library's source> --out <doc.json> \\
+        [--source-title <the text's title>] [--items-approved]
     cf export site-pages <rendered site> --out <pages.json> [--source-id ID] [--title T] \\
         [--path P] [--rendered-at TIME] [--exclude GLOB]...
     cf export literature-links --run <locate run> [--challenge-run <run>]... --set-id <id> \\
@@ -83,6 +86,24 @@ def register(subparsers) -> None:
     dt.add_argument("--adapter-config", type=Path, metavar="FILE",
                     help="the docstring_tags adapter config to read the tags with "
                          "(default: the shipped tao-measure-lean template)")
+    im = sub.add_parser("informal-markers",
+                        help="an informalization companion: the PDF's boxes, the item table and "
+                             "the library's declarations")
+    _common_arguments(im)
+    # a declaration's page is a blob view of the library's git host, not a rendered Lean
+    # site: `informal_markers.SITE`, which a test pins against this default
+    im.set_defaults(site_name="other")
+    im.add_argument("--pdf", type=Path, required=True, metavar="FILE",
+                    help="the canonical PDF informal/markers.json was measured on")
+    im.add_argument("--pdf-url", required=True, metavar="URL",
+                    help="the https URL the maintainer publishes that PDF at (a release asset); "
+                         "the overlay fetches it and verifies its sha256")
+    im.add_argument("--library-src", type=Path, required=True, metavar="DIR",
+                    help="the library's source at the pinned commit, which the snippets on the "
+                         "cards are cut from (<workspace>/informalize/<id>/library/src)")
+    im.add_argument("--items-approved", action="store_true",
+                    help="the items approval pins this items.json, so the links are recorded as "
+                         "confirmed by a person")
     sp = sub.add_parser("site-pages",
                         help="write a rendered literate site's page manifest, the file docstring-tags "
                              "--site-pages reads")
@@ -167,6 +188,16 @@ def run(args) -> int:
             doc, report = attribution_table.export(checkout, args.commit, lean_build=args.lean_build,
                                                    data_dir=args.data_dir, ledger=args.ledger,
                                                    official_source=args.official_source, **options)
+        elif args.export_command == "informal-markers":
+            from annotations.export import informal_markers
+            if not args.pdf.is_file():
+                raise CfError(f"--pdf: {args.pdf} is not a file")
+            if not args.library_src.is_dir():
+                raise CfError(f"--library-src: {args.library_src} is not a directory")
+            doc, report = informal_markers.export(checkout, args.commit, pdf=args.pdf,
+                                                  pdf_url=args.pdf_url,
+                                                  library_src=args.library_src,
+                                                  items_approved=args.items_approved, **options)
         else:
             from annotations.export import docstring_tags
             for flag in ("pdf", "xref", "site_pages"):

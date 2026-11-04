@@ -92,6 +92,8 @@ CSL_TYPE = "book"
 
 _CLUSTER_SECTION = re.compile(r"\bSection (\d+)\.(\d+)", re.ASCII)
 _DOTTED = re.compile(r"(\d+)\.(\d+)", re.ASCII)
+#: An ``item.section`` that is one number: the folder is that number.
+_PLAIN_SECTION = re.compile(r"[0-9]+", re.ASCII)
 _HTTPS = re.compile(r"https://[^\s#\\]+\Z")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 #: Device names Windows reserves whatever the extension (`nul.json` is `NUL`).
@@ -152,16 +154,21 @@ def section_of(item: dict, clusters: dict) -> str:
     """The section folder an item's records go to.
 
     A number with three or more parts names its section (``1.2.7`` is in
-    ``1.2``); otherwise the item's own ``section`` or a cluster locator that
-    says ``Section N.M``; otherwise ``other`` (a two-part number such as
-    ``3.4`` may be an equation or a section, so it names no section).
+    ``1.2``); otherwise the item's own ``section``, as ``N.M`` or as one
+    number (a document whose sections are numbered ``1``, ``2``, ... says so
+    there), or a cluster locator that says ``Section N.M``; otherwise ``other``
+    (a two-part number such as ``3.4`` may be an equation or a section, so it
+    names no section).
     """
     parts = str(item.get("number") or "").split(".")
     if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
         return f"{parts[0]}.{parts[1]}"
-    match = _DOTTED.search(str(item.get("section") or ""))
+    section = str(item.get("section") or "").strip()
+    match = _DOTTED.search(section)
     if match:
         return f"{match.group(1)}.{match.group(2)}"
+    if _PLAIN_SECTION.fullmatch(section):
+        return section
     for cluster in item.get("clusters") or []:
         match = _CLUSTER_SECTION.search(str((clusters.get(cluster) or {}).get("locator") or ""))
         if match:
