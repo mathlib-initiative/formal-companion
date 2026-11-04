@@ -386,7 +386,10 @@ companion IS the checkout that is the document's `companion.commit`, and for
 one whose companion is another repository (`informal-markers`, whose companion
 is the Lean library its text is about, `docs/exporters.md` section 8) the
 export's report names it and `export.lean` is `{repo, commit}` of that
-library, which the object ends point into.
+library, which the object ends point into. Which of the two a convention is
+settles it, not what the report happens to hold: an export of the second kind
+whose report does not name the commit it read is refused, rather than
+recording the library's commit as the export's.
 
 ## 7. The annotation files
 

@@ -54,6 +54,11 @@ __all__ = ["CONVENTIONS", "ExportResult", "export", "run_cf_export"]
 #: `tests/test_overlay_cli.py` pins this set against the live `cf export` tree.
 CONVENTIONS = ("attribution-table", "docstring-tags", "informal-markers")
 
+#: The conventions whose document's `companion` is a repository OTHER than the
+#: checkout exported, so the export's own commit comes from the report
+#: (:func:`_export_record`) and the companion goes in ``export.lean``.
+FOREIGN_COMPANION = ("informal-markers",)
+
 #: What a failed export prints back, at most.
 TAIL = 600
 #: A commit the record may carry as the export's: the checkout's HEAD, in full.
@@ -121,18 +126,32 @@ def _export_record(doc: dict, report: dict, commit: str, convention: str, source
 
     Its ``commit`` is the checkout's HEAD in full.  For a convention whose
     companion IS the checkout that is the document's `companion.commit`; for
-    one whose companion is another repository -- `informal-markers`, whose
-    companion is the library the Lean ends point into -- the report names it
+    one of :data:`FOREIGN_COMPANION` -- `informal-markers`, whose companion is
+    the library the Lean ends point into -- the report names it
     (``counts.checkout_commit``, since `cf overlay` runs no git in the
     companion) and the library goes in ``lean``, so the record still says
     which bytes were exported and what they link to.
+
+    Which branch to take is the CONVENTION's answer, never a key the report
+    happens to carry: a report that could not be read would otherwise record
+    the library's commit as the export's, a plausible 40-hex sha for bytes
+    nobody exported, in the record whose one job is letting CI tell a stale
+    export.  So a foreign-companion convention whose report does not name the
+    checkout's HEAD is refused instead.
     """
     companion = doc.get("companion") or {}
+    if convention not in FOREIGN_COMPANION:
+        return {"commit": companion.get("commit") or commit,
+                "convention": convention, "source_id": source_id}
     head = (report.get("counts") or {}).get("checkout_commit")
-    head = head if isinstance(head, str) and FULL_COMMIT.fullmatch(head) else None
-    out = {"commit": head or companion.get("commit") or commit,
-           "convention": convention, "source_id": source_id}
-    if head and companion.get("repo") and companion.get("commit") != head:
+    if not (isinstance(head, str) and FULL_COMMIT.fullmatch(head) and head.startswith(commit)):
+        raise CfError(f"the {convention} export's report does not name the commit it read "
+                      f"({commit}), so nothing was written",
+                      hint="its companion is the Lean library, not the checkout, so "
+                           "`counts.checkout_commit` is the only record of which bytes "
+                           "were exported; re-run the export and keep its report")
+    out = {"commit": head, "convention": convention, "source_id": source_id}
+    if companion.get("repo") and companion.get("commit") != head:
         out["lean"] = {"repo": companion["repo"], "commit": companion.get("commit")}
     return out
 

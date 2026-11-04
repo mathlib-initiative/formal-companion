@@ -46,6 +46,7 @@ import _informalize_doc as doc                                     # noqa: E402
 import cf as cf_main                                               # noqa: E402
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from cflib import vocab as cf_vocab                                # noqa: E402
+from cflib.errors import CfError                                   # noqa: E402
 from formal_companion_annotations import ids                       # noqa: E402
 from formal_companion_annotations import validate as V             # noqa: E402
 from annotations.export import common, informal_markers            # noqa: E402
@@ -243,7 +244,7 @@ class TestTheDocument(unittest.TestCase):
         self.assertEqual({k: v for k, v in items["theorem-1.2-a"].items() if k != "coverage"},
                          {"id": "theorem-1.2-a", "id_source": "label", "form": "numbered",
                           "source": doc.JOB, "kind": "Theorem", "number": "1.2", "sub": "a",
-                          "section": "1"})
+                          "section": "1", "title": "The glue theorem"})
         self.assertEqual(items["definition-1.1"]["title"], "Gluing data")
         self.assertNotIn("sub", items["definition-1.1"])
         self.assertEqual({i["coverage"] for i in items.values()}, {"formalized"})
@@ -259,6 +260,9 @@ class TestTheDocument(unittest.TestCase):
         self.assertEqual(selector["page"], page)
         self.assertEqual(selector["coordinate_space"]["origin"], "top_left")
         self.assertEqual(selector["coordinate_space"]["units"], "normalized")
+        # the markers are measured against TeX's paper size and rendered without -cropbox
+        self.assertEqual(selector["coordinate_space"]["page_box"], "MediaBox")
+        self.assertIn("MediaBox", shards.DISPLAYED_BOXES)
         self.assertEqual(selector["rect"], {"x0": x, "y0": y, "x1": round(x + w, 9),
                                             "y1": round(y + h, 9)})
         self.assertEqual(len(self.doc["locations"]), sum(len(b) for b in boxes.values())
@@ -455,6 +459,58 @@ class TestItRefusesInputsThatDisagree(unittest.TestCase):
         text = V.canonical_dumps(V.canonicalize(copy.deepcopy(exported)))
         self.assertEqual(V.check(V.loads(text), text=text, canonical=True).problems, [])
 
+    def test_a_library_source_at_another_commit_of_the_library(self):
+        """Nothing pins --library-src, so a key declaration's keyword line is checked there."""
+        path = self.fixture.src / SOURCE_PATH
+        path.write_text("-- a later header\n" * 3 + path.read_text(encoding="utf-8"),
+                        encoding="utf-8")
+        message = self.refusal()
+        self.assertIn("ExampleLib.", message)
+        self.assertIn("keyword outside a comment", message)
+
+    def test_a_library_source_that_does_not_hold_the_file_at_all(self):
+        """The refusal names --library-src, not the ledger this convention never reads."""
+        (self.fixture.src / SOURCE_PATH).unlink()
+        message = self.refusal()
+        self.assertIn(f"informal/declarations.json names {SOURCE_PATH}", message)
+        self.assertNotIn("ledger", message)
+
+    def test_an_item_title_holding_a_url_is_dropped_and_reported(self):
+        """The format's `external-urls` lint (L1) allows no URL in a title."""
+        titled = "Gluing data (see https://example.org/notes)"
+        items = copy.deepcopy(doc.ITEMS)
+        for item in items["items"]:
+            if item["id"] == "1.1":
+                item["title"] = titled
+        fixture = Fixture(scratch(self), items=items)
+        written = fixture.markers()
+        for entry in written["entries"]:
+            if entry["id"] == "1.1":
+                entry["title"] = titled
+        fixture.write_markers(written)
+        head = fixture.commit("the markers of the titled item")
+        document, report = fixture.export(commit=head)
+        (record,) = [i for i in document["items"] if i["id"] == "definition-1.1"]
+        self.assertNotIn("title", record)
+        self.assertEqual(report.lossy["item.title"]["count"], 1)
+        text = V.canonical_dumps(V.canonicalize(copy.deepcopy(document)))
+        self.assertEqual(V.check(V.loads(text), text=text, canonical=True,
+                                 lints=common.LINTS).problems, [])
+
+    def test_a_helper_cut_at_another_line_is_a_warning_the_command_prints(self):
+        """A helper is exempt from the keyword check, so the bend is what is left to say so."""
+        path = self.fixture.src / SOURCE_PATH
+        lines = path.read_text(encoding="utf-8").split("\n")
+        lines[29], lines[32] = "-- line 30", lines[29]          # glue_map, a helper, moves
+        path.write_text("\n".join(lines), encoding="utf-8")
+        _, report = self.fixture.export()
+        self.assertEqual(report.counts["snippets_line_differs"],
+                         ["ExampleLib.glue_map: 33 and 30"])
+        self.assertEqual(common.report_warnings(report.counts),
+                         ["1 snippet(s) were cut at a line the document does not give for the "
+                          "declaration, so the source read may not be the pinned one: "
+                          "ExampleLib.glue_map: 33 and 30"])
+
     def test_a_key_declaration_that_no_box_names(self):
         document = self.fixture.markers()
         for entry in document["entries"]:
@@ -506,7 +562,7 @@ class TestTheOverlayCarriesIt(unittest.TestCase):
         (subject,) = record["subject"]
         (end,) = record["object"]
         self.assertEqual(subject["uri"], PDF_URL)
-        self.assertEqual(subject["title"], "Theorem 1.2(a)")
+        self.assertEqual(subject["title"], "Theorem 1.2(a) (The glue theorem)")
         self.assertEqual(subject["location"]["page"], 1)
         self.assertEqual(record["relation"], "exactMatch")
         self.assertEqual(record["status"], "formalized")
@@ -524,6 +580,11 @@ class TestTheOverlayCarriesIt(unittest.TestCase):
         record = self.conversion.files["1/definition-1.1__key__ExampleLib.GlueData.json"]
         self.assertEqual(record["subject"][0]["title"], "Definition 1.1 (Gluing data)")
 
+    def test_a_part_s_card_shows_its_item_s_title_too(self):
+        """A part is a part OF the item, so the printed label repeats its title."""
+        record = self.conversion.files["1/theorem-1.2-a__key__ExampleLib.glue_theorem.json"]
+        self.assertEqual(record["subject"][0]["title"], "Theorem 1.2(a) (The glue theorem)")
+
     def test_the_export_record_names_the_checkout_and_the_library(self):
         record = overlay_export._export_record(                  # noqa: SLF001 - its own test
             self.doc, {"counts": self.report.counts}, self.fixture.head[:12],
@@ -532,6 +593,13 @@ class TestTheOverlayCarriesIt(unittest.TestCase):
                                   "source_id": doc.JOB,
                                   "lean": {"repo": "example.org/lean-libs/ExampleLib",
                                            "commit": doc.COMMIT}})
+
+    def test_a_report_that_names_no_commit_is_refused_rather_than_recording_the_library_s(self):
+        """`overlay.export` sets `report = {}` for a report it could not read."""
+        with self.assertRaises(CfError) as caught:
+            overlay_export._export_record(                       # noqa: SLF001 - its own test
+                self.doc, {}, self.fixture.head[:12], "informal-markers", doc.JOB)
+        self.assertIn("does not name the commit it read", caught.exception.message)
 
     def test_a_convention_whose_companion_is_the_checkout_records_what_it_always_did(self):
         document = {"companion": {"repo": "git.example.invalid/owner/notes", "commit": "a" * 40}}

@@ -28,7 +28,10 @@ annotation per box:
 
 Nothing is written when an input disagrees with another: the markers must be
 of this PDF and of this `informal/`, every declaration must be one
-`declarations.json` holds, and every box must fit its page.
+`declarations.json` holds, every key declaration must stand at the keyword
+line it gives in the source under ``--library-src`` (the item table's own
+check, since nothing else pins that directory to the library's commit), and
+every box must fit its page.
 """
 from __future__ import annotations
 
@@ -60,9 +63,11 @@ SITE = "other"
 PROVENANCE_ID = "prov-informalize"
 TOOL_NAME = "cf informalize"
 #: The coordinate space of a `markers.json` box: fractions of the displayed page,
-#: from its top left (section 5.6).
+#: from its top left (section 5.6).  The box is the MediaBox: `extract_markers.py`
+#: holds the page size against the `.aux`'s `\pdfpagewidth` and `\pdfpageheight`,
+#: TeX's paper size, and the proof sheets render with `pdftoppm` without `-cropbox`.
 COORDINATE_SPACE = {"origin": "top_left", "units": "normalized", "x_axis": "right",
-                    "y_axis": "down", "page_box": "CropBox"}
+                    "y_axis": "down", "page_box": "MediaBox"}
 #: A box's coverage class: a key link states the whole of it, and a box whose
 #: `\leanref`s are all helpers states none of it (invariant I5).
 COVERAGE = "formalized"
@@ -103,6 +108,8 @@ class _Export:
         self.locations: list[dict] = []
         self.links: list[dict] = []
         self.indexed: dict[str, dict] = {}
+        self.keyword_checked: set[str] = set()
+        self.source_tree = None
 
     # -- the inputs -----------------------------------------------------------------
     def read_inputs(self) -> None:
@@ -113,6 +120,7 @@ class _Export:
         from informalize import runtime as informalize_runtime
 
         self.fc = informalize_runtime.fccommon()
+        self.fcitems = informalize_runtime.fcitems()
         informal = self.repo / INFORMAL
         for rel in INPUTS:
             if not (informal / rel).is_file():
@@ -265,12 +273,12 @@ class _Export:
             try:
                 self.indexed[rel] = leansnippets.index_text(self.read_source(rel))
             except leansnippets.SnippetError as exc:
-                raise ExportError(f"{rel}: {exc}",
+                # not `{exc}`: that reader was written for the attribution table's ledger,
+                # and this convention reads none
+                raise ExportError(f"{INFORMAL}/declarations.json names {rel}, which "
+                                  f"--library-src does not hold as a readable file",
                                   hint="--library-src is the library's source at the commit, "
                                        "as `cf informalize fetch-library` unpacks it") from exc
-            except OSError as exc:
-                self.report.problem(f"{rel} cannot be read, so its declarations have no snippet: {exc}")
-                self.indexed[rel] = {}
         found = self.indexed[rel].get(record["id"])
         if found is None:
             self.report.counts.setdefault("snippets_unlocated", []).append(record["id"])
@@ -279,10 +287,35 @@ class _Export:
         self.snippets[record["id"]] = {"id": f"snippet:{record['id']}",
                                        "declaration": record["id"], "text": text, "line": line}
         if line != record["line"]:
+            where = f"{record['id']}: {line} and {record['line']}"
+            self.report.counts.setdefault("snippets_line_differs", []).append(where)
             self.report.bend("snippet.line_differs", 1,
                              "the line the snippet was cut at is not the keyword line "
                              "declarations.json gives (the scan reads the source, the probe read "
-                             "the build)", [f"{record['id']}: {line} and {record['line']}"])
+                             "the build)", [where])
+
+    def check_keyword_line(self, name: str, where: str) -> None:
+        """A key declaration's keyword line in `--library-src`, by the item table's own rule.
+
+        `cf informalize check-items` and the gate hold every key declaration to
+        :func:`fcitems.keyword_problem` against the library at the commit
+        `informalize.json` names; this command is pointed at a bare directory,
+        which nothing pins to that commit, so it asks the same question again
+        rather than quoting bytes from another one.  A helper is exempt here as
+        it is there: one may be a declaration a command such as `@[simps]`
+        generated, whose line is the generating declaration's.
+        """
+        row = self.decls_in[name]
+        if self.source_tree is None or name in self.keyword_checked \
+                or row.get("kind") not in self.fcitems.KEYWORDS:
+            return
+        self.keyword_checked.add(name)
+        problem = self.fcitems.keyword_problem(row, self.source_tree)
+        if problem:
+            raise ExportError(f"{where}: {problem}",
+                              hint="--library-src must be the library's source at "
+                                   f"{self.library_commit[:12]}, the commit informalize.json "
+                                   "names; `cf informalize fetch-library` unpacks it")
 
     def read_source(self, rel: str) -> str:
         if self._read is None:
@@ -331,8 +364,13 @@ class _Export:
                   "section": str(item.get("section") or "")}
         if letter:
             record["sub"] = letter
-        elif item.get("title"):
-            record["title"] = item["title"]
+        title = item.get("title")
+        if common.has_url(title):
+            self.report.lose("item.title", 1,
+                             "a title holding a URL would fail the format's `external-urls` "
+                             "lint, so the item carries none", [f"{where}: {title}"])
+        elif title:
+            record["title"] = title
         links = self.link_records(entry, item, rid, letter, where)
         if any(link["role"] == "key" for link in links):
             record["coverage"] = COVERAGE
@@ -368,6 +406,8 @@ class _Export:
                 self.report.bend("link.role_not_in_the_table", 1,
                                  "a `\\leanref` the item's table does not list is linked as a "
                                  "helper, with no relation", [f"{where}: {name}"])
+            if role == "key":
+                self.check_keyword_line(name, where)
             link = {"id": f"{rid}/{role}/{name}", "item": rid, "declaration": decl["id"],
                     "role": role, "provenance": PROVENANCE_ID}
             token = RELATION_TOKENS.get(given.get("relation")) if given else None
@@ -435,6 +475,7 @@ class _Export:
 
     def run(self) -> dict:
         self._read = leansnippets.reader(self.library_src) if self.library_src else None
+        self.source_tree = self.fcitems.SourceTree(self.library_src) if self.library_src else None
         companion = self.companion()
         self.check_markers()
         source = self.source()
@@ -475,6 +516,7 @@ class _Export:
         counts["source_commit"] = self.source_commit
         counts["library"] = {"repo": self.repo_id, "commit": self.library_commit}
         counts.setdefault("snippets_unlocated", [])
+        counts.setdefault("snippets_line_differs", [])
 
 
 def export(checkout: Path, commit: str, *, pdf: Path, pdf_url: str, library_src: Path | None,

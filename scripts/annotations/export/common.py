@@ -32,6 +32,9 @@ docs/proposals/pdf-to-companion.md section 5.4.
   keys it owns is present (invariant I14), at the version the vendored package
   knows.  A source's ``role`` is core (1.0.0rc1 and later), so a document whose only
   profile-shaped key is ``role`` declares nothing.
+* :func:`report_warnings` is what a successful export's counts say that the
+  user must see anyway: an input nothing read, a snippet not located, and a
+  snippet cut at a line the document does not give for its declaration.
 * :func:`has_url` is the exporters' own guard for the format's ``external-urls``
   lint (``L1``): a note, a title or a raw label that holds a URL is dropped and
   reported, so the documents pass the lint the viewer's deployment relies on.
@@ -280,6 +283,11 @@ def report_warnings(counts: dict) -> list[str]:
         out.append(f"no snippet for {len(unlocated)} of the ids it links (not in the Lean file the "
                    f"document names for them): {', '.join(unlocated[:5])}"
                    + (", …" if len(unlocated) > 5 else ""))
+    differs = counts.get("snippets_line_differs") or []
+    if differs:
+        out.append(f"{len(differs)} snippet(s) were cut at a line the document does not give for "
+                   f"the declaration, so the source read may not be the pinned one: "
+                   + ", ".join(differs[:5]) + (", …" if len(differs) > 5 else ""))
     return out
 
 

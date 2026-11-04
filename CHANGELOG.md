@@ -49,15 +49,20 @@ release has something to say.
   Literature Links annotations. It reads the output repository at a pinned commit -- the
   four files `informal/informalize.json`, `items.json`, `declarations.json` and
   `markers.json` -- the canonical PDF those markers were measured on and the library's
-  source for the snippets, and refuses a PDF with another sha256 or an `informal/` that
-  changed since the markers' `source_commit`. The document's `companion` is the **library**
+  source for the snippets, and refuses a PDF with another sha256, an `informal/` that
+  changed since the markers' `source_commit`, or a `--library-src` that does not hold a key
+  declaration at the keyword line `declarations.json` gives (the item table's own check,
+  since nothing else pins that directory to the library's commit). The document's
+  `companion` is the **library**
   at its own commit, since every Lean end is made from it: one item per part and per item
   without parts (`ids.item_label_id`, one location per box), one link per `\leanref` the
   build recorded there with the role and relation `items.json` gives it, a snippet cut by
   `adapters.leansnippets` and a destination at the declaration's keyword line on the
   library's git host. Two changes in `scripts/overlay/` come with it: `overlay.export`
-  records `export.commit` as the checkout's HEAD and, for a document whose companion is
-  another repository, `export.lean` `{repo, commit}`; and `shards.section_of` puts an item
+  records `export.commit` as the checkout's HEAD and, for a convention whose companion is
+  another repository, `export.lean` `{repo, commit}` -- which of the two a convention is
+  decides that, so an export of the second kind whose report does not name the commit it
+  read is refused rather than recording the library's; and `shards.section_of` puts an item
   whose `section` is one number into that folder, where it went to `other/`. `cf informalize
   overlay`, which runs the export and writes the site, is the rest of component 7 and is
   not implemented yet: until then the overlay's own `init`, `export`, `sync` and `check` are
