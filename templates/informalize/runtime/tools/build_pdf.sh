@@ -19,7 +19,9 @@
 # and when it exists, is not empty and holds no build-only.txt or
 # build-receipt.json of an earlier build.  A second build into an OUTDIR that
 # a build is still using is refused too: OUTDIR/.build-lock is held while the
-# copy and latexmk run.
+# copy and latexmk run.  latexmk runs in a process group of its own, and INT or
+# TERM sent to this script stops it and its pdflatex and removes the lock, so a
+# caller's time limit stops a section that loops.
 #
 # The marker package is this script's own: the fcmarkers.sty beside tools/ is
 # copied to OUTDIR/runtime/, which comes first on TEXINPUTS.  A gate that
@@ -32,7 +34,9 @@
 # with -norc (no latexmkrc is read), -no-shell-escape and -recorder, and with
 # openin_any=p and openout_any=p, so the source may not name an absolute path,
 # a parent directory or a dot file.  A symbolic link anywhere in informal/ is
-# refused.
+# refused, and so is a build that read a file of OUTDIR outside src/ and
+# runtime/ other than the job's own .aux, .out or .toc, or wrote any file but
+# the job's own: TeX reads a file of OUTDIR before it searches TEXINPUTS.
 #
 #   --only 2,3          typeset sections 2 and 3 only; the others are skipped
 #                       but counted, so no number changes, and references into
@@ -46,8 +50,9 @@
 # (the PDF's sha256 and size, the pdfTeX and latexmk versions and the sha256 of
 # every file TeX read), and prints the PDF's sha256 last.  Exit status: 0 built,
 # 1 LaTeX failed (its error messages are printed, without the source lines TeX
-# shows around them), 2 a usage or configuration error, 3 a program or a TeX
-# file is missing.
+# shows around them) or the build read or wrote a file it may not, 2 a usage or
+# configuration error, 3 a program or a TeX file is missing, 130 or 143 stopped
+# by INT or TERM.
 set -eu
 
 me=build_pdf.sh
@@ -176,10 +181,28 @@ if [ -n "$only" ]; then
   pretex="$pretex\\def\\FCOnly{$only}"
 fi
 
+# latexmk runs in the background, in a process group of its own, because a trap
+# waits for a foreground command to end: INT or TERM stops latexmk and its
+# pdflatex at once (with TERM, since a background job ignores INT), even in a
+# section that loops.
 cd -- "$outdir/src"
-if ! latexmk -norc -pdf -recorder -no-shell-escape -interaction=nonstopmode \
-    -halt-on-error -file-line-error -jobname="$job" -outdir="$outdir" \
-    -auxdir="$outdir" "-usepretex=$pretex" "$main" >"$outdir/latexmk.out" 2>&1; then
+python3 -c 'import os, sys; os.setpgid(0, 0); os.execvp(sys.argv[1], sys.argv[1:])' \
+  latexmk -norc -pdf -recorder -no-shell-escape -interaction=nonstopmode \
+  -halt-on-error -file-line-error -jobname="$job" -outdir="$outdir" \
+  -auxdir="$outdir" "-usepretex=$pretex" "$main" >"$outdir/latexmk.out" 2>&1 &
+pid=$!
+stop() {
+  kill -s TERM -- "-$pid" 2>/dev/null || kill -s TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  exit "$1"
+}
+trap 'stop 130' INT
+trap 'stop 143' TERM
+status=0
+wait "$pid" || status=$?
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [ "$status" != 0 ]; then
   echo "$me: LaTeX failed; see $outdir/$job.log" >&2
   grep -E '^[^ ]+:[0-9]+: |^! ' "$outdir/$job.log" 2>/dev/null | head -n 20 >&2 || true
   exit 1
@@ -188,7 +211,9 @@ fi
 
 set -- receipt "$outdir" --only "$only"
 [ -z "$commit" ] || set -- "$@" --source-commit "$commit"
-python3 "$tools/fccommon.py" "$@" || exit 2
+status=0
+python3 "$tools/fccommon.py" "$@" || status=$?
+[ "$status" = 0 ] || exit "$status"
 
 if command -v sha256sum >/dev/null 2>&1; then
   sha256sum "$outdir/$job.pdf"

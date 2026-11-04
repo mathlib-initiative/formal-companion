@@ -24,7 +24,8 @@ The two commands, for build_pdf.sh:
         needs, one per line, after checking informalize.json; exits 2 on a bad file
     python3 fccommon.py receipt <outdir> [--only N,M] [--source-commit SHA]
         writes OUTDIR/build-receipt.json, with the sections the .aux records as typeset;
-        exits 2 when a section --only names was not typeset
+        exits 2 when a section --only names was not typeset, and 1 when the build read or
+        wrote a file of OUTDIR it may not (`recorded_inputs`)
 
 Standard library only, and no import of a sibling. Apache License 2.0.
 """
@@ -74,7 +75,6 @@ REFERENCE_SOURCES = ("docstring", "module docstring", "inferred", "none")
 ROLES = ("key", "helper")
 
 ITEM_ID = re.compile(r"\A[1-9][0-9]*\.[1-9][0-9]*\Z")
-PART_LETTER = re.compile(r"\A[a-z]\Z")
 _JOB = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 _MAIN = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.tex\Z")
 _TEX_FILE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
@@ -86,6 +86,10 @@ _HYP_KEY = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9-]{0,39}\Z")
 
 class ToolError(Exception):
     """A problem a tool reports in one line and exits 2 on: missing input, bad config."""
+
+
+class BuildRefused(ToolError):
+    """A build that read or wrote a file of OUTDIR it may not; the receipt command exits 1."""
 
 
 # ---------------------------------------------------------------------------
@@ -157,11 +161,6 @@ def tex_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def item_sort_key(item_id: str) -> tuple[int, int]:
-    section, _, n = item_id.partition(".")
-    return int(section), int(n)
-
-
 # ---------------------------------------------------------------------------
 # informalize.json
 
@@ -174,7 +173,6 @@ class Config:
     source_date_epoch: int | None
     boxes: dict[str, float]
     tex_packages: list[str]
-    raw: dict = field(default_factory=dict)
 
 
 def load_config(informal: Path) -> Config:
@@ -206,7 +204,7 @@ def load_config(informal: Path) -> Config:
     if not isinstance(packages, list) or not all(
             isinstance(p, str) and _TEX_FILE.match(p) for p in packages):
         raise ToolError("informalize.json: tex_packages is not a list of TeX file names")
-    return Config(job, main, epoch, boxes, list(packages), data)
+    return Config(job, main, epoch, boxes, list(packages))
 
 
 # ---------------------------------------------------------------------------
@@ -238,10 +236,6 @@ class Build:
     def receipt(self) -> dict:
         self.need(self.receipt_path)
         return read_json(self.receipt_path, "build-receipt.json")
-
-    def built_sections(self) -> list[str]:
-        """The sections the build typeset, as the receipt records them from the .aux."""
-        return list(self.receipt().get("sections") or [])
 
 
 # ---------------------------------------------------------------------------
@@ -296,9 +290,7 @@ class Aux:
     hyps: list[dict] = field(default_factory=list)
     hypdefs: list[dict] = field(default_factory=list)
     refs: list[dict] = field(default_factory=list)
-    marks: dict[str, str] = field(default_factory=dict)    # end marker -> h | v
     positions: dict[str, dict[str, int]] = field(default_factory=dict)
-    labels: dict[str, str] = field(default_factory=dict)   # item label -> printed number
 
     def parts_of(self, item_id: str) -> list[str]:
         return [p["part"] for p in self.parts if p["id"] == item_id]
@@ -313,8 +305,8 @@ class Aux:
 
 RECORDS = {
     "fc@auxgeometry": 1, "fc@auxsection": 4, "fc@auxitem": 4, "fc@auxpart": 2,
-    "fc@auxleanref": 3, "fc@auxhyp": 3, "fc@auxhypdef": 2, "fc@auxref": 4, "fc@auxmark": 2,
-    "zref@newlabel": 2, "newlabel": 2,
+    "fc@auxleanref": 3, "fc@auxhyp": 3, "fc@auxhypdef": 2, "fc@auxref": 4,
+    "zref@newlabel": 2,
 }
 _CMD = re.compile(r"\\(" + "|".join(re.escape(k) for k in RECORDS) + r")(?![A-Za-z@])")
 
@@ -350,18 +342,11 @@ def parse_aux(text: str) -> Aux:
         elif name == "fc@auxref":
             aux.refs.append({"id": g[0], "part": g[1], "number": tex_text(g[2]),
                              "star": g[3] == "*"})
-        elif name == "fc@auxmark":
-            aux.marks[g[0]] = g[1]
         elif name == "zref@newlabel":
             props = dict(re.findall(r"\\(\w+)\{([^{}]*)\}", g[1]))
             if g[0].startswith("fc:"):
                 aux.positions[g[0]] = {k: int(v) for k, v in props.items()
                                        if k in ("posx", "posy", "abspage")}
-        elif name == "newlabel":
-            if g[0].startswith("item:"):
-                first = _groups(g[1], 0, 1)
-                if first:
-                    aux.labels[g[0]] = first[0][0]
     return aux
 
 
@@ -376,7 +361,6 @@ def read_aux(path: Path) -> Aux:
 class Items:
     """items.json: the sections in order, and the items by id with their order and parts."""
 
-    raw: dict
     sections: list[dict]
     by_id: dict[str, dict]
     problems: list[str]
@@ -444,7 +428,7 @@ def load_items(path: Path) -> Items:
         item["decls"] = decls
         item["keys"] = [d for d in decls if d.get("role") == "key"]
         by_id[iid] = item
-    return Items(data, sections, by_id, problems)
+    return Items(sections, by_id, problems)
 
 
 def load_declarations(path: Path) -> dict[str, dict]:
@@ -602,11 +586,6 @@ def type_head(text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def hypothesis_heads(signature: str) -> set[str]:
-    """The head constants of the hypotheses a one-line Lean signature binds."""
-    return {h for h in map(type_head, hypothesis_types(signature)) if h}
-
-
 def hypothesis_matches(row: dict, printed: str) -> bool:
     """Does a row of hypotheses.json name a binder whose type is printed so?  By the type's
     head constant (`binder_head`), or by a regular expression the whole type matches with
@@ -652,35 +631,59 @@ def _version(argv: list[str], cwd: Path) -> str | None:
     return None
 
 
-def recorded_inputs(fls: Path, outdir: Path) -> dict[str, str]:
+#: the job's own files: what a build may write into OUTDIR, and of those what it may read back
+JOB_OUTPUTS = (".aux", ".log", ".out", ".toc", ".pdf")
+JOB_INPUTS = (".aux", ".out", ".toc")
+
+
+def recorded_inputs(fls: Path, outdir: Path, job: str) -> dict[str, str]:
     """``{path: sha256}`` of every file the recorder saw TeX read.
 
     A file of the build directory is named relative to it (`src/main.tex`,
-    `runtime/fcmarkers.sty`) and the build's own intermediate files (.aux, .out) are left
-    out; a file of the TeX installation keeps its absolute path.
+    `runtime/fcmarkers.sty`) and the job's own .aux, .out and .toc are left out; a file of
+    the TeX installation keeps its absolute path.  A build that read any other file of
+    OUTDIR, or wrote any file but the job's own, is refused (BuildRefused): TeX opens a
+    file of its output directory before it searches TEXINPUTS, and a section may \\openout
+    one there, so such a file would replace the runtime's fcmarkers.sty or any package.
     """
     pwd = outdir
     found: dict[str, str] = {}
+    refused: list[str] = []
     for line in fls.read_text(encoding="utf-8", errors="replace").splitlines():
         if line.startswith("PWD "):
             pwd = Path(line[4:].strip())
             continue
-        if not line.startswith("INPUT "):
+        kind, _, name = line.partition(" ")
+        if kind not in ("INPUT", "OUTPUT"):
             continue
-        path = Path(line[6:].strip())
+        path = Path(name.strip())
         if not path.is_absolute():
             path = pwd / path
         path = Path(os.path.normpath(path))
         try:
             rel = path.relative_to(outdir)
         except ValueError:
+            rel = None
+        if kind == "OUTPUT":
+            if rel is None or rel.as_posix() not in {job + s for s in JOB_OUTPUTS}:
+                refused.append(f"wrote {path}")
+            continue
+        if rel is None:
             key = str(path)
-        else:
-            if rel.parts[0] not in ("src", "runtime"):
-                continue
+        elif rel.as_posix() in {job + s for s in JOB_INPUTS}:
+            continue
+        elif rel.parts[:1] in (("src",), ("runtime",)):
             key = rel.as_posix()
+        else:
+            refused.append(f"read {path}")
+            continue
         if key not in found and path.is_file():
             found[key] = sha256_file(path)
+    if refused:
+        raise BuildRefused("the build " + ", ".join(dict.fromkeys(refused)) + "; in OUTDIR "
+                           "a build may read only src/, runtime/ and its own .aux, .out and "
+                           ".toc, and write only its own files (remove any other file there "
+                           "and rebuild with --clean)")
     return dict(sorted(found.items()))
 
 
@@ -709,7 +712,7 @@ def write_receipt(outdir: Path, only: list[str], source_commit: str | None) -> d
         # directory it runs in, and build_pdf.sh runs this command in OUTDIR/src/
         "pdftex": _version(["pdflatex", "--version"], build.outdir),
         "latexmk": _version(["latexmk", "-norc", "-v"], build.outdir),
-        "inputs": recorded_inputs(build.fls, build.outdir),
+        "inputs": recorded_inputs(build.fls, build.outdir, build.config.job),
     }
     write_json(build.receipt_path, receipt)
     return receipt
@@ -747,6 +750,9 @@ def _cli(argv: list[str]) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(_cli(sys.argv[1:]))
+    except BuildRefused as exc:
+        print(f"fccommon: {exc}", file=sys.stderr)
+        sys.exit(1)
     except ToolError as exc:
         print(f"fccommon: {exc}", file=sys.stderr)
         sys.exit(2)

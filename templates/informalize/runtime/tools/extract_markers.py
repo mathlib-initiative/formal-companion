@@ -32,7 +32,9 @@ that, so the boxes of a column line up.  Moreover
     edge goes halfway between;
   * two consecutive parts on a page share one edge, halfway between their ink, unless the
     ink is at least 2 pad_bp + frame_bp apart;
-  * boxes of different items stay frame_bp apart where the ink allows it;
+  * boxes of different items stay frame_bp apart where that leaves CLEAR_BP between each
+    edge and its ink, so that a proof sheet's stroke misses the ink; else they share one
+    edge, halfway between their ink;
   * an item's box encloses the boxes of its parts, and a part edge closer than frame_bp to
     the item's edge is moved onto it (no double lines).
 
@@ -57,6 +59,7 @@ import fccommon as fc  # noqa: E402
 
 XHEIGHT_BP = 4.0    # every line has ink at least this far above its baseline
 SLACK_BP = 3.0      # how far above the text block a page's first line may reach
+CLEAR_BP = 2.0      # ink to an item's edge before frame_bp is kept (3 pixels at 110 dpi)
 
 
 @dataclass(frozen=True)
@@ -294,16 +297,16 @@ def share_edge(a: Span, b: Span, params: Params) -> None:
 
 
 def separate_items(spans: list[Span], params: Params) -> None:
-    """Item spans on one page, top to bottom: keep them frame_bp apart if the ink allows
-    it, and never let them overlap."""
-    frame = params.frame_bp
+    """Item spans on one page, top to bottom: keep them frame_bp apart if the ink leaves
+    CLEAR_BP (at most pad_bp) between each edge and its ink, else give them one edge halfway
+    between their ink; never let them overlap."""
+    frame, clear = params.frame_bp, min(CLEAR_BP, params.pad_bp)
     spans = sorted(spans, key=lambda s: s.ink_top)
     for a, b in zip(spans, spans[1:]):
         if b.top - a.bottom >= frame:
             continue
-        room = b.ink_top - a.ink_bottom
-        if room > frame:
-            pad = min(params.pad_bp, (room - frame) / 2)
+        pad = min(params.pad_bp, (b.ink_top - a.ink_bottom - frame) / 2)
+        if pad >= clear:
             a.bottom, b.top = a.ink_bottom + pad, b.ink_top - pad
         else:
             a.bottom = b.top = (a.ink_bottom + b.ink_top) / 2

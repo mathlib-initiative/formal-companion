@@ -33,10 +33,13 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -104,6 +107,13 @@ class TestTheRuntimeFiles(unittest.TestCase):
         # canonical_pdf.sh is component 6's (section 11)
         self.assertEqual(listed - shipped, {"tools/canonical_pdf.sh"})
         self.assertEqual(shipped - listed, set())
+
+    def test_the_runtime_carries_its_license(self):
+        # Apache-2.0 section 4(a): a copy of the runtime in an output repository, whose own
+        # LICENSE is the text's, carries the license text with it
+        self.assertEqual((RUNTIME / "LICENSE-runtime").read_bytes(),
+                         (SKILL / "LICENSE").read_bytes())
+        self.assertIn("LICENSE-runtime", (RUNTIME / "STYLE.md").read_text(encoding="utf-8"))
 
     def test_the_python_tools_import_only_the_standard_library_and_their_siblings(self):
         siblings = {p.stem for p in TOOLS.glob("*.py")}
@@ -198,7 +208,7 @@ class TestTheRuntimeFiles(unittest.TestCase):
         # the provenance lines name the pilot's files ("ported from the pilot's
         # rrmarkers.sty"), as CLAUDE.md section 3 asks; nothing else of it is left
         pilot = ("rr@", "rr:", "RROnly", "stich", "hypF", "hypEx", "Riemann", "Roch",
-                 "TauCeti", "decls-")
+                 "TauCeti", "decls-", "divisor")
         for root in (RUNTIME, PROJECT):
             for path in sorted(p for p in root.rglob("*") if p.is_file()
                                and "__pycache__" not in p.parts and p.suffix != ".pyc"):
@@ -294,8 +304,7 @@ class TestParsing(unittest.TestCase):
 
     def test_the_aux_records_are_read(self):
         aux = fc.parse_aux(fake_aux() + "\\zref@newlabel{fc:1.1:start}{\\posx{10}\\posy{20}"
-                           "\\abspage{1}}\n\\newlabel{item:1.2:a}{{1.2(a)}{1}}\n"
-                           "\\fc@auxmark{fc:1.1:end}{h}\n\\fc@auxgeometry{textwidth=5,texttop=7}\n")
+                           "\\abspage{1}}\n\\fc@auxgeometry{textwidth=5,texttop=7}\n")
         self.assertEqual([s["number"] for s in aux.sections], ["1", "2"])
         self.assertEqual([i["id"] for i in aux.items], ["1.1", "1.2", "2.1", "2.2", "2.3"])
         self.assertEqual(aux.parts_of("1.2"), ["a", "b"])
@@ -304,8 +313,6 @@ class TestParsing(unittest.TestCase):
                                        "star": True})
         self.assertEqual(aux.hypdefs, [{"key": "open", "macro": "\\hypOpen"}])
         self.assertEqual(aux.positions["fc:1.1:start"], {"posx": 10, "posy": 20, "abspage": 1})
-        self.assertEqual(aux.labels["item:1.2:a"], "1.2(a)")
-        self.assertEqual(aux.marks, {"fc:1.1:end": "h"})
         self.assertEqual(aux.geometry, {"textwidth": 5, "texttop": 7})
 
     def test_a_title_is_read_in_the_spelling_a_person_types(self):
@@ -317,7 +324,8 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(aux.items[0]["title"], "ét\\'e $\\pi_1$")
 
     def test_hypotheses_are_found_as_binders_and_as_arrows(self):
-        heads = fc.hypothesis_heads
+        def heads(signature: str) -> set[str]:
+            return {h for h in map(fc.type_head, fc.hypothesis_types(signature)) if h}
         self.assertIn("IsOpen", heads("∀ {X : Type} (U : Set X), IsOpen U → IsClosed U → P U"))
         self.assertIn("IsClosed", heads("∀ {X : Type} (U : Set X), IsOpen U → IsClosed U → P U"))
         self.assertNotIn("P", heads("∀ {X : Type} (U : Set X), IsOpen U → IsClosed U → P U"))
@@ -379,6 +387,37 @@ class TestParsing(unittest.TestCase):
                     200 if (y, x) == (10, 20) else 255 for y in range(h) for x in range(w))
                 ink = extract_markers.PageInk(pgm, (w, h), level)
                 self.assertEqual(ink.rows[10] is not None, caught)
+
+    def test_a_stroke_that_only_touches_ink_is_a_tight_edge(self):
+        # ink in the row just above a box's top edge: the 2-pixel stroke covers it, the edge
+        # itself does not cross it
+        w, h = 40, 40
+        ppm = bytearray(b"P6\n%d %d\n255\n" % (w, h) + b"\xff" * (3 * w * h))
+        offset = len(b"P6\n%d %d\n255\n" % (w, h))
+        ppm[offset + 3 * (9 * w + 20):offset + 3 * (9 * w + 21)] = b"\x00\x00\x00"
+        img = proof_sheets.Image(bytes(ppm), 224)
+        out: dict = {}
+        proof_sheets.check_page(img, [proof_sheets.Box({"id": "1.1", "number": "1.1"},
+                                                       [1, 0.1, 10 / h, 0.8, 0.5], w, h)],
+                                [], 1, out, False, False, 1)
+        self.assertNotIn("ink under a stroke", out)
+        self.assertEqual(out["tight edge"],
+                         ["p.1 1.1: ink near the top edge (1 ink pixels under the stroke)"])
+
+    def test_items_keep_their_frames_apart_only_with_room_to_spare(self):
+        params = extract_markers.Params(288, 224, 3.0, 4.0)
+
+        def pair(gap: float) -> tuple[float, float]:
+            a = extract_markers.Span(1, 100, 110, 80, 500, None, None, bottom=110 + gap / 2)
+            b = extract_markers.Span(1, 110 + gap, 130, 80, 500, None, None, top=110 + gap / 2)
+            extract_markers.separate_items([b, a], params)
+            return a.bottom - a.ink_bottom, b.ink_top - b.top
+        # room for frame_bp and CLEAR_BP of clearance on each side: frames apart
+        self.assertEqual(pair(10.0), (3.0, 3.0))
+        self.assertEqual(pair(8.5), (2.25, 2.25))
+        # less: one edge halfway, never an edge within a pixel of ink, as frame_bp would put it
+        self.assertEqual(pair(5.75), (2.875, 2.875))
+        self.assertEqual(pair(3.0), (1.5, 1.5))
 
 
 class TestRulesWithoutTeX(unittest.TestCase):
@@ -636,6 +675,26 @@ class TestTheRuntimeBuilds(_Built):
                          ["page-01.png", "page-01.svg", "page-02.png", "page-02.svg", "render"])
         self.assertTrue((sheets / "page-01.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_the_proof_sheets_pass_wherever_the_page_breaks(self):
+        # tall and deep lines at every boundary, with the page break slid through them: the
+        # edges where \lineskip leaves 2pt between two lines are tight, never fatal
+        def one(n: int) -> list[str]:
+            repo = self.repo(f"stress-{n}", sections={"02-covers": doc.stress_section_2(n)})
+            outdir = self.root / f"stress-{n}-out"
+            failed = []
+            for argv, script in (([str(outdir)], None), ([str(outdir)], "extract_markers"),
+                                 ([str(outdir), "--strict"], "check_items"),
+                                 ([str(outdir)], "proof_sheets")):
+                out = self.tool(repo, *argv, script=script)
+                if out.returncode:
+                    failed.append(f"{n} sentences, {script or 'build_pdf'}: "
+                                  f"{out.stdout[-600:]}{out.stderr[-600:]}")
+                    break
+            return failed
+        with ThreadPoolExecutor(4) as pool:
+            failed = [f for got in pool.map(one, (2, 7, 13, 18)) for f in got]
+        self.assertEqual(failed, [])
+
     def test_no_tool_leaves_bytecode_in_the_repository(self):
         self.assertEqual(list(self.repo_.rglob("__pycache__")), [])
         self.assertEqual(list(self.a.rglob("__pycache__")), [])
@@ -698,7 +757,9 @@ class TestPartialBuilds(_Built):
     def test_a_section_number_is_a_number_and_must_exist(self):
         repo = self.repo("numbers")
         outdir = self.root / "numbers-out"
-        # the file is 02-covers.tex, and 02 is section 2
+        # sections.tex and --only both write 02, and 02 is section 2
+        (repo / "informal" / "sections.tex").write_text(
+            doc.SECTIONS_TEX.replace("\\fcinputsection{2}", "\\fcinputsection{02}"))
         self.build(repo, outdir, "--only", "02")
         receipt = json.loads((outdir / "build-receipt.json").read_text())
         self.assertEqual((receipt["only"], receipt["sections"]), (["2"], ["2"]))
@@ -776,14 +837,73 @@ class TestTheBuildRefuses(_Built):
         self.assertIn("Section 1 comes after section 2", out.stderr)
 
     def test_the_source_may_not_reach_outside_its_copy(self):
+        # OUTDIR/build-only.txt exists, so only openin_any=p keeps ../ from reading it
         for what, line in (("an absolute path", "\\input{/etc/hosts}"),
-                           ("a parent directory", "\\input{../../informal/main}")):
+                           ("a parent directory", "\\input{../build-only.txt}")):
             with self.subTest(case=what):
                 repo = self.repo(f"reach-{len(os.listdir(self.root))}",
                                  sections={"02-covers": doc.SECTION_2 + line + "\n"})
                 out = self.build(repo, self.root / "reach-out", ok=False)
                 self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
                 self.assertIn("not found", out.stderr)
+
+    def test_a_file_the_source_writes_into_outdir_is_refused(self):
+        # TeX reads a file of OUTDIR before it searches TEXINPUTS: a section that writes a
+        # fcmarkers.sty there would replace the runtime's on the next pass
+        shadow = (doc.SECTION_2 + "\\newwrite\\shadow\\immediate\\openout\\shadow=fcmarkers.sty\n"
+                  "\\immediate\\write\\shadow{\\string\\typeout{SHADOW}"
+                  "\\string\\input{runtime/fcmarkers.sty}}\\immediate\\closeout\\shadow\n"
+                  "\\immediate\\openout\\shadow=runtime/note.tex\\immediate\\closeout\\shadow\n")
+        outdir = self.root / "shadow-out"
+        out = self.build(self.repo("shadow", sections={"02-covers": shadow}), outdir, ok=False)
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        for what in (f"read {outdir.resolve()}/fcmarkers.sty",
+                     f"wrote {outdir.resolve()}/fcmarkers.sty",
+                     f"wrote {outdir.resolve()}/runtime/note.tex"):
+            self.assertIn(what, out.stderr)
+        # and a file left in OUTDIR refuses the next build into it until it is removed
+        repo = self.repo("after-shadow")
+        out = self.build(repo, outdir, ok=False)
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        self.assertIn(f"read {outdir.resolve()}/fcmarkers.sty", out.stderr)
+        (outdir / "fcmarkers.sty").unlink()
+        self.build(repo, outdir, "--clean")
+        receipt = json.loads((outdir / "build-receipt.json").read_text())
+        self.assertEqual([k for k in receipt["inputs"] if "fcmarkers" in k],
+                         ["runtime/fcmarkers.sty"])
+
+    def test_a_stopped_build_stops_tex_and_frees_outdir(self):
+        # a section that loops: TERM must stop latexmk and pdflatex, not wait for them
+        loop = "\\begin{lemma}[id=2.1]{Monotonicity of covers}\\def\\x{\\x}\\x\\end{lemma}\n"
+        repo = self.repo("loop", sections={"02-covers": loop})
+        outdir = (self.root / "loop-out").resolve()
+
+        def tex() -> list[str]:
+            ps = subprocess.run(["ps", "-A", "-o", "pid=,args="], capture_output=True,
+                                text=True).stdout
+            return [line for line in ps.splitlines() if str(outdir) in line
+                    and ("pdflatex" in line or "latexmk" in line)]
+        proc = subprocess.Popen(["bash", "informal/tools/build_pdf.sh", str(outdir)], cwd=repo,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+        try:
+            deadline = time.monotonic() + 60
+            while not any("pdflatex" in line for line in tex()):
+                self.assertLess(time.monotonic(), deadline, "pdflatex never started")
+                time.sleep(0.2)
+            proc.send_signal(signal.SIGTERM)
+            self.assertEqual(proc.wait(timeout=30), 143)
+            deadline = time.monotonic() + 10
+            while tex() and time.monotonic() < deadline:
+                time.sleep(0.2)
+            self.assertEqual(tex(), [])
+            self.assertFalse((outdir / ".build-lock").exists())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for line in tex():
+                os.kill(int(line.split()[0]), signal.SIGKILL)
 
     def test_a_symbolic_link_is_refused(self):
         repo = self.repo("link")

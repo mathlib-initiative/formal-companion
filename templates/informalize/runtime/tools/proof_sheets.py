@@ -23,9 +23,11 @@ extract_markers.py) and writes, for every page NN:
 DIR defaults to OUTDIR/proof-sheets/ and N to 110 (a letter page is then 935 pixels
 wide).  Then it checks, on the rendered pages and on the words of pdftotext -tsv:
 
-  * ink under a stroke: no box edge runs through ink (a pixel whose darkest channel is
-    below ink_level), and no horizontal edge has ink closer than CLEAR_PX pixels on either
-    side (reported separately);
+  * ink under a stroke: no box edge runs through ink: the edge's own pixel row (or
+    column) at res_dpi, the resolution extract_markers.py fits the boxes at, holds no pixel
+    whose darkest channel is below ink_level.  Where the 2-pixel stroke of a top or bottom
+    edge drawn at N dpi touches ink, as it may where \\lineskip leaves two lines 2pt apart,
+    the edge is reported as a tight edge, not fatal;
   * cut words: no word lies across a box edge (between 25% and 75% of its pdftotext box
     inside);
   * stray item text: in an item with parts, no word of the item lies between two parts or
@@ -37,11 +39,12 @@ wide).  Then it checks, on the rendered pages and on the words of pdftotext -tsv
   * frames apart: boxes of different items on a page are at least frame_bp apart (less a
     pixel for rounding), and a part box either shares its top edge with the box above it or
     keeps that distance from it (reported, not fatal);
-  * with --tight, every horizontal edge with ink closer than CLEAR_PX pixels;
+  * with --tight, also every horizontal edge with ink closer than CLEAR_PX pixels to its
+    stroke;
   * with --list-unboxed, every line of text outside all item boxes, for reading.
 
-The exit status is 1 when a stroke runs through ink, a word is cut, item text strays or ink
-lies outside its boxes, and 2 when an input is missing.
+The exit status is 1 when a box edge runs through ink, a word is cut, item text strays or
+ink lies outside its boxes, and 2 when an input is missing.
 
 Standard library only (zlib writes the PNG files).  Apache License 2.0.
 """
@@ -224,7 +227,10 @@ def render(pdf: Path, page: int, dpi: int, tmp: Path, ink_level: int) -> Image:
     stem = tmp / f"p{page}"
     subprocess.run(["pdftoppm", "-r", str(dpi), "-f", str(page), "-l", str(page),
                     "-singlefile", str(pdf), str(stem)], check=True)
-    return Image((tmp / f"p{page}.ppm").read_bytes(), ink_level)
+    ppm = tmp / f"p{page}.ppm"
+    img = Image(ppm.read_bytes(), ink_level)
+    ppm.unlink()
+    return img
 
 
 def words_of(pdf: Path) -> dict[int, list[dict]]:
@@ -284,30 +290,40 @@ def item_bands(aux: fc.Aux, sizes: list[tuple[float, float]]) -> dict[int, dict[
 def check_page(img: Image, boxes: list[Box], words: list[dict], page: int,
                out: dict[str, list[str]], list_unboxed: bool, tight: bool,
                frame_px: int, bands: dict[str, tuple] | None = None,
-               page_h: float | None = None) -> None:
+               page_h: float | None = None, fine: Image | None = None) -> None:
+    """Check one page.  `img` is the page at the sheet's dpi, `fine` the same page at res_dpi
+    (default `img`)."""
     def note(kind: str, msg: str) -> None:
         out.setdefault(kind, []).append(f"p.{page} {msg}")
 
-    # Ink under a stroke, and clearance of horizontal edges.
+    # Ink under a stroke: the edge's own row or column at res_dpi.  Tight edges: the stroke
+    # at the sheet's dpi touches ink, or (--tight) comes within CLEAR_PX pixels of it.
+    fine = fine or img
     for b in boxes:
-        for name, y in (("top", b.y0), ("bottom", b.y1)):
-            hits = sum(1 for yy in (y - 1, y) for x in range(b.x0, b.x1 + 1) if img.ink(x, yy))
+        x0, x1 = math.floor(b.fx * fine.w), math.floor((b.fx + b.fw) * fine.w)
+        y0, y1 = math.floor(b.fy * fine.h), math.floor((b.fy + b.fh) * fine.h)
+        for name, y, stroke in (("top", y0, b.y0), ("bottom", y1, b.y1)):
+            hits = sum(1 for x in range(x0, x1 + 1) if fine.ink(x, y))
             if hits:
-                note("ink under a stroke", f"{b.id}: {name} edge (y={y}px) runs through "
-                                           f"{hits} ink pixels")
+                note("ink under a stroke", f"{b.id}: {name} edge (row {y} at res_dpi) runs "
+                                           f"through {hits} ink pixels")
                 continue
             near = []
+            under = sum(1 for yy in (stroke - 1, stroke) for x in range(b.x0, b.x1 + 1)
+                        if img.ink(x, yy))
+            if under:
+                near.append(f"{under} ink pixels under the stroke")
             for d in range(1, CLEAR_PX + 1 if tight else 1):
-                for side, yy in (("above", y - 1 - d), ("below", y + d)):
+                for side, yy in (("above", stroke - 1 - d), ("below", stroke + d)):
                     if any(img.ink(x, yy) for x in range(b.x0, b.x1 + 1)):
                         near.append(f"{side} at {d}px")
             if near:
                 note("tight edge", f"{b.id}: ink near the {name} edge ({', '.join(near)})")
-        for name, x in (("left", b.x0), ("right", b.x1)):
-            hits = sum(1 for xx in (x - 1, x) for y in range(b.y0, b.y1 + 1) if img.ink(xx, y))
+        for name, x in (("left", x0), ("right", x1)):
+            hits = sum(1 for y in range(y0, y1 + 1) if fine.ink(x, y))
             if hits:
-                note("ink under a stroke", f"{b.id}: {name} edge (x={x}px) runs through "
-                                           f"{hits} ink pixels")
+                note("ink under a stroke", f"{b.id}: {name} edge (column {x} at res_dpi) runs "
+                                           f"through {hits} ink pixels")
 
     items = [b for b in boxes if not b.is_part]
     parts = [b for b in boxes if b.is_part]
@@ -425,6 +441,7 @@ def sheets(build: fc.Build, dest: Path, dpi: int, list_unboxed: bool = False,
     if markers.get("pdf_sha256") != fc.sha256_file(build.pdf):
         raise fc.ToolError(f"{build.markers} is stale; rerun extract_markers.py")
     ink_level = int(build.config.boxes["ink_level"])
+    res_dpi = int(build.config.boxes["res_dpi"])
     frame = frame_px(float(build.config.boxes["frame_bp"]), dpi)
     (dest / "render").mkdir(parents=True, exist_ok=True)
     words = words_of(build.pdf)
@@ -436,11 +453,12 @@ def sheets(build: fc.Build, dest: Path, dpi: int, list_unboxed: bool = False,
         tmp = Path(t)
         for page in range(1, markers["pages"] + 1):
             img = render(build.pdf, page, dpi, tmp, ink_level)
+            fine = img if res_dpi == dpi else render(build.pdf, page, res_dpi, tmp, ink_level)
             boxes = [Box(e, b, img.w, img.h) for e in markers["entries"]
                      for b in e["boxes"] if b[0] == page]
             n_boxes += len(boxes)
             check_page(img, boxes, words.get(page, []), page, findings, list_unboxed, tight,
-                       frame, bands.get(page, {}), sizes[page - 1][1])
+                       frame, bands.get(page, {}), sizes[page - 1][1], fine)
             (dest / "render" / f"page-{page:02d}.png").write_bytes(img.png())
             (dest / f"page-{page:02d}.png").write_bytes(draw(img, boxes, page).png())
             (dest / f"page-{page:02d}.svg").write_text(svg(img, boxes, page), encoding="utf-8")
@@ -461,7 +479,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list-unboxed", action="store_true",
                     help="also list every line of text outside all item boxes")
     ap.add_argument("--tight", action="store_true",
-                    help=f"also list horizontal edges with ink closer than {CLEAR_PX} pixels")
+                    help=f"also list horizontal edges with ink closer than {CLEAR_PX} pixels "
+                         "to their stroke")
     args = ap.parse_args(argv)
     try:
         fc.require_programs("pdftoppm", "pdftotext", "pdfinfo")

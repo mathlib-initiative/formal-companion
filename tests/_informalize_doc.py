@@ -11,7 +11,9 @@ lines the pilot's boxes got wrong are here too: a first line taller than a basel
 (a nested fraction in the head line of 1.1), ink below the last line (an underbrace label
 ending 1.1, a nested denominator ending 2.3), a tilde under a superscript at a part
 boundary (1.2) and stacked accents in a head line (2.3).  The proof sheets must find no
-ink under a stroke and none outside its item's boxes.
+ink under a stroke and none outside its item's boxes.  `stress_section_2` is section 2
+again with tall and deep lines at every item and part boundary, after prose that slides
+its page break.
 """
 from __future__ import annotations
 
@@ -228,6 +230,60 @@ with $\dfrac{1}{\dfrac{2}{3}}$ to spare.
 \leanref{ExampleLib.glue_card}
 \end{corollary}
 """.replace("FILLER", _FILLER)
+
+
+_STRESS = r"""
+FILLER
+
+\begin{lemma}[id=2.1]{Monotonicity of covers}
+Let $U$, $V$ and $W$ be subsets of $X$ with $\dfrac{\dfrac{a}{b}}{\dfrac{c}{d}}$ and
+$\underbrace{U \cap V}_{\text{meet}}$.
+\itempart{a}{%
+  $\overbrace{U \subseteq V}^{\text{inclusion}}$ and $U$ covers $W$, then $V$ covers
+  $\underbrace{W}_{\text{target}}$.
+  \leanref{ExampleLib.cover_mono}}
+\itempart{b}{%
+  $\dfrac{\dfrac{1}{2}}{3}$: the whole space $X$ covers $U$, and
+  \begin{itemize}
+  \item $\tilde{k}^{\tilde{k}}$ is one case;
+  \item $\dfrac{a}{\dfrac{b}{c}}$ is another.
+  \end{itemize}
+  \leanref{ExampleLib.cover_univ}}
+\end{lemma}
+
+\begin{example}[id=2.2]{A long chain}
+$\overbrace{n}^{\text{number}}$ is a natural number, $\dfrac{\dfrac{n}{2}}{3}$.
+\itempart{a}{%
+  The chain $\underbrace{c_n}_{\text{chain}}$ is long, and $\dfrac{1}{\dfrac{2}{c_n}}$.
+  \leanref{ExampleLib.chain_long}}
+\itempart{b}{%
+  $\overbrace{c_{n+1}}^{\text{next}}$ long gives $c_n$ long:
+  \[
+    \dfrac{c_{n+1}}{\dfrac{a}{b}} \Longrightarrow \underbrace{c_n}_{\text{shorter}}.
+  \]
+  \leanref{ExampleLib.chain_short}}
+\end{example}
+
+\begin{corollary}[id=2.3]{Counting glued pieces}
+\fcref{Corollary 4.7}
+$\dfrac{\dfrac{U}{V}}{X}$: let $U$ and $V$ be subsets of $X$ with hull
+$\hat{\hat{\hat{U}}}$, and suppose that \hypOpen.  By \itemref[a]{1.2}, the number of
+pieces satisfies
+\[
+  n(U \cup V) \le n(U) + n(V),
+\]
+with $\dfrac{1}{\dfrac{2}{3}}$ to spare and $\underbrace{n(U)}_{\text{pieces}}$.
+\leanref{ExampleLib.glue_card}
+\end{corollary}
+"""
+
+
+def stress_section_2(n: int) -> str:
+    """Section 2 with a fraction, a brace or a list on both sides of every item and part
+    boundary, where \\lineskip leaves the lines 2pt apart, after `n` sentences of prose."""
+    sentence = ("The chain $c_n$ continues one step further, and each step is a link of the "
+                "chain.")
+    return _STRESS.replace("FILLER", " ".join([sentence] * n))
 
 
 def write_json(path: Path, data) -> None:

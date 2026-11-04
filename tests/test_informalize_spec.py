@@ -552,11 +552,13 @@ class TestTheRuntimeItSpecifies(unittest.TestCase):
                                                               text).group(1)))
         handled = set(re.findall(r"^\s+(--[a-z-]+)\)", build, re.M)) - {"--help"}
         self.assertEqual(listed, handled)
-        check = (self.RUNTIME / "tools" / "check_items.py").read_text(encoding="utf-8")
-        listed = set(re.findall(r"\[(--[a-z-]+)", re.search(r"`tools/check_items\.py ([^`]*)`",
-                                                              text).group(1)))
-        handled = set(re.findall(r'add_argument\("(--[a-z-]+)"', check))
-        self.assertEqual(listed, handled)
+        for tool in ("check_items", "proof_sheets", "extract_markers"):
+            with self.subTest(tool=tool):
+                source = (self.RUNTIME / "tools" / f"{tool}.py").read_text(encoding="utf-8")
+                usage = re.search(rf"`tools/{tool}\.py ([^`]*)`", text).group(1)
+                listed = set(re.findall(r"\[(--[a-z-]+)", usage))
+                handled = set(re.findall(r'add_argument\("(--[a-z-]+)"', source))
+                self.assertEqual(listed, handled)
 
 
 class TestEachPromiseIsOneList(unittest.TestCase):

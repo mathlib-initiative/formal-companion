@@ -5,7 +5,7 @@
 % section 7.2, in the formal-companion skill), ported from the pilot's
 % rrmarkers.sty.  `cf informalize sync` copies it byte for byte into the output
 % repository's informal/ and records its sha256 in GENERATED.json, so it is
-% changed in the skill and never here.  Apache License 2.0.
+% changed in the skill and never here.  Apache License 2.0 (LICENSE-runtime).
 %
 % Interface (STYLE.md says how a drafter uses it):
 %   \begin{theorem}[id=1.2]{Title} ... \end{theorem}
@@ -31,7 +31,8 @@
 %
 % Everything a tool needs is written to the .aux file:
 %   \fc@auxgeometry{key=value,...}         page and text block, in sp
-%   \fc@auxsection{n}{1 or 0}{file}{title} 1 when the section was typeset
+%   \fc@auxsection{n}{1 or 0}{file}{title} 1 when the section was typeset; n as a
+%                                          number (2 for 02)
 %   \fc@auxitem{id}{kind}{section}{title}
 %   \fc@auxkind{id}{Kind}                  read back by \itemref
 %   \fc@auxpart{id}{letter}
@@ -39,7 +40,6 @@
 %   \fc@auxhyp{id}{letter or empty}{key}
 %   \fc@auxhypdef{key}{\macro}
 %   \fc@auxref{id}{letter or empty}{number}{* or empty}
-%   \fc@auxmark{marker}{h or v}            mode in which an end marker sat
 %   \zref@newlabel{fc:<id>:start}{\posx{..}\posy{..}\abspage{..}}, and
 %   fc:<id>:above, :end and :below, and the same four for fc:<id>:<letter>.
 % A start marker sits on the baseline of the first line (in the theorem head
@@ -109,11 +109,9 @@
   \ifhmode
     \fc@savepos{#1:end}%
     \vadjust{\fc@savepos{#1:below}}%
-    \fc@auxwrite{\string\fc@auxmark{#1:end}{h}}%
     \par
   \else
     \fc@savepos{#1:end}%
-    \fc@auxwrite{\string\fc@auxmark{#1:end}{v}}%
   \fi}
 
 % Page and text block geometry, and the hypotheses notation.sty defined,
@@ -142,7 +140,6 @@
 \def\fc@auxhyp#1#2#3{}
 \def\fc@auxhypdef#1#2{}
 \def\fc@auxref#1#2#3#4{}
-\def\fc@auxmark#1#2{}
 \def\fc@auxkind#1#2{\global\@namedef{fc@kind@#1}{#2}}
 
 % ---------------------------------------------------------------------------
@@ -361,12 +358,12 @@
       \ifnum\fc@sec=#1\relax\global\fc@wantedtrue\fi}%
   \fi
   \iffc@wanted
-    \fc@auxwrite{\string\fc@auxsection{#1}{1}{\detokenize{#2}}{\detokenize{#3}}}%
+    \fc@auxwrite{\string\fc@auxsection{\number#1}{1}{\detokenize{#2}}{\detokenize{#3}}}%
     \setcounter{section}{\numexpr#1-1\relax}%
-    \section{#3}\label{sec:#1}%
+    \section{#3}\label{sec:\number#1}%
     \input{sections/#2}%
   \else
-    \fc@auxwrite{\string\fc@auxsection{#1}{0}{\detokenize{#2}}{\detokenize{#3}}}%
+    \fc@auxwrite{\string\fc@auxsection{\number#1}{0}{\detokenize{#2}}{\detokenize{#3}}}%
     \setcounter{section}{#1}%
   \fi}
 

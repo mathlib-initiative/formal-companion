@@ -485,7 +485,8 @@ holds templates that `init` renders once (`main.tex`, `notation.sty`,
 `sections/00-conventions.tex`, `STYLE-project.md`, `README.md`, `.gitignore`); those files
 are the project's afterwards and `sync` never touches them. The license texts that `init`
 writes as `LICENSE`, one per license `text.license` may name, come with component 3
-(section 11).
+(section 11); the runtime's own license, the Apache License 2.0, travels with it as
+`LICENSE-runtime`, whatever license the text has.
 
 | runtime file | ported from the pilot's | what changes |
 |---|---|---|
@@ -495,8 +496,9 @@ writes as `LICENSE`, one per license `text.license` may name, come with componen
 | `tools/canonical_pdf.sh` | the pilot's final-build steps | section 9 |
 | `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json`; a region's first and last line from the above and below markers |
 | `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check |
-| `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py`; ink outside an item's boxes is fatal |
+| `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py`; an edge through ink is judged at `res_dpi`, a stroke touching ink only reported; ink outside an item's boxes is fatal |
 | `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts` |
+| `LICENSE-runtime` | (new) | this repository's `LICENSE`, the Apache License 2.0 the other runtime files are under |
 
 The tools are standard-library Python and POSIX shell, run from the output repository's
 root as `python3 informal/tools/<tool>.py` (or `bash`), and import only their siblings. Each
@@ -525,8 +527,9 @@ tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output re
   labels are `item:<id>` and `item:<id>:<letter>`.
 - `\fcinputsection{<n>}{<file>}{<title>}`, one line per section in `sections.tex`, sets the
   section counter to `<n>`, prints `\section{<title>}` with the label `sec:<n>`, inputs
-  `sections/<file>` and records `\fc@auxsection{<n>}{1}{<file>}{<title>}`; a section file
-  therefore writes no `\section`, and sections out of increasing order are a LaTeX error.
+  `sections/<file>` and records `\fc@auxsection{<n>}{1}{<file>}{<title>}`, `<n>` written as
+  a number in the record and the label (`02` as 2); a section file therefore writes no
+  `\section`, and sections out of increasing order are a LaTeX error.
   With `\FCOnly` (a comma list that `build_pdf.sh --only` defines) a section it does not
   name, compared as numbers, only advances the counter and is recorded with `0`.
 - Positions: zref savepos and abspage labels `fc:<id>[:<letter>]:start`, `:above`, `:end`
@@ -534,9 +537,9 @@ tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output re
   label. The above marker sits on the vertical list before the first line and its interline
   glue (`\vadjust pre`, then `\nobreak`, so it adds no place to break the page). The end
   marker sits on the last baseline in horizontal mode, or after a closing display or list in
-  vertical mode, recorded by `\fc@auxmark{<marker>}{h|v}`; in horizontal mode the below
-  marker follows the last line's box (`\vadjust`). The text block's geometry is written once
-  per run in `\fc@auxgeometry{...}`, as the pilot's.
+  vertical mode; in horizontal mode the below marker follows the last line's box
+  (`\vadjust`). The text block's geometry is written once per run in
+  `\fc@auxgeometry{...}`, as the pilot's.
 - `\lineskiplimit` and `\lineskip` are 2pt, so no box edge between parts crosses ink.
 
 ### 7.3 The tools and their checks
@@ -553,18 +556,27 @@ file, so a section cannot `\input` a file of the host), `SOURCE_DATE_EPOCH` from
 `\pdfsuppressptexinfo=-1` it sets itself, before the main file, through latexmk's
 `-usepretex`). First it runs kpsewhich on every file of `tex_packages` and stops naming the
 missing ones. It refuses an `<outdir>` inside `informal/`, one that is the current directory or
-holds it, and an existing, non-empty one that holds no `build-only.txt` or
-`build-receipt.json` of an earlier build, since every build replaces `<outdir>/src/` and
-`<outdir>/runtime/`; and it holds `<outdir>/.build-lock` while it copies and builds, so a
-second build into the same `<outdir>` is refused. `--only` numbers are read as numbers (`02`
-is section 2). When `--only` differs from the last build's, which a stamp file in
-`<outdir>` records, it deletes the `.aux` and `.fdb_latexmk` files first, as the pilot's does:
-a stale `.fdb_latexmk` let latexmk skip a pass. It writes `<outdir>/<job>.pdf` and
-`<outdir>/build-receipt.json`: the PDF's sha256 (`sha256sum`, else `shasum -a 256`), `--only`,
-the sections the `.aux` records as typeset (a build that did not typeset a section `--only`
+holds it, one whose path holds a colon (it goes on `TEXINPUTS`), and an existing, non-empty
+one that holds no `build-only.txt` or `build-receipt.json` of an earlier build, since every
+build replaces `<outdir>/src/` and `<outdir>/runtime/`; and it holds `<outdir>/.build-lock`
+while it copies and builds, so a second build into the same `<outdir>` is refused. latexmk
+runs in the background in a process group of its own, so INT or TERM sent to the script stops
+latexmk and its pdflatex at once, even in a section that loops, removes the lock and exits
+130 or 143 (a shell runs a trap only once a foreground command ends). `--only` numbers are
+read as numbers (`02` is section 2). When `--only` differs from the last build's, which a
+stamp file in `<outdir>` records, it deletes the `.aux` and `.fdb_latexmk` files first, as the
+pilot's does: a stale `.fdb_latexmk` let latexmk skip a pass. It writes `<outdir>/<job>.pdf` and
+`<outdir>/build-receipt.json`: the PDF's sha256 and size (`fccommon.py receipt` hashes the
+file; the script prints the sha256 last, with `sha256sum`, else `shasum -a 256`), `--only`, the
+sections the `.aux` records as typeset (a build that did not typeset a section `--only`
 names is refused), `--source-commit` (the output repository commit that `informal/` is,
 which `markers.json` carries on), the pdfTeX and latexmk versions (`latexmk -norc -v`, run in
-`<outdir>`), and the sha256 of every input the `.fls` lists.
+`<outdir>`), and the sha256 of every file the `.fls` lists as read but the job's own `.aux`,
+`.out` and `.toc`. TeX opens a file of its output directory before it searches `TEXINPUTS`,
+and `openout_any=p` lets a section `\openout` one there, so a file left in `<outdir>` or
+written by the source would replace `fcmarkers.sty` or any package: a build that read a file
+of `<outdir>` outside `src/` and `runtime/` other than those three, or wrote any file but the
+job's own `.aux`, `.log`, `.out`, `.toc` and `.pdf`, is refused (exit 1).
 
 `tools/check_items.py <outdir> [--section N] [--items IDS] [--strict] [--aux-only] [--conventions] [--declarations FILE]`
 (`--declarations`: another `declarations.json` than the built copy's, the gate's) fails unless:
@@ -585,8 +597,8 @@ which `markers.json` carries on), the pdfTeX and latexmk versions (`latexmk -nor
    `\fcdefhyp`;
 6. `\fcref` matches the item's or the part's `reference.number`, where it is given, with a
    star exactly when its `source` is `inferred`, once, and appears nowhere else;
-7. the log has no multiply defined label (warning: an undefined reference, which in a
-   `--only` build may point into a section not built);
+7. the log has no multiply defined label (warning: an undefined reference or citation; a
+   reference into a section a `--only` build did not typeset is not one);
 
 and, without `--aux-only` (these need poppler):
 
@@ -604,10 +616,15 @@ only, since every check on items would fail there. `tools/extract_markers.py <ou
 does, but finds a region's first line from its above marker and its last from its below
 marker, so a line taller than a baselineskip and ink below the last baseline stay in the box;
 it states its assumptions: one column, boxes span the text block.
-`tools/proof_sheets.py <outdir> --dest <dir> [--dpi 110]` draws the boxes over each page
-(PNG through zlib, and SVG) and exits 1 on ink under a stroke, a cut word, stray item text,
-or ink between an item's above and below markers that lies outside its boxes; frames closer
-than `frame_bp` are reported, not fatal.
+`tools/proof_sheets.py <outdir> [--dest DIR] [--dpi N] [--tight] [--list-unboxed]` draws the
+boxes over each page (PNG through zlib, and SVG) into `DIR` (default
+`<outdir>/proof-sheets/`) at `N` dpi (default 110) and exits 1 on ink under a stroke (a box
+edge whose own pixel row or column holds ink at `res_dpi`, the resolution the boxes are
+fitted at), a cut word, stray item text, or ink between an item's above and below markers
+that lies outside its boxes. A 2-pixel stroke at `N` dpi that touches ink (a tight edge,
+which `\lineskip` allows between two parts) and frames closer than `frame_bp` are reported,
+not fatal, and so is what `--tight` (ink within 2 pixels of a stroke) and `--list-unboxed`
+(the lines of text outside every item box) add.
 
 The runtime's tests (component 2, `tests/test_informalize_runtime.py`) build a two-section
 document of five items and six parts in a temporary directory, with the lines the pilot's
@@ -796,10 +813,18 @@ standard library and its sibling files. Rules, each refusal naming its number:
    it with the gate's own copy of the runtime's `build_pdf.sh`, which builds with the
    `fcmarkers.sty` beside its `tools/`, whatever `informal/` holds (`-norc`,
    `-no-shell-escape`, `openin_any=p`, section 7.3), a 10-minute limit: `--only <section>`
-   for draft and judge, the whole document for conventions and edit. A LaTeX error, an
-   undefined control sequence or an `fcmarkers` error refuses. The gate prints the error
-   messages alone, never the input lines TeX shows around them, since its output reaches the
-   reviewer and the reworking worker.
+   for draft and judge, the whole document for conventions and edit. The gate starts the
+   build in a session of its own (`start_new_session=True`) and at the limit sends SIGTERM
+   to that process group, which `build_pdf.sh` passes on to latexmk's own group before it
+   removes its lock; SIGKILL follows only if the script has not ended within a few seconds.
+   A LaTeX error, an undefined control sequence, an `fcmarkers` error, or a build that read
+   or wrote a file of its build directory it may not (section 7.3) refuses. The `.aux`
+   records are only as good as the source: a section can forge any of them with
+   `\makeatletter\immediate\write\@auxout{...}`, so component 5a adds a lint of the section
+   files to this rule (no `\makeatletter`, control sequence holding `@`, `\write`,
+   `\openout`, `\def`, `\csname` or `\input`). The gate prints the error messages alone,
+   never the input lines TeX shows around them, since its output reaches the reviewer and the
+   reworking worker.
 3. **Aux checks**: the gate's `check_items.py --aux-only --strict` on that build, for the
    section or the whole document, with `--conventions` in the conventions phase (no LaTeX or
    `fcmarkers` error, no multiply defined label, a `\fcdefhyp` for every key of
@@ -971,7 +996,13 @@ network, and no Claude attribution anywhere.
    `docs/design/stage_map.md`; a short section of `POLICY.md` (the reference work's numbers
    only, the library's docstrings only under its license, the PDF under `text.license`); the
    `informalize/<id>/` tree in `docs/workspace.md`'s layout; and this file on `CLAUDE.md`
-   section 2's `docs/proposals/` line.
+   section 2's `docs/proposals/` line. `CLAUDE.md` section 4 then records the runtime's
+   copies of the item kinds, roles, reference sources and item id grammar
+   (`templates/informalize/runtime/tools/fccommon.py`, which runs where `cflib` cannot be
+   imported) as the second documented copy of the vocabulary and of an item grammar, beside
+   `gate/verify_findings.py`'s `finding_id`, and this commit makes
+   `tests/test_informalize_runtime.py`'s lockstep test unconditional, the id grammar `cflib`
+   uses for `approve` and `check-items` included.
 4. The Lean side: `build-command | fetch-library | scope`, `library_host.sh`, the
    `LIBRARY_CACHE` option. Tests on fake index, deps and host outputs.
 5. The fleet: (a) `verify_informal.py`, `cf plan-informalize`, the prompts, the tend config,

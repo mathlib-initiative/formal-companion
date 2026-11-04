@@ -21,4 +21,6 @@ bash informal/tools/build_pdf.sh build/pdf
 Two builds on one TeX installation give the same bytes; the published PDF is the one whose
 sha256 the annotations pin.
 
-The text and the PDF are released under {{ license_name }} (`LICENSE`).
+The text and the PDF are released under {{ license_name }} (`LICENSE`). The runtime that
+formal-companion copies into `informal/` (`fcmarkers.sty`, `STYLE.md`, `tools/`) is under
+the Apache License 2.0 (`informal/LICENSE-runtime`).

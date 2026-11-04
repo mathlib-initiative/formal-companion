@@ -19,6 +19,7 @@ from this checkout could leave here; the tools themselves write no bytecode.
 | `tools/check_items.py` | the build against `items.json`, `declarations.json` and `hypotheses.json` (rules 1 to 10) |
 | `tools/proof_sheets.py` | the boxes drawn over the pages, and the checks a person would make by eye |
 | `tools/fccommon.py` | what the three Python tools share, and the two commands `build_pdf.sh` runs |
+| `LICENSE-runtime` | the Apache License 2.0, which the files above are under; a copy of this repository's `LICENSE`, so that the output repository carries it whatever license its text has |
 
 The tools are standard-library Python 3.11 and POSIX shell, run from the output
 repository's root (`python3 informal/tools/<tool>.py`, `bash informal/tools/build_pdf.sh`),
