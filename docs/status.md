@@ -122,6 +122,41 @@ reviews rejected in each run (commit `0514feb`). Inventory pilots ran over 83 ar
 host, and none shows frozen bench gold. Milestones L-M4 to L-M6 are open, and no coverage
 figure for Wikipedia appears in this repository.
 
+## Informalization
+
+**Built.** Components 1 to 5a of `docs/proposals/informalize.md` section 11, the
+`cf run` and `cf harvest` half of 5b, and the exporter of 7: the specification with
+`tests/test_informalize_spec.py`, which holds it to the code it names; the LaTeX
+runtime and the project templates
+(`templates/informalize/`); `cf informalize init | sync | status | build-command |
+fetch-library | scope | check-items | approve | reference-checklist`; `cf
+plan-informalize` with the out-of-tree gate `scripts/gate/verify_informal.py`, the
+phase prompts and the tend config; and `cf export informal-markers`, which turns a
+canonical PDF's boxes into one annotation document.
+
+**Tested on synthetic inputs only.** `tests/e2e/informalize_synthetic/driver.py` takes
+an informalize id over a fake library through every phase: the planner, contributions
+written in worktrees of an entrypoint made as `cf run` makes one, the staged gate run as
+a run host runs it (a copy of `gate/`, `python3 -I`, a bare environment) admitting good
+contributions and refusing bad ones under the rule they break, a task ended at the
+attempt cap, and `cf harvest` between phases. `tests/test_informalize_runtime.py` builds
+a two-section document of five items and six parts with pdflatex and checks the boxes
+against the lines the pilot's got wrong. Those builds, and the fleet phases that build,
+skip without TeX; CI's `informalize-tex` job runs them with `CF_REQUIRE_TEX=1`.
+
+**Not run.** No Lean library has been built or probed for this mode, no phase has run
+under `tend` on a host, no item table or canonical PDF of a real theorem exists, and no
+informalization companion has been published. No cost figure for a phase is recorded
+here: the pilot that did this once by hand and with ad-hoc workflows used 69 agents and
+about 11.3M tokens for 96 items and logged no dollars, which the specification's
+section 12 says nothing reliable follows from.
+
+**Not implemented.** `cf informalize apply` and the spend watchdog of component 5b; the
+canonical PDF of I6 (`pdf-command`, `fetch-pdf`, `canonical_pdf.sh`); and the overlay
+stage of I7 (`cf informalize overlay`, `check-site`, the site and workflow templates).
+Until `apply` exists, the files a phase wrote are copied out of `corpus/<run>/tree/` by
+hand, which is what the synthetic driver does.
+
 ## PDF-to-companion pipeline
 
 `docs/proposals/pdf-to-companion.md` designs ten stages, and the deterministic parts of
@@ -131,7 +166,8 @@ and stages S2 to S9 are not. Measured passage recall on Tao's chapter 1 is 19 of
 ## Never exercised end to end
 
 Locate's campaign sequencer and spend watchdog on a host, the benchmark against real
-gold, and the `tend-agent` bridge (`scripts/run/bridge-tend-agent.sh`), which is a stub
+gold, the informalize mode (nothing of it has run outside the synthetic driver), and
+the `tend-agent` bridge (`scripts/run/bridge-tend-agent.sh`), which is a stub
 whose own TODO says its CLI contract has not been exercised. S2 to S9 are not built.
 
 ## Older statements

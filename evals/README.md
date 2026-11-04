@@ -1,6 +1,6 @@
 # Trigger evals
 
-`trigger.json` is ten prompts, five that should make this skill fire and five
+`trigger.json` is eleven prompts, six that should make this skill fire and five
 that should not. They are **data**, not a test: running them calls a model, and
 nothing in `tests/` ever does. `tests/test_rf_docs.py` only checks the file's
 shape, so a malformed eval set fails fast without costing anything.
@@ -49,7 +49,7 @@ python3 "$SC/scripts/run_eval.py" --eval-set evals/trigger.json --skill-path . \
 `$SC/scripts/improve_description.py` does the same thing as a search, which is
 the honest way to settle the one open question below.
 
-## The open question
+## Two open questions
 
 The shipped description ends with a negative clause — "not a proof checker, not
 a Lean linter and not a fixer". That clause is two-sided: the skill-creator
@@ -62,6 +62,14 @@ train/test split of the queries, and keep whichever scores better on the ones
 you held out. Record the result in `CHANGELOG.md`, because "we thought it read
 better" is exactly the kind of unmeasured claim this repo exists to catch in
 other people's work.
+
+The second is the **informalize clause**, added with that mode
+(`docs/proposals/informalize.md`): the description gained a sentence about
+writing the informal text of a Lean theorem, and lost the item-kind list and
+"reads repositories" to stay under the router's 1,024 characters. Nobody has
+run the set with and without it, so whether the new clause earns its room — and
+whether `write-up-from-lean`, the prompt it exists for, fires at all — is
+unmeasured. It is the first thing to settle on the next eval run.
 
 ## Adding a case
 

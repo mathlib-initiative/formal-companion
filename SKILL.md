@@ -1,6 +1,6 @@
 ---
 name: companion-faithfulness
-description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalizes — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace; and to locate which passages of a source (a Wikipedia article) which Lean library formalizes. It is not a proof checker, not a Lean linter and not a fixer — the audit reads repositories and reports findings, and never edits Lean or repairs a proof; the one command that writes into a companion is `cf overlay`, and it writes only pdf-overlay/ and annotations/.
+description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalizes — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether the statements say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report findings; or to onboard a companion into a workspace; and to locate which passages of a source (a Wikipedia article) which Lean library formalizes; and, the other way round, to informalize — the informal text of a Lean theorem and its dependencies, checked against it. It is not a proof checker, not a Lean linter and not a fixer — the audit reports findings and never edits Lean or repairs a proof; the one command that writes into a companion is `cf overlay`, and only its pdf-overlay/ and annotations/.
 ---
 
 # Companion faithfulness audits
@@ -177,11 +177,10 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
    <SPDX id> --brain-lib <token>` (a record set refuses a library with no licence; a
    re-add records one; the token is the consumer's library name, `FF_AdicModules`, and
    an id that is none, `lean-core`, needs it; a token names one repository, compared
-   without case, and each repository is spelled one way, so `--repo` is the spelling
-   the universe already uses), then
-   on the host the pipeline `cf corpus probe-command` prints (**cf never builds a
-   library**), `cf corpus ingest` (refused until the toolchain's canary passed)
-   and `cf corpus build-db <u>` (`--blind` too, for the G1-blind arm).
+   without case, so `--repo` is the spelling the universe already uses), then on the
+   host the pipeline `cf corpus probe-command` prints (**cf never builds a library**),
+   `cf corpus ingest` (refused until the toolchain's canary passed) and
+   `cf corpus build-db <u>` (`--blind` too, for the G1-blind arm).
 2. `cf sourceset create <s>`, `enumerate-wikiproject` / `adopt`, `fetch` and
    `render` — append-only manifests; nothing reaches Wikipedia without `--execute`.
 3. `cf locate candidates --sourceset <s> --universe <u>` — L2's curated joins and
@@ -189,35 +188,37 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
 4. `cf plan-locate --preset locate-inventory`, then `--preset locate
    --inventory-run <r>`, then `--preset locate-challenge --challenge-of <r>`; each
    run goes through `cf run <r> --host <h> --i-have-consent --include-source-text`
-   (a spend cap is required) and `cf harvest`, whose
-   locate gate runs out of tree over each task's own documents, under the
-   versions its `gate.json` names. A run planned with this code names the
-   statement cut's (`docs/proposals/statement-cut.md`): its inventory is cut one
-   passage per statement, with its `statement`, `conjuncts` and `shape`, and
-   held to gate rule 10 (statement-cut rule 3, the wide bound) and span-end
-   rule 3, which run a sentence on over the paragraph that finishes it after
-   its display; its locate and challenge documents to judgment rules 4 (gate
-   rule 9, `references/locate-documents.md` §3 and §4): no claim list (one is refused) — the clause ids are the frozen
-   inventory's conjunct ids, `c1` for a simple statement —, the clauses every
-   record states, an absence's query of its own per clause, both instantiation
-   tests and the instantiation line on a strong location, a part's
-   `conjunct_relation` and step, a closeMatch's convention, a coverage claim
-   only as a bundle of strong parts on a compound statement, and no junk value
-   as a convention, and rules 4's checks (`pd6`, `bridge`). A run planned before
-   keeps the rules it names (rules 1 and 2 a claim list per passage). R1–R7, the
-   PD1–PD11 defaults and the smoke-4 calls are in `references/vocabulary.md` §1.11.
-   Larger work is a `cf campaign` of shards.
+   (a spend cap is required) and `cf harvest`, whose locate gate runs out of tree
+   over each task's own documents, under the versions its `gate.json` names. How a
+   run is cut and judged is its own plan's: this code's are the statement cut's
+   rules (one passage per statement) and judgment rules 4, and a run planned
+   before keeps the rules it names — `docs/proposals/statement-cut.md`,
+   `references/locate-documents.md` §3 and §4, and R1–R7, the PD1–PD11 defaults
+   and the smoke-4 calls in `references/vocabulary.md` §1.11. Larger work is a
+   `cf campaign` of shards.
 5. `cf tally --locate --run <r> --challenge-run <c>` — passage outcomes and the
    derived status (`references/vocabulary.md` §1.11: a coverage claim over
-   `hasPart` parts counts only once a challenger confirms it; under status rules 2
-   and 3 a confirmed bundle is one more location of its weakest part's relation,
-   and under 3 (R-BROAD), which a run planned now names, a `broadMatch` formalizes); then
+   `hasPart` parts counts only once a challenger confirms it, and under status
+   rule 3 (R-BROAD), which a run planned now names, a `broadMatch` formalizes); then
    `cf export literature-links` — a sealed record set (`cf-locate-recordset/2`
    for a run of status rule 2 or 3), every record checked by the vendored
    Literature Links checker, quotes capped and only from an open licence class.
 6. `cf bench build | anchor | freeze | score | compare | carry` — gold, metrics with
    article-clustered intervals, and the acceptance rule; labels never go to the
    host.
+
+## Informalization
+
+The reverse direction (`docs/proposals/informalize.md`): from a Lean library at
+a pinned commit and one theorem, **write the source** — the items of the
+theorem's dependency closure, an informal LaTeX text a fleet attacks against
+the Lean, and a PDF whose boxes become annotations. `cf informalize` makes the
+output repository, its LaTeX runtime and that closure (**cf never builds a
+library**); `cf plan-informalize` → `cf run` → `cf harvest` is one tend run per
+phase (`items`, `conventions`, `draft`, `attack`, `judge`, `edit`), with the
+maintainer's `approve` between them. Of the PDF and the overlay only
+`cf export informal-markers` is built, and nothing has run outside the
+synthetic driver (`docs/status.md`).
 
 ## Command index
 
@@ -273,7 +274,7 @@ actually has, and is generated from the parsers themselves.
 | `review-tags <document> [--json]` | the known attribution defects a document's key links carry: items keyed only to where they sit, keys on a structure field or projection, keys borrowed from a neighbouring item or shared with no owner, book-content tag spellings a fold script hides, the document's own attribution-gap verdicts; `--keep-pattern` and `--hide-pattern` are the fold script's rules |
 | `sourceset create \| enumerate-wikiproject \| adopt \| fetch \| flag-biographies \| render \| status` | locate L1: a **sourceset** of web sources (`references/locate-documents.md` §7) — append-only manifest versions, one directory per page revision. `create --from <sourceset>` seeds a new one with another's sources and bytes and no layers (the way to a new renderer). `enumerate-wikiproject --project P` lists a WikiProject's articles at their latest revisions, flags redirects, disambiguation pages and lists, counts the rows that are no article, and resumes from its checkpoint after a failure (`--restart` starts over), `flag-biographies` flags biographies from Wikidata (P31 = Q5), `adopt --from <pins>` takes a consumer's pinned revisions, with their bytes when it holds them (a pin with only a title has its page resolved from its revision under `--execute`; a pinned page keeps its adopted revision and its page's assessment and QID; a row may carry the fixed `fetch` and the producer's `layer_sha256`, its `bytes` lies inside the pins file's directory, a source is pinned by one row, and one bad row refuses the whole file), `fetch [--source ID | --select FILE]` gets each revision's parse output once (only the named sources or pages with a selection), `render` writes the Literature Links layer, head text, reading copy and its map, sections, blocks and the deterministic finders (renderer `web-html/3`; a recorded rendering is only completed, never rewritten; a source whose layer is not its producer's `layer_sha256` is refused by name and stays refused in `state.json` `parity_refusals` until a render writes it), `status [--verify]` checks every recorded sha and reports the producer-layer counts (`--verify` counts a standing parity refusal as a problem). Nothing touches the network without `--execute` (`--fixtures <dir>` replays recorded responses) |
 | `overlay init \| sync \| check \| export` | generate a companion's `pdf-overlay/` and its Literature Links annotations, and keep both honest: `cf overlay init <companion> --source-id ID --title T` writes the config, which is committed before `export` because `export` refuses a dirty checkout (SHA is that commit), `cf overlay export <companion> --convention attribution-table --commit SHA` runs an exporter and writes one `annotations/<section>/[<item>/]<name>.json` per annotation, `cf overlay sync <companion>` copies the viewer, tools, schemas, PDF.js and the Literature Links package byte for byte and writes the annotation bundle and `GENERATED.json` (`--check` is read-only and includes the scan), and `cf overlay check <companion>` adds the curation inputs' hashes, the overlay rules and a committed `verso.json`. **The one command that writes into a companion repo**, and only under `pdf-overlay/` and `annotations/` (`docs/overlay.md` rule 5). Needs no workspace |
-| `informalize init \| sync \| status \| build-command \| fetch-library \| scope \| check-items \| approve \| reference-checklist` | the informalize mode (`docs/proposals/informalize.md`, an informal companion written from a Lean library at a commit and one theorem; components 2 to 4 of its section 11 are built): `cf informalize init <id> --library URL --commit SHA --module M --theorem T --prefix P --text-license L --title T --author A [--reference CITATION]` writes `informalize/<id>/informalize.yaml` and creates the output repository `informalize/<id>/repo/` (git, the runtime, the project files, `LICENSE`); `sync <id> [--check]` copies the runtime into `informal/` byte for byte and records it in `informal/GENERATED.json`; `status <id>` reads the receipts and approvals; `build-command <id> --host H [--min-free-gb 60] [--lean-threads 16]` runs nothing: it copies the host drivers into `library/to-host/` and prints the lines that send them and start the library's build, probe, canary and dependency dump on the host (Lean never runs here); `fetch-library <id> --host H --execute --i-have-consent` brings that back, checks it and unpacks the source; `scope <id>` writes the theorem's exact dependency closure (`scope.json`, `informal/declarations.json`); `check-items <id>` holds `informal/items.json` to section 5.4 and to `declarations.json` and the library's source; `approve <id> items --by NAME --in-v1 IDS\|all` renumbers the table before the first draft and pins it, `reference-checklist <id>` lists the reference numbers for a person with the work, and `approve <id> references --by NAME` pins that list. **The second command that writes into a repository**: only its own output repository, only the paths of `docs/proposals/informalize.md` section 1.3. Needs a workspace |
+| `informalize init \| sync \| status \| build-command \| fetch-library \| scope \| check-items \| approve \| reference-checklist` | the informalize mode (`docs/proposals/informalize.md`, an informal companion written from a Lean library at a commit and one theorem; components 2 to 5a of its section 11 are built, with the `cf run` and `cf harvest` half of 5b and the exporter of 7 — `cf informalize apply`, the canonical PDF (`pdf-command`, `fetch-pdf`) and the overlay stage (`overlay`, `check-site`) are not implemented): `cf informalize init <id> --library URL --commit SHA --module M --theorem T --prefix P --text-license L --title T --author A [--reference CITATION]` writes `informalize/<id>/informalize.yaml` and creates the output repository `informalize/<id>/repo/` (git, the runtime, the project files, `LICENSE`); `sync <id> [--check]` copies the runtime into `informal/` byte for byte and records it in `informal/GENERATED.json`; `status <id>` reads the receipts and approvals; `build-command <id> --host H [--min-free-gb 60] [--lean-threads 16]` runs nothing: it copies the host drivers into `library/to-host/` and prints the lines that send them and start the library's build, probe, canary and dependency dump on the host (Lean never runs here); `fetch-library <id> --host H --execute --i-have-consent` brings that back, checks it and unpacks the source; `scope <id>` writes the theorem's exact dependency closure (`scope.json`, `informal/declarations.json`); `check-items <id>` holds `informal/items.json` to section 5.4 and to `declarations.json` and the library's source; `approve <id> items --by NAME --in-v1 IDS\|all` renumbers the table before the first draft and pins it, `reference-checklist <id>` lists the reference numbers for a person with the work, and `approve <id> references --by NAME` pins that list. **The second command that writes into a repository**: only its own output repository, only the paths of `docs/proposals/informalize.md` section 1.3. Needs a workspace |
 | `plan-informalize <id> --phase P` | one **informalize** fleet phase as a tend run (`docs/proposals/informalize.md` §8; `items`, `conventions`, `draft`, `attack`, `judge`, `edit`), planned from the output repository's HEAD and, for `judge` and `edit`, the harvested `--from-run`: tasks with their owned paths, prompts, `data/`, `gate.json` and a tend root whose `gate/` holds `verify_informal.py` and the runtime, every file pinned; it refuses after `items` without current items and references approvals, after `conventions` until that phase is applied, and without a spend cap (`--max-cost`, else `caps.max_cost_per_phase`); `--workers`, `--reviewers` and `--agent-timeout` default to `informalize.yaml`'s caps. Nothing is sent: `cf run <run>` sends it (the output repository into the entrypoint, `--include-sources` the library's source) and `cf harvest <run>` brings home its documents, the files its tasks wrote (`corpus/<run>/tree/`), the gate re-run over both and the entrypoint's own change set, which refuses a path no task of the run owns |
 
 Deleted: `cf book` — a source is discovered, and re-prepared by
@@ -328,10 +329,9 @@ you use it.
   pre-merge check (`--pre-merge`) admits several.
 - **`detect-proxies --lean`** needs a `deps.json` from a built `.lake` and a
   per-source stage table a human has filled in; the generated skeleton
-  deliberately counts as no table.
-- **`detect-proxies` stage analysis for a new book** needs that table written
-  from scratch; without one the cheap tier still runs and reports the scan as
-  SKIPPED rather than clean.
+  deliberately counts as no table, and a new book's is written from scratch.
+  Without one the cheap tier still runs and reports the scan as SKIPPED rather
+  than clean.
 - **Three presets cannot be planned at all**: `differential-legacy`,
   `attack-legacy` and `mechanical` describe imported corpora, and `cf plan-run`
   exits 2 on them.

@@ -11,8 +11,10 @@ option (section 6); and the fleet's first half (section 8): `cf plan-informalize
 the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`; of
 component 5b, `cf run` sends a phase and `cf harvest` brings one home (section 8.5); and of
 component 7, the exporter `cf export informal-markers` with the two `scripts/overlay/`
-changes of section 10. These
+changes of section 10; and of component 8, `SKILL.md`'s command index and its
+Informalization section, `README.md`, `docs/status.md` and the trigger eval. These
 are not implemented yet: the watchdog `cf run` starts at the smoke stage (section 8.1),
+the runbook section of component 8,
 `cf informalize apply`, `cf informalize pdf-command`, `cf informalize fetch-pdf`,
 `cf informalize overlay` and `cf informalize check-site`, and
 paths into this repository written in *italics* do not exist yet. Section 11 lists the components

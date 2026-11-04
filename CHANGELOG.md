@@ -43,6 +43,20 @@ release has something to say.
 
 ### Added
 
+- **The informalize mode in the documents a reader starts from** (component 8 of
+  `docs/proposals/informalize.md`): an `Informalization` section and the command index
+  entries in `SKILL.md`, a tool row and the write rule in `README.md`, what is built,
+  tested, not run and not implemented in `docs/status.md`, and a trigger eval,
+  `write-up-from-lean`, for the one question the mode answers that nothing else here
+  does. `SKILL.md`'s frontmatter description gained an informalize clause, since the
+  description is the only thing a router reads; it is under the 1,024-character limit
+  because the item-kind list, "lecture notes" aside, and "reads repositories" came out.
+  That trade is **unmeasured** -- nobody has run `evals/trigger.json` with and without
+  it, which `evals/README.md` now records as the second open question. SKILL.md must
+  stay under 500 lines (`tests/test_rf_docs.py`), so the room for the new section came
+  out of the locate program's restatement of judgment rules that
+  `references/locate-documents.md` §3 and §4 and `references/vocabulary.md` §1.11 hold;
+  no rule changed. `tests/test_informalize_docs.py` holds all of it to the CLI.
 - **`cf export informal-markers`** (the exporter of component 7 of
   `docs/proposals/informalize.md`, its section 10): an informalization companion's PDF, box
   by box, as one annotation document, so the existing overlay export turns it into
