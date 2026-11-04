@@ -77,6 +77,10 @@ scripts/bench/       locate's benchmark (`cf bench`; references/locate-bench.md)
                      workflows/locate-label.workflow.js, its frozen labeler
 templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
                      tests/ holds its node --test suites
+templates/informalize/ runtime/ is copied verbatim into an output repository's informal/
+                     (fcmarkers.sty, STYLE.md, the build and check tools); project/
+                     holds the templates `cf informalize init` renders once
+                     (docs/proposals/informalize.md section 7)
 templates/campaign/  the host-side sequencer `cf campaign render` writes
 templates/tend/      the tend root's config, faithfulness and locate (`*-locate*`)
 templates/  workflows/  tests/  .github/workflows/
@@ -287,6 +291,9 @@ The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
 `CF_M1_ENFORCE_BARS=1` (assert the proposal's recall bars instead of only
 reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
 and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
+`tests/test_informalize_runtime.py` builds PDFs and skips without pdflatex, latexmk,
+kpsewhich, poppler or a package of `tex_packages`; `CF_REQUIRE_TEX=1` makes that skip a
+failure, and CI's `informalize-tex` job sets it.
 Tests that compare this checkout with a frozen base commit skip in a checkout
 that does not hold it, such as a shallow clone; `CF_REQUIRE_BASE_COMMITS=1`
 makes that a failure (`tests/_base_commits.py`), and CI sets it and takes the

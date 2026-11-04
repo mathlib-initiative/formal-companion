@@ -27,6 +27,10 @@
 # the model-free detector against tests/e2e/answer-key.json. It needs poppler and
 # nothing else, and it is what stops the quick start rotting.
 #
+# The informalize-tex job is the one with TeX: the informalize runtime's
+# builds (tests/test_informalize_runtime.py) skip in every other job, and
+# CF_REQUIRE_TEX makes a skip a failure there.
+#
 # What it does NOT cover, so nobody reads green here as more than it is: the
 # baseline-backed tests (they need private corpora and skip), `cf run --execute`,
 # `render_pages.render()` and the pdftoppm path (only its two refusals are
@@ -160,7 +164,30 @@ jobs:
       # yet, so a bare invocation would fail the job on pre-existing lines. Drop
       # the flag in a follow-up once the job is green and fix or `disable=` what
       # it then reports.
-      - run: shellcheck --severity=error scripts/run/bridge-*.sh scripts/detect/dump_deps.sh tests/e2e/*.sh
+      - run: shellcheck --severity=error scripts/run/bridge-*.sh scripts/detect/dump_deps.sh tests/e2e/*.sh templates/informalize/runtime/tools/build_pdf.sh
+
+  informalize-tex:
+    name: informalize runtime (TeX Live, latexmk, poppler)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # docs/proposals/informalize.md section 7.3. The runtime's build, box,
+      # check and refusal tests need pdflatex, latexmk, kpsewhich and poppler,
+      # and skip without them; CF_REQUIRE_TEX makes the skip a failure here, and
+      # the tests then run kpsewhich on every file of informalize.json's
+      # tex_packages and name any that is missing. texlive-latex-base holds
+      # amsmath, geometry and hyperref, -recommended xcolor, -extra zref, and
+      # lmodern the T1 fonts the template loads.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends latexmk texlive-latex-base texlive-latex-recommended texlive-latex-extra lmodern poppler-utils
+      # One module, run as a script: it holds no test of a frozen base commit,
+      # so this job is not one of the suite jobs tests/test_base_commits.py
+      # holds to a full history.
+      - run: python tests/test_informalize_runtime.py -v
+        env:
+          CF_REQUIRE_TEX: "1"
 
   synthetic-e2e:
     name: synthetic end-to-end (booklet, planted defects, score)

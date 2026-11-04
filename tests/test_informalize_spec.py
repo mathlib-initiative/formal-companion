@@ -514,7 +514,49 @@ class TestTheExamples(unittest.TestCase):
         self.assertEqual(len(keys), len(set(keys)))
         for row in doc["hypotheses"]:
             self.assertRegex(row["macro"], r"\A\\[A-Za-z]+\Z")
-            self.assertTrue(row["binder_head"])
+            self.assertTrue(row.get("binder_head") or row.get("binder_type"))
+
+
+class TestTheRuntimeItSpecifies(unittest.TestCase):
+    """Section 7 against templates/informalize/runtime/ (component 2): the .aux records the
+    marker package writes, the tools that read them, and the tools' flags."""
+
+    RUNTIME = SKILL / "templates" / "informalize" / "runtime"
+
+    def records(self) -> dict[str, int]:
+        """``{name: arity}`` of the tools' .aux parser, read without importing it."""
+        tree = ast.parse((self.RUNTIME / "tools" / "fccommon.py").read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "RECORDS" for t in node.targets):
+                return ast.literal_eval(node.value)
+        raise AssertionError("fccommon.py defines no RECORDS")
+
+    def test_the_aux_records_have_one_arity_everywhere(self):
+        sty = (self.RUNTIME / "fcmarkers.sty").read_text(encoding="utf-8")
+        defined = {name: len(args) // 2 for name, args in
+                   re.findall(r"^\\def\\(fc@aux[a-z]+)((?:#\d)*)\{", sty, re.M)}
+        records = {k: v for k, v in self.records().items() if k.startswith("fc@aux")}
+        # \fc@auxkind is read back by \itemref, not by the tools
+        self.assertEqual(records, {k: v for k, v in defined.items() if k != "fc@auxkind"})
+        spelled = re.findall(r"`\\(fc@aux[a-z]+)((?:\{[^{}`]*\})+)", section("7.2"))
+        self.assertTrue(spelled)
+        for name, groups in spelled:
+            with self.subTest(record=name):
+                self.assertEqual(groups.count("{"), defined[name], groups)
+
+    def test_the_tools_flags_are_the_ones_it_lists(self):
+        text = section("7.3")
+        build = (self.RUNTIME / "tools" / "build_pdf.sh").read_text(encoding="utf-8")
+        listed = set(re.findall(r"\[(--[a-z-]+)", re.search(r"`tools/build_pdf\.sh ([^`]*)`",
+                                                              text).group(1)))
+        handled = set(re.findall(r"^\s+(--[a-z-]+)\)", build, re.M)) - {"--help"}
+        self.assertEqual(listed, handled)
+        check = (self.RUNTIME / "tools" / "check_items.py").read_text(encoding="utf-8")
+        listed = set(re.findall(r"\[(--[a-z-]+)", re.search(r"`tools/check_items\.py ([^`]*)`",
+                                                              text).group(1)))
+        handled = set(re.findall(r'add_argument\("(--[a-z-]+)"', check))
+        self.assertEqual(listed, handled)
 
 
 class TestEachPromiseIsOneList(unittest.TestCase):

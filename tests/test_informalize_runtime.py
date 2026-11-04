@@ -1,0 +1,898 @@
+"""templates/informalize/: the LaTeX runtime and the project templates of the informalize mode.
+
+New code, for docs/proposals/informalize.md section 7 (component 2 of section 11).  Three
+groups:
+
+* the files themselves: what section 7.1 lists is there, the Python tools import nothing
+  but the standard library and their siblings and write no bytecode, the shell parses, the
+  packages the marker package and the main template load are the ones informalize.json
+  lists, the project templates' slots are the ones their README names, and nothing of the
+  pilot's own text is left;
+* the checks of `check_items.py` (rules 1 to 7) and the parsing they rest on, run on a
+  fake build's .aux, so they need no TeX;
+* the whole runtime on the synthetic document of `tests/_informalize_doc.py`: two clean
+  builds that are byte-identical, the boxes, the checks, the proof sheets, and each LaTeX
+  error and check failure caught.  These need pdflatex, latexmk, kpsewhich and poppler and
+  skip without them; CF_REQUIRE_TEX=1 (what CI's TeX job sets) makes the skip a failure.
+"""
+from __future__ import annotations
+
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
+import argparse
+import ast
+import copy
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SKILL = HERE.parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import _informalize_doc as doc                                # noqa: E402
+
+RUNTIME = doc.RUNTIME
+PROJECT = doc.PROJECT
+TOOLS = RUNTIME / "tools"
+SPEC = (SKILL / "docs" / "proposals" / "informalize.md").read_text(encoding="utf-8")
+
+
+def load_tool(name: str):
+    """Import a runtime tool by path, as `python3 informal/tools/<tool>.py` would.
+
+    The tool sets `sys.dont_write_bytecode` itself, but only once it runs, after the import
+    has compiled it; so the flag is set here first, or the import would leave a
+    `__pycache__/` in templates/informalize/runtime/tools/ for every copy of it to carry.
+    """
+    path = TOOLS / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:                  # pragma: no cover
+        raise RuntimeError(f"cannot import {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    saved = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = saved
+    return module
+
+
+fc = load_tool("fccommon")
+check_items = load_tool("check_items")
+extract_markers = load_tool("extract_markers")
+proof_sheets = load_tool("proof_sheets")
+
+TEX_PROGRAMS = ("pdflatex", "latexmk", "kpsewhich")
+POPPLER = ("pdftotext", "pdftoppm", "pdfinfo")
+
+
+def spec_runtime_example() -> dict:
+    for body in re.findall(r"^```json\n(.*?)^```", SPEC, re.M | re.S):
+        data = json.loads(body)
+        if data["schema"] == fc.RUNTIME_SCHEMA:
+            return data
+    raise AssertionError("the specification has no informalize.json example")
+
+
+# ---------------------------------------------------------------------------
+# the files
+
+class TestTheRuntimeFiles(unittest.TestCase):
+
+    def test_section_7_1_lists_what_is_there(self):
+        table = SPEC[SPEC.index("| runtime file |"):SPEC.index("The tools are standard-library")]
+        listed = set(re.findall(r"^\| `([^`]+)` \|", table, re.M))
+        shipped = {p.relative_to(RUNTIME).as_posix() for p in RUNTIME.rglob("*") if p.is_file()
+                   and "__pycache__" not in p.parts}
+        # canonical_pdf.sh is component 6's (section 11)
+        self.assertEqual(listed - shipped, {"tools/canonical_pdf.sh"})
+        self.assertEqual(shipped - listed, set())
+
+    def test_the_python_tools_import_only_the_standard_library_and_their_siblings(self):
+        siblings = {p.stem for p in TOOLS.glob("*.py")}
+        allowed = set(sys.stdlib_module_names) | {"__future__"} | siblings
+        for path in sorted(TOOLS.glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            with self.subTest(tool=path.name):
+                names = set()
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        names |= {a.name.split(".")[0] for a in node.names}
+                    elif isinstance(node, ast.ImportFrom):
+                        names.add((node.module or "").split(".")[0])
+                self.assertLessEqual(names, allowed)
+                self.assertIsNotNone(ast.get_docstring(tree))
+                # no bytecode: the flag is set before the first sibling is imported
+                text = path.read_text(encoding="utf-8")
+                flag = text.index("sys.dont_write_bytecode = True")
+                for sibling in siblings - {path.stem}:
+                    for m in re.finditer(rf"^\s*import {sibling}\b", text, re.M):
+                        self.assertLess(flag, m.start())
+
+    def test_the_runtime_holds_no_bytecode(self):
+        # `cf informalize sync` copies every file under runtime/, so a __pycache__ there
+        # would land in every output repository
+        self.assertEqual([p for p in RUNTIME.rglob("*")
+                          if p.name == "__pycache__" or p.suffix == ".pyc"], [])
+
+    def test_the_runtime_s_vocabulary_is_the_specification_s(self):
+        flat = " ".join(SPEC.split())
+        kinds = re.search(r"`kind` is one of ([a-z, ]+)\.", flat).group(1).split(", ")
+        roles = re.findall(r"`([a-z]+)`", re.search(r"`role` is (`[a-z]+` or `[a-z]+`)",
+                                                     flat).group(1))
+        sources = re.findall(r"`([a-z ]+)`", re.search(r"`source` one of ((?:`[a-z ]+`,? )+)",
+                                                       flat).group(1))
+        self.assertEqual(list(fc.KIND_NAMES), kinds)
+        self.assertEqual(list(fc.ROLES), roles)
+        self.assertEqual(list(fc.REFERENCE_SOURCES), sources)
+        # and cflib.vocab's copies, once component 3 adds them
+        from cflib import vocab
+        for name, mine in (("INFORMALIZE_KINDS", tuple(fc.KIND_NAMES)),
+                           ("INFORMALIZE_ROLES", fc.ROLES),
+                           ("REFERENCE_SOURCES", fc.REFERENCE_SOURCES)):
+            if hasattr(vocab, name):
+                with self.subTest(name=name):
+                    self.assertEqual(tuple(getattr(vocab, name)), tuple(mine))
+
+    def test_an_item_id_is_two_numbers_from_1(self):
+        for good in ("1.1", "2.10", "12.3"):
+            self.assertRegex(good, fc.ITEM_ID)
+        for bad in ("0.1", "1.0", "01.2", "1.02", "1.2a", "1.2(a)", " 1.2", "1"):
+            with self.subTest(id=bad):
+                self.assertIsNone(fc.ITEM_ID.match(bad))
+
+    def test_the_shell_parses(self):
+        for shell in ("sh", "bash"):
+            if shutil.which(shell) is None:                  # pragma: no cover
+                continue
+            with self.subTest(shell=shell):
+                out = subprocess.run([shell, "-n", str(TOOLS / "build_pdf.sh")],
+                                     capture_output=True, text=True)
+                self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_the_packages_loaded_are_the_ones_informalize_json_lists(self):
+        listed = set(spec_runtime_example()["tex_packages"])
+        self.assertEqual(listed, set(doc.TEX_PACKAGES))
+        sty = (RUNTIME / "fcmarkers.sty").read_text(encoding="utf-8")
+        main = (PROJECT / "main.tex").read_text(encoding="utf-8")
+        notation = (PROJECT / "notation.sty").read_text(encoding="utf-8")
+        loaded = set()
+        for text in (sty, main, notation):
+            for group in re.findall(r"\\(?:RequirePackage|usepackage)(?:\[[^]]*\])?\{([^}]*)\}",
+                                    text):
+                loaded |= {f"{name.strip()}.sty" for name in group.split(",")}
+        own = {"fcmarkers.sty", "notation.sty", "fontenc.sty"}     # fontenc is LaTeX's own
+        self.assertLessEqual(loaded - own, listed)
+        self.assertIn("t1lmr.fd", listed)                     # T1 with lmodern
+        self.assertIn("\\usepackage[T1]{fontenc}", main)
+
+    def test_the_project_slots_are_the_readme_s(self):
+        readme = (SKILL / "templates" / "informalize" / "README.md").read_text(encoding="utf-8")
+        documented = set(re.findall(r"^\| `([a-z_]+)` \|", readme, re.M))
+        used = set()
+        for path in PROJECT.rglob("*"):
+            if path.is_file():
+                used |= set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}",
+                                       path.read_text(encoding="utf-8")))
+        self.assertEqual(used, documented)
+        self.assertEqual(used, set(doc.SLOTS))
+
+    def test_nothing_of_the_pilot_s_own_text_is_left(self):
+        # the provenance lines name the pilot's files ("ported from the pilot's
+        # rrmarkers.sty"), as CLAUDE.md section 3 asks; nothing else of it is left
+        pilot = ("rr@", "rr:", "RROnly", "stich", "hypF", "hypEx", "Riemann", "Roch",
+                 "TauCeti", "decls-")
+        for root in (RUNTIME, PROJECT):
+            for path in sorted(p for p in root.rglob("*") if p.is_file()
+                               and "__pycache__" not in p.parts and p.suffix != ".pyc"):
+                text = path.read_text(encoding="utf-8")
+                for word in pilot:
+                    with self.subTest(file=path.name, word=word):
+                        self.assertFalse(word in text, f"{path.name} says {word!r}")
+
+    def test_the_spec_example_config_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc.write_json(Path(tmp) / "informalize.json", spec_runtime_example())
+            config = fc.load_config(Path(tmp))
+        self.assertEqual(config.boxes, {"res_dpi": 288, "ink_level": 224, "pad_bp": 3.0,
+                                        "frame_bp": 4.0})
+        self.assertIsNone(config.source_date_epoch)       # filled by I1; the build refuses null
+
+    def test_a_bad_config_is_refused(self):
+        breaks = {
+            "a job with a slash": {"job": "../x"},
+            "a main file in a directory": {"main": "sub/main.tex"},
+            "an unknown box setting": {"boxes": {"res_dpi": 288, "dpi": 3}},
+            "a negative time": {"source_date_epoch": -1},
+            "a package with a space": {"tex_packages": ["a b.sty"]},
+            "another schema": {"schema": "formal-companion/informalize-items"},
+        }
+        for what, change in breaks.items():
+            with self.subTest(broken=what), tempfile.TemporaryDirectory() as tmp:
+                doc.write_json(Path(tmp) / "informalize.json", {**doc.CONFIG, **change})
+                with self.assertRaises(fc.ToolError):
+                    fc.load_config(Path(tmp))
+
+
+# ---------------------------------------------------------------------------
+# parsing, and rules 1 to 7 on a fake build
+
+def fake_aux(items: dict = doc.ITEMS, decls: dict = doc.DECLARATIONS) -> str:
+    """The .aux a correct build of ``items`` would write (records only, no positions)."""
+    signatures = {d["name"]: d["signature"] for d in decls["declarations"]}
+    lines = ["\\fc@auxhypdef{open}{\\hypOpen}"]
+    by_section: dict[str, list[dict]] = {}
+    for item in items["items"]:
+        if item["in_v1"]:
+            by_section.setdefault(item["section"], []).append(item)
+    for sec in items["sections"]:
+        n = sec["number"]
+        lines.append(f"\\fc@auxsection{{{n}}}{{1}}{{{int(n):02d}-{sec['slug']}}}{{{sec['title']}}}")
+        for item in by_section.get(n, []):
+            iid = item["id"]
+            lines.append(f"\\fc@auxitem{{{iid}}}{{{item['kind']}}}{{{n}}}{{{item['title']}}}")
+            ref = item.get("reference")
+            if ref and ref.get("number"):
+                star = "*" if ref["source"] == "inferred" else ""
+                lines.append(f"\\fc@auxref{{{iid}}}{{}}{{{ref['number']}}}{{{star}}}")
+            keys = [d for d in item["declarations"] if d["role"] == "key"]
+            if any("IsOpen" in signatures[d["name"]] for d in keys):
+                lines.append(f"\\fc@auxhyp{{{iid}}}{{}}{{open}}")
+            for d in keys:
+                if d["part"] is None:
+                    lines.append(f"\\fc@auxleanref{{{iid}}}{{}}{{{d['name']}}}")
+            for part in item["parts"]:
+                c = part["letter"]
+                lines.append(f"\\fc@auxpart{{{iid}}}{{{c}}}")
+                for d in keys:
+                    if d["part"] == c:
+                        lines.append(f"\\fc@auxleanref{{{iid}}}{{{c}}}{{{d['name']}}}")
+    return "\n".join(lines) + "\n"
+
+
+def run_rules(aux_text: str, items: dict = doc.ITEMS, hyps: dict = doc.HYPOTHESES,
+              log: str = "", decls: dict = doc.DECLARATIONS) -> check_items.Report:
+    """Rules 1 to 7 on an .aux text, as `check_items.py --aux-only` runs them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        doc.write_json(Path(tmp) / "items.json", items)
+        doc.write_json(Path(tmp) / "hypotheses.json", hyps)
+        loaded = fc.load_items(Path(tmp) / "items.json")
+        rows, problems = fc.load_hypotheses(Path(tmp) / "hypotheses.json")
+    decls = {d["name"]: d for d in decls["declarations"]}
+    aux = fc.parse_aux(aux_text)
+    report = check_items.Report()
+    check_items.check_log(log, aux, report)
+    check_items.check_hypdefs(aux, rows, problems, report)
+    args = argparse.Namespace(items=None, section=None)
+    check_items.check_aux(aux, loaded, decls, rows, check_items.scope_of(args, aux, loaded), report)
+    return report
+
+
+def rules_of(report: check_items.Report, warnings: bool = False) -> set[int]:
+    lines = report.fails + (report.warns if warnings else [])
+    return {int(m.group(1)) for line in lines for m in [re.search(r"\[(\d+)\]", line)] if m}
+
+
+class TestParsing(unittest.TestCase):
+
+    def test_the_aux_records_are_read(self):
+        aux = fc.parse_aux(fake_aux() + "\\zref@newlabel{fc:1.1:start}{\\posx{10}\\posy{20}"
+                           "\\abspage{1}}\n\\newlabel{item:1.2:a}{{1.2(a)}{1}}\n"
+                           "\\fc@auxmark{fc:1.1:end}{h}\n\\fc@auxgeometry{textwidth=5,texttop=7}\n")
+        self.assertEqual([s["number"] for s in aux.sections], ["1", "2"])
+        self.assertEqual([i["id"] for i in aux.items], ["1.1", "1.2", "2.1", "2.2", "2.3"])
+        self.assertEqual(aux.parts_of("1.2"), ["a", "b"])
+        self.assertEqual(aux.decls_of("1.2", "b"), ["ExampleLib.glue_surjective"])
+        self.assertEqual(aux.refs[1], {"id": "1.2", "part": "", "number": "Theorem 4.1",
+                                       "star": True})
+        self.assertEqual(aux.hypdefs, [{"key": "open", "macro": "\\hypOpen"}])
+        self.assertEqual(aux.positions["fc:1.1:start"], {"posx": 10, "posy": 20, "abspage": 1})
+        self.assertEqual(aux.labels["item:1.2:a"], "1.2(a)")
+        self.assertEqual(aux.marks, {"fc:1.1:end": "h"})
+        self.assertEqual(aux.geometry, {"textwidth": 5, "texttop": 7})
+
+    def test_a_title_is_read_in_the_spelling_a_person_types(self):
+        # TeX's \write puts a space after every control word
+        self.assertEqual(fc.tex_text("The map $\\pi _1(X)$ and \\emph {it}"),
+                         "The map $\\pi_1(X)$ and \\emph{it}")
+        self.assertEqual(fc.tex_text("\\alpha x\n  y"), "\\alpha x y")
+        aux = fc.parse_aux("\\fc@auxitem{1.1}{lemma}{1}{^^c3^^a9t\\'e $\\pi _1$}\n")
+        self.assertEqual(aux.items[0]["title"], "ét\\'e $\\pi_1$")
+
+    def test_hypotheses_are_found_as_binders_and_as_arrows(self):
+        heads = fc.hypothesis_heads
+        self.assertIn("IsOpen", heads("∀ {X : Type} (U : Set X), IsOpen U → IsClosed U → P U"))
+        self.assertIn("IsClosed", heads("∀ {X : Type} (U : Set X), IsOpen U → IsClosed U → P U"))
+        self.assertNotIn("P", heads("∀ {X : Type} (U : Set X), IsOpen U → IsClosed U → P U"))
+        self.assertIn("IsOpen", heads("∀ (U : Set X) (hU : IsOpen U), P U"))
+        self.assertIn("IsOpen", heads("∀ (U : Set X) ⦃h : @IsOpen X _ U⦄, P U"))
+        self.assertIn("Finite", heads("∀ (s : Set X) [Finite s], P s"))
+        self.assertIn("Finite", heads("∀ (s : Set X) [h : Finite s], P s"))
+        # a name is a whole name: IsOpenMap is not IsOpen
+        self.assertNotIn("IsOpen", heads("∀ (f : X → Y) (hf : IsOpenMap f), P f"))
+        # what a hypothesis's conclusion holds is not a hypothesis
+        self.assertNotIn("IsOpen", heads("∀ (U : Set X), P U → IsOpen U"))
+        # nor what one side of an equivalence binds, or an existential's body
+        self.assertEqual(heads("∀ {X : Type} (W : Set X), ExampleLib.Covers Set.univ W ↔ "
+                               "∀ (s : Set X), IsOpen s → s ⊆ W"), {"Type", "Set"})
+        self.assertNotIn("IsPathConnected",
+                         heads("∀ (x : X), ∃ U, IsOpen U ∧ (IsPathConnected U → x ∈ U)"))
+        # nor the inside of a binder's type: f is a function, not a hypothesis IsOpen U
+        self.assertNotIn("IsOpen", heads("∀ {X : Type} (f : IsOpen U → Prop), P f"))
+        # a def's type prints its binders with arrows
+        self.assertEqual(heads("{X : Type u_1} → [inst : TopologicalSpace X] → Set X → "
+                               "ExampleLib.Glued X"), {"Type", "TopologicalSpace", "Set"})
+
+    def test_a_hypothesis_is_matched_by_its_head_or_its_printed_type(self):
+        types = fc.hypothesis_types("interior A ∪ interior B = Set.univ → IsPathConnected A → "
+                                    "IsPathConnected (A ∩ B) → ∀ (h : x ∈ A), P x")
+        self.assertEqual(types, ["interior A ∪ interior B = Set.univ", "IsPathConnected A",
+                                 "IsPathConnected (A ∩ B)", "x ∈ A"])
+        both = {"binder_type": r"IsPathConnected \(A ∩ B\)"}
+        self.assertEqual([t for t in types if fc.hypothesis_matches(both, t)],
+                         ["IsPathConnected (A ∩ B)"])
+        cover = {"binder_type": r"interior \w+ ∪ interior \w+ = Set\.univ"}
+        self.assertTrue(fc.hypothesis_matches(cover, types[0]))
+        self.assertTrue(fc.hypothesis_matches({"binder_head": "IsPathConnected"}, types[1]))
+        self.assertFalse(fc.hypothesis_matches({"binder_head": "IsPath"}, types[1]))
+
+    def test_json_keeps_a_string_that_looks_like_a_list(self):
+        data = {"title": "The interval $[ 0, 1 ]$", "boxes": [[1, 0.1, 0.2, 0.3, 0.4]]}
+        text = fc.dump_json(data)
+        self.assertEqual(json.loads(text), data)
+        self.assertIn("\n  [1, 0.1, 0.2, 0.3, 0.4]\n", text)
+
+    def test_light_grey_counts_as_ink(self):
+        # a pixel of gray 200, below the ink level 224 the pilot settled on and above 160
+        w, h = 40, 40
+        ppm = bytearray(b"P6\n%d %d\n255\n" % (w, h) + b"\xff" * (3 * w * h))
+        offset = len(b"P6\n%d %d\n255\n" % (w, h))
+        i = offset + 3 * (10 * w + 20)
+        ppm[i:i + 3] = b"\xc8\xc8\xc8"
+        entry = {"id": "1.1", "number": "1.1"}
+        box = [1, 0.1, 10 / h, 0.8, 0.5]                       # top edge on row 10
+        for level, caught in ((224, True), (160, False)):
+            with self.subTest(ink_level=level):
+                img = proof_sheets.Image(bytes(ppm), level)
+                out: dict = {}
+                proof_sheets.check_page(img, [proof_sheets.Box(entry, box, w, h)], [], 1, out,
+                                        False, False, 1)
+                self.assertEqual("ink under a stroke" in out, caught, out)
+                pgm = b"P5\n%d %d\n255\n" % (w, h) + bytes(
+                    200 if (y, x) == (10, 20) else 255 for y in range(h) for x in range(w))
+                ink = extract_markers.PageInk(pgm, (w, h), level)
+                self.assertEqual(ink.rows[10] is not None, caught)
+
+
+class TestRulesWithoutTeX(unittest.TestCase):
+    """Rules 1 to 7 on a fake build of the synthetic items: clean, then one break each."""
+
+    def test_the_fake_build_passes(self):
+        report = run_rules(fake_aux())
+        self.assertEqual((report.fails, report.warns), ([], []))
+
+    def assertCaught(self, aux_text: str, rule: int, *, items: dict = doc.ITEMS,
+                     hyps: dict = doc.HYPOTHESES, log: str = "", warning: bool = False):
+        report = run_rules(aux_text, items, hyps, log)
+        self.assertEqual(rules_of(report, warnings=warning), {rule},
+                         report.fails + report.warns)
+        if warning:
+            self.assertEqual(report.fails, [])
+            self.assertTrue(report.failed(strict=True))
+
+    def test_rule_1(self):
+        clean = fake_aux()
+        self.assertCaught(clean.replace("\\fc@auxitem{1.1}{definition}", "\\fc@auxitem{1.1}{lemma}"), 1)
+        self.assertCaught(clean.replace("{Gluing data}", "{Glueing data}"), 1)
+        self.assertCaught(clean.replace("\\fc@auxitem{2.3}{corollary}{2}",
+                                        "\\fc@auxitem{2.3}{corollary}{1}"), 1)
+        self.assertCaught(clean + "\\fc@auxitem{2.4}{remark}{2}{An item left for later}\n", 1)
+        self.assertCaught(clean + "\\fc@auxitem{2.9}{remark}{2}{Stray}\n", 1)
+        self.assertCaught(clean.replace("{02-covers}{Covers}", "{02-covering}{Covers}"), 1)
+        swapped = copy.deepcopy(doc.ITEMS)                      # 2.2 listed after 2.3
+        swapped["items"][3], swapped["items"][4] = swapped["items"][4], swapped["items"][3]
+        self.assertCaught(clean, 1, items=swapped)
+        missing = re.sub(r"\\fc@auxitem\{2\.1\}.*?(?=\\fc@auxitem\{2\.2\})", "", clean, flags=re.S)
+        self.assertCaught(missing, 1)
+
+    def test_rule_2(self):
+        clean = fake_aux()
+        self.assertCaught(clean.replace("\\fc@auxpart{2.1}{b}\n", ""), 2)
+
+    def test_rule_3(self):
+        clean = fake_aux()
+        self.assertCaught(clean + "\\fc@auxleanref{1.1}{}{ExampleLib.nowhere}\n", 3)
+        self.assertCaught(clean + "\\fc@auxleanref{1.1}{}{ExampleLib.cover_univ}\n", 3,
+                          warning=True)
+        # a helper the item lists is no warning
+        self.assertEqual(run_rules(clean + "\\fc@auxleanref{1.2}{b}{ExampleLib.glue_map}\n").warns,
+                         [])
+
+    def test_rule_4(self):
+        clean = fake_aux()
+        self.assertCaught(clean.replace("\\fc@auxleanref{1.2}{a}{ExampleLib.glue_theorem}", ""), 4)
+        self.assertCaught(clean.replace("\\fc@auxleanref{1.2}{a}{ExampleLib.glue_theorem}",
+                                        "\\fc@auxleanref{1.2}{}{ExampleLib.glue_theorem}"), 4)
+        self.assertCaught(clean + "\\fc@auxleanref{2.1}{b}{ExampleLib.cover_mono}\n", 4)
+
+    def test_rule_5(self):
+        clean = fake_aux()
+        self.assertCaught(clean.replace("\\fc@auxhyp{2.3}{}{open}", ""), 5)
+        # in the part that needs it is enough
+        moved = clean.replace("\\fc@auxhyp{1.2}{}{open}\n", "") + (
+            "\\fc@auxhyp{1.2}{a}{open}\n\\fc@auxhyp{1.2}{b}{open}\n")
+        self.assertEqual(rules_of(run_rules(moved), warnings=True), set())
+        self.assertCaught(clean + "\\fc@auxhyp{2.1}{a}{open}\n", 5, warning=True)
+        self.assertCaught(clean.replace("\\fc@auxhypdef{open}{\\hypOpen}", ""), 5)
+        self.assertCaught(clean.replace("\\fc@auxhypdef{open}{\\hypOpen}",
+                                        "\\fc@auxhypdef{open}{\\hypIsOpen}"), 5)
+        self.assertCaught(clean + "\\fc@auxhypdef{closed}{\\hypClosed}\n", 5, warning=True)
+        bad = copy.deepcopy(doc.HYPOTHESES)
+        bad["hypotheses"].append({"key": "open", "macro": "hypOpen", "binder_head": "Is Open"})
+        self.assertCaught(clean, 5, hyps=bad)
+
+    def test_rule_5_by_a_printed_type(self):
+        by_type = copy.deepcopy(doc.HYPOTHESES)
+        del by_type["hypotheses"][0]["binder_head"]
+        by_type["hypotheses"][0]["binder_type"] = r"IsOpen [UV]"
+        self.assertEqual(run_rules(fake_aux(), hyps=by_type).fails, [])
+        by_type["hypotheses"][0]["binder_type"] = r"IsClosed .*"   # nothing binds it
+        self.assertCaught(fake_aux(), 5, hyps=by_type, warning=True)
+        neither = copy.deepcopy(by_type)
+        del neither["hypotheses"][0]["binder_type"]
+        self.assertCaught(fake_aux(), 5, hyps=neither)
+
+    def test_rule_5_reads_no_hypothesis_out_of_a_conclusion(self):
+        # cover_univ states an equivalence; IsOpen on its right is no hypothesis it binds
+        decls = copy.deepcopy(doc.DECLARATIONS)
+        for d in decls["declarations"]:
+            if d["name"] == "ExampleLib.cover_univ":
+                d["signature"] = ("∀ {X : Type u_1} [inst : TopologicalSpace X] (W : Set X), "
+                                  "ExampleLib.Covers Set.univ W ↔ ∀ (s : Set X), IsOpen s → s ⊆ W")
+        report = run_rules(fake_aux(), decls=decls)
+        self.assertEqual((report.fails, report.warns), ([], []))
+
+    def test_rule_5_counts_a_hypothesis_items_json_lists(self):
+        items = copy.deepcopy(doc.ITEMS)
+        lemma = items["items"][2]
+        lemma["declarations"][0]["hypotheses"] = ["hU : IsOpen U"]   # cover_mono's signature does not
+        self.assertCaught(fake_aux(), 5, items=items)
+
+    def test_rule_6(self):
+        clean = fake_aux()
+        self.assertCaught(clean.replace("{Theorem 4.1}{*}", "{Theorem 4.1}{}"), 6)
+        self.assertCaught(clean.replace("{Definition 2.3}{}", "{Definition 2.4}{}"), 6)
+        self.assertCaught(clean.replace("\\fc@auxref{1.1}{}{Definition 2.3}{}", ""), 6)
+        self.assertCaught(clean + "\\fc@auxref{2.1}{a}{Lemma 1.1}{}\n", 6)
+        self.assertCaught(clean + "\\fc@auxref{1.1}{}{Definition 2.3}{}\n", 6)
+        items = copy.deepcopy(doc.ITEMS)                        # a number on part (b) only
+        items["items"][2]["parts"][1]["reference"] = {"number": "Lemma 3.2", "source": "docstring",
+                                                     "declaration": "ExampleLib.cover_univ"}
+        self.assertCaught(clean, 6, items=items)
+        self.assertEqual(run_rules(clean + "\\fc@auxref{2.1}{b}{Lemma 3.2}{}\n", items).fails, [])
+
+    def test_rule_7(self):
+        clean = fake_aux()
+        self.assertCaught(clean, 7, log="LaTeX Warning: Label `item:1.1' multiply defined.\n")
+        log = "LaTeX Warning: Reference `item:1.2:a' on page 2 undefined on input line 9.\n"
+        self.assertCaught(clean, 7, log=log, warning=True)
+        # a reference into a section this build skipped is no warning
+        partial = clean.replace("\\fc@auxsection{1}{1}", "\\fc@auxsection{1}{0}")
+        report = run_rules(partial, log=log)
+        self.assertNotIn(7, rules_of(report, warnings=True))
+        cite = "LaTeX Warning: Citation `reference' on page 1 undefined on input line 3.\n"
+        self.assertCaught(clean, 7, log=cite, warning=True)
+
+
+# ---------------------------------------------------------------------------
+# the whole runtime, with TeX and poppler
+
+def missing_programs() -> list[str]:
+    missing = [p for p in TEX_PROGRAMS + POPPLER if shutil.which(p) is None]
+    if not missing:
+        for name in doc.TEX_PACKAGES:
+            if subprocess.run(["kpsewhich", name], capture_output=True).returncode != 0:
+                missing.append(name)
+    return missing
+
+
+def need_tex(case: unittest.TestCase) -> None:
+    missing = missing_programs()
+    if missing:
+        why = "TeX or poppler is missing: " + ", ".join(missing)
+        if os.environ.get("CF_REQUIRE_TEX") == "1":
+            case.fail(f"{why}, and CF_REQUIRE_TEX=1 requires them")
+        raise unittest.SkipTest(why)
+
+
+class _Built(unittest.TestCase):
+    """A synthetic repository, and helpers to build and check it."""
+
+    tmp: tempfile.TemporaryDirectory
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.tmp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        need_tex(self)
+
+    def repo(self, name: str, **changes) -> Path:
+        return doc.write_repo(self.root / name, **changes)
+
+    @staticmethod
+    def tool(repo: Path, *argv: str, script: str | None = None) -> subprocess.CompletedProcess:
+        """Run a tool from the repository's root, as the brief says to."""
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+        if script is None:
+            cmd = ["bash", "informal/tools/build_pdf.sh", *argv]
+        else:
+            cmd = [sys.executable, f"informal/tools/{script}.py", *argv]
+        return subprocess.run(cmd, cwd=repo, capture_output=True, text=True, env=env,
+                              timeout=600)
+
+    def build(self, repo: Path, outdir: Path, *flags: str, ok: bool = True):
+        out = self.tool(repo, *flags, str(outdir))
+        if ok:
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        return out
+
+    def check(self, repo: Path, outdir: Path, *flags: str) -> subprocess.CompletedProcess:
+        return self.tool(repo, str(outdir), *flags, script="check_items")
+
+
+class TestTheRuntimeBuilds(_Built):
+    """The clean document: builds, boxes, checks and sheets."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if missing_programs():
+            return
+        cls.repo_ = doc.write_repo(cls.root / "repo")
+        cls.a, cls.b = cls.root / "a", cls.root / "b"
+        for outdir in (cls.a, cls.b):
+            subprocess.run(["bash", "informal/tools/build_pdf.sh", "--clean", "--source-commit",
+                            "f" * 40, str(outdir)], cwd=cls.repo_, check=True,
+                           capture_output=True)
+        subprocess.run([sys.executable, "informal/tools/extract_markers.py", str(cls.a)],
+                       cwd=cls.repo_, check=True, capture_output=True)
+
+    def test_two_clean_builds_are_byte_identical(self):
+        pdf_a, pdf_b = (d / f"{doc.JOB}.pdf" for d in (self.a, self.b))
+        self.assertEqual(pdf_a.read_bytes(), pdf_b.read_bytes())
+        receipt = json.loads((self.a / "build-receipt.json").read_text())
+        self.assertEqual(receipt["pdf"]["sha256"], fc.sha256_file(pdf_a))
+        self.assertEqual(receipt["source_commit"], "f" * 40)
+        self.assertEqual(receipt["source_date_epoch"], doc.CONFIG["source_date_epoch"])
+        self.assertTrue(receipt["pdftex"].startswith("pdfTeX"))
+        # the marker package is the runtime's, from OUTDIR/runtime/, and the sections the copy's
+        self.assertIn("runtime/fcmarkers.sty", receipt["inputs"])
+        self.assertIn("src/sections/02-covers.tex", receipt["inputs"])
+        self.assertNotIn("src/fcmarkers.sty", receipt["inputs"])
+        info = subprocess.run(["pdfinfo", str(pdf_a)], capture_output=True, text=True).stdout
+        self.assertRegex(info, r"Title:\s+The glue theorem, after ExampleLib\n")
+        self.assertNotIn(b"/ID [", pdf_a.read_bytes())         # \pdftrailerid{}
+        self.assertNotIn(b"PTEX.Fullbanner", pdf_a.read_bytes())
+
+    def test_the_markers_hold_one_box_per_page_of_every_item_and_part(self):
+        markers = json.loads((self.a / "markers.json").read_text())
+        self.assertEqual(markers["schema"], fc.MARKERS_SCHEMA)
+        self.assertEqual(markers["pdf_sha256"], fc.sha256_file(self.a / f"{doc.JOB}.pdf"))
+        self.assertEqual(markers["source_commit"], "f" * 40)
+        self.assertEqual(markers["boxes_config"], doc.CONFIG["boxes"])
+        entries = {e["id"]: e for e in markers["entries"]}
+        self.assertEqual(list(entries), ["1.1", "1.2", "1.2(a)", "1.2(b)", "2.1", "2.1(a)",
+                                         "2.1(b)", "2.2", "2.2(a)", "2.2(b)", "2.3"])
+        self.assertEqual(entries["1.2"]["parts"], ["1.2(a)", "1.2(b)"])
+        self.assertEqual(entries["1.2(b)"]["decls"],
+                         ["ExampleLib.glue_surjective", "ExampleLib.glue_map"])
+        self.assertEqual(entries["2.3"]["title"], "Counting glued pieces")
+        # example 2.2 crosses the page break: one box on each page, for it and its part (a)
+        self.assertEqual([b[0] for b in entries["2.2"]["boxes"]], [1, 2])
+        self.assertEqual([b[0] for b in entries["2.2(a)"]["boxes"]], [1, 2])
+        for entry in markers["entries"]:
+            for page, x, y, w, h in entry["boxes"]:
+                with self.subTest(entry=entry["id"]):
+                    self.assertTrue(0 <= x and 0 <= y and w > 0 and h > 0)
+                    self.assertLessEqual(x + w, 1)
+                    self.assertLessEqual(y + h, 1)
+        # consecutive parts share an edge, inside their item
+        a, b = entries["1.2(a)"]["boxes"][0], entries["1.2(b)"]["boxes"][0]
+        self.assertAlmostEqual(a[2] + a[4], b[2], places=5)
+
+    def test_the_checks_and_the_proof_sheets_pass(self):
+        out = self.check(self.repo_, self.a, "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("check_items: PASS (all sections: 5 of 5 items, 6 parts, 13 boxes;", out.stdout)
+        sheets = self.root / "sheets"
+        out = self.tool(self.repo_, str(self.a), "--dest", str(sheets), script="proof_sheets")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("0 ink under a stroke, 0 cut word, 0 stray item text, "
+                      "0 ink outside its boxes, 0 frames too close", out.stdout)
+        self.assertEqual(sorted(p.name for p in sheets.iterdir()),
+                         ["page-01.png", "page-01.svg", "page-02.png", "page-02.svg", "render"])
+        self.assertTrue((sheets / "page-01.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_no_tool_leaves_bytecode_in_the_repository(self):
+        self.assertEqual(list(self.repo_.rglob("__pycache__")), [])
+        self.assertEqual(list(self.a.rglob("__pycache__")), [])
+
+    def test_a_box_that_holds_no_text_or_overlaps_is_caught(self):
+        outdir = self.root / "boxes"
+        shutil.copytree(self.a, outdir)
+        markers = json.loads((outdir / "markers.json").read_text())
+        entries = {e["id"]: e for e in markers["entries"]}
+        entries["1.1"]["boxes"][0][2] = 0.02                     # in the top margin: no text
+        box = entries["2.1"]["boxes"][0]                         # down through 2.2's head
+        box[4] = entries["2.2"]["boxes"][0][2] + 0.008 - box[2]
+        (outdir / "markers.json").write_text(json.dumps(markers))
+        out = self.check(self.repo_, outdir)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("FAIL [9] 1.1: box 1 (page 1) holds no text", out.stdout)
+        self.assertIn("FAIL [10] 2.1: its boxes overlap those of item 2.2", out.stdout)
+        # and a proof sheet sees a stroke through the text of 2.2
+        sheets = self.tool(self.repo_, str(outdir), script="proof_sheets")
+        self.assertEqual(sheets.returncode, 1, sheets.stdout)
+        self.assertIn("INK UNDER A STROKE: p.1 2.1: bottom edge", sheets.stdout)
+
+    def test_markers_of_another_build_are_caught(self):
+        out = self.check(self.repo_, self.b)                      # b was never extracted
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("FAIL [8] markers:", out.stdout)
+        outdir = self.root / "stale"
+        shutil.copytree(self.a, outdir)
+        markers = json.loads((outdir / "markers.json").read_text())
+        markers["entries"][0]["decls"] = []
+        (outdir / "markers.json").write_text(json.dumps(markers))
+        out = self.check(self.repo_, outdir)
+        self.assertIn("FAIL [8] markers: the entries of", out.stdout)
+
+    def test_aux_only_needs_no_markers(self):
+        out = self.check(self.repo_, self.b, "--aux-only", "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+
+
+class TestPartialBuilds(_Built):
+
+    def test_one_section_builds_and_checks_alone(self):
+        repo = self.repo("partial")
+        outdir = self.root / "partial-out"
+        self.build(repo, outdir, "--only", "2")
+        receipt = json.loads((outdir / "build-receipt.json").read_text())
+        self.assertEqual((receipt["only"], receipt["sections"]), (["2"], ["2"]))
+        # 2.3 cites 1.2(a), in the section this build skipped: no warning
+        out = self.check(repo, outdir, "--aux-only", "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("(section 2: 3 of 3 items", out.stdout)
+        out = self.check(repo, outdir, "--section", "1", "--aux-only")
+        self.assertEqual(out.returncode, 2)
+        # then the whole document into the same directory: the stamp resets latexmk's state
+        self.build(repo, outdir)
+        out = self.check(repo, outdir, "--aux-only", "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("(all sections: 5 of 5 items", out.stdout)
+
+    def test_a_section_number_is_a_number_and_must_exist(self):
+        repo = self.repo("numbers")
+        outdir = self.root / "numbers-out"
+        # the file is 02-covers.tex, and 02 is section 2
+        self.build(repo, outdir, "--only", "02")
+        receipt = json.loads((outdir / "build-receipt.json").read_text())
+        self.assertEqual((receipt["only"], receipt["sections"]), (["2"], ["2"]))
+        self.assertEqual((outdir / "build-only.txt").read_text(), "2")
+        out = self.check(repo, outdir, "--aux-only", "--strict")
+        self.assertIn("(section 2: 3 of 3 items", out.stdout)
+        # a section sections.tex does not list is refused, and a build of no section
+        # passes no check
+        out = self.build(repo, outdir, "--only", "7", ok=False)
+        self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
+        self.assertIn("--only 7: no such section was typeset", out.stderr)
+        out = self.check(repo, outdir, "--aux-only", "--strict")
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        self.assertIn("FAIL [1] sections: the checked scope (no section) holds no item",
+                      out.stdout)
+        out = self.build(repo, outdir, "--only", "0", ok=False)
+        self.assertEqual(out.returncode, 2)
+
+    def test_the_conventions_phase_checks_its_build(self):
+        empty = {"01-gluing-spaces": "", "02-covers": ""}
+        repo = self.repo("conventions", sections=empty)
+        outdir = self.root / "conventions-out"
+        self.build(repo, outdir)
+        out = self.check(repo, outdir, "--conventions", "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        repo = self.repo("conventions-bad", sections=empty, notation_extra="")
+        self.build(repo, outdir, "--clean")
+        out = self.check(repo, outdir, "--conventions")
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("FAIL [5] notation: no \\fcdefhyp for the hypothesis open", out.stdout)
+
+
+class TestTheBuildRefuses(_Built):
+
+    def test_each_marker_error_stops_the_build(self):
+        theorem = doc.SECTION_1[doc.SECTION_1.index("\\begin{theorem}"):]
+        cases = {
+            "an id used twice": (doc.SECTION_1.replace("[id=1.2]", "[id=1.1]"),
+                                 "Item 1.1 appears twice"),
+            "an item inside an item": (doc.SECTION_1.replace("\\end{definition}", "") + "\n"
+                                       "\\end{definition}\n", "is still open"),
+            "an item without an id": (doc.SECTION_1.replace("[id=1.1]", ""),
+                                       "Item without an id"),
+            "a part out of order": (theorem.replace("\\itempart{b}", "\\itempart{c}"),
+                                    "Part (c) of item 1.2 should be (b)"),
+            "a part outside an item": ("\\itempart{a}{x}\n", "outside an item"),
+            "a declaration outside an item": ("\\leanref{ExampleLib.GlueData}\n",
+                                              "outside an item"),
+        }
+        for what, (body, message) in cases.items():
+            with self.subTest(case=what):
+                repo = self.repo(f"error-{len(os.listdir(self.root))}",
+                                 sections={"01-gluing-spaces": body})
+                out = self.build(repo, self.root / "error-out", ok=False)
+                self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+                self.assertIn(message, out.stderr)
+                # the error lines alone, never the source lines TeX shows around them
+                self.assertNotRegex(out.stderr, r"(?m)^l\.\d+ ")
+
+    def test_a_hypothesis_macro_that_clashes_stops_the_build(self):
+        repo = self.repo("clash", notation_extra=doc.NOTATION_HYPOTHESES
+                         + "\\fcdefhyp{\\hypAlso}{open}{again}\n")
+        out = self.build(repo, self.root / "clash-out", ok=False)
+        self.assertIn("Hypothesis `open' is defined twice", out.stderr)
+        repo = self.repo("clash2", notation_extra="\\fcdefhyp{\\section}{open}{x}\n")
+        out = self.build(repo, self.root / "clash2-out", ok=False)
+        self.assertIn("\\section is already defined", out.stderr)
+
+    def test_sections_out_of_order_stop_the_build(self):
+        repo = self.repo("order")
+        (repo / "informal" / "sections.tex").write_text(
+            "\\fcinputsection{2}{02-covers}{Covers}\n"
+            "\\fcinputsection{1}{01-gluing-spaces}{Gluing spaces}\n")
+        out = self.build(repo, self.root / "order-out", ok=False)
+        self.assertIn("Section 1 comes after section 2", out.stderr)
+
+    def test_the_source_may_not_reach_outside_its_copy(self):
+        for what, line in (("an absolute path", "\\input{/etc/hosts}"),
+                           ("a parent directory", "\\input{../../informal/main}")):
+            with self.subTest(case=what):
+                repo = self.repo(f"reach-{len(os.listdir(self.root))}",
+                                 sections={"02-covers": doc.SECTION_2 + line + "\n"})
+                out = self.build(repo, self.root / "reach-out", ok=False)
+                self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+                self.assertIn("not found", out.stderr)
+
+    def test_a_symbolic_link_is_refused(self):
+        repo = self.repo("link")
+        (repo / "informal" / "sections" / "03-other.tex").symlink_to("/etc/hosts")
+        out = self.build(repo, self.root / "link-out", ok=False)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("symbolic link", out.stderr)
+
+    def test_shell_escape_is_off(self):
+        marker = self.root / "shell-escape-ran"
+        repo = self.repo("shell", sections={
+            "02-covers": doc.SECTION_2 + f"\\immediate\\write18{{touch {marker}}}\n"})
+        self.build(repo, self.root / "shell-out")
+        self.assertFalse(marker.exists())
+        # TeX Live's default, restricted shell escape, would refuse `touch` too; the log
+        # says whether any shell escape was on
+        log = (self.root / "shell-out" / f"{doc.JOB}.log").read_text(errors="replace")
+        self.assertNotIn("write18 enabled", log)
+
+    def test_no_latexmkrc_is_read(self):
+        # a latexmkrc in the copy is Perl that latexmk would run; -norc keeps it unread
+        marker = self.root / "latexmkrc-ran"
+        repo = self.repo("rc")
+        (repo / "informal" / "latexmkrc").write_text(
+            f"open(my $fh, '>', '{marker}'); close($fh);\n")
+        self.build(repo, self.root / "rc-out")
+        self.assertFalse(marker.exists())
+
+    def test_an_outdir_that_holds_other_files_is_refused(self):
+        repo = self.repo("outdirs")
+        # the repository itself, or a directory that holds it: each build replaces
+        # OUTDIR/src/ and OUTDIR/runtime/
+        for outdir in (repo, repo.parent):
+            with self.subTest(outdir=str(outdir)):
+                out = self.build(repo, outdir, ok=False)
+                self.assertEqual(out.returncode, 2, out.stdout + out.stderr)
+                self.assertIn("may not be the current directory or hold it", out.stderr)
+        self.assertTrue((repo / "informal" / "main.tex").is_file())
+        occupied = self.root / "occupied"
+        (occupied / "src").mkdir(parents=True)
+        (occupied / "src" / "keep.txt").write_text("keep")
+        out = self.build(repo, occupied, ok=False)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("is not empty and holds no earlier build", out.stderr)
+        self.assertTrue((occupied / "src" / "keep.txt").is_file())
+        # one build at a time: a held lock refuses a second
+        busy = self.root / "busy"
+        self.build(repo, busy)
+        self.assertFalse((busy / ".build-lock").exists())
+        (busy / ".build-lock").mkdir()
+        out = self.build(repo, busy, ok=False)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("another build is using", out.stderr)
+        self.assertTrue((busy / "src" / "main.tex").is_file())
+
+    def test_bad_arguments_and_settings_are_refused(self):
+        repo = self.repo("args")
+        out = self.build(repo, repo / "informal" / "build", ok=False)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("OUTDIR may not be inside informal/", out.stderr)
+        out = self.build(repo, self.root / "args-out", "--only", "1,,2", ok=False)
+        self.assertEqual(out.returncode, 2)
+        out = self.build(repo, self.root / "args-out", "--source-commit", "abc", ok=False)
+        self.assertEqual(out.returncode, 2)
+        null = self.repo("null-time", config={**doc.CONFIG, "source_date_epoch": None})
+        out = self.build(null, self.root / "null-out", ok=False)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("source_date_epoch is null", out.stderr)
+        absent = self.repo("absent", config={**doc.CONFIG, "tex_packages": [
+            *doc.TEX_PACKAGES, "no-such-package-here.sty"]})
+        out = self.build(absent, self.root / "absent-out", ok=False)
+        self.assertEqual(out.returncode, 3)
+        self.assertIn("TeX cannot find: no-such-package-here.sty", out.stderr)
+        out = subprocess.run(["bash", str(TOOLS / "build_pdf.sh"), str(self.root / "x")],
+                             cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("no informal/ here", out.stderr)
+
+
+class TestTheChecksCatchARealBuild(_Built):
+    """The rules on a build whose sections break five of them at once."""
+
+    def test_each_break_is_reported_under_its_rule(self):
+        section_1 = (doc.SECTION_1
+                     .replace("\\begin{definition}[id=1.1]", "\\begin{lemma}[id=1.1]")
+                     .replace("\\end{definition}", "\\end{lemma}")            # rule 1
+                     .replace("\\fcref*{Theorem 4.1}", "\\fcref{Theorem 4.1}")  # rule 6
+                     .replace(", and suppose that \\hypOpen", ""))             # rule 5
+        section_2 = (doc.SECTION_2
+                     .replace("\\leanref{ExampleLib.cover_univ}",
+                              "\\leanref{ExampleLib.nowhere}")                 # rules 3, 4
+                     .replace("\\itempart{b}{%\n  If the chain", "\\itempart{b}{%\n"
+                              "  \\leanref{ExampleLib.chain_long}If the chain"))  # rule 4
+        repo = self.repo("broken", sections={"01-gluing-spaces": section_1,
+                                             "02-covers": section_2})
+        outdir = self.root / "broken-out"
+        self.build(repo, outdir)
+        out = self.check(repo, outdir, "--aux-only")
+        self.assertEqual(out.returncode, 1)
+        for line in ("FAIL [1] 1.1: typeset as lemma, but items.json says definition",
+                     "FAIL [3] 2.1(b): \\leanref{ExampleLib.nowhere} is not a declaration",
+                     "FAIL [4] 2.1(b): key declaration ExampleLib.cover_univ is not \\leanref'd here",
+                     "FAIL [4] 2.2(b): key declaration ExampleLib.chain_long belongs to 2.2(a)",
+                     "FAIL [5] 1.2(a): \\hypOpen is missing: ExampleLib.glue_theorem binds IsOpen",
+                     "FAIL [5] 1.2(b): \\hypOpen is missing: ExampleLib.glue_surjective binds",
+                     "FAIL [6] 1.2: \\fcref{Theorem 4.1} should be \\fcref*{Theorem 4.1}"):
+            with self.subTest(line=line):
+                self.assertIn(line, out.stdout)
+
+
+if __name__ == "__main__":                                    # pragma: no cover
+    unittest.main()

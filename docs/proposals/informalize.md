@@ -1,6 +1,7 @@
 # Informalize: an informal companion written from a Lean library
 
-**Status: specification, 2026-11-03. Nothing below is built:
+**Status: specification, 2026-11-03. Component 2 of section 11, the LaTeX runtime and the
+project templates under `templates/informalize/`, is built; nothing else is:
 `cf informalize`, `cf plan-informalize` and `cf export informal-markers` are not implemented,
 and paths into this repository written in *italics* do not exist yet. Section 11 lists the
 components in the order they land; a component whose code shows this file wrong changes it
@@ -295,7 +296,8 @@ docstrings: drafters read those in the library's source.
   provisional ids. While every section file is empty, `approve items --in-v1` moves the other
   items to `deferred`, drops empty sections, renumbers sections and items with `n` from 1
   without gaps within a section, records the old-to-new map in `decisions`, and writes
-  `sections.tex` and an empty file per section. Once a section file is not empty (the first
+  `sections.tex`, one line `\fcinputsection{<n>}{<NN>-<slug>}{<title>}` per section
+  (section 7.2), and an empty file per section. Once a section file is not empty (the first
   applied draft run), the ids are frozen: a later approval only pins, never renumbers and
   never writes a section file that is not empty; an item is only added at the end of its
   section, and a withdrawn id is never reused but stays a gap, recorded in `decisions` as
@@ -314,6 +316,9 @@ docstrings: drafters read those in the library's source.
   as the reference work prints it, `source` one of `docstring`, `module docstring`,
   `inferred`, `none`, and the `declaration` whose docstring states it. Never a quotation.
 - `kind` is one of definition, lemma, proposition, theorem, corollary, example, remark.
+- **Titles** of sections and items are LaTeX source, as the text prints them (`--` for an
+  en dash, math in `$...$`): a drafter copies an item's title into its environment as it
+  stands, and check 1 (section 7.3) compares the two as written.
 
 `check-items` (a port of the pilot's `verify.py`) refuses a table whose declarations are not
 in `declarations.json`, whose module or keyword line differs from it, whose keyword line in
@@ -340,9 +345,17 @@ the conventions task, read by the checks:
  "hypotheses": [{"key": "open", "macro": "\\hypOpen", "binder_head": "IsOpen"}]}
 ```
 
-`binder_head` is the head constant of a binder's type in the probe's one-line signature:
-the checks find `(h : <binder_head> ...)` in any bracket kind. The words live in
-`notation.sty` (section 7.2).
+A row names its hypothesis by `binder_head`, the head constant of the hypothesis's printed
+type, or by `binder_type`, a Python regular expression that the whole printed type matches
+with its spaces collapsed, for a hypothesis in infix notation (`x ∈ A`) or for several with
+one head; it gives at least one of the two. The checks read a key declaration's hypotheses
+from the leading telescope of the probe's one-line signature: the binders of each
+`∀ ... ,` in any bracket kind, a bracketed binder before `→`, and the antecedent of an arrow
+outside every bracket, which is how the probe prints a hypothesis nothing depends on. They
+stop at the conclusion (a segment holding `↔` outside brackets, one starting with `∃`, or
+the last) and never read inside a binder's type, so `(f : IsOpen U → Prop)` binds a
+function, not `IsOpen U`. A binder the item's `hypotheses` lists counts too. The words live
+in `notation.sty` (section 7.2).
 
 ### 5.6 `informal/markers.json`
 
@@ -465,21 +478,24 @@ members were reached through types alone. It writes `scope.json` and
 
 ### 7.1 Files
 
-*templates/informalize/runtime/* is copied byte for byte into `repo/informal/` by
-`cf informalize sync` and recorded in `informal/GENERATED.json`; nothing is substituted into
-it. *templates/informalize/project/* holds templates that `init` renders once (`main.tex`,
-`notation.sty`, `sections/00-conventions.tex`, `STYLE-project.md`, `README.md`, the license
-texts, `.gitignore`); those files are the project's afterwards and `sync` never touches them.
+`templates/informalize/runtime/` is copied byte for byte into `repo/informal/` by
+`cf informalize sync` (never a `__pycache__/` or `*.pyc` file) and recorded in
+`informal/GENERATED.json`; nothing is substituted into it. `templates/informalize/project/`
+holds templates that `init` renders once (`main.tex`, `notation.sty`,
+`sections/00-conventions.tex`, `STYLE-project.md`, `README.md`, `.gitignore`); those files
+are the project's afterwards and `sync` never touches them. The license texts that `init`
+writes as `LICENSE`, one per license `text.license` may name, come with component 3
+(section 11).
 
 | runtime file | ported from the pilot's | what changes |
 |---|---|---|
 | `fcmarkers.sty` | `rrmarkers.sty` | `fc@` prefixes; the id printed as the number; hypothesis macros defined per project; a reference macro; `\FCOnly` |
 | `STYLE.md` | `STYLE.md`'s generic half | the project half is `STYLE-project.md` |
-| `tools/build_pdf.sh` | `build_pdf.sh` | main file and job from `informalize.json`; builds a snapshot; `-norc` and `openin_any=p`; a receipt |
+| `tools/build_pdf.sh` | `build_pdf.sh` | main file and job from `informalize.json`; builds a snapshot; `-norc` and `openin_any=p`; refuses an unsafe `<outdir>` and a second build into one; a receipt |
 | `tools/canonical_pdf.sh` | the pilot's final-build steps | section 9 |
-| `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json` |
+| `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json`; a region's first and last line from the above and below markers |
 | `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check |
-| `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py` |
+| `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py`; ink outside an item's boxes is fatal |
 | `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts` |
 
 The tools are standard-library Python and POSIX shell, run from the output repository's
@@ -490,8 +506,9 @@ tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output re
 ### 7.2 `fcmarkers.sty`
 
 - `\begin{<kind>}[id=<id>]{<title>}` for the seven kinds prints "<Kind> <id> (<title>)" and
-  records `\fc@auxitem{<id>}{<kind>}{\thesection}{<title>}`; an id used twice, an item opened
-  inside another, or a missing id is a LaTeX error.
+  records `\fc@auxitem{<id>}{<kind>}{\thesection}{<title>}` and `\fc@auxkind{<id>}{<Kind>}`
+  (which `\itemref` reads back); an id used twice, an item opened inside another, or a
+  missing id is a LaTeX error.
 - `\itempart{<letter>}{<text>}` inside an item: the next letter in order or an error;
   records `\fc@auxpart{<id>}{<letter>}`.
 - `\leanref{<full name>}` prints nothing and records `\fc@auxleanref{<id>}{<letter>}{<name>}`
@@ -499,49 +516,75 @@ tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output re
 - `\fcdefhyp{<\macro>}{<key>}{<words>}`, used in `notation.sty`, defines `<\macro>` to print
   the words and record `\fc@auxhyp{<id>}{<letter>}{<key>}`, and `<\macro>*` to print them
   only (for a hypothesis named on one side of an equivalence); it records
-  `\fc@auxhypdef{<key>}`.
+  `\fc@auxhypdef{<key>}{<\macro>}`.
 - `\fcref{<number>}` prints the citation `[<label>, <number>]` of the bibliography entry
-  `reference` and records `\fc@auxref{<id>}{<letter>}{<number>}`.
+  `reference` and records `\fc@auxref{<id>}{<letter>}{<number>}{}`; `\fcref*{<number>}`,
+  for a number whose `source` is `inferred`, adds a dagger and records `*` as the fourth
+  argument.
 - `\itemref{<id>}` and `\itemref[<letter>]{<id>}` print "Theorem 1.2" and "Theorem 1.2(b)";
   labels are `item:<id>` and `item:<id>:<letter>`.
-- `\fcinputsection{<n>}{<file>}` inputs a section; with `\FCOnly` (a comma list set by
-  `build_pdf.sh --only`) other sections only advance the section counter.
-- Positions: zref savepos and abspage labels `fc:<id>[:<letter>]:start` and `:end`, the end
-  marker in horizontal or vertical mode recorded by `\fc@auxmark{<marker>}{h|v}`, and the
-  text block's geometry once per run in `\fc@auxgeometry{...}`, all as the pilot's.
+- `\fcinputsection{<n>}{<file>}{<title>}`, one line per section in `sections.tex`, sets the
+  section counter to `<n>`, prints `\section{<title>}` with the label `sec:<n>`, inputs
+  `sections/<file>` and records `\fc@auxsection{<n>}{1}{<file>}{<title>}`; a section file
+  therefore writes no `\section`, and sections out of increasing order are a LaTeX error.
+  With `\FCOnly` (a comma list that `build_pdf.sh --only` defines) a section it does not
+  name, compared as numbers, only advances the counter and is recorded with `0`.
+- Positions: zref savepos and abspage labels `fc:<id>[:<letter>]:start`, `:above`, `:end`
+  and `:below`. The start marker sits on the first baseline, in the theorem head or the part
+  label. The above marker sits on the vertical list before the first line and its interline
+  glue (`\vadjust pre`, then `\nobreak`, so it adds no place to break the page). The end
+  marker sits on the last baseline in horizontal mode, or after a closing display or list in
+  vertical mode, recorded by `\fc@auxmark{<marker>}{h|v}`; in horizontal mode the below
+  marker follows the last line's box (`\vadjust`). The text block's geometry is written once
+  per run in `\fc@auxgeometry{...}`, as the pilot's.
 - `\lineskiplimit` and `\lineskip` are 2pt, so no box edge between parts crosses ink.
 
 ### 7.3 The tools and their checks
 
-`tools/build_pdf.sh [--only N[,M]] [--clean] <outdir>`: copies `informal/` into `<outdir>/src/`
-and builds there (so an edit during a build cannot leave latexmk out of passes), with latexmk
+`tools/build_pdf.sh [--only N[,M]] [--clean] [--source-commit SHA] <outdir>`: copies `informal/`
+into `<outdir>/src/` and builds there (so an edit during a build cannot leave latexmk out of
+passes), with the `fcmarkers.sty` beside its own `tools/` copied to `<outdir>/runtime/` and
+first on `TEXINPUTS` (which it sets), whatever `informal/` holds, with latexmk
 `-norc -pdf -no-shell-escape -recorder` (`-norc`: no `latexmkrc` in the copy is read),
 `openin_any=p` and `openout_any=p` in its environment (kpathsea reads both from there; a file
 the source names may then not be an absolute path, climb to a parent directory or be a dot
 file, so a section cannot `\input` a file of the host), `SOURCE_DATE_EPOCH` from
-`informalize.json` and `FORCE_SOURCE_DATE=1` (the template sets `\pdftrailerid{}` and
-`\pdfsuppressptexinfo=-1`). First it runs kpsewhich on every file of `tex_packages` and stops
-naming the missing ones. When `--only` differs from the last build's, which a stamp file in
+`informalize.json` and `FORCE_SOURCE_DATE=1` (`\pdftrailerid{}` and
+`\pdfsuppressptexinfo=-1` it sets itself, before the main file, through latexmk's
+`-usepretex`). First it runs kpsewhich on every file of `tex_packages` and stops naming the
+missing ones. It refuses an `<outdir>` inside `informal/`, one that is the current directory or
+holds it, and an existing, non-empty one that holds no `build-only.txt` or
+`build-receipt.json` of an earlier build, since every build replaces `<outdir>/src/` and
+`<outdir>/runtime/`; and it holds `<outdir>/.build-lock` while it copies and builds, so a
+second build into the same `<outdir>` is refused. `--only` numbers are read as numbers (`02`
+is section 2). When `--only` differs from the last build's, which a stamp file in
 `<outdir>` records, it deletes the `.aux` and `.fdb_latexmk` files first, as the pilot's does:
 a stale `.fdb_latexmk` let latexmk skip a pass. It writes `<outdir>/<job>.pdf` and
-`<outdir>/build-receipt.json`: the PDF's sha256 (`sha256sum`, else `shasum -a 256`), the pdfTeX
-and latexmk versions, and the sha256 of every input the `.fls` lists.
+`<outdir>/build-receipt.json`: the PDF's sha256 (`sha256sum`, else `shasum -a 256`), `--only`,
+the sections the `.aux` records as typeset (a build that did not typeset a section `--only`
+names is refused), `--source-commit` (the output repository commit that `informal/` is,
+which `markers.json` carries on), the pdfTeX and latexmk versions (`latexmk -norc -v`, run in
+`<outdir>`), and the sha256 of every input the `.fls` lists.
 
-`tools/check_items.py <outdir> [--section N] [--items IDS] [--strict] [--aux-only] [--conventions]`
-fails unless:
+`tools/check_items.py <outdir> [--section N] [--items IDS] [--strict] [--aux-only] [--conventions] [--declarations FILE]`
+(`--declarations`: another `declarations.json` than the built copy's, the gate's) fails unless:
 
-1. every `in_v1` item appears once, with its id, kind and title, in the section the id names
-   (the `\section` number), in `items.json` order, and no other id appears;
+1. the sections are `items.json`'s, in order, each with its title and its file
+   `sections/NN-<slug>.tex`; every `in_v1` item appears once, with its id, kind and title, in
+   the section the id names (the `\section` number), in `items.json` order, and no other id
+   appears; the checked sections hold at least one `in_v1` item, and every section `--only`
+   named was typeset;
 2. each item has exactly its parts, in order;
 3. every `\leanref` names a declaration of `declarations.json` (warning: one the item does
    not list);
 4. every key declaration is `\leanref`'d in its part, or in the item's text when its part is
    null, and in no other part;
-5. wherever a key declaration `\leanref`'d there binds a hypothesis of `hypotheses.json`, its
-   macro is recorded in that part or in the item's own text (warning: a recorded hypothesis
-   no key there binds), and every key of `hypotheses.json` has a `\fcdefhyp`;
-6. `\fcref` matches the item's or the part's `reference.number`, where it is given, and
-   appears nowhere else;
+5. wherever a key declaration `\leanref`'d there binds a hypothesis of `hypotheses.json`
+   (section 5.5), its macro is recorded in that part or in the item's own text (warning: a
+   recorded hypothesis no key there binds), and every key of `hypotheses.json` has a
+   `\fcdefhyp`;
+6. `\fcref` matches the item's or the part's `reference.number`, where it is given, with a
+   star exactly when its `source` is `inferred`, once, and appears nowhere else;
 7. the log has no multiply defined label (warning: an undefined reference, which in a
    `--only` build may point into a section not built);
 
@@ -551,22 +594,30 @@ and, without `--aux-only` (these need poppler):
 9. every box, cropped with `pdftotext -x -y -W -H` at 288 dpi, holds text: an item's first
    box its head ("Theorem 1.2"), a part's first box its label ("(a)"), and an item's boxes
    together the words of its title;
-10. boxes of different items do not overlap.
+10. boxes of different items, and of two parts of one item, do not overlap, and a part's
+    boxes lie inside its item's.
 
 `--strict` makes every warning a failure. `--conventions` is for a build whose section files
 are still empty (the conventions phase): it runs check 7 and the `\fcdefhyp` half of check 5
 only, since every check on items would fail there. `tools/extract_markers.py <outdir>`
 (pdfinfo, pdftoppm) fits each box to the ink of its marked lines at `res_dpi`, as the pilot's
-does, and states its assumptions: one column, boxes span the text block.
+does, but finds a region's first line from its above marker and its last from its below
+marker, so a line taller than a baselineskip and ink below the last baseline stay in the box;
+it states its assumptions: one column, boxes span the text block.
 `tools/proof_sheets.py <outdir> --dest <dir> [--dpi 110]` draws the boxes over each page
-(PNG through zlib, and SVG) and exits 1 on ink under a stroke, a cut word or stray item text;
-frames closer than `frame_bp` are reported, not fatal.
+(PNG through zlib, and SVG) and exits 1 on ink under a stroke, a cut word, stray item text,
+or ink between an item's above and below markers that lies outside its boxes; frames closer
+than `frame_bp` are reported, not fatal.
 
-The runtime's tests (component 2) build a two-item, two-part document in a temporary
-directory, check that two clean builds are byte-identical and that each failure above is
-caught, and skip without pdflatex or poppler. CI gets a job that installs a TeX distribution
-with latexmk and the packages of `tex_packages`, and poppler; the job that exists today
-(`.github/workflows/tests.yml`) installs poppler only.
+The runtime's tests (component 2, `tests/test_informalize_runtime.py`) build a two-section
+document of five items and six parts in a temporary directory, with the lines the pilot's
+boxes got wrong (a first line taller than a baselineskip, ink below the last line, a tilde
+under a superscript at a part boundary, stacked accents); they check that two clean builds
+are byte-identical, that the proof sheets pass, and that each failure above is caught, and
+skip without pdflatex or poppler. CI's `informalize-tex` job
+(`.github/workflows/tests.yml`) installs TeX Live with latexmk and the packages of
+`tex_packages`, and poppler, and runs them with `CF_REQUIRE_TEX=1`, which makes the skip a
+failure.
 
 ## 8. The fleet phases (I3, I4, I5)
 
@@ -742,7 +793,8 @@ standard library and its sibling files. Rules, each refusal naming its number:
    `--pre-merge` admits several tasks' paths. A refusal here builds nothing.
 2. **Build**: the gate extracts `informal/` from the contribution's HEAD (`git archive`,
    with its pinned git) into a scratch directory, never the worktree's own files, and builds
-   it with the gate's `tex/` first on `TEXINPUTS` and the gate's `build_pdf.sh` (`-norc`,
+   it with the gate's own copy of the runtime's `build_pdf.sh`, which builds with the
+   `fcmarkers.sty` beside its `tools/`, whatever `informal/` holds (`-norc`,
    `-no-shell-escape`, `openin_any=p`, section 7.3), a 10-minute limit: `--only <section>`
    for draft and judge, the whole document for conventions and edit. A LaTeX error, an
    undefined control sequence or an `fcmarkers` error refuses. The gate prints the error
@@ -885,7 +937,8 @@ approval at the current PDF's sha256, then, in the output repository:
    license, `site.output_root` to `site`, `build.commands` to none, `display.strip_prefix`
    to `<prefix>.` and `display.minimal` to true; writes `site/index.html`, the `.gitignore`
    lines and the workflow directory's `pages.yml` (a Pages workflow artifact, never a branch
-   deploy) and `check.yml` (`check_generated.py`) from *templates/informalize/project/*;
+   deploy) and `check.yml` (`check_generated.py`) from the templates component 7 adds to
+   `templates/informalize/project/`;
    commits;
 2. exports through `overlay.export.export` with the convention `informal-markers`, the
    commit just made and the exporter arguments above, then `overlay.sync.sync` and
@@ -909,9 +962,10 @@ network, and no Claude attribution anywhere.
 1. This specification, a CHANGELOG line and `docs/layout.md`'s list. Its test,
    `tests/test_informalize_spec.py`, holds the spec to the code it names and pins what the
    later components must build to it.
-2. The runtime and project templates (section 7), their tests and the CI TeX job.
+2. The runtime and project templates (section 7), their tests and the CI TeX job (built).
 3. `cf informalize init | sync | status | check-items | approve | reference-checklist`, the
-   formats of section 5 with their validators, the vocabulary, the workspace paths
+   license texts `init` writes as `LICENSE` (section 7.1), the formats of section 5 with
+   their validators, the vocabulary, the workspace paths
    (`cflib.paths`) and `.gitignore` lines, and the rule exception of section 1.3 in
    `SKILL.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/overlay.md` and
    `docs/design/stage_map.md`; a short section of `POLICY.md` (the reference work's numbers

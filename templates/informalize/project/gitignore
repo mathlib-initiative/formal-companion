@@ -1,0 +1,5 @@
+*.pdf
+.lake/
+/build/
+/site/*
+!/site/index.html

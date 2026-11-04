@@ -42,6 +42,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- **The informalize mode's LaTeX runtime and project templates** (`templates/informalize/`,
+  component 2 of `docs/proposals/informalize.md`): the marker package `fcmarkers.sty`, the
+  drafting rules, a reproducible build into a directory of its own, the boxes of every item
+  and part fitted to the ink of a render, the checks of a build against `items.json`,
+  `declarations.json` and `hypotheses.json`, and proof sheets. `tests/test_informalize_runtime.py`
+  builds a synthetic document with them, and CI's `informalize-tex` job runs it with TeX.
 - **A specification for the informalize mode** (`docs/proposals/informalize.md`), not yet
   built: from a Lean library at a commit and one theorem, an item table, an informal LaTeX text
   written and checked by a fleet, a reproducible PDF with a box per item and part, Literature

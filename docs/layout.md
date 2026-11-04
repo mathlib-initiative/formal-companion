@@ -95,6 +95,11 @@ templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend co
 templates/overlay/
                   runtime/, copied verbatim into a companion's pdf-overlay/ (the
                   viewer, its tools and schemas, PDF.js), and tests/ (its node suites)
+templates/informalize/
+                  runtime/, copied verbatim into an informalize output repository's
+                  informal/ (fcmarkers.sty, STYLE.md, the build and check tools), and
+                  project/, the templates `cf informalize init` renders once
+                  (proposals/informalize.md section 7)
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local,
                   and locate-label, the bench's frozen labeler)
 tests/            the test suite; baseline regressions skip unless the env names the baseline
