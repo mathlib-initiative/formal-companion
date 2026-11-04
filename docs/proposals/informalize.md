@@ -8,8 +8,9 @@ of section 5 they read and write, the vocabulary and the rule exception of secti
 and `scope` with `scripts/informalize/library_host.sh` and the driver's `LIBRARY_CACHE`
 option (section 6); and the fleet's first half (section 8): `cf plan-informalize`, the gate
 `scripts/gate/verify_informal.py`, the prompts, the tend config, the bridge's second switch,
-the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`. These
-are not implemented yet: `cf run`'s and `cf harvest`'s informalize support (component 5b),
+the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`; and of
+component 5b, `cf run` sends a phase and `cf harvest` brings one home (section 8.5). These
+are not implemented yet: the watchdog `cf run` starts at the smoke stage (section 8.1),
 `cf informalize apply`, `cf informalize pdf-command`, `cf informalize fetch-pdf`,
 `cf informalize overlay`, `cf informalize check-site` and `cf export informal-markers`, and
 paths into this repository written in *italics* do not exist yet. Section 11 lists the components
@@ -886,10 +887,13 @@ minutes, too short for the items task). `--model` overrides `workspace.yaml`'s `
 (SKILL.md rule 8: another id only after a 1/1 smoke test on the host confirms it).
 
 The cap is enforced on the host, not by tend: with agentbox, tend's own budget counts no
-agent's spend (`manifest.check_budget_cap`). `cf run` (component 5b) starts `bin/watchdog.py`
+agent's spend (`manifest.check_budget_cap`). `cf run` is to start `bin/watchdog.py`
 beside `tend run` at the smoke stage, with `--max-cost` at `budget.max_cost` and no pilot
 thresholds, so its merged-task count, which reads `findings/`, decides nothing; it sums the
-agents' usage envelopes and drains the root at the cap, from the first task on.
+agents' usage envelopes and drains the root at the cap, from the first task on. That half of
+component 5b is not built: until it is, the helper is on the host (the planner stages it in
+`bin/`) and the operator starts it by hand, and a phase's only ceiling is `tend-control
+budget`, which counts no agentbox spend.
 
 The tend config is locate's shape: `validation_commands` run the gate with
 `--changed-files --base main`, `pre_merge_validation_commands` add `--pre-merge`,
@@ -919,14 +923,17 @@ and review records to locate. At the cap, `attempt_cap.py`'s informalize form (a
 manifest of schema `cf-informalize-task/1`) puts back every path the attempts changed, as
 locate's does, and commits the task file alone with `status: complete`; the reviewer side
 approves exactly that, the gate admits that change set when the task's counter
-(`<tend-root>/attempts/`, `gate.json`'s `attempts_dir`) is at the cap, harvest (component 5b)
-counts the task as capped, and its files stay as they were.
+(`<tend-root>/attempts/`, `gate.json`'s `attempts_dir`) is at the cap, and its files stay as
+they were: the harvest brings home what the entrypoint holds, so a capped task leaves the
+base commit's bytes and no document of its own.
 
 `cf run <run-id>` then works as for any run (preflight, transfer, verify, smoke, raise,
-monitor, stop), with four changes (component 5b): the gate it verifies is
+monitor, stop), with four changes: the gate it verifies is
 `verify_informal.py --self-check` (imports, the pinned sha256s, kpsewhich of `tex_packages`,
-the pdfTeX version); the entrypoint's first commit is `repo/` plus `tasks/`; the smoke stage
-starts the watchdog above; and `--include-sources` ships `library/src/` read-only (`manifest.READONLY_CHMOD`) to
+the pdfTeX version); the entrypoint's first commit is `repo/` plus `tasks/`, which is why
+the run's `data/` is not sent into it (`manifest.informalize_entries`); the smoke stage is to
+start the watchdog above (not built); and `--include-sources` ships `library/src/` read-only
+(`manifest.READONLY_CHMOD`) to
 `<remote_root>/library-src/<id>-<commit>/`, checked by tree digest, which the workers read.
 One phase is one run: whether a dependent task's worktree sees a dependency's merged files
 is not known, so no phase relies on `depends_on`.
@@ -1130,24 +1137,43 @@ never from pasted reports.
 ### 8.5 Harvest and apply
 
 `cf harvest <run> --execute --i-have-consent` lands the findings and the cost as for any run
-(`corpus/<run>/`, `RECEIPT.json`, the gate re-run with `--findings`, its `--root` the run's
-`repo/` as section 8.3 says) and, for an informalize
-run (component 5b), the entrypoint's `main` as a git bundle, `corpus/<run>/entrypoint.bundle`,
-with the files of the run's owned paths unpacked under `corpus/<run>/tree/` and listed with
-their sha256 in `tree.json` beside the bundle's head and `base_commit`. It writes nothing in
-the output repository.
+(`corpus/<run>/`, `RECEIPT.json`) and, for an informalize run, three things more
+(`scripts/harvest/informal_files.py`, `harvest.gate_corpus.gate_informal_corpus`):
 
-`cf informalize apply <id> --run <run>` checks that the output repository's HEAD is the
-run's `base_commit` (else: plan again); that the bundle's head descends from the entrypoint's
-root commit, `tasks for <run>` (`cf run`'s transfer makes the entrypoint with `git init`, so
-its history is not the output repository's), and that this commit's tree without `tasks/` is
-`base_commit`'s tree; that every changed path is owned by a task of the run; and that
-`tree/` holds exactly the bundle's files. Then it copies in the changed paths under
+- the files of the run's **owned paths** that are not `findings/` (`run.yaml`'s
+  `informalize.paths`, the planner's own record, which the gate holds each contribution
+  to), copied out of the entrypoint into `corpus/<run>/tree/<path>`. The expectation is the
+  host's own listing: one `ssh` asks for the sha256 of each of those paths that is there,
+  and a path that was listed and did not land, or landed with another sha256, is on the
+  receipt (`informalize.missing`, `sha_mismatched`) and the harvest is not complete. The
+  block also says which of them the run WROTE, against the base commit's bytes
+  (`gate.json`'s `base_files`); a path those pins do not name counts as written. `tree/`
+  holds no finding, and the receipt's findings listing leaves it out by name
+  (`harvest.files.NON_FINDING_DIRS`);
+- the gate re-run with `--findings` over what landed: the run's own staged `gate/`, copied
+  beside its `gate.local.json` and run out of tree with `python3 -I` as the host runs it.
+  Its `--root` is the run's planned `repo/` (the base commit's files, so rule 6 reads the
+  text the attackers quoted) and each document is named where the harvest landed it; for
+  the items and the conventions phase, whose one document is a file of `informal/`, the
+  root is `tree/` instead, where the harvest put it;
+- a phase whose fleet writes no document under `findings/` at all (`items`, `conventions`,
+  `draft`) has no findings directory on the host: nothing is listed or transferred there,
+  and the harvest is its files, its gate and its receipt.
+
+It writes nothing in the output repository, and no faithfulness tally, companion pin or
+state is written for it.
+
+**Not built yet.** `cf informalize apply <id> --run <run>` checks that the output
+repository's HEAD is the
+run's `base_commit` (else: plan again); that every changed path is owned by a task of the
+run; and that `tree/` is what the receipt records. Then it copies in the changed paths under
 `informal/`, and only those: `findings/` and the task files stay in `corpus/<run>/`, and any
 other path is refused. It commits them with the message
 `Informalize <phase> (<run>): <n> files` and writes the phase's receipt. An attack run
 changes nothing under `informal/`: its apply writes only the receipt and makes no commit.
-After the items phase it runs `check-items`.
+After the items phase it runs `check-items`. Until it is built, the maintainer copies the
+files of `corpus/<run>/tree/` the receipt marks as written into `informalize/<id>/repo/` and
+commits them there, which is what the synthetic driver does.
 
 ## 9. The canonical PDF (I6)
 

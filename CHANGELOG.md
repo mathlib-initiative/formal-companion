@@ -43,6 +43,24 @@ release has something to say.
 
 ### Added
 
+- **`cf run` and `cf harvest` carry an informalize phase** (part of component 5b of
+  `docs/proposals/informalize.md`, its sections 8.1 and 8.5): the existing commands, not a
+  second path. The transfer sends the run's `repo/` into the entrypoint, where `tasks/`
+  beside it is its first commit (the run's `data/` stays out, so the tree is the base
+  commit's), and `--include-sources` sends `library/src/` read-only to
+  `<remote_root>/library-src/<id>-<commit12>/` under the before/after tree digest a
+  companion repo travels with; the verify stage runs `verify_informal.py --self-check`, and
+  the staged tend config is checked against that gate. The harvest brings the files of the
+  tasks' owned paths home beside the documents, into `corpus/<run>/tree/`, with the host's
+  own sha256 as the expectation -- a path that was listed and did not land, or landed with
+  another sha256, makes the receipt incomplete -- records which of them the run wrote
+  against `gate.json`'s `base_files`, and re-runs the run's own staged gate with
+  `--findings` over what landed (`--root` the planned `repo/`, or `tree/` for the items and
+  conventions phases). A phase that writes no findings document is harvested from the
+  entrypoint alone. `corpus/<run>/tree/` holds no finding: the receipt's listing leaves it
+  out (`harvest.files.NON_FINDING_DIRS`). `cf informalize apply` and the watchdog `cf run`
+  is to start are the rest of component 5b and are not implemented yet; the synthetic
+  driver now harvests each of its runs with `cf harvest` and applies by hand.
 - **`cf plan-informalize`** (component 5a of `docs/proposals/informalize.md`, its section 8):
   one tend run per fleet phase (`items`, `conventions`, `draft`, `attack`, `judge`, `edit`),
   planned from the output repository's HEAD and, for `judge` and `edit`, a harvested

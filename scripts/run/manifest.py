@@ -37,7 +37,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from ._compat import CfError, human_bytes
+from ._compat import CfError, cf_paths, human_bytes
 
 #: rsync flags used for every component (archive, no device/special files).
 BASE_RSYNC = ["-a", "--no-D", "--omit-dir-times"]
@@ -421,7 +421,12 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
 
     entries.append(_entry("tasks", rd / "tasks", f"{root}/{names['entrypoint']}/tasks/",
                           note="tend task YAML, one per item"))
-    if (rd / "data").exists():
+    if is_informalize(run):
+        found, notes = informalize_entries(workspace_dir, run_id, run, root, names,
+                                           include_sources=include_sources)
+        entries.extend(found)
+        warnings.extend(notes)
+    elif (rd / "data").exists():
         entries.append(_entry("data", rd / "data", f"{root}/{names['entrypoint']}/data/",
                               note="statement tables the workers read"))
     elif not is_locate(run):
@@ -508,7 +513,7 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                                       f"{root}/{names['repos']}/.{name}.listing",
                                       note="the sent tree's paths and digests, so a refused "
                                            "digest names what differs"))
-        if not companions:
+        if not companions and not is_informalize(run):
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
     # A locate run's source text is its rendered layers, which locate_entries
     # above already sent (or warned about); run.yaml's faithfulness `sources`
@@ -557,6 +562,63 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
 def is_locate(run: dict) -> bool:
     """Is this run.yaml a locate run's (references/locate-documents.md section 9)?"""
     return isinstance((run or {}).get("locate"), dict)
+
+
+def is_informalize(run: dict) -> bool:
+    """Is this run.yaml an informalize phase's (docs/proposals/informalize.md section 8.1)?"""
+    return isinstance((run or {}).get("informalize"), dict)
+
+
+def informalize_entries(workspace_dir: Path, run_id: str, run: dict, root: str, names: dict, *,
+                        include_sources: bool) -> tuple[list[dict], list[str]]:
+    """What an informalize phase sends beyond its tasks: the repository, and the library.
+
+    The entrypoint's first commit is the output repository at the run's base
+    commit plus ``tasks/`` (docs/proposals/informalize.md section 8.1), and
+    `cf informalize apply` reads that commit's tree against the base commit's, so
+    nothing else goes into it -- the run's ``data/`` stays in the gate directory,
+    where the prompts point the workers at it.
+
+    ``library/src/`` is the library's Lean source at the pinned commit, which the
+    workers read beside their worktrees; it travels read-only, as a companion
+    repo does, with ``--include-sources`` and under the same before/after tree
+    digest.  Its destination is the one the plan recorded
+    (``remote.library_src``: one directory per id and library commit), so a run
+    of another id, or of this one at another commit, never replaces it under a
+    live run.
+    """
+    block = _as_dict(run.get("informalize"))
+    rd = Path(workspace_dir) / "runs" / run_id
+    entries = [_entry("repo", rd / "repo", f"{root}/{names['entrypoint']}/",
+                      note="the output repository at the base commit; with tasks/ it is the "
+                           "entrypoint's first commit")]
+    warnings: list[str] = []
+    dest = str(_as_dict(run.get("remote")).get("library_src") or "").strip("/")
+    informalize_id = str(block.get("id") or "")
+    if not include_sources:
+        warnings.append("the library's source was not included (--include-sources): the "
+                        "workers read it on the host, and the gate's self-check refuses a run "
+                        f"without it at {root}/{dest or 'library-src/<id>-<commit12>'}")
+        return entries, warnings
+    if not dest or not informalize_id:
+        warnings.append("run.yaml records no remote.library_src for this informalize run, so "
+                        "the library's source has no destination on the host; re-plan it")
+        return entries, warnings
+    src = cf_paths.WorkspacePaths(Path(workspace_dir)).informalize_library_src(informalize_id)
+    entry = _entry("library-src", src, f"{root}/{dest}/",
+                   flags=READONLY_CHMOD + ["--delete"]
+                   + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
+                   note="the library's Lean source at the pinned commit, transferred read-only")
+    if entry["exists"]:
+        walked = tree_digest(src, SOURCE_EXCLUDES)
+        entry["tree_sha256"] = recorded_tree_digests(run).get("library-src") or walked["sha256"]
+        planned = str(_as_dict(block.get("library")).get("src_sha256") or "")
+        if planned and planned != walked["sha256"]:
+            warnings.append(f"{src} is not the tree this run was planned against (run.yaml "
+                            "informalize.library.src_sha256): the workers would read a library "
+                            "source the plan never saw; re-plan the phase")
+    entries.append(entry)
+    return entries, warnings
 
 
 def locate_gate(run_dir: Path) -> tuple[dict, dict]:
@@ -1027,8 +1089,10 @@ def gate_config_warnings(workspace_dir: Path, run_id: str, host: dict, run: dict
     must pass a changed-files check.
     """
     names = remote_names(run, run_id)
-    # a locate run's tend config calls the locate gate (references/locate-documents.md S9)
-    script = "verify_locate.py" if is_locate(run) else "verify_findings.py"
+    # a locate run's tend config calls the locate gate (references/locate-documents.md S9),
+    # an informalize phase's the informalize gate (docs/proposals/informalize.md section 8.3)
+    script = ("verify_informal.py" if is_informalize(run) else
+              "verify_locate.py" if is_locate(run) else "verify_findings.py")
     gate_path = f"{host['remote_root']}/{names['gate']}/{script}"
     config = workspace_dir / "runs" / run_id / "tend-root" / "config.yaml"
     if not config.exists():

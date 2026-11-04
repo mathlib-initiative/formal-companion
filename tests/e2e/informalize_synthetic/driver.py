@@ -11,11 +11,12 @@ the STAGED gate as the host runs it: a copy of the planned `gate/` outside the r
 config the run's `gate.local.json`, `python3 -I`, an environment of PATH and HOME alone and
 the worktree as the working directory.  Good contributions pass; bad ones are refused under
 the rule they break; the batched pre-merge check takes two drafts at once; a task at the
-attempt cap is ended by `bin/attempt_cap.py` and admitted.  Between phases the driver does by
-hand what `cf harvest` and `cf informalize apply` will do (component 5b): the merged
-documents to `corpus/<run>/<task>/`, the merged `informal/` files into the output repository,
-committed, and for the conventions phase the I4 receipt.  The maintainer's approvals run
-through `cf informalize approve`.
+attempt cap is ended by `bin/attempt_cap.py` and admitted.  Between phases each run is
+harvested by `cf harvest` from that entrypoint -- the documents to `corpus/<run>/<task>/`,
+the files the run wrote to `corpus/<run>/tree/`, the gate re-run over both -- and the driver
+then does by hand what `cf informalize apply` will do (component 5b): those files into the
+output repository, committed, and for the conventions phase the I4 receipt.  The
+maintainer's approvals run through `cf informalize approve`.
 
 The phases that build need pdflatex, latexmk and kpsewhich (`TEX`); without them the driver
 stops after the items phase and says so.  Run it on its own with
@@ -90,7 +91,17 @@ def check(condition: bool, message: str) -> None:
 
 
 def have_tex() -> bool:
-    return all(shutil.which(p) for p in TEX)
+    """The three programs the phases that build need, and every package of `tex_packages`.
+
+    The packages too: kpsewhich is on a machine whose TeX does not ship lmodern, and
+    there the gate's build is exit 3 -- "the gate could not run" -- which is not a
+    verdict on a contribution and not a failure of this driver either.  It is the list
+    tests/test_informalize_runtime.py skips on.
+    """
+    if not all(shutil.which(p) for p in TEX):
+        return False
+    return all(subprocess.run(["kpsewhich", name], capture_output=True).returncode == 0
+               for name in doc.TEX_PACKAGES)
 
 
 class Pipeline:
@@ -246,24 +257,28 @@ class Pipeline:
             self.git(ep, "merge", "-q", "--no-ff", "-m", f"merge {branch}", branch)
 
     def harvest(self, phase: str) -> None:
-        """What `cf harvest` lands (component 5b): the merged documents and a receipt."""
+        """`cf harvest` on the entrypoint this machine plays the host with: the merged
+        documents, the files the run wrote under `corpus/<run>/tree/`, the gate re-run
+        over what landed and the receipt."""
         ep = self.entrypoint(phase)
-        out = self.paths.corpus_run_dir(self.runs[phase])
-        for path in sorted((ep / "findings").glob("*/*.json")) if (ep / "findings").is_dir() else []:
-            dest = out / path.parent.name / path.name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, dest)
-        self.write_json(out / "RECEIPT.json", {"run_id": self.runs[phase], "synthetic": True})
+        findings = ep / "findings"
+        self.cf("harvest", self.runs[phase], "--from",
+                str(findings if findings.is_dir() else ep))
+        receipt = json.loads((self.paths.corpus_run_dir(self.runs[phase]) / "RECEIPT.json")
+                             .read_text(encoding="utf-8"))
+        check(receipt["complete"], f"the {phase} harvest is not complete: {receipt}")
+        check((receipt.get("gate") or {}).get("ok"),
+              f"the {phase} harvest's gate refused what landed: {(receipt.get('gate') or {})}")
 
     def apply(self, phase: str) -> None:
-        """What `cf informalize apply` does (component 5b): the merged informal/ files the
-        run changed, committed in the output repository."""
-        ep = self.entrypoint(phase)
-        root_commit = self.git(ep, "rev-list", "--max-parents=0", "HEAD").split()[0]
-        changed = [p for p in self.git(ep, "diff", "--name-only", root_commit, "HEAD").split()
-                   if p.startswith("informal/")]
+        """What `cf informalize apply` does (component 5b, not implemented yet): the files
+        the harvest landed under `corpus/<run>/tree/`, committed in the output repository."""
+        corpus = self.paths.corpus_run_dir(self.runs[phase])
+        receipt = json.loads((corpus / "RECEIPT.json").read_text(encoding="utf-8"))
+        block = receipt.get("informalize") or {}
+        changed = [rel for rel in block.get("changed") or [] if rel.startswith("informal/")]
         for rel in changed:
-            shutil.copy2(ep / rel, self.repo / rel)
+            shutil.copy2(corpus / "tree" / rel, self.repo / rel)
         if changed:
             self.git(self.repo, "add", "--", *changed)
             self.git(self.repo, "commit", "-qm", f"Informalize {phase} ({self.runs[phase]}): "
@@ -322,6 +337,7 @@ class Pipeline:
         self.passes("items", wt)
         self.passes("items", wt, "items")
         self.merge("items", "items")
+        self.harvest("items")
         self.apply("items")
         self.cf("informalize", "approve", ID, "items", "--by", "A. Maintainer",
                 "--in-v1", "1.1,1.4,2.2,2.5,2.7")
@@ -362,6 +378,7 @@ class Pipeline:
         self.complete(forged, "conventions")
         self.refused("conventions", forged, 2, "a forged .aux record", task="conventions")
         self.merge("conventions", "conventions")
+        self.harvest("conventions")
         self.apply("conventions")
 
     def draft(self) -> None:
@@ -443,6 +460,7 @@ class Pipeline:
         self.complete(bad, "draft-01")
         self.refused("draft", bad, 1, "another section's file", task="draft-01")
         self.merge("draft", "draft-01", "draft-02")
+        self.harvest("draft")
         self.apply("draft")
         code, text = self.plan("draft", "--sections", "1", ok=False)
         check(code != 0 and "drafted already" in text, f"a second draft was planned:\n{text}")
@@ -597,6 +615,8 @@ class Pipeline:
         self.write_json(bad / "findings/edit/edit.json", {"task": "edit", "answers": []})
         self.complete(bad, "edit")
         self.refused("edit", bad, 8, "an unanswered request", task="edit")
+        self.merge("edit", "edit")
+        self.harvest("edit")
 
     def cap(self) -> None:
         """A task at the attempt cap: the bridge's helper ends it, and the gate admits it."""

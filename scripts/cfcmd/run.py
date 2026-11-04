@@ -53,7 +53,8 @@ def register(subparsers) -> None:
     p.add_argument("--i-have-consent", action="store_true",
                    help="the owner of that host agreed to this run; recorded in run.yaml")
     p.add_argument("--include-sources", action="store_true",
-                   help="also transfer the companion repos (read-only)")
+                   help="also transfer the companion repos -- for an informalize phase, the "
+                        "library's source the workers read (read-only)")
     p.add_argument("--include-source-text", action="store_true", dest="include_source_text",
                    help="also transfer this run's source text/images (COPYRIGHTED)")
     p.add_argument("--max-cost", type=float, help="spend ceiling for this run")
@@ -94,13 +95,16 @@ def run(args) -> int:
 
     if args.show_status:
         return _status(workspace, args, data)
-    if data.get("mode") == "informalize":
-        # cf plan-informalize (docs/proposals/informalize.md section 8.1) plans it; sending it
-        # (the entrypoint from repo/ and tasks/, the library's source, the informalize gate's
-        # self-check, the watchdog) is component 5b of that file's section 11
-        raise CfError(f"run {args.run_id!r} is an informalize run, which cf run does not send "
-                      "yet", hint="docs/proposals/informalize.md section 11, component 5b")
     planned_host = data.get("host") if isinstance(data.get("host"), dict) else {}
+    if manifest.is_informalize(data) and (args.local or planned_host.get("kind") == "local"):
+        # As for locate below: an informalize phase has no local fleet, and a run
+        # planned for `local` carries this machine's paths in gate.json and in the
+        # tend root (docs/proposals/informalize.md section 8.1).
+        raise CfError(
+            f"informalize run {args.run_id!r} was planned for this machine; an informalize "
+            "phase runs on an allowlisted host through tend",
+            hint="re-plan it for that host: `cf plan-informalize <id> --phase <phase> --host "
+                 f"<allowlisted host> --run-id {args.run_id} --i-have-consent`")
     if manifest.is_locate(data) and (args.local or planned_host.get("kind") == "local"):
         # Before the local branch, which creates runs/<id>/self-gate/ and then
         # refuses the run for naming no source: a locate run has no local fleet,
@@ -406,7 +410,9 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
                                  names=names, budget=budget, concurrency=concurrency,
                                  force=args.force,
                                  locate=(manifest.locate_gate(run_yaml_path.parent)[0]
-                                         if locate else None))
+                                         if locate else None),
+                                 informalize=(data["informalize"]
+                                              if manifest.is_informalize(data) else None))
     stages = remote.stages_upto(args.stage)
     if args.stage == "raise" and not args.smoke_verified:
         raise CfError(

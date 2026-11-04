@@ -295,7 +295,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
                   run_yaml: str | None = None, allow_edition_mismatch: bool = False,
                   gate: dict | None = None, cost: dict | None = None,
                   host_artifacts: dict | None = None, audit: dict | None = None,
-                  turns: dict | None = None) -> dict:
+                  turns: dict | None = None, informalize: dict | None = None) -> dict:
     """Reconcile the destination against the expected set.
 
     ``expected`` is the REMOTE listing, never a number someone remembered.
@@ -325,7 +325,10 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     locate run's turn-record blocks (``harvest.turn_records.summarise``: ``needs_review``,
     ``worker_documents``, ``merged_not_worker``, ``reviewer_tampered``), recorded as given
     and only when given; a ``merged_not_worker`` row -- a merged document that is not the
-    blob its worker committed -- makes the receipt incomplete.
+    blob its worker committed -- makes the receipt incomplete.  ``informalize`` is an
+    informalize phase's own files, landed under ``corpus/<run>/tree/``
+    (``harvest.informal_files.fetch``): a path the host listed that did not land, or one
+    that landed with another sha256, makes the receipt incomplete too.
     """
     actual_paths = iter_finding_files(dest)
     actual = sorted(finding_name(p, dest) for p in actual_paths)
@@ -353,6 +356,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
 
     artifacts_missing = host_mod.missing(host_artifacts) if host_artifacts is not None else []
     not_worker = list((turns or {}).get("merged_not_worker") or [])
+    files_ok = True if informalize is None else bool(informalize.get("ok"))
     receipt = {
         "run_id": run_id,
         "harvested_at": iso_now(),
@@ -369,7 +373,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "malformed": malformed,
         "complete": (not missing and not mismatched and not sha_unverified and not malformed
                      and edition["ok"] and gate_ok and not artifacts_missing
-                     and not not_worker),
+                     and not not_worker and files_ok),
         "manifest_algo": "sha256",
         "manifest": manifest,
         "run_yaml": run_yaml or "",
@@ -386,6 +390,8 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     if host_artifacts is not None:
         receipt["host_artifacts"] = host_artifacts
         receipt["host_artifacts_missing"] = artifacts_missing
+    if informalize is not None:
+        receipt["informalize"] = informalize
     if audit is not None:
         receipt["audit"] = audit
     if turns is not None:
@@ -520,6 +526,10 @@ def describe(receipt: dict) -> str:
         from harvest import host_artifacts as host_mod
 
         lines.extend(host_mod.describe(receipt["host_artifacts"]))
+    if isinstance(receipt.get("informalize"), dict):
+        from harvest import informal_files   # local, as the blocks below
+
+        lines.extend(informal_files.describe(receipt["informalize"]))
     if isinstance(receipt.get("audit"), dict):
         from harvest import audit_summary
 
@@ -545,7 +555,8 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
             execute: bool = True, allow_edition_mismatch: bool = False,
             gate_runner=None, cost: dict | None = None,
             host_artifacts: dict | None = None, audit_runner=None,
-            turns_runner=None) -> dict:
+            turns_runner=None, findings: bool = True,
+            informalize: dict | None = None) -> dict:
     """Transfer, reconcile and write RECEIPT.json. Returns the receipt.
 
     ``execute=False`` only makes sense for a remote source: it prints the
@@ -554,17 +565,26 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
     ``audit_runner``, an audited run's, is called on the landed corpus like
     ``gate_runner`` and its block recorded as the receipt's ``audit``; ``turns_runner``,
     an unaudited locate run's, likewise, for its turn-record blocks.
+
+    ``findings=False`` is the informalize phase whose fleet writes no document
+    under ``findings/`` at all (items, conventions, draft): there is no findings
+    directory on the host to list, so none is listed or transferred, and what the
+    run wrote is the ``informalize`` block the caller landed
+    (``harvest.informal_files``) -- the gate and the receipt are the same.
     """
     dest = Path(dest)
     if source["kind"] == "remote" and not execute:
         raise CfError("remote harvest needs --execute (it ssh/rsyncs to the host)")
     previous = read_receipt(dest)
-    expected = source_names(source)
-    if not expected:
+    expected = source_names(source) if findings else []
+    if findings and not expected:
         raise CfError(f"source holds no *.json findings: {source}",
                       hint="check the run actually merged findings before harvesting")
-    shas = source_shas(source) if verify_sha else None
-    transfer(source, dest)
+    shas = source_shas(source) if (findings and verify_sha) else None
+    if findings:
+        transfer(source, dest)
+    else:
+        dest.mkdir(parents=True, exist_ok=True)
 
     run_yaml_name = ""
     if run_yaml_src and Path(run_yaml_src).exists():
@@ -579,7 +599,7 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
                             run_yaml=run_yaml_name,
                             allow_edition_mismatch=allow_edition_mismatch, gate=gate,
                             cost=cost, host_artifacts=host_artifacts, audit=audit,
-                            turns=turns)
+                            turns=turns, informalize=informalize)
     write_json(dest / RECEIPT_NAME, receipt, indent=1, sort_keys=True)
     return receipt
 

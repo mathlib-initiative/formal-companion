@@ -643,13 +643,13 @@ class TestThePlanner(unittest.TestCase):
         worker = (rd / "tend-root" / "bin" / "worker-agent.sh").read_text(encoding="utf-8")
         self.assertIn("export CF_AGENT_TIMEOUT=2h", worker)
 
-    def test_cf_run_refuses_it_until_component_5b(self):
+    def test_cf_run_reads_a_planned_phase(self):
+        """What `cf run` SENDS is tests/test_informalize_run.py's; here only that a planned
+        phase is a run it knows -- `--status` answers from the workspace alone."""
         self.pipe.plan("items")
-        code, text = self.pipe.cf("run", self.pipe.runs["items"], "--i-have-consent", ok=False)
-        self.assertNotEqual(code, 0)
-        self.assertIn("component 5b", text)
-        code, text = self.pipe.cf("run", self.pipe.runs["items"], "--status", ok=False)
-        self.assertNotIn("component 5b", text)
+        code, text = self.pipe.cf("run", self.pipe.runs["items"], "--status")
+        self.assertEqual(code, 0, text)
+        self.assertIn(self.pipe.runs["items"], text)
 
     def test_planning_again_writes_the_same_root(self):
         self.pipe.plan("items", "--run-id", "again")

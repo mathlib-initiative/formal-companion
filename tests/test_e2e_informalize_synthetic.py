@@ -6,9 +6,10 @@ each phase planned with `cf plan-informalize`, its contributions written in work
 entrypoint made as `cf run` makes one, judged by the staged gate as the host runs it
 (`python3 -I` from a copy of the planned `gate/`, a bare environment), good ones passed and
 bad ones refused under the rule they break, the batched pre-merge check, a task at the
-attempt cap, and a gate whose pinned file moved.  The phases that build need pdflatex,
-latexmk and kpsewhich and are skipped without them; CF_REQUIRE_TEX=1 (CI's TeX job) makes
-that skip a failure.
+attempt cap, a gate whose pinned file moved, and each run harvested by `cf harvest` from
+that entrypoint.  The phases that build need pdflatex, latexmk, kpsewhich and every package
+of `tex_packages`, and are skipped without them; CF_REQUIRE_TEX=1 (CI's TeX job) makes that
+skip a failure.
 """
 from __future__ import annotations
 
@@ -62,8 +63,9 @@ class TestTheSyntheticInformalizeFleet(unittest.TestCase):
     def test_the_phases_that_build_ran(self):
         if not pipeline.have_tex():
             if REQUIRE_TEX:
-                self.fail("CF_REQUIRE_TEX=1 and pdflatex, latexmk or kpsewhich is missing")
-            self.skipTest("no pdflatex, latexmk or kpsewhich")
+                self.fail("CF_REQUIRE_TEX=1 and pdflatex, latexmk, kpsewhich or a package of "
+                          "tex_packages is missing")
+            self.skipTest("no pdflatex, latexmk, kpsewhich or a package of tex_packages")
         self.assertEqual(tuple(self.done), pipeline.STAGES)
 
     def test_every_phase_was_planned_once(self):

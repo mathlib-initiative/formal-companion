@@ -22,7 +22,9 @@ nobody reads, the verify/monitor stages recompute the digest of each
 transferred companion tree, so a read-only copy an agent made writable again is
 visible before its findings are harvested, and a locate run's verify stage
 checks its databases and every source layer its gate reads against the shas
-gate.json pins (references/locate-documents.md section 9).  They record their
+gate.json pins (references/locate-documents.md section 9), and an informalize
+phase's runs its own gate's self-check, which reads the library's source and the
+TeX the agents build with (docs/proposals/informalize.md section 8.3).  They record their
 output into run.yaml through :func:`execute`, including when they REFUSE: a
 step that exits non-zero raises, and the one outcome worth a durable record
 must not be the one that writes nothing, so :func:`execute` appends into a
@@ -376,7 +378,8 @@ def _tree_check(host: dict, entry: dict) -> dict:
 
 def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                   names: dict, budget: dict, concurrency: dict,
-                  force: bool = False, locate: dict | None = None) -> list[dict]:
+                  force: bool = False, locate: dict | None = None,
+                  informalize: dict | None = None) -> list[dict]:
     """The ordered command plan: preflight, transfer, verify, smoke, raise, monitor.
 
     Each step is ``{stage, title, argv, shell, safe}``; ``safe`` marks the
@@ -477,9 +480,23 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"{tend} tend-task verify {shlex.quote(entrypoint + '/tasks')}"), safe=True)
     add("verify", "orchestrator config",
         _ssh(host, f"{tend} tend validate-config --root {shlex.quote(tend_root)}"), safe=True)
-    gate_script = "verify_locate.py" if locate is not None else "verify_findings.py"
+    gate_script = ("verify_informal.py" if informalize is not None else
+                   "verify_locate.py" if locate is not None else "verify_findings.py")
     gate_dir = f"{root}/{names['gate']}"
-    if locate is not None:
+    if informalize is not None:
+        # The same reason as the locate gate below, and two more of its own: the
+        # gate builds the document with its own copy of the runtime, so a TeX
+        # installation without a package of `tex_packages` fails every task that
+        # builds, and the workers read the library's source at a path only this
+        # transfer puts there (docs/proposals/informalize.md section 8.3).
+        add("verify", "the informalize gate runs out of tree from its own directory (python3 "
+                      "-I --self-check: modules, the pinned sha256s, the task manifests, the "
+                      "library's source and, in a phase that builds, pdflatex, latexmk and "
+                      "every package of tex_packages)",
+            _ssh(host, f"python3 -I {shlex.quote(gate_dir + '/' + gate_script)} --gate-config "
+                       f"{shlex.quote(gate_dir + '/gate.json')} --self-check"),
+            safe=True, record_output=True)
+    elif locate is not None:
         # Not just present: the locate gate must RUN from its own directory, with
         # nothing else on the path (-I).  A gate directory staged without one of
         # its modules passed a `test -f` and then failed every worker's first

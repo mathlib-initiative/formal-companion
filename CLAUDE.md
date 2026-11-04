@@ -382,8 +382,10 @@ informalize id over a fake library, each phase planned with `cf plan-informalize
 contributions written in worktrees of an entrypoint made as `cf run` makes one, and judged by
 the staged gate as the run host runs it (a copy of the planned `gate/`, `python3 -I`, PATH and
 HOME alone); good contributions pass, bad ones are refused under the rule they break, and a
-task at the attempt cap is ended by `attempt_cap.py` and admitted. Between phases it does by
-hand what harvesting and applying a run will do (not implemented yet: component 5b of
-`docs/proposals/informalize.md`). The phases that build need TeX.
+task at the attempt cap is ended by `attempt_cap.py` and admitted. Between phases each run is
+harvested with `cf harvest` from that entrypoint, and the driver then does by hand what
+applying one will do (not implemented yet: `cf informalize apply`, component 5b of
+`docs/proposals/informalize.md`). The phases that build need TeX, every package of
+`tex_packages` included, and are skipped without them.
 Run it with `python3 tests/e2e/informalize_synthetic/driver.py [--keep <dir>]`; the suite
 runs it as `tests/test_e2e_informalize_synthetic.py`.
