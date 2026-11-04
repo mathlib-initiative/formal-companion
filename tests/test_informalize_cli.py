@@ -55,7 +55,7 @@ from cflib import vocab                                       # noqa: E402
 from cflib.errors import CfError                              # noqa: E402
 from cflib.paths import WorkspacePaths                        # noqa: E402
 from cflib.yamlio import load_yaml, read_yaml                 # noqa: E402
-from informalize import config, itemtable, project, runtime   # noqa: E402
+from informalize import config, itemtable, project, runtime, stages  # noqa: E402
 from informalize.approve import AGENT_ENVIRONMENT             # noqa: E402
 from informalize.outrepo import GIT_LOCATION_ENV, OutputRepo  # noqa: E402
 from overlay.config import OPEN_LICENSES                      # noqa: E402
@@ -1224,6 +1224,24 @@ class TestStatus(_Table):
         self.assertIn("check-items: ok", out)
         self.assertIn(f"cf informalize approve {ID} items --by <name>", out)
         self.assertRegex(out, r"repository\s+: .* 1 uncommitted change")
+
+    def test_the_next_step_after_the_approvals_is_the_phase_that_is_due(self):
+        """The writing phases: conventions until I4, then the sections that are empty."""
+        self.approve_items("--in-v1", "1.1,1.4,2.2,2.5,2.7")
+        self.cf("informalize", "reference-checklist", ID)
+        self.cf("informalize", "approve", ID, "references", "--by", "A. Maintainer")
+        self.assertIn(f"cf plan-informalize {ID} --phase conventions",
+                      self.cf("informalize", "status", ID))
+        stages.write_receipt(self.paths, ID, "I4", inputs={}, outputs={}, checks={})
+        sections = self.repo / "informal/sections"
+        files = sorted(p for p in sections.iterdir() if p.name != "00-conventions.tex")
+        self.assertIn("--phase draft --sections 1,2", self.cf("informalize", "status", ID))
+        files[0].write_text("Some text.\n", encoding="utf-8")
+        self.assertIn("--phase draft --sections 2", self.cf("informalize", "status", ID))
+        for path in files[1:]:
+            path.write_text("Some text.\n", encoding="utf-8")
+        self.assertIn(f"cf plan-informalize {ID} --phase attack",
+                      self.cf("informalize", "status", ID))
 
 
 # ---------------------------------------------------------------------------

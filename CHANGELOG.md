@@ -432,6 +432,12 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **`cf informalize status`'s next step reaches the writing phases.** It stopped at the
+  conventions phase, from before `cf plan-informalize` was built. With the I4 receipt
+  written it now names `--phase draft` and the sections whose files are still empty, and
+  `--phase attack` once every section with a version-1 item is drafted. It stops there:
+  `cf informalize apply` (component 5b of `docs/proposals/informalize.md`) writes no
+  receipt yet, so a harvested writing phase leaves nothing else to read.
 - The overlay reads Literature Links 1.0.1 at its tag `v1.0.1`, commit `789af9a`. The vendored
   copy differs from 1.0.0 in `__version__` and the schema's `$id` alone, and accepts and rejects
   what it did. 1.0.1's specification lets a `lean` end's `version` name a release tag, which a

@@ -10,7 +10,7 @@ from __future__ import annotations
 from cflib.errors import CfError
 from cflib.vocab import APPROVAL_GATES
 
-from informalize import approve, config, project, runtime, stages
+from informalize import approve, config, itemtable, project, runtime, stages
 from informalize.outrepo import OutputRepo
 
 STAGES = ("I0", "I1", "I2", "I3", "I4", "I6", "I7")
@@ -81,8 +81,9 @@ def _items(workspace, informalize_id: str) -> str:
 
 
 def next_step(workspace, informalize_id: str) -> str:
-    """The next command, from what is there.  `cf plan-informalize` (component 5a) is
-    not implemented yet."""
+    """The next command, from what is there.  It stops at the writing phases: `cf
+    informalize apply` (component 5b) writes no receipt yet, so a harvested phase leaves
+    nothing here to read but the section files it wrote."""
     paths = workspace.paths
     if stages.read_receipt(paths, informalize_id, "I0") is None:
         return f"cf informalize sync {informalize_id}"
@@ -103,4 +104,14 @@ def next_step(workspace, informalize_id: str) -> str:
                     informalize_id).is_file():
                 return f"cf informalize reference-checklist {informalize_id}"
             return f"cf informalize approve {informalize_id} {gate} --by <name>"
-    return f"cf plan-informalize {informalize_id} (the conventions phase, stage I4)"
+    if stages.read_receipt(paths, informalize_id, "I4") is None:
+        return f"cf plan-informalize {informalize_id} --phase conventions (stage I4)"
+    doc = table.items()
+    drafted = set(table.drafted())
+    in_v1 = {it.get("section") for it in doc.get("items") or [] if it.get("in_v1") is True}
+    empty = [s["number"] for s in doc.get("sections") or []
+             if s["number"] in in_v1 and f"{itemtable.section_file(s)}.tex" not in drafted]
+    if empty:
+        return (f"cf plan-informalize {informalize_id} --phase draft --sections "
+                f"{','.join(empty)} (stage I5)")
+    return f"cf plan-informalize {informalize_id} --phase attack (stage I5)"

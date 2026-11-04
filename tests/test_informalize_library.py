@@ -1142,7 +1142,11 @@ class TestTheHostScriptEndToEnd(_Workspace):
         # the dump ran with the open-file limit raised and under its own timeout
         nofile = re.search(r"^nofile (\S+)$", lake, re.M).group(1)
         self.assertTrue(nofile == "unlimited" or int(nofile) >= 65536, nofile)
-        self.assertIn("timeout 777 lake env lean --run", (home / "timeout.log").read_text())
+        # dump_deps.sh prints the command it runs; the `timeout` in it is the one of the
+        # PATH it sets for lake (`PATH=/usr/bin:$PATH`), which is the host's own on a box
+        # that has one, so the stub's log is not where this is read.
+        self.assertIn("timeout 777 lake env lean --run",
+                      (host / "dump_deps.log").read_text(encoding="utf-8"))
 
         out = self.fetch("--execute", "--i-have-consent")
         self.assertIn("canary passed on Lean 4.34.0 (plain form)", out)
