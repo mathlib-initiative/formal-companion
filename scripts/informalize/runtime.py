@@ -13,9 +13,12 @@ sync (`scripts/overlay/sync.py`, docs/overlay.md section 6).  Three kinds of fil
   commit, so `sync --check` (and a person) can tell a copy that was edited or left behind.
 
 A second sync is a no-op.  A file a previous `GENERATED.json` listed and the templates no
-longer have is deleted; a file under `informal/tools/` that no record lists is refused,
-not overwritten or blessed.  The configuration written is first read back by the
-runtime's own `fccommon.load_config`, so `cf` never writes one the tools would refuse.
+longer have is deleted, when it is one the runtime could have held (under `tools/`, or a
+top-level name that is none of :data:`NOT_RUNTIME`); a record that lists another file is
+refused.  A file under `informal/tools/` that no record lists is refused, not overwritten
+or blessed (Python's `__pycache__/` aside, which the output repository ignores).  The
+configuration written is first read back by the runtime's own `fccommon.load_config`, so
+`cf` never writes one the tools would refuse.
 """
 from __future__ import annotations
 
@@ -52,6 +55,12 @@ TEX_PACKAGES = ["amsmath.sty", "amssymb.sty", "amsthm.sty", "keyval.sty", "zref-
                 "hyperref.sty"]
 #: the directory of informal/ that only the runtime writes
 TOOLS = "tools"
+#: the top-level files of informal/ that are not the runtime's: the stamp and the record,
+#: what the project templates render, and what the stages write (section 4); sync never
+#: deletes one, whatever a record lists
+NOT_RUNTIME = ("informalize.json", "GENERATED.json", "main.tex", "notation.sty",
+               "STYLE-project.md", "declarations.json", "items.json", "items-review.md",
+               "sections.tex", "hypotheses.json", "markers.json")
 
 assert STAMP == f"{INFORMAL}/{CONFIG_NAME}"
 
@@ -186,12 +195,14 @@ def _scan(directory: Path) -> tuple[dict[str, str], list[str]]:
     if not directory.is_dir():
         return found, odd
     for parent, names, files in os.walk(directory):
-        names.sort()
+        names[:] = sorted(n for n in names if n != "__pycache__")
         for name in names:
             path = Path(parent) / name
             if path.is_symlink():
                 odd.append(f"{path.relative_to(informal).as_posix()}: a symlinked directory")
         for name in sorted(files):
+            if name.endswith(".pyc"):
+                continue
             path = Path(parent) / name
             relative = path.relative_to(informal).as_posix()
             mode = path.lstat().st_mode
@@ -253,6 +264,13 @@ def sync(repo: OutputRepo, cfg: dict) -> SyncResult:
         raise CfError(f"{INFORMAL}/{unknown[0]} is a file no {GENERATED_NAME} listed",
                       hint=f"{INFORMAL}/{TOOLS}/ is the runtime's; keep your own files outside it"
                            + (f" (and {', '.join(unknown[1:])})" if unknown[1:] else ""))
+    foreign = sorted(p for p in previous - set(templates)
+                     if p in present and not _runtime_shaped(p))
+    if foreign:
+        raise CfError(f"{INFORMAL}/{GENERATED_NAME} lists {INFORMAL}/{foreign[0]}, which is not "
+                      "the runtime's to delete",
+                      hint=f"remove it from {GENERATED_NAME} and re-run"
+                           + (f" (and {', '.join(foreign[1:])})" if foreign[1:] else ""))
     result = SyncResult()
     for relative in sorted(previous - set(templates)):
         if relative in present:
@@ -275,6 +293,12 @@ def sync(repo: OutputRepo, cfg: dict) -> SyncResult:
     else:
         result.unchanged.append(target)
     return result
+
+
+def _runtime_shaped(relative: str) -> bool:
+    """Could the runtime have held `relative` (a path inside informal/)?"""
+    return relative.startswith(TOOLS + "/") \
+        or ("/" not in relative and relative not in NOT_RUNTIME)
 
 
 def _same_files(record: dict, document: dict) -> bool:

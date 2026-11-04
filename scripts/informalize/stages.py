@@ -2,7 +2,8 @@
 
 New code, for docs/proposals/informalize.md sections 5.7 and 13.  A receipt says what a
 stage read and wrote, by sha256, what it checked, which runs it applied and what they
-cost; an approval says who signed which gate when, and pins the files (or, for the
+cost (a stage re-run that changes none of that leaves its receipt as it was); an
+approval says who signed which gate when, and pins the files (or, for the
 references gate, the list derived from one) it signed, so a later change voids it.  Paths
 in both are relative to `informalize/<id>/` (`repo/informal/items.json`); a pin of a list
 derived from a file is that file's path with a `#` fragment naming the list
@@ -88,7 +89,22 @@ def write_receipt(paths: WorkspacePaths, informalize_id: str, stage: str, *,
     found = receipt_problems(doc)
     if found:
         raise CfError(f"refusing to write the {stage} receipt: {found[0]}")
-    return write_json(paths.informalize_receipt(informalize_id, stage), doc)
+    path = paths.informalize_receipt(informalize_id, stage)
+    if _same_receipt(path, doc):
+        return path                             # nothing changed: the receipt stays as it was
+    return write_json(path, doc)
+
+
+def _same_receipt(path: Path, doc: dict) -> bool:
+    """Does `path` already hold `doc`, but for when it was written?"""
+    if not path.is_file():
+        return False
+    try:
+        old = read_json(path)
+    except (CfError, ValueError, OSError):
+        return False
+    return isinstance(old, dict) and all(old.get(k) == doc[k] for k in RECEIPT_KEYS
+                                         if k != "written_at")
 
 
 def read_receipt(paths: WorkspacePaths, informalize_id: str, stage: str) -> dict | None:

@@ -10,16 +10,20 @@ New code, for docs/proposals/informalize.md sections 5.4, 5.7 and 13.
   file is empty it moves the items not chosen to `deferred`, drops empty sections,
   renumbers what is left, records the old-to-new map in `decisions`, writes `sections.tex`
   and an empty file per section, and commits; once a section file is not empty the ids
-  are frozen, and an approval only pins (after setting `in_v1` when `--in-v1` is given),
-  holding the table to the ids it approved before.  It pins `items.json`.
+  are frozen, and stay so (the approval records it), and an approval only pins (after
+  setting `in_v1` when `--in-v1` is given), holding the table to the ids it approved
+  before.  It pins `items.json`, once the commit it records holds those bytes.
 * `reference-checklist` writes `reference-checklist.md`, the reference numbers of the
-  approved table for a person with the work in hand; `approve <id> references` pins that
-  list (not the whole table), and only the list the checklist on disk shows.
+  approved table for a person with the work in hand (a box ticked on a row that is still
+  there stays ticked); `approve <id> references` pins that list (not the whole table), and
+  only the list the checklist on disk shows.
 * `approve <id> proof-sheets` and `approve <id> publish` pin what the I6 and I7 receipts
   list, once those stages have run (components 6 and 7 write them).
 
 An approval is the maintainer's: it is refused inside a fleet task (an agent's wrapper
-sets `CF_ROLE`, tend sets `TEND_TASK_ID`), and it prints what it pins.
+sets `CF_ROLE`, tend sets `TEND_TASK_ID`) and inside a Claude Code session (which sets
+`CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` for its agents and their shells), and it prints
+what it pins.
 """
 from __future__ import annotations
 
@@ -48,8 +52,9 @@ REFERENCES_PIN = f"repo/{ITEMS}#references"
 #: the stage whose receipt a gate pins from, for the two gates of components 6 and 7
 RECEIPT_GATES = {"proof-sheets": ("I6", "cf informalize fetch-pdf"),
                  "publish": ("I7", "cf informalize overlay")}
-#: what a fleet's wrappers and tend set in an agent's environment
-AGENT_ENVIRONMENT = ("CF_ROLE", "TEND_TASK_ID")
+#: what a fleet's wrappers and tend set in an agent's environment, and what Claude Code sets
+#: for a local session, its subagents and the shells they run
+AGENT_ENVIRONMENT = ("CF_ROLE", "TEND_TASK_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 _SECTION_FILE = re.compile(r"\A[0-9]{2,}-[a-z0-9-]+\.tex\Z")
 
 
@@ -120,6 +125,17 @@ class Table:
                       if p.name != CONVENTIONS_FILE and _SECTION_FILE.match(p.name)
                       and p.is_file() and p.read_text(encoding="utf-8", errors="replace").strip())
 
+    def frozen_since(self) -> str | None:
+        """Why the ids are frozen, or None: a drafted section file, or an earlier approval
+        that found one (a section emptied later, or drafts still on the host, thaw nothing)."""
+        drafted = self.drafted()
+        if drafted:
+            return f"{drafted[0]} was drafted"
+        previous = stages.read_approval(self.paths, self.id, "items")
+        if previous is not None and previous.get("frozen") is True:
+            return f"the approval of {previous['at']}"
+        return None
+
     def references_sha(self) -> str | None:
         path = self.repo.root / ITEMS
         if not path.is_file():
@@ -187,8 +203,10 @@ def approve(workspace, informalize_id: str, gate: str, *, by: str, in_v1: str | 
     """`cf informalize approve <id> <gate>`: write and return the approval."""
     agents = [name for name in AGENT_ENVIRONMENT if os.environ.get(name)]
     if agents:
-        raise CfError(f"approve is the maintainer's, and this is a fleet task ({agents[0]} is set)",
-                      hint="an agent never signs a gate (docs/proposals/informalize.md section 13)")
+        raise CfError(f"approve is the maintainer's, and this is an agent's environment "
+                      f"({agents[0]} is set)",
+                      hint="an agent never signs a gate (docs/proposals/informalize.md section "
+                           "13); run it in your own terminal, outside Claude Code and the fleet")
     if gate not in APPROVAL_GATES:
         raise CfError(f"no gate {gate!r}", hint=f"one of {', '.join(APPROVAL_GATES)}")
     if not by or not by.strip() or "\n" in by:
@@ -208,20 +226,25 @@ def approve_items(workspace, informalize_id: str, *, by: str, in_v1: str | None,
     table.repo.require_stamp()
     doc = table.items()
     previous = stages.read_approval(table.paths, informalize_id, "items")
-    drafted = table.drafted()
-    if not drafted:
+    frozen = table.frozen_since()
+    if frozen is None:
         new = _renumbered(table, doc, in_v1, by, first=previous is None)
     else:
-        new = _frozen(table, doc, in_v1, previous, drafted)
-    touched = _write_table(table, new, renumber=not drafted)
+        new = _frozen(table, doc, in_v1, previous, frozen)
+    owned = _write_table(table, new, renumber=frozen is None)
     count = sum(1 for it in new["items"] if it["in_v1"])
+    # every path approve owns, rewritten or not: a table fixed by hand in the bytes approve
+    # writes is committed too (commit takes only what differs from HEAD)
     commit = table.repo.commit(
-        touched, f"Approve the item table: {count} items in version 1, in "
-                 f"{len(new['sections'])} sections")
+        owned, f"Approve the item table: {count} items in version 1, in "
+               f"{len(new['sections'])} sections")
+    if not table.repo.committed(ITEMS):         # the commit recorded holds what is pinned
+        raise CfError(f"{table.repo.root}: HEAD does not hold the {ITEMS} to approve",
+                      hint="commit it, then approve again")
     pins = {f"repo/{ITEMS}": sha256_file(table.repo.root / ITEMS)}
     return stages.write_approval(
         table.paths, informalize_id, "items", by=by, pins=pins, note=note,
-        extra={"snapshot": itemtable.snapshot(new), "frozen": bool(drafted),
+        extra={"snapshot": itemtable.snapshot(new), "frozen": frozen is not None,
                "commit": commit or table.repo.head()})
 
 
@@ -255,16 +278,17 @@ def _renumbered(table: Table, doc: dict, in_v1: str | None, by: str, *, first: b
     doc = dict(doc, items=[dict(it, in_v1=it.get("id") in chosen) if isinstance(it, dict) else it
                            for it in doc.get("items") or []])
     _refuse(table.check(doc, numbered=False), "items.json")
-    new, decision = itemtable.renumber(doc, chosen)
+    at = now()
+    new, decision = itemtable.renumber(doc, chosen, at=at)
     if decision:
         new["decisions"] = list(doc.get("decisions") or []) + [
-            dict(decision, approved_by=by.strip(), at=now())]
+            dict(decision, approved_by=by.strip(), at=at)]
     _refuse(table.check(new, numbered=True), "the renumbered table")    # a bug if it fires
     return new
 
 
 def _frozen(table: Table, doc: dict, in_v1: str | None, previous: dict | None,
-            drafted: list[str]) -> dict:
+            since: str) -> dict:
     new = doc
     if in_v1 is not None:
         chosen = _parse_choice(in_v1, doc)
@@ -272,23 +296,24 @@ def _frozen(table: Table, doc: dict, in_v1: str | None, previous: dict | None,
     problems = table.check(new, numbered=True)
     if not problems:
         problems = itemtable.frozen_problems(new, (previous or {}).get("snapshot"))
-    _refuse(problems, f"items.json (ids frozen since {drafted[0]} was drafted)")
+    _refuse(problems, f"items.json (ids frozen since {since})")
     return new
 
 
 def _write_table(table: Table, doc: dict, *, renumber: bool) -> list[str]:
-    """Write items.json, sections.tex and the empty section files; the paths to commit."""
+    """Write items.json, sections.tex and the empty section files; every path approve owns,
+    for the commit: those two, and before the freeze every section file (all empty), after
+    it only the ones written now (a drafted file is the draft's)."""
     repo = table.repo
-    touched = []
-    if repo.write(ITEMS, itemtable.dumps(doc)):
-        touched.append(ITEMS)
-    if repo.write(SECTIONS_TEX, itemtable.sections_tex(doc).encode("utf-8")):
-        touched.append(SECTIONS_TEX)
+    repo.write(ITEMS, itemtable.dumps(doc))
+    repo.write(SECTIONS_TEX, itemtable.sections_tex(doc).encode("utf-8"))
+    owned = [ITEMS, SECTIONS_TEX]
     wanted = {f"{itemtable.section_file(s)}.tex" for s in doc["sections"]}
     for name in sorted(wanted):
         relative = f"{SECTIONS_DIR}/{name}"
-        if not (repo.root / relative).exists() and repo.write(relative, b""):
-            touched.append(relative)
+        written = not (repo.root / relative).exists() and repo.write(relative, b"")
+        if written or renumber:
+            owned.append(relative)
     if renumber:                        # every section file is empty: drop the old numbering's
         directory = repo.root / SECTIONS_DIR
         for path in sorted(directory.iterdir()) if directory.is_dir() else []:
@@ -296,8 +321,8 @@ def _write_table(table: Table, doc: dict, *, renumber: bool) -> list[str]:
                     and _SECTION_FILE.match(path.name) and path.is_file() \
                     and not path.read_text(encoding="utf-8", errors="replace").strip():
                 repo.remove(f"{SECTIONS_DIR}/{path.name}")
-                touched.append(f"{SECTIONS_DIR}/{path.name}")
-    return touched
+                owned.append(f"{SECTIONS_DIR}/{path.name}")
+    return owned
 
 
 def approve_references(workspace, informalize_id: str, *, by: str, note: str = "") -> dict:
@@ -368,5 +393,7 @@ def reference_checklist(workspace, informalize_id: str) -> tuple[Path, list[dict
     rows = itemtable.reference_rows(doc)
     work = doc.get("reference_work") or (table.cfg.get("reference") or {}).get("work")
     path = table.paths.informalize_reference_checklist(informalize_id)
-    atomic_write(path, itemtable.checklist_markdown(informalize_id, work, rows))
+    ticked = itemtable.ticked_rows(path.read_text(encoding="utf-8", errors="replace")
+                                   if path.is_file() else "")
+    atomic_write(path, itemtable.checklist_markdown(informalize_id, work, rows, ticked=ticked))
     return path, rows

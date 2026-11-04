@@ -74,7 +74,7 @@ def _items(workspace, informalize_id: str) -> str:
         problems = table.check(doc, numbered=table.numbered())
     except CfError as exc:
         return f"{text}; not checked: {exc.message}"
-    frozen = table.drafted()
+    frozen = table.frozen_since()
     return (f"{text}; check-items: "
             + ("ok" if not problems else f"{len(problems)} problem(s)")
             + ("; ids frozen" if frozen else ""))

@@ -18,6 +18,13 @@ an annotation's id derives from the kind and the id.
 `templates/informalize/schema/items.schema.json` states the shape as a JSON Schema for a
 reader; this module is the implementation, and tests/test_informalize_cli.py holds the two
 to one set of keys and enums.
+
+TODO(component 5a): the gate checks items.json too (section 8.3 rule 4), with `python3 -I`
+out of tree, where this module cannot be imported (it imports cflib).  5a moves the pure
+rules (`items_problems`, `declarations_problems`, `keyword_problem`, `SourceTree` and the
+patterns they use) into the runtime's `tools/` beside `fccommon.py`, adds
+`INFORMALIZE_RELATIONS` to the copies tests/test_informalize_runtime.py pins, and imports
+them here through `runtime.fccommon()`, so that there is no third copy of the rules.
 """
 from __future__ import annotations
 
@@ -50,14 +57,15 @@ DECLARATION_KEYS = ("name", "module", "line", "part", "role", "relation", "junk"
 SLUG_PATTERN = r"\A[a-z0-9]+(?:-[a-z0-9]+)*\Z"
 SECTION_NUMBER_PATTERN = r"\A[1-9][0-9]*\Z"
 SHA256_PATTERN = r"\A[0-9a-f]{64}\Z"
-#: the keywords a declaration's keyword line holds, for each kind the probe records
-#: (templates/corpus/probe.lean.tmpl, `kindOf`); an instance's line need not hold its
-#: name, since an anonymous instance's generated name is not on it
+#: the keywords a key declaration's keyword line holds, for each kind the probe records
+#: (templates/corpus/probe.lean.tmpl, `kindOf`): a `partial def` is an opaque constant, and
+#: Mathlib's `irreducible_def` a def; an instance's line need not hold its name, since an
+#: anonymous instance's generated name is not on it
 KEYWORDS = {
     "theorem": ("theorem", "lemma"),
-    "def": ("def",),
+    "def": ("def", "irreducible_def"),
     "abbrev": ("abbrev", "def"),
-    "opaque": ("opaque",),
+    "opaque": ("opaque", "def"),
     "axiom": ("axiom",),
     "inductive": ("inductive",),
     "structure": ("structure",),
@@ -115,8 +123,9 @@ def reference_problems(where: str, ref: Any) -> list[str]:
     return out
 
 
-def item_problems(item: Any, section_numbers: set[str]) -> list[str]:
-    """Every rule of section 5.4 one item breaks, on its own."""
+def item_problems(item: Any, section_numbers: set[str] | None) -> list[str]:
+    """Every rule of section 5.4 one item breaks, on its own; `section_numbers=None` for a
+    deferred item, whose section is the one of the numbering it was deferred from."""
     if not isinstance(item, dict):
         return [f"an item that is not an object: {item!r}"]
     iid = item.get("id")
@@ -127,7 +136,7 @@ def item_problems(item: Any, section_numbers: set[str]) -> list[str]:
         out.append(f"item {iid!r}: an id is <section>.<n>, both numbers from 1")
     elif item.get("section") != iid.split(".")[0]:
         out.append(f"{where}: its section is {item.get('section')!r}, not the one its id names")
-    if item.get("section") not in section_numbers:
+    if section_numbers is not None and item.get("section") not in section_numbers:
         out.append(f"{where}: section {item.get('section')!r} is not in `sections`")
     if item.get("kind") not in INFORMALIZE_KINDS:
         out.append(f"{where}: kind {item.get('kind')!r} is not one of {', '.join(INFORMALIZE_KINDS)}")
@@ -240,6 +249,8 @@ def items_problems(doc: Any, *, numbered: bool = True) -> list[str]:
     for key in ("deferred", "decisions"):
         if not isinstance(doc.get(key), list):
             out.append(f"{key} is not a list")
+    for entry in doc.get("deferred") if isinstance(doc.get("deferred"), list) else []:
+        out += [f"deferred {p}" for p in item_problems(entry, None)]
     out += _section_problems(doc.get("sections"), numbered)
     numbers = {s.get("number") for s in doc.get("sections") or [] if isinstance(s, dict)}
     items = doc.get("items")
@@ -394,9 +405,19 @@ class SourceTree:
         return Path(real).read_text(encoding="utf-8", errors="replace").splitlines()
 
 
+def _without_comments(text: str) -> str:
+    """A source line with its comments blanked: the end of one opened on an earlier line,
+    each `/- ... -/` and `/-- ... -/` on it, one left open, and a `--` comment."""
+    if "-/" in text and ("/-" not in text or text.index("-/") < text.index("/-")):
+        text = " " + text[text.index("-/") + 2:]
+    text = re.sub(r"/-.*?-/", " ", text)
+    text = re.sub(r"/-.*\Z", " ", text)
+    return re.sub(r"--.*\Z", " ", text)
+
+
 def keyword_problem(entry: dict, source: SourceTree) -> str | None:
     """Why `entry`'s keyword line in the library's source does not hold its keyword and
-    its name's last component, or None when it does."""
+    its name's last component outside a comment, or None when it does."""
     name, kind, line = entry["name"], entry.get("kind"), entry.get("line")
     lines = source.lines(entry.get("path"))
     if lines is None:
@@ -404,16 +425,17 @@ def keyword_problem(entry: dict, source: SourceTree) -> str | None:
     if not isinstance(line, int) or not 1 <= line <= len(lines):
         return f"{name}: {entry.get('path')} has no line {line}"
     text = lines[line - 1]
+    code = _without_comments(text)
     words = KEYWORDS.get(kind)
     if words is None:
         return f"{name}: no keyword is known for kind {kind!r}"
     keyword = rf"(?<![{_IDENT}.])(?:{'|'.join(words)})(?![{_IDENT}])"
-    if not re.search(keyword, text):
+    if not re.search(keyword, code):
         return (f"{name}: line {line} of {entry['path']} holds no {' or '.join(words)} "
-                f"keyword: {text.strip()[:80]!r}")
+                f"keyword outside a comment: {text.strip()[:80]!r}")
     if kind != "instance":
         last = name.rsplit(".", 1)[-1]
-        if not re.search(rf"(?<![{_IDENT}]){re.escape(last)}(?![{_IDENT}])", text):
+        if not re.search(rf"(?<![{_IDENT}]){re.escape(last)}(?![{_IDENT}])", code):
             return f"{name}: line {line} of {entry['path']} does not name {last}"
     return None
 
@@ -421,8 +443,9 @@ def keyword_problem(entry: dict, source: SourceTree) -> str | None:
 def check_table(doc: Any, *, declarations: dict, declarations_sha256: str, source: SourceTree,
                 library_commit: str, numbered: bool = True) -> list[str]:
     """`cf informalize check-items`: the rules of section 5.4, then every declaration of
-    every item against `declarations.json` (name, module, keyword line) and its keyword line
-    in the library's source."""
+    every item against `declarations.json` (name, module, keyword line), and each key
+    declaration's keyword line in the library's source (a helper may be one a command such
+    as `@[simps]` generated, whose line is the generating declaration's)."""
     out = items_problems(doc, numbered=numbered)
     if not isinstance(doc, dict):
         return out
@@ -460,7 +483,7 @@ def check_table(doc: Any, *, declarations: dict, declarations_sha256: str, sourc
             if decl.get("line") != row.get("line"):
                 out.append(f"item {iid}: {name}'s keyword line is {row.get('line')}, not "
                            f"{decl.get('line')}")
-            if name not in checked:
+            if decl.get("role") == "key" and name not in checked:
                 checked.add(name)
                 found = keyword_problem(row, source)
                 if found:
@@ -481,12 +504,15 @@ def parse_in_v1(spec: str, doc: dict) -> set[str]:
     return chosen
 
 
-def renumber(doc: dict, chosen: set[str]) -> tuple[dict, dict]:
+def renumber(doc: dict, chosen: set[str], *, at: str | None = None) -> tuple[dict, dict]:
     """The numbered table: the chosen items in v1 and numbered 1.. per section in reading
     order, the others moved to `deferred`, empty sections dropped and the rest numbered
-    1..; and the decision that records it (empty when nothing moved)."""
+    1..; and the decision that records it (empty when nothing moved).  A deferred item
+    keeps the id and section it had, and `at` (the decision's time) as `x_deferred_at`,
+    which names the numbering they belong to."""
     keep = [it for it in doc["items"] if it["id"] in chosen]
-    moved = [dict(it, in_v1=False) for it in doc["items"] if it["id"] not in chosen]
+    stamp = {"x_deferred_at": at} if at else {}
+    moved = [dict(it, in_v1=False, **stamp) for it in doc["items"] if it["id"] not in chosen]
     used = [s for s in doc["sections"] if any(it["section"] == s["number"] for it in keep)]
     section_of = {s["number"]: str(n) for n, s in enumerate(used, 1)}
     position = {id(it): i for i, it in enumerate(keep)}
@@ -516,13 +542,15 @@ def renumber(doc: dict, chosen: set[str]) -> tuple[dict, dict]:
 def snapshot(doc: dict) -> dict:
     """What an items approval records of the table, for :func:`frozen_problems`."""
     return {"items": {it["id"]: it["kind"] for it in doc["items"]},
-            "sections": {s["number"]: s["slug"] for s in doc["sections"]}}
+            "sections": {s["number"]: s["slug"] for s in doc["sections"]},
+            "withdrawn": sorted(withdrawn_ids(doc))}
 
 
 def frozen_problems(doc: dict, previous: dict | None) -> list[str]:
     """After the first draft: every approved id is still there with its kind and section,
-    or withdrawn; a new id comes after every approved one of its section; an approved
-    section keeps its number and slug, and a new one comes after them all."""
+    or withdrawn; a withdrawn id stays withdrawn; a new id comes after every approved one of
+    its section; an approved section keeps its number and slug, and a new one comes after
+    them all."""
     if not isinstance(previous, dict):
         return []
     out: list[str] = []
@@ -539,6 +567,9 @@ def frozen_problems(doc: dict, previous: dict | None) -> list[str]:
         elif iid not in withdrawn:
             out.append(f"item {iid}: gone without a withdrawal; record "
                        f'{{"withdrawn": "{iid}", "why": "..."}} in decisions')
+    for iid in sorted(set(previous.get("withdrawn") or []) - withdrawn):
+        out.append(f"item {iid}: withdrawn when it was last approved; a withdrawal stays in "
+                   "decisions, and the id is never reused")
     top: dict[int, int] = {}
     for iid in filter(is_informal_item_id, before_items):
         section, n = split_informal_item_id(iid)
@@ -596,8 +627,24 @@ def _cell(value: Any) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
-def checklist_markdown(informalize_id: str, work: str | None, rows: list[dict]) -> str:
-    """`reference-checklist.md`, deterministic: the same list gives the same bytes."""
+#: a cell boundary of a checklist row: a `|` that `_cell` did not escape
+_CELL_BOUNDARY = re.compile(r"(?<!\\)\|")
+
+
+def ticked_rows(text: str) -> set[tuple[str, str]]:
+    """The (item, number) cells of each row a person ticked in a checklist, as written."""
+    out = set()
+    for line in text.splitlines():
+        cells = [c.strip() for c in _CELL_BOUNDARY.split(line)]
+        if len(cells) == 9 and cells[1].lower() == "[x]":
+            out.add((cells[2], cells[5]))
+    return out
+
+
+def checklist_markdown(informalize_id: str, work: str | None, rows: list[dict],
+                       ticked: set[tuple[str, str]] = frozenset()) -> str:
+    """`reference-checklist.md`, deterministic: the same list and the same `ticked`
+    (:func:`ticked_rows` of the file it replaces) give the same bytes."""
     lines = [f"# Reference numbers to check: {informalize_id}", ""]
     if work:
         lines += [f"Reference work: {work}.", ""]
@@ -618,7 +665,8 @@ def checklist_markdown(informalize_id: str, work: str | None, rows: list[dict]) 
               "|---|---|---|---|---|---|---|"]
     for row in rows:
         label = row["id"] + (f"({row['part']})" if row["part"] else "")
-        lines.append("| [ ] | " + " | ".join(_cell(v) for v in (
+        box = "[x]" if (_cell(label), _cell(row["number"])) in ticked else "[ ]"
+        lines.append(f"| {box} | " + " | ".join(_cell(v) for v in (
             label, row["kind"], row["title"], row["number"], row["source"],
             row["declaration"])) + " |")
     return "\n".join(lines) + "\n"

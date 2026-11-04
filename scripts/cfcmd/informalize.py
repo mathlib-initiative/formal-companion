@@ -183,7 +183,7 @@ def _approve(args) -> int:
     if args.gate == "items":
         snapshot = approval["snapshot"]
         log.info(f"  {len(snapshot['items'])} items in {len(snapshot['sections'])} sections"
-                 + ("; the ids are frozen (a section is drafted)" if approval["frozen"] else ""))
+                 + ("; the ids are frozen (a section was drafted)" if approval["frozen"] else ""))
         log.info(f"next: cf informalize reference-checklist {args.id}")
     elif args.gate == "references":
         log.info(f"  {len(approval['references'])} reference numbers")

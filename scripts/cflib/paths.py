@@ -333,12 +333,6 @@ class WorkspacePaths:
         """The library's source at its commit, unpacked from `git archive`."""
         return self.informalize_library(informalize_id) / "src"
 
-    def informalize_scope_json(self, informalize_id: str) -> Path:
-        return self.informalize_dir(informalize_id) / "scope.json"
-
-    def informalize_pdf_dir(self, informalize_id: str, commit12: str) -> Path:
-        return self.informalize_dir(informalize_id) / "pdf" / _safe_id(commit12, "commit")
-
     def informalize_stages_dir(self, informalize_id: str) -> Path:
         return self.informalize_dir(informalize_id) / "stages"
 
@@ -352,12 +346,6 @@ class WorkspacePaths:
 
     def informalize_reference_checklist(self, informalize_id: str) -> Path:
         return self.informalize_dir(informalize_id) / "reference-checklist.md"
-
-    def list_informalize(self) -> list[str]:
-        if not self.informalize_root.is_dir():
-            return []
-        return sorted(p.name for p in self.informalize_root.iterdir()
-                      if p.is_dir() and (p / "informalize.yaml").exists())
 
     # -- locate (docs/proposals/wikipedia-locate.md; the layout is
     # references/locate-documents.md section 7) -------------------------

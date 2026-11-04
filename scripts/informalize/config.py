@@ -222,7 +222,11 @@ def load(paths: WorkspacePaths, informalize_id: str, *, sessions: int = SESSION_
     path = paths.informalize_yaml(informalize_id)
     if not path.is_file():
         raise CfError(f"no {path}", hint=f"`cf informalize init {informalize_id} ...` writes it")
-    doc = read_yaml(path)
+    try:
+        doc = read_yaml(path)
+    except CfError as exc:
+        raise CfError(exc.message, hint="edit it, or re-run `cf informalize init` with --force, "
+                                        "which replaces a file that does not parse") from None
     found = problems(doc, sessions=sessions)
     if not found and doc.get("id") != informalize_id:
         found = [f"id {doc.get('id')!r} is not {informalize_id!r}, the directory it is in"]

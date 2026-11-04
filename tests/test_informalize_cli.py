@@ -56,7 +56,8 @@ from cflib.errors import CfError                              # noqa: E402
 from cflib.paths import WorkspacePaths                        # noqa: E402
 from cflib.yamlio import load_yaml, read_yaml                 # noqa: E402
 from informalize import config, itemtable, project, runtime   # noqa: E402
-from informalize.outrepo import OutputRepo                    # noqa: E402
+from informalize.approve import AGENT_ENVIRONMENT             # noqa: E402
+from informalize.outrepo import GIT_LOCATION_ENV, OutputRepo  # noqa: E402
 from overlay.config import OPEN_LICENSES                      # noqa: E402
 
 SPEC = (SKILL / "docs" / "proposals" / "informalize.md").read_text(encoding="utf-8")
@@ -505,6 +506,49 @@ class TestTheTableAgainstTheLibrary(unittest.TestCase):
         self.assertIn("holds no theorem", itemtable.keyword_problem(
             at_one, itemtable.SourceTree(self.src)))
 
+    def test_a_name_in_a_comment_is_not_a_keyword_line(self):
+        (self.src / "D.lean").write_text(
+            "/-- The glue theorem: `glue_theorem` says the square is a pushout. -/\n"
+            "theorem glue_theorem : True := trivial -- by glue_theorem\n"
+            "theorem other : True := trivial -- glue_theorem\n"
+            "  the theorem glue_theorem. -/ theorem glue_theorem : True := trivial\n",
+            encoding="utf-8")
+        source = itemtable.SourceTree(self.src)
+        entry = {"name": "ExampleLib.glue_theorem", "kind": "theorem", "path": "D.lean"}
+        self.assertIn("outside a comment", itemtable.keyword_problem(dict(entry, line=1), source))
+        self.assertIsNone(itemtable.keyword_problem(dict(entry, line=2), source))
+        self.assertIn("does not name", itemtable.keyword_problem(dict(entry, line=3), source))
+        self.assertIsNone(itemtable.keyword_problem(dict(entry, line=4), source))
+
+    def test_partial_and_irreducible_defs_are_keyword_lines(self):
+        (self.src / "P.lean").write_text("partial def loop (n : Nat) : Nat := loop n\n"
+                                         "irreducible_def sealed : Nat := 1\n", encoding="utf-8")
+        source = itemtable.SourceTree(self.src)
+        self.assertIsNone(itemtable.keyword_problem(
+            {"name": "A.loop", "kind": "opaque", "path": "P.lean", "line": 1}, source))
+        self.assertIsNone(itemtable.keyword_problem(
+            {"name": "A.sealed", "kind": "def", "path": "P.lean", "line": 2}, source))
+
+    def test_only_a_key_declaration_s_line_is_read_in_the_source(self):
+        # a helper @[simps] generated carries its generating declaration's line
+        rows = copy.deepcopy(doc.DECLARATIONS)
+        for row in rows["declarations"]:
+            if row["name"] == "ExampleLib.glue_map":
+                row.update(kind="theorem", line=40)
+        table = numbered_table()
+        for item in table["items"]:
+            for decl in item["declarations"]:
+                if decl["name"] == "ExampleLib.glue_map":
+                    self.assertEqual(decl["role"], "helper")
+                    decl["line"] = 40
+        self.assertEqual(self.check(table, rows), [])
+        for item in table["items"]:
+            for decl in item["declarations"]:
+                if decl["name"] == "ExampleLib.glue_map":
+                    decl["role"] = "key"
+                    decl["part"] = "a"
+        self.assertTrue(any("does not name glue_map" in p for p in self.check(table, rows)))
+
     def test_an_instance_needs_no_name_on_its_line(self):
         (self.src / "I.lean").write_text("instance : Inhabited Foo := ⟨x⟩\n", encoding="utf-8")
         entry = {"name": "ExampleLib.instInhabitedFoo", "kind": "instance", "path": "I.lean",
@@ -527,6 +571,13 @@ class TestTheTableAgainstTheLibrary(unittest.TestCase):
 class _Workspace(unittest.TestCase):
 
     def setUp(self):
+        # this suite may run inside an agent's shell (a Claude Code session sets CLAUDECODE),
+        # where approve refuses; and no git variable may point at another repository
+        environ = mock.patch.dict(os.environ)
+        environ.start()
+        self.addCleanup(environ.stop)
+        for name in AGENT_ENVIRONMENT + GIT_LOCATION_ENV:
+            os.environ.pop(name, None)
         self.root = scratch(self) / "ws"
         code, out, err = cf("init", str(self.root), "--no-git", "-q")
         self.assertEqual(code, 0, out + err)
@@ -623,6 +674,37 @@ class TestInit(_Workspace):
         self.assertTrue((self.repo / "LICENSE").read_text(encoding="utf-8").startswith("MIT License"))
         self.assertIn("informal/main.tex", self.git("status", "--porcelain"))
 
+    def test_a_forced_change_of_another_setting_keeps_the_license(self):
+        self.init()
+        license_path = self.repo / "LICENSE"
+        edited = "Copyright 2026 A. Maintainer\n\n" + license_path.read_text(encoding="utf-8")
+        license_path.write_text(edited, encoding="utf-8")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "my header")
+        head = self.git("rev-parse", "HEAD")
+        out = self.init("--workers", "5", "--force")
+        self.assertNotIn("LICENSE is now", out)
+        self.assertEqual(license_path.read_text(encoding="utf-8"), edited)
+        self.assertEqual(self.git("rev-parse", "HEAD"), head)
+        self.assertEqual(read_yaml(self.paths.informalize_yaml(ID))["caps"]["workers"], 5)
+
+    def test_force_replaces_a_settings_file_that_does_not_parse(self):
+        self.init()
+        yaml_path = self.paths.informalize_yaml(ID)
+        yaml_path.write_text("id: a: b\n  c: d\n", encoding="utf-8")
+        self.assertIn("--force", self.cf("informalize", "status", ID, code=2))
+        self.init(code=2)
+        self.init("--force")
+        self.assertEqual(config.problems(read_yaml(yaml_path)), [])
+
+    def test_a_no_op_leaves_the_receipt_as_it_was(self):
+        self.init()
+        receipt = self.paths.informalize_receipt(ID, "I0")
+        before = receipt.read_bytes()
+        with mock.patch("informalize.stages.now", return_value="2099-01-01T00:00:00Z"):
+            self.init()
+            self.cf("informalize", "sync", ID)
+        self.assertEqual(receipt.read_bytes(), before)
+
     def test_a_bad_flag_is_refused_before_anything_is_written(self):
         cases = {"an http URL": ("--library", "http://example.org/x"),
                  "a short commit": ("--commit", "abc"),
@@ -682,6 +764,55 @@ class TestInit(_Workspace):
         out = self.init(code=2)
         self.assertIn("did not make", out)
 
+    def test_init_takes_up_no_repository_holding_other_files(self):
+        self.repo.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        (self.repo / "informal").mkdir()
+        (self.repo / "informal/fcmarkers.sty").write_text("% mine\n", encoding="utf-8")
+        out = self.init(code=2)
+        self.assertIn("informal/fcmarkers.sty", out)
+        self.assertEqual((self.repo / "informal/fcmarkers.sty").read_text(encoding="utf-8"),
+                         "% mine\n")
+        # what a first init left before its stamp is taken up
+        shutil.rmtree(self.repo)
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        (self.repo / "README.md").write_bytes(project.project_files(config.build(
+            iid=ID, url=URL, commit=doc.COMMIT, module="ExampleLib.Topology.Glue.Basic",
+            theorem="ExampleLib.glue_theorem", prefix="ExampleLib", text_license="Apache-2.0",
+            title="The glue theorem, after ExampleLib", author="A. Maintainer",
+            reference="A. Author, Gluing, Example Press, 2001"))["README.md"])
+        self.init()
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_init_refuses_a_git_file_pointing_elsewhere(self):
+        other = scratch(self) / "other"
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        self.repo.mkdir(parents=True)
+        (self.repo / ".git").write_text(f"gitdir: {other / '.git'}\n", encoding="utf-8")
+        self.assertIn("is not a directory", self.init(code=2))
+        done = subprocess.run(["git", "-C", str(other), "rev-list", "--all"], capture_output=True,
+                              text=True)
+        self.assertEqual(done.stdout, "")
+
+    def test_init_refuses_a_symlinked_informalize_directory(self):
+        outside = scratch(self) / "outside"
+        outside.mkdir()
+        self.paths.informalize_root.symlink_to(outside)
+        self.assertIn("resolves outside the workspace", self.init(code=2))
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_a_git_variable_cannot_send_the_commits_elsewhere(self):
+        other = scratch(self) / "other"
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git"),
+                                          "GIT_WORK_TREE": str(other)}):
+            self.init()
+        self.assertEqual(self.commits(), 1)
+        done = subprocess.run(["git", "-C", str(other), "rev-list", "--all"], capture_output=True,
+                              text=True)
+        self.assertEqual(done.stdout, "")
+
     def test_init_refuses_a_symlinked_repository(self):
         elsewhere = scratch(self) / "elsewhere"
         elsewhere.mkdir()
@@ -711,7 +842,7 @@ class TestTheException(_Workspace):
         self.init()
         repo = OutputRepo(self.paths, ID)
         for good in ("informal/x.tex", "annotations/1/a.json", "pdf-overlay/GENERATED.json",
-                     "site/index.html", ".github/workflows/pages.yml",
+                     "site/index.html", ".github/workflows/tests.yml",
                      ".lake/overlay-pdf/x.pdf", "README.md", "LICENSE", ".gitignore"):
             with self.subTest(path=good):
                 repo.target(good)
@@ -782,6 +913,22 @@ class TestSync(_Workspace):
         self.assertFalse((self.repo / "informal/tools/retired.py").exists())
         self.cf("informalize", "sync", ID, "--check")
         self.assertEqual(self.commits(), before + 1)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_a_record_cannot_delete_a_project_file(self):
+        record = json.loads((self.repo / "informal/GENERATED.json").read_text(encoding="utf-8"))
+        record["files"].append({"path": "main.tex", "sha256": "0" * 64})
+        (self.repo / "informal/GENERATED.json").write_text(json.dumps(record), encoding="utf-8")
+        out = self.cf("informalize", "sync", ID, code=2)
+        self.assertIn("informal/main.tex, which is not the runtime's", out)
+        self.assertTrue((self.repo / "informal/main.tex").is_file())
+
+    def test_python_s_cache_in_tools_is_ignored(self):
+        cache = self.repo / "informal/tools/__pycache__"
+        cache.mkdir()
+        (cache / "fccommon.cpython-313.pyc").write_bytes(b"\0")
+        self.cf("informalize", "sync", ID, "--check")
+        self.cf("informalize", "sync", ID)
         self.assertEqual(self.git("status", "--porcelain"), "")
 
     def test_the_library_commit_s_time_is_kept_until_the_commit_moves(self):
@@ -936,10 +1083,81 @@ class TestApproveItems(_Table):
                          .read_text(encoding="utf-8"), doc.SECTION_1)
 
     def test_an_agent_cannot_approve(self):
-        with mock.patch.dict(os.environ, {"CF_ROLE": "worker"}):
-            self.assertIn("maintainer's", self.approve_items("--in-v1", "all", code=2))
-        with mock.patch.dict(os.environ, {"TEND_TASK_ID": "items"}):
-            self.assertIn("maintainer's", self.approve_items("--in-v1", "all", code=2))
+        for name, value in (("CF_ROLE", "worker"), ("TEND_TASK_ID", "items"),
+                            ("CLAUDECODE", "1"), ("CLAUDE_CODE_ENTRYPOINT", "sdk-py")):
+            with self.subTest(variable=name), mock.patch.dict(os.environ, {name: value}):
+                self.assertIn("maintainer's", self.approve_items("--in-v1", "all", code=2))
+        self.assertFalse(self.paths.informalize_approval(ID, "items").exists())
+
+    def approval(self) -> dict:
+        return json.loads(self.paths.informalize_approval(ID, "items").read_text(encoding="utf-8"))
+
+    def assert_commit_holds_the_pin(self) -> None:
+        approval = self.approval()
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        held = subprocess.run(["git", "-C", str(self.repo), "show",
+                               f"{approval['commit']}:informal/items.json"],
+                              capture_output=True, check=True).stdout
+        self.assertEqual(hashlib.sha256(held).hexdigest(),
+                         approval["pins"]["repo/informal/items.json"])
+
+    def test_a_table_fixed_by_hand_in_the_bytes_approve_writes_is_committed(self):
+        self.approve_items("--in-v1", "1.1,1.4,2.2,2.5,2.7")
+        table = self.items()
+        table["items"][0]["gist"] = "Another gist."              # before the first draft
+        (self.repo / "informal/items.json").write_bytes(itemtable.dumps(table))
+        self.approve_items()
+        self.assert_commit_holds_the_pin()
+        (self.repo / "informal/sections/01-gluing-spaces.tex").write_text(doc.SECTION_1,
+                                                                          encoding="utf-8")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "draft")
+        table = self.items()
+        table["items"][1]["reference"]["number"] = "Theorem 4.2"   # after it
+        (self.repo / "informal/items.json").write_bytes(itemtable.dumps(table))
+        self.assertIn("frozen", self.approve_items())
+        self.assert_commit_holds_the_pin()
+
+    def test_the_ids_stay_frozen_when_the_drafted_section_is_emptied(self):
+        self.approve_items("--in-v1", "1.1,1.4,2.2,2.5,2.7")
+        section = self.repo / "informal/sections/01-gluing-spaces.tex"
+        section.write_text(doc.SECTION_1, encoding="utf-8")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "draft")
+        self.approve_items()
+        section.write_text("", encoding="utf-8")                   # a reverted draft
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "revert")
+        self.approve_items("--in-v1", "1.2,2.1,2.2,2.3")
+        self.assertEqual([it["id"] for it in self.items()["items"]],
+                         ["1.1", "1.2", "2.1", "2.2", "2.3"])
+        self.assertFalse(self.items()["items"][0]["in_v1"])
+        self.assertTrue(self.approval()["frozen"])
+
+    def test_a_withdrawn_id_is_never_taken_back(self):
+        self.approve_items("--in-v1", "1.1,1.4,2.2,2.5,2.7")
+        (self.repo / "informal/sections/01-gluing-spaces.tex").write_text(doc.SECTION_1,
+                                                                          encoding="utf-8")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "draft")
+        table = self.items()
+        last = table["items"][-1]
+        self.assertEqual(last["id"], "2.3")
+        table["items"] = table["items"][:-1]
+        table["decisions"] = table["decisions"] + [{"withdrawn": "2.3", "why": "merged"}]
+        self.write_items(table)
+        self.approve_items()
+        self.assertEqual(self.approval()["snapshot"]["withdrawn"], ["2.3"])
+        table["decisions"] = table["decisions"][:-1]
+        table["items"].append(dict(last, kind="remark", title="Another item"))
+        self.write_items(table)
+        self.assertIn("never reused", self.approve_items(code=1))
+
+    def test_a_deferred_item_names_the_numbering_it_came_from(self):
+        self.approve_items("--in-v1", "1.1,1.4,2.2,2.5,2.7")
+        deferred = self.items()["deferred"]
+        at = self.items()["decisions"][-1]["at"]
+        self.assertEqual({it["x_deferred_at"] for it in deferred}, {at})
+        table = self.items()
+        table["deferred"][0]["kind"] = "axiom"
+        self.write_items(table)
+        self.assertIn("deferred item 2.9", self.cf("informalize", "check-items", ID, code=1))
 
 
 class TestReferences(_Table):
@@ -954,9 +1172,12 @@ class TestReferences(_Table):
         text = self.paths.informalize_reference_checklist(ID).read_text(encoding="utf-8")
         self.assertIn("| [ ] | 1.2 | theorem | The glue theorem | Theorem 4.1 | inferred |  |", text)
         self.assertIn("Reference work: A. Author, Gluing, Example Press, 2001.", text)
-        # ticking a box does not void it
+        # ticking a box does not void it, and writing the list again keeps the tick
         self.paths.informalize_reference_checklist(ID).write_text(
             text.replace("| [ ] | 1.1", "| [x] | 1.1"), encoding="utf-8")
+        self.cf("informalize", "reference-checklist", ID)
+        self.assertIn("| [x] | 1.1 |", self.paths.informalize_reference_checklist(ID)
+                      .read_text(encoding="utf-8"))
         self.cf("informalize", "approve", ID, "references", "--by", "A. Maintainer")
         status = self.cf("informalize", "status", ID)
         self.assertRegex(status, r"approve references\s+: current")

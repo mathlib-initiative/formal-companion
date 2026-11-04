@@ -10,11 +10,13 @@ output repository only through `cflib.gitsafe`, and write only under the excepti
 section 1.3 (`informalize.outrepo`).
 
 A second `init` with the same settings changes nothing; with other settings it refuses
-unless `--force`, which rewrites `informalize.yaml` (and `LICENSE` when the text's license
-changed) but never a project file, which is the maintainer's from the first `init` on.
+unless `--force`, which rewrites `informalize.yaml` (one that does not parse too, and
+`LICENSE` when the text's license changed) but never a project file, which is the
+maintainer's from the first `init` on.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -61,6 +63,16 @@ def ensure_workspace_ignores(workspace) -> bool:
     return True
 
 
+#: what `init --force` reads an informalize.yaml that does not parse as
+UNREADABLE = "a file that does not parse"
+
+
+def _text_license(settings: object) -> str | None:
+    text = settings.get("text") if isinstance(settings, dict) else None
+    found = text.get("license") if isinstance(text, dict) else None
+    return found if isinstance(found, str) else None
+
+
 def _differences(old: object, new: dict, prefix: str = "") -> list[str]:
     if not isinstance(old, dict):
         return [prefix.rstrip(".") or "the whole file"]
@@ -74,22 +86,50 @@ def _differences(old: object, new: dict, prefix: str = "") -> list[str]:
     return out
 
 
-def _check_new_repo(repo: OutputRepo) -> None:
+def _check_new_repo(repo: OutputRepo, settings: dict) -> None:
     """A repository `init` may create or take up again: absent, empty, its own, or one
-    whose first `init` stopped before any commit."""
+    whose first `init` stopped before the stamp, holding nothing init would not write."""
     root = repo.check_location()
     if not root.exists() or not any(root.iterdir()):
         return
-    if not (root / ".git").exists():
+    if repo.git_dir() is None:
         raise CfError(f"{root} exists and is not a git repository",
                       hint="init creates the output repository itself; move that directory away")
     stamped = repo.stamped_id()
-    if stamped == repo.id or (stamped is None and repo.head() is None):
+    if stamped == repo.id:
         return
+    if stamped is None and repo.head() is None:
+        foreign = _not_written_by_init(repo, settings)
+        if not foreign:
+            return
+        raise CfError(f"{root} is a git repository init did not make: it holds "
+                      + ", ".join(foreign[:3]) + (" ..." if foreign[3:] else ""),
+                      hint="init takes up only an empty repository or what its own first run "
+                           "left; move that directory away")
     raise CfError(f"{root} is a repository init did not make for {repo.id!r} (its stamp names "
                   f"{stamped!r})",
                   hint="cf informalize writes only into its own output repository "
                        "(docs/proposals/informalize.md section 1.3)")
+
+
+def _not_written_by_init(repo: OutputRepo, settings: dict) -> list[str]:
+    """Every file of `repo` outside `.git` that is not a file init writes, with the bytes it
+    writes (the project files, LICENSE, the runtime)."""
+    expected = dict(project.project_files(settings))
+    expected.update({f"{runtime.INFORMAL}/{path}": raw
+                     for path, raw in runtime.template_files().items()})
+    out = []
+    for parent, names, files in os.walk(repo.root):
+        names[:] = sorted(n for n in names if not (parent == str(repo.root) and n == ".git"))
+        for name in sorted(files + [n for n in names if os.path.islink(os.path.join(parent, n))]):
+            path = Path(parent) / name
+            relative = path.relative_to(repo.root).as_posix()
+            raw = None if path.is_symlink() or not path.is_file() else path.read_bytes()
+            if relative == "LICENSE" and project.license_matches(settings, raw):
+                continue
+            if raw is None or expected.get(relative) != raw:
+                out.append(relative)
+    return out
 
 
 def write_receipt(workspace, repo: OutputRepo) -> Path:
@@ -113,7 +153,12 @@ def init(workspace, settings: dict, *, force: bool = False) -> Result:
         raise CfError(found[0], hint="; ".join(found[1:4]) or None)
     iid = settings["id"]
     yaml_path = paths.informalize_yaml(iid)
-    existing = config.read(yaml_path) if yaml_path.is_file() else None
+    try:
+        existing = config.read(yaml_path) if yaml_path.is_file() else None
+    except CfError:
+        if not force:
+            raise
+        existing = UNREADABLE                   # --force replaces a file that does not parse
     changed = existing is not None and existing != settings
     if changed and not force:
         raise CfError(f"{yaml_path} exists with other settings: "
@@ -121,7 +166,7 @@ def init(workspace, settings: dict, *, force: bool = False) -> Result:
                       hint="pass --force to rewrite it; the project files init rendered are the "
                            "maintainer's and stay as they are", exit_code=1)
     repo = OutputRepo(paths, iid)
-    _check_new_repo(repo)
+    _check_new_repo(repo, settings)
     result = Result(repo=repo.root)
     if existing is None or changed:
         yaml_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,8 +178,11 @@ def init(workspace, settings: dict, *, force: bool = False) -> Result:
     for relative, raw in project.project_files(settings).items():
         if not (repo.root / relative).exists() and repo.write(relative, raw):
             result.written.append(relative)
+    # LICENSE is the maintainer's once written, unless text.license itself changed
     license_raw = repo.read_bytes("LICENSE")
-    if license_raw is None or (force and not project.license_matches(settings, license_raw)):
+    license_changed = _text_license(existing) not in (None, settings["text"]["license"])
+    if license_raw is None or (license_changed
+                               and not project.license_matches(settings, license_raw)):
         if repo.write("LICENSE", project.license_text(settings)):
             result.written.append("LICENSE")
             if license_raw is not None:

@@ -9,10 +9,14 @@ repository but this one, and only under the exception section 1.3 words (SKILL.m
   without that stamp, or with another id's (:meth:`OutputRepo.require_stamp`).
 * Only the paths of :data:`ALLOWED_DIRS` and :data:`ALLOWED_FILES` are written
   (:meth:`OutputRepo.target`); a `repo/` that is a symlink or resolves outside
-  `informalize/<id>/` is refused, and so is a write through a symlinked component.
+  `informalize/<id>/`, or an `informalize/<id>/` that resolves outside the workspace, is
+  refused, and so is a write through a symlinked component.
 * git runs there only through `cflib.gitsafe`, which pins every program a repository's
-  configuration could name, and a commit takes only the paths the command wrote
-  (:meth:`OutputRepo.commit`), so a maintainer's uncommitted edit elsewhere stays his.
+  configuration could name, with none of the variables that point git at another
+  repository (:data:`GIT_LOCATION_ENV`), and only where `repo/.git` is a directory of its
+  own (a `.git` file or link would send the commits elsewhere).  A commit takes only the
+  paths the command names (:meth:`OutputRepo.commit`), so a maintainer's uncommitted edit
+  elsewhere stays his.
 
 Nothing here reads or writes the library: that is `library/`, beside the repository.
 """
@@ -39,6 +43,19 @@ STAMP = "informal/informalize.json"
 FALLBACK_IDENTITY = ("-c", "user.name=cf informalize",
                      "-c", "user.email=cf-informalize@example.invalid")
 _GIT_SETTINGS = ("-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main")
+#: what points git at another repository, index or work tree (`git rev-parse
+#: --local-env-vars`); unset around every git call here
+GIT_LOCATION_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE")
+
+
+def _run(root: Path, args: list[str], timeout: int):
+    """`gitsafe.run` in `root`, with :data:`GIT_LOCATION_ENV` unset for the call."""
+    saved = {name: os.environ.pop(name) for name in GIT_LOCATION_ENV if name in os.environ}
+    try:
+        return gitsafe.run(root, args, timeout=timeout)
+    finally:
+        os.environ.update(saved)
 
 
 class OutputRepo:
@@ -46,6 +63,7 @@ class OutputRepo:
 
     def __init__(self, paths: WorkspacePaths, informalize_id: str):
         self.id = informalize_id
+        self.workspace = paths.root
         self.home = paths.informalize_dir(informalize_id)
         self.root = paths.informalize_repo(informalize_id)
         self._who: tuple[str, ...] | None = None
@@ -56,6 +74,11 @@ class OutputRepo:
         if self.home.is_symlink():
             raise CfError(f"{self.home} is a symlink",
                           hint="informalize/<id>/ is written in place; remove the link")
+        top = os.path.realpath(self.workspace)
+        if not os.path.realpath(self.home).startswith(top + os.sep):
+            raise CfError(f"{self.home} resolves outside the workspace {self.workspace}",
+                          hint="informalize/ and informalize/<id>/ are real directories of the "
+                               "workspace; remove the link")
         if self.root.is_symlink():
             raise CfError(f"{self.root} is a symlink",
                           hint="the output repository is written in place; a link could put "
@@ -68,8 +91,24 @@ class OutputRepo:
                               hint="repo/ must be a real directory of informalize/<id>/")
         return self.root
 
+    def git_dir(self) -> Path | None:
+        """`repo/.git`, or None when there is none; refusing a `.git` that is a file or a
+        link (or a linked worktree's), since git would commit into the repository it names."""
+        path = self.root / ".git"
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise CfError(f"{path} is not a directory",
+                          hint="a .git file or link points git at another repository; the output "
+                               "repository holds its own .git directory")
+        if not path.exists():
+            return None
+        if (path / "commondir").exists():
+            raise CfError(f"{path} is a linked worktree's",
+                          hint="the output repository holds its own .git directory")
+        return path
+
     def exists(self) -> bool:
-        return (self.check_location() / ".git").exists()
+        self.check_location()
+        return self.git_dir() is not None
 
     def stamped_id(self) -> str | None:
         """The id `informal/informalize.json` names, or None without a readable stamp."""
@@ -86,7 +125,7 @@ class OutputRepo:
     def require_stamp(self) -> None:
         """Refuse a repository `init` did not make for this id."""
         self.check_location()
-        if not (self.root / ".git").exists():
+        if self.git_dir() is None:
             raise CfError(f"{self.root} is not a git repository",
                           hint=f"`cf informalize init {self.id} ...` creates it")
         found = self.stamped_id()
@@ -172,7 +211,7 @@ class OutputRepo:
         if shutil.which("git") is None:
             raise CfError("git not found on PATH",
                           hint="the output repository is a git repository")
-        done = gitsafe.run(self.root, [*_GIT_SETTINGS, *self._identity(), *args], timeout=120)
+        done = _run(self.root, [*_GIT_SETTINGS, *self._identity(), *args], timeout=120)
         if check and done.returncode != 0:
             raise CfError(f"git {' '.join(args[:2])} failed in {self.root}: "
                           f"{(done.stderr or done.stdout).strip()}")
@@ -180,31 +219,31 @@ class OutputRepo:
 
     def _identity(self) -> tuple[str, ...]:
         """No `-c` identity when the maintainer's git names one (his commits are his)."""
-        if not (self.root / ".git").exists():
+        if self.git_dir() is None:
             return ()
         if self._who is None:
             names = []
             for key in ("user.name", "user.email"):
-                done = gitsafe.run(self.root, ["config", "--get", key], timeout=30)
+                done = _run(self.root, ["config", "--get", key], timeout=30)
                 names.append(done.returncode == 0 and bool(done.stdout.strip()))
             self._who = () if all(names) else FALLBACK_IDENTITY
         return self._who
 
     def init(self) -> None:
         self.check_location().mkdir(parents=True, exist_ok=True)
-        if not (self.root / ".git").exists():
+        if self.git_dir() is None:
             self.git("init", "-q")
 
     def head(self) -> str | None:
-        if not (self.root / ".git").exists():
+        if self.git_dir() is None:
             return None
-        done = gitsafe.run(self.root, ["rev-parse", "--verify", "-q", "HEAD"], timeout=30)
+        done = _run(self.root, ["rev-parse", "--verify", "-q", "HEAD"], timeout=30)
         found = done.stdout.strip()
         return found if done.returncode == 0 and len(found) == 40 else None
 
     def tracked(self) -> set[str]:
         """Every path the index holds."""
-        if not (self.root / ".git").exists():
+        if self.git_dir() is None:
             return set()
         return {p for p in self.git("ls-files", "-z").split("\0") if p}
 
@@ -244,3 +283,10 @@ class OutputRepo:
             return None
         self.git("commit", "-q", "-m", message, "--", *changed)
         return self.head()
+
+    def committed(self, relative: str) -> bool:
+        """Does HEAD hold `relative` byte for byte as it is on disk?"""
+        self.target(relative)
+        on_disk = self.git("hash-object", "--no-filters", "--", relative).strip()
+        done = _run(self.root, ["rev-parse", "--verify", "-q", f"HEAD:{relative}"], timeout=30)
+        return done.returncode == 0 and done.stdout.strip() == on_disk

@@ -162,8 +162,8 @@ repo/
 
 `cf init`'s `.gitignore` gains `informalize/*/repo/`, `informalize/*/library/` and
 `informalize/*/pdf/`. The output repository's own `.gitignore` ignores `*.pdf`, `.lake/`,
-`/build/`, `/site/*` and keeps `!/site/index.html`. The library is never cloned on the Mac:
-`library/src/` is an archive's contents, not a checkout.
+`/build/`, `/site/*` and `__pycache__/`, and keeps `!/site/index.html`. The library is
+never cloned on the Mac: `library/src/` is an archive's contents, not a checkout.
 
 ## 5. Formats
 
@@ -262,12 +262,15 @@ commit changes, until I1 runs again. Before `informalize.json` is written, the r
 overlay's does (`schema` `formal-companion/informalize-generated`, `instance_files`
 `["informalize.json"]`); a sync that changes no file keeps the record, generator commit and
 all, so a new formal-companion commit alone makes no commit in the output repository.
-`informal/tools/` is the runtime's: a file there that no record lists is refused, and a file
-a previous record listed that the templates no longer have is deleted. `sync --check` exits 1
+`informal/tools/` is the runtime's: a file there that no record lists is refused (Python's
+`__pycache__/` aside), and a file a previous record listed that the templates no longer have
+is deleted when the runtime could have held it: one under `tools/`, or a top-level file
+that is not the stamp, the record, a project file or a stage's output (section 4); a record
+that lists another is refused by name. `sync --check` exits 1
 naming a missing, changed or extra runtime file (extra: a file of `tools/` or of the record
 that the templates do not have) and an `informalize.json` that is not what
 `informalize.yaml` gives. `init` and `sync` commit what they write, with a message that says
-so, and write `stages/I0.json`.
+so, and write `stages/I0.json` (left as it was when nothing it records changed).
 
 ### 5.3 `scope.json` and `informal/declarations.json`
 
@@ -332,14 +335,20 @@ docstrings: drafters read those in the library's source.
   empty file per section, deleting the empty files of an earlier numbering. `--in-v1` is
   required at the first approval; before the first draft a later one without it keeps the
   items the table marks `in_v1`. Once a section file is not empty (the first applied draft
-  run), the ids are frozen: a later approval only pins, never renumbers and never writes a
-  section file that is not empty (`--in-v1` then only sets each item's `in_v1`, and an item
-  out of version 1 stays in `items` under its id); an item is only added at the end of its
-  section and a section after the last, an approved section keeps its number and slug, and
-  a withdrawn id is never reused but stays a gap, recorded in `decisions` as
-  `{"withdrawn": "<id>", "why": "..."}`. The items approval records each id with its kind
-  (section 5.7) to hold a later table to: an annotation's id derives from the kind and the id
-  (section 10), so the kind is frozen too.
+  run), the ids are frozen, and stay frozen if that file is emptied again (the approval
+  that found it records `frozen`): a later approval only pins, never renumbers and never
+  writes a section file that is not empty (`--in-v1` then only sets each item's `in_v1`, and
+  an item out of version 1 stays in `items` under its id); an item is only added at the end
+  of its section and a section after the last, an approved section keeps its number and
+  slug, and a withdrawn id is never reused but stays a gap, recorded in `decisions` as
+  `{"withdrawn": "<id>", "why": "..."}`. The items approval records each id with its kind,
+  and the withdrawn ids (section 5.7), to hold a later table to: an annotation's id derives
+  from the kind and the id (section 10), so the kind is frozen too, and a withdrawal recorded
+  at one approval is never taken back. An item moved to `deferred` keeps the id and section
+  of the numbering it was deferred from (a later numbering may give that id to another item)
+  and records the approval's time as `x_deferred_at`, which names that numbering's decision;
+  each entry of `deferred` keeps the rules of an item, but for its section, which `sections`
+  need not hold.
 - `library` pins the library `commit` and the sha256 of the `declarations.json` the table was
   drafted against; `check-items` refuses another. A key starting with `x_` is an extension
   any object of the table may carry; any other key the rules do not name is refused.
@@ -363,15 +372,21 @@ docstrings: drafters read those in the library's source.
   stands, and check 1 (section 7.3) compares the two as written.
 
 `check-items` (a port of the pilot's `verify.py`) refuses a table whose declarations are not
-in `declarations.json`, whose module or keyword line differs from it, whose keyword line in
-`library/src/` does not hold a keyword of the declaration's kind in `declarations.json` (the
-probe's) and its last name component, or that breaks a rule above. The probe's kinds map to
-keywords: `theorem` to `theorem` or `lemma`; `def` to `def`; `abbrev` to `abbrev` or `def`;
-`opaque`, `axiom`, `inductive`, `structure` and `class` to themselves; `instance` to
-`instance`, where the name is not required, since an anonymous instance's generated name is
-not on its line. A keyword and a name match as whole words, and a source file is read only
-inside `library/src/`, never through a link out of it. `check-items` checks a provisional
-table until the first items approval and a numbered one from then on, and writes nothing;
+in `declarations.json`, whose module or keyword line differs from it, one of whose key
+declarations has a keyword line in `library/src/` that does not hold a keyword of the
+declaration's kind in `declarations.json` (the probe's) and its last name component, or that
+breaks a rule above. The probe's kinds map to keywords: `theorem` to `theorem` or `lemma`;
+`def` to `def` or `irreducible_def`; `abbrev` to `abbrev` or `def`; `opaque` to `opaque` or
+`def` (a `partial def` is an opaque constant); `axiom`, `inductive`, `structure` and `class`
+to themselves; `instance` to `instance`, where the name is not required, since an anonymous
+instance's generated name is not on its line. A keyword and a name match as whole words,
+outside a comment or docstring on the line, and a source file is read only inside
+`library/src/`, never through a link out of it. A declaration a command generated
+(`@[simps]`, `@[to_additive]`, `alias`) carries the line of the declaration that generated
+it, which does not name it: it can be a helper, whose line is not read in the source, but
+not a key, and the table names the generating declaration as the key instead.
+`check-items` checks a provisional table until the first items approval and a numbered one
+from then on, and writes nothing;
 `templates/informalize/schema/items.schema.json` states the shape as a JSON Schema for a
 reader, and `scripts/informalize/itemtable.py` is the implementation.
 
@@ -381,7 +396,8 @@ whose docstring states it, for the maintainer to check against his own copy of t
 before anything is drafted, since the drafters print the numbers. It refuses until the items
 approval pins the current table, whose renumbering changes the ids the list names. The file is
 deterministic and carries the list's sha256 (of its canonical JSON), and a checkbox per row
-the maintainer may tick. The references approval pins that list, not the whole table, and
+the maintainer may tick; writing it again keeps the tick of a row whose item, part and
+number are unchanged. The references approval pins that list, not the whole table, and
 only when the checklist on disk shows it (section 13).
 
 ### 5.5 `informal/hypotheses.json`
@@ -441,7 +457,9 @@ section 13 says what each one pins. Every path in a receipt or an approval is re
 that file's path with a fragment naming it (`repo/informal/items.json#references`). An approval
 whose pin no longer holds is stale, and `cf informalize status` says which pin moved. The
 items approval also records `snapshot` (each id with its kind, each section's number with its
-slug), `frozen` and the output repository's `commit` that holds the approved table; the
+slug, the withdrawn ids), `frozen` and the output repository's `commit` that holds the
+approved table (the approval commits every file it owns, rewritten or not, and is refused
+unless that commit holds the bytes it pins); the
 references approval records the rows it pinned (`references`); the publish approval the
 output repository's `head`.
 
@@ -889,7 +907,12 @@ standard library and its sibling files. Rules, each refusal naming its number:
    `hypotheses.json`); in a section build an undefined reference into another section is
    allowed.
 4. **Items** (phase `items`): `items.json` validates (section 5.4) and passes `check-items`
-   against the gate's `declarations.json` and the library's source.
+   against the gate's `declarations.json` and the library's source. The rules are written
+   once: `scripts/informalize/itemtable.py` imports `cflib`, which the gate cannot carry, so
+   component 5a moves its pure rules (the table's and `declarations.json`'s rules, the
+   keyword check, the source reader and their patterns) into the runtime's `tools/`, adds
+   the relations to the copies `tests/test_informalize_runtime.py` pins, and has
+   `itemtable.py` import them from there, as `runtime.py` imports `fccommon.load_config`.
 5. **Conventions**: `hypotheses.json` validates and each key has its `\fcdefhyp`.
 6. **Attack**: the document validates; its `base_commit` is the run's; every finding's item
    and part are in the section; its `quote` occurs verbatim in the section's file at
@@ -1195,11 +1218,13 @@ A wrong reference number is fixed in `items.json` by hand, which voids the items
 until it is given again (after the ids are frozen, that approval only pins, section 5.4); the
 references approval stands as long as the list it pinned does.
 `approve` prints what it pins and refuses a gate whose stage has not run; an agent never runs
-it, and it refuses to run where a fleet's wrapper (`CF_ROLE`) or tend (`TEND_TASK_ID`) has set
-the environment. The references approval refuses until the items approval is current; the
-proof-sheets and publish approvals pin the receipt of their stage (I6, I7) and every output it
-lists, each checked on disk first, and publish also wants a current proof-sheets approval and a
-clean output repository. Publishing itself (the repository, the release asset, Pages) is the maintainer's alone,
+it, and it refuses to run where a fleet's wrapper (`CF_ROLE`), tend (`TEND_TASK_ID`) or Claude
+Code (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, set for a local session, its subagents and the
+shells they run) has set the environment: the maintainer runs it in his own terminal. The
+references approval refuses until the items approval is current; the proof-sheets and
+publish approvals pin the receipt of their stage (I6, I7) and every output it lists, each
+checked on disk first, and publish also wants a current proof-sheets approval and a clean
+output repository. Publishing itself (the repository, the release asset, Pages) is the maintainer's alone,
 after the publish approval.
 
 ## 14. Risks
