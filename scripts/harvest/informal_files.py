@@ -263,6 +263,9 @@ def fetch(source: Mapping, entrypoint: str, paths: Sequence[str], dest: Path, *,
     block["absent"] = [rel for rel in paths if rel not in expected]
     base = {str(k): str(v) for k, v in dict(base_files or {}).items()}
     if expected and source.get("kind") == "remote":
+        # rsync makes only the last folder of its destination (macOS's 2.6.9 not even that
+        # under a missing parent), and corpus/<run>/ does not exist yet on a first harvest
+        dest.mkdir(parents=True, exist_ok=True)
         # one rsync for the whole set, its names on stdin: see :func:`_rsync_argv`
         _run(_rsync_argv(source, entrypoint, dest), "copying the run's own files from the host",
              stdin=_names_stdin(sorted(expected)))
