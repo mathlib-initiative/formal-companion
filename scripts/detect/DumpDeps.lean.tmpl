@@ -52,9 +52,12 @@ unsafe def main : IO Unit := do
     for ci in md.constants do
       let n := ci.name
       let tdeps := ci.type.getUsedConstants
-      let vdeps := match ci.value? with
-        | some v => v.getUsedConstants
-        | none => #[]
+      -- a theorem's proof too: `value?` leaves theorems out on newer toolchains
+      -- unless asked (`allowOpaque`), and older ones have no such argument
+      let vdeps := match ci with
+        | .defnInfo v => v.value.getUsedConstants
+        | .thmInfo v => v.value.getUsedConstants
+        | _ => #[]
       for d in tdeps do referenced := referenced.insert d
       for d in vdeps do referenced := referenced.insert d
       let isInst := Meta.isInstanceCore env n

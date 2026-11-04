@@ -41,6 +41,14 @@ Nothing is released yet: there is no tag, and the version has been `0.2.0`
 since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
+### Fixed
+
+- **`DumpDeps` records a theorem's proof again.** On newer toolchains `ConstantInfo.value?`
+  leaves theorems out unless it is passed `allowOpaque`, so every theorem's `value_deps` came
+  out empty. That blocked `cf informalize fetch-library`, and the dump missed every edge from a
+  proof (the first one was TauCeti at Lean v4.36.0-rc2). The template now matches
+  definitions and theorems directly, which works on old and new toolchains alike.
+
 ### Added
 
 - **The informalize mode in the documents a reader starts from** (component 8 of
