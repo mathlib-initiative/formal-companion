@@ -111,6 +111,9 @@ def withdrawn_ids(doc: dict) -> set[str]:
 # the rules of section 5.4
 
 def reference_problems(where: str, ref: Any) -> list[str]:
+    """An item's or a part's `reference`, the number the reference work prints it under --
+    not declarations.json's `references` table, which is
+    :func:`declaration_references_problems`."""
     if ref is None:
         return []
     if not isinstance(ref, dict):
@@ -340,7 +343,7 @@ def _order_problems(doc: dict, numbered: bool) -> list[str]:
 
 def declarations_problems(doc: Any) -> list[str]:
     """Section 5.3's `declarations.json`: one entry per scope member, sorted by name, and the
-    `references` the conventions link to (:func:`references_problems`)."""
+    `references` the conventions link to (:func:`declaration_references_problems`)."""
     rows = doc.get("declarations") if isinstance(doc, dict) else None
     if not isinstance(rows, list):
         return ["declarations.json: no `declarations` list"]
@@ -377,10 +380,10 @@ def declarations_problems(doc: Any) -> list[str]:
         out.append(f"declarations.json: listed twice: {', '.join(twice[:5])}")
     if names != sorted(names):
         out.append("declarations.json: the entries are not sorted by name")
-    return out + references_problems(doc)
+    return out + declaration_references_problems(doc)
 
 
-def references_problems(doc: Any) -> list[str]:
+def declaration_references_problems(doc: Any) -> list[str]:
     """Section 5.3's `references`, which an older `declarations.json` may not carry: the
     constants from outside the library that a member's type names, sorted by name, each with
     the module the dependency dump found it in and the URL of its documentation (empty for a

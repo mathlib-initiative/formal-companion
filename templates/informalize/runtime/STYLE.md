@@ -113,9 +113,12 @@ standard term already says is unread, and an unread text states nothing.
 ### Exactly the Lean
 
 - Read each key declaration's signature (`declarations.json`, and the source it points
-  to), not only the gist. The statement carries exactly the hypotheses the signature binds,
-  each in the part, or the item's own text, whose declaration binds it; `"hypotheses"` in
-  `items.json` lists the ones it must carry.
+  to), not only the gist. The statement carries exactly the mathematical hypotheses the
+  signature binds, each in the part, or the item's own text, whose declaration binds it;
+  `"hypotheses"` in `items.json` lists the ones it must carry. A binder that states
+  mathematics is one of those; the typeclass, universe and index binders that carry the
+  ambient structure are the conventions' ("Lean's bookkeeping is not mathematics" below),
+  and a statement that leaves them to the conventions has dropped nothing.
 - Add nothing the Lean does not have: no "open" where the signature has neighborhoods, no
   "unique" where it has existence, no finiteness, connectedness or nonemptiness that no
   binder states. The usual form of a result is not what this text states; the library's
@@ -142,7 +145,10 @@ standard term already says is unread, and an unread text states nothing.
   of the conventions.
 - `"departures"` explain how the library's statement differs from the usual one, or why a
   key declaration is not an `exactMatch`. Use them to state the item correctly; mention a
-  departure only when the statement would otherwise mislead, in one sentence of your own.
+  departure only when the statement would otherwise mislead, in one sentence of your own. A
+  departure the conventions state once -- that the sets of a cover need not be open, say --
+  is not mentioned again in the item, not even where the item's `\fcref` points at a
+  numbered result that does assume it: what the text assumes is what the text prints.
 
 ### In a mathematician's words
 

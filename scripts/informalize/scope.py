@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from annotations.export.common import repo_id_from_url
 from cflib import log
 from cflib.errors import CfError
 from cflib.hashing import sha256_file
@@ -64,7 +65,7 @@ ENTRY_KEYS = ("name", "module", "path", "line", "start_line", "end_line", "kind"
               "source_url")
 #: a row of declarations.json's `references`: a constant from outside the library that a
 #: member's type names, and where its definition is documented
-REFERENCE_KEYS = ("name", "module", "kind", "doc_url")
+DOC_REFERENCE_KEYS = ("name", "module", "kind", "doc_url")
 #: where the libraries the Lean toolchain and Mathlib ship are documented: a module's page is
 #: the module path with `/` for `.`, and a declaration's anchor its full name
 DOC_SITE = "https://leanprover-community.github.io/mathlib4_docs/"
@@ -182,14 +183,18 @@ def doc_url(module: Any, name: str) -> str:
 def source_url(url: Any, commit: str, path: Any, line: Any) -> str:
     """A declaration's line in the library's own source at the pinned commit, as a web URL.
 
-    `informalize.yaml`'s `library.url` is an https URL (`config.URL_PATTERN`), and the
-    annotation cards build their destination the same way
-    (`annotations.export.informal_markers`); anything else gets no link."""
+    The destination is the annotation cards' (`annotations.export.informal_markers`), built
+    from `informalize.yaml`'s `library.url` through the one reader of a remote URL this repo
+    has, `annotations.export.common.repo_id_from_url` (`docs/exporters.md`): a URL it refuses
+    -- one with no `<org>/<name>` to it -- gets no link rather than a link to nowhere."""
     if not isinstance(url, str) or not re.match(config.URL_PATTERN, url):
         return ""
     if not isinstance(path, str) or not isinstance(line, int) or isinstance(line, bool):
         return ""
-    return f"{url.rstrip('/').removesuffix('.git')}/blob/{commit}/{path}#L{line}"
+    repo_id = repo_id_from_url(url)
+    if not repo_id:
+        return ""
+    return f"https://{repo_id}/blob/{commit}/{path}#L{line}"
 
 
 def reference_table(graph: dict[str, dict], members: list[dict], referenced: Any) -> list[dict]:
@@ -370,7 +375,13 @@ def scope(workspace, informalize_id: str) -> ScopeResult:
 
 
 def _warn_table(repo: OutputRepo, declarations_sha: str) -> None:
-    """Say so when an item table was drafted against another scope: check-items refuses it."""
+    """Say so when an item table pins another scope: check-items refuses it.
+
+    The pin is over the whole file, so a re-run that changes only what a member is described
+    by -- `source_url` and `references` arrived this way -- re-keys it while every fact the
+    table was drafted against stands.  The remedy is the same either way, and it is the
+    maintainer's: set `library.declarations_sha256` to the sha below, run `check-items`, and
+    approve the table again (section 5.3)."""
     raw = repo.read_bytes("informal/items.json")
     if raw is None:
         return
@@ -379,5 +390,6 @@ def _warn_table(repo: OutputRepo, declarations_sha: str) -> None:
     except (ValueError, AttributeError):
         return
     if pinned and pinned != declarations_sha:
-        log.warn("informal/items.json was drafted against another declarations.json; "
-                 "`cf informalize check-items` refuses it until the table is redrafted")
+        log.warn("informal/items.json pins another declarations.json; `cf informalize "
+                 "check-items` refuses it until its library.declarations_sha256 is "
+                 f"{declarations_sha}, and the table is approved again")

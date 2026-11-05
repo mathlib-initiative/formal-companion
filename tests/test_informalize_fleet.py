@@ -100,6 +100,12 @@ class TestTheRegister(unittest.TestCase):
         # the links the conventions write come from the data the scope carries
         self.assertIn("`source_url`", self.STYLE)
         self.assertIn("`references`", self.STYLE)
+        # the two halves agree on which binders a statement carries: "exactly the
+        # hypotheses the signature binds" would ask back for the bookkeeping the other half
+        # sends to the conventions
+        self.assertIn("exactly the mathematical hypotheses", self.STYLE)
+        self.assertIn("leaves them to the conventions has dropped nothing", self.STYLE)
+        self.assertNotIn("carries exactly the hypotheses", self.STYLE)
 
     def test_the_attackers_and_the_judge_rule_on_meaning(self):
         attack = self.prompt("attack")

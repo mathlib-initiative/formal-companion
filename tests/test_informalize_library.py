@@ -48,6 +48,7 @@ for entry in (str(HERE), str(SKILL / "scripts")):
 
 import _informalize_doc as doc                                # noqa: E402
 import cf as cf_main                                          # noqa: E402
+from annotations.export import common                         # noqa: E402
 from cflib import gitsafe                                     # noqa: E402
 from cflib.errors import CfError                              # noqa: E402
 from cflib.paths import WorkspacePaths                        # noqa: E402
@@ -534,7 +535,7 @@ class TestTheClosure(unittest.TestCase):
 
     def test_the_references_are_what_the_members_types_name_elsewhere(self):
         _members, entries, references, counts = self.compute()
-        self.assertEqual([tuple(r) for r in references], [scope_mod.REFERENCE_KEYS] * 3)
+        self.assertEqual([tuple(r) for r in references], [scope_mod.DOC_REFERENCE_KEYS] * 3)
         self.assertEqual({r["name"]: r["doc_url"] for r in references}, {
             # a member's type names it, and the doc site holds its library
             "Set": "https://leanprover-community.github.io/mathlib4_docs/"
@@ -554,6 +555,19 @@ class TestTheClosure(unittest.TestCase):
         cfg = settings(url="git@example.org:lean-libs/ExampleLib.git")
         _members, entries, _references, _counts = self.compute(cfg=cfg)
         self.assertEqual({e["source_url"] for e in entries}, {""})
+
+    def test_the_source_link_is_the_annotation_cards_destination(self):
+        # one reader of a remote URL, the exporter's, so the link in declarations.json and
+        # the card's destination are the same string for every URL, port and trailing .git
+        # included -- and a URL with no repository to it gets no link rather than one to
+        # nowhere
+        for url in (URL, f"{URL}.git", f"{URL}/", "https://example.org:8443/lib/ExampleLib"):
+            with self.subTest(url=url):
+                self.assertEqual(
+                    scope_mod.source_url(url, doc.COMMIT, "A.lean", 3),
+                    f"https://{common.repo_id_from_url(url)}/blob/{doc.COMMIT}/A.lean#L3")
+        self.assertEqual(scope_mod.source_url("https://example.org", doc.COMMIT, "A.lean", 3),
+                         "")
 
     def test_a_broken_reference_table_is_refused(self):
         rows = [{"name": "Set", "module": "Mathlib.Data.Set.Defs", "kind": "def",

@@ -55,8 +55,11 @@ release has something to say.
   everything else `style`, and a `style` fix is shorter or more standard, never longer.
   Faithfulness is unchanged and stated harder: a standard term may carry a hypothesis only
   when it says exactly that hypothesis (no "open cover" where the Lean has neighborhoods, no
-  "unique" where it has existence). The conventions, draft, judge, edit, worker and reviewer
-  briefs, and sections 8.2 and 8.4 of the proposal, say the same thing.
+  "unique" where it has existence). `"hypotheses"` in `items.json` is the binders that state
+  mathematics, not the typeclass, universe and index binders the conventions fix once, so
+  "carries every hypothesis" and "repeats none of the bookkeeping" are no longer two rules
+  pulling against each other. The items, conventions, draft, judge, edit, worker and
+  reviewer briefs, and sections 5.4, 8.2 and 8.4 of the proposal, say the same thing.
 - **`declarations.json` says where each definition is documented.** `cf informalize scope`
   now writes `source_url` on every entry (its line in the library at the pinned commit) and
   a `references` list: every constant from outside the library that a member's *type* names,
@@ -64,7 +67,10 @@ release has something to say.
   documentation site holds, the URL of its page. The conventions task links each notion it
   fixes to one of the two, so a reader can see the actual definition. The module came from
   nowhere before: the probe indexes the library's own modules only, and the dump's
-  `referenced` table was left in the workspace.
+  `referenced` table was left in the workspace. A text that already has an approved item
+  table gets the links by running the stage again, which re-keys the file: `items.json`
+  pins it by sha, so the maintainer re-stamps `library.declarations_sha256` with the sha
+  the stage prints and approves the table again. Nothing the table says changes.
 
 ### Fixed
 

@@ -308,8 +308,10 @@ through types alone, else `value`.
 runtime and the gate read, one entry per scope member sorted by name:
 `{name, module, path, line, start_line, end_line, kind, signature, source_url}` (`signature`
 empty for an unsigned member; `source_url` the member's line in the library at the pinned
-commit, empty when `library.url` is not a web URL). It carries no docstrings: drafters read
-those in the library's source, and the cards' statements are cut from it (section 10).
+commit, which is the destination the annotation cards build, read from `library.url` by the
+same `annotations.export.common.repo_id_from_url` and so empty for a URL that names no
+`<org>/<name>`). It carries no docstrings: drafters read those in the library's source, and
+the cards' statements are cut from it (section 10).
 
 `references`, beside `declarations`, is where a reader sees the definitions the text leans
 on: one row `{name, module, kind, doc_url}`, sorted by name, for each constant from *outside*
@@ -322,6 +324,14 @@ libraries that site documents (Mathlib, Init, Std, Lean, Batteries and the tools
 with) and empty for any other, which keeps its module. The conventions task links each
 notion it fixes to one of these two URLs (`STYLE.md`, "The conventions section"); an older
 `declarations.json` that carries no `references` is read as before.
+
+`items.json` pins this file by the sha256 of its whole bytes (section 5.4), so running the
+stage again re-keys that pin even when it adds only a way of describing a member the table
+already names -- which is how `source_url` and `references` reached an existing text. The
+table itself is not stale then, only its pin: the maintainer sets
+`library.declarations_sha256` to the new sha, runs `cf informalize check-items` and approves
+the table again. Until then `check-items` refuses it, and so does a fleet run, whose plan
+hands the gate the same sha.
 
 ### 5.4 `informal/items.json`
 
@@ -401,7 +411,9 @@ notion it fixes to one of these two URLs (`STYLE.md`, "The conventions section")
   (section 10); a key declaration that is not `exactMatch` says why in `departures`.
 - `junk`: the junk values the statement relies on, in words ("the rank is 0 on an
   infinite-dimensional space"); the drafter turns each into one sentence of the text.
-  `hypotheses`: the binders of the declaration's signature the statement must carry.
+  `hypotheses`: the binders of the declaration's signature the statement must carry -- the
+  ones that state mathematics, not the typeclass, universe and index binders that carry the
+  ambient structure, which the conventions section fixes once (section 8.2).
 - `reference` (on the item, or on a part when the number covers only that part): `number`
   as the reference work prints it, `source` one of `docstring`, `module docstring`,
   `inferred`, `none`, and the `declaration` whose docstring states it (required for
@@ -663,8 +675,8 @@ one tree, and the drafters and the cards read the statement there. It writes `sc
 writes the I2 receipt (inputs the index, `deps.json` and `src.tar`; outputs the two files;
 checks the counts, among them how many members were reached through types alone, and how many
 constants from outside the library the members' types name). It warns
-when `items.json` was drafted against another `declarations.json`, which `check-items` then
-refuses.
+when `items.json` pins another `declarations.json`, which `check-items` then refuses, and
+names the sha to re-stamp the table with (section 5.3).
 
 ## 7. The LaTeX runtime
 
