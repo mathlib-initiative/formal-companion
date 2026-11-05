@@ -88,12 +88,20 @@ def library_source() -> str:
     return "\n".join(lines) + "\n"
 
 
+#: the notions `tests/_informalize_doc.py`'s conventions fix: two constants of Mathlib
+#: (rows of `declarations.json`'s `references`) and one declaration of the library
+NOTIONS = [("Set", "subset"), ("IsOpen", "open"), ("ExampleLib.GlueData", "gluing data")]
+#: where a package's source lies under a `.lake/packages` directory
+MATHLIB_PATH = "mathlib/Mathlib/Topology/Defs/Basic.lean"
+
+
 def markers(source_commit: str, pdf_sha256: str) -> dict:
-    """A `markers.json` for the fixture: one box per item and part, two pages.
+    """A `markers.json` for the fixture: one box per item, part and notion, two pages.
 
     The boxes are the ones `extract_markers.py` would write, laid out by hand;
     a part's `decls` are the `\\leanref`s the section files put in it, so part
-    (b) of 1.2 names the helper as well as its key.
+    (b) of 1.2 names the helper as well as its key.  The notion boxes are the
+    conventions', a few words wide each.
     """
     entries: list[dict] = []
     page, y = 1, 0.1
@@ -118,6 +126,10 @@ def markers(source_commit: str, pdf_sha256: str) -> dict:
             y += 0.08
         if y > 0.75:
             page, y = page + 1, 0.1
+    for n, (name, words) in enumerate(NOTIONS, start=1):
+        entries.append({"id": f"notion:{name}", "notion": name, "words": words,
+                        "label": f"notion:{n}", "number": f"n{n}",
+                        "boxes": [[1, 0.1 + 0.2 * (n - 1), 0.9, 0.15, 0.02]]})
     return {"schema": "formal-companion/informalize-markers", "schema_version": 1,
             "job": doc.JOB, "source_commit": source_commit, "pdf_sha256": pdf_sha256,
             "pages": page, "page_size_pt": [612.0, 792.0],
@@ -142,13 +154,20 @@ def git(root: Path, *args: str) -> str:
 class Fixture:
     """An output repository at a commit, its canonical PDF and the library's source."""
 
-    def __init__(self, root: Path, *, items: dict | None = None):
+    def __init__(self, root: Path, *, items: dict | None = None,
+                 declarations: dict | None = None):
         self.root = root
         self.repo = root / "repo"
-        doc.write_repo(self.repo, items=items)
+        doc.write_repo(self.repo, items=items, declarations=declarations)
         self.src = root / "library-src"
         (self.src / SOURCE_PATH).parent.mkdir(parents=True)
         (self.src / SOURCE_PATH).write_text(library_source(), encoding="utf-8")
+        # a `.lake/packages` directory, with one of the two Mathlib modules in it
+        self.packages = root / "packages"
+        (self.packages / MATHLIB_PATH).parent.mkdir(parents=True)
+        (self.packages / MATHLIB_PATH).write_text(
+            "-- line 1\n-- line 2\ndef IsOpen (s : Set X) : Prop :=\n  TopologicalSpace.IsOpen s\n",
+            encoding="utf-8")
         self.pdf = root / f"{doc.JOB}.pdf"
         self.pdf.write_bytes(b"%PDF-1.5\n% the canonical PDF of the fixture\n%%EOF\n")
         self.pdf_sha256 = common.sha256_bytes(self.pdf.read_bytes())
@@ -235,7 +254,7 @@ class TestTheDocument(unittest.TestCase):
 
     def test_one_item_per_part_and_per_item_without_parts(self):
         items = by_id(self.doc, "items")
-        self.assertEqual(sorted(items), [
+        self.assertEqual(sorted(i for i in items if items[i]["form"] == "numbered"), [
             "corollary-2.3", "definition-1.1", "example-2.2-a", "example-2.2-b",
             "lemma-2.1-a", "lemma-2.1-b", "theorem-1.2-a", "theorem-1.2-b"])
         self.assertNotIn("theorem-1.2", items, "an item with parts is boxed around them")
@@ -248,6 +267,7 @@ class TestTheDocument(unittest.TestCase):
         self.assertEqual(items["definition-1.1"]["title"], "Gluing data")
         self.assertNotIn("sub", items["definition-1.1"])
         self.assertEqual({i["coverage"] for i in items.values()}, {"formalized"})
+        self.assertEqual(sum(1 for i in items.values() if i["form"] == "passage"), len(NOTIONS))
 
     def test_one_location_per_box_of_the_markers(self):
         boxes = {e["id"]: e["boxes"] for e in self.fixture.markers()["entries"]}
@@ -277,6 +297,9 @@ class TestTheDocument(unittest.TestCase):
             "example-2.2-b/key/ExampleLib.chain_short",
             "lemma-2.1-a/key/ExampleLib.cover_mono",
             "lemma-2.1-b/key/ExampleLib.cover_univ",
+            "notion:ExampleLib.GlueData/key/ExampleLib.GlueData",
+            "notion:IsOpen/key/IsOpen",
+            "notion:Set/key/Set",
             "theorem-1.2-a/key/ExampleLib.glue_theorem",
             "theorem-1.2-b/helper/ExampleLib.glue_map",
             "theorem-1.2-b/key/ExampleLib.glue_surjective"])
@@ -306,6 +329,61 @@ class TestTheDocument(unittest.TestCase):
             "href": f"https://example.org/lean-libs/ExampleLib/blob/{doc.COMMIT}/{SOURCE_PATH}"})
         self.assertEqual(self.report.counts["snippets_unlocated"], [])
 
+    def test_a_notion_is_a_passage_linked_to_the_constant_it_marks(self):
+        items = by_id(self.doc, "items")
+        self.assertEqual(items["notion:IsOpen"],
+                         {"id": "notion:IsOpen", "id_source": "declared", "form": "passage",
+                          "source": doc.JOB, "kind": "passage", "title": "open",
+                          "coverage": "formalized"})
+        links = by_id(self.doc, "links")
+        self.assertEqual(links["notion:IsOpen/key/IsOpen"],
+                         {"id": "notion:IsOpen/key/IsOpen", "item": "notion:IsOpen",
+                          "declaration": "IsOpen", "role": "key", "relation": "exact",
+                          "provenance": informal_markers.PROVENANCE_ID})
+        boxes = {e["id"]: e["boxes"] for e in self.fixture.markers()["entries"]}
+        located = [loc for loc in self.doc["locations"] if loc["items"] == ["notion:IsOpen"]]
+        self.assertEqual(len(located), len(boxes["notion:IsOpen"]))
+        # a notion of the library itself is a declaration like any other
+        self.assertEqual(by_id(self.doc, "declarations")["ExampleLib.GlueData"]["module"],
+                         "ExampleLib.Topology.Glue.Basic")
+
+    def test_a_notion_of_a_dependency_carries_its_module_and_its_documentation_page(self):
+        """Without `--packages-src` nothing on disk holds Mathlib, so the card opens the
+        page `declarations.json`'s `references` names and shows no statement."""
+        declarations = by_id(self.doc, "declarations")
+        self.assertEqual(declarations["IsOpen"], {
+            "id": "IsOpen", "id_source": "name", "name": "IsOpen", "kind": "def",
+            "module": "Mathlib.Topology.Defs.Basic",
+            "file": "Mathlib/Topology/Defs/Basic.lean", "private": False, "anonymous": False,
+            "x_package": "mathlib", "x_repo": "github.com/leanprover-community/mathlib4",
+            "x_commit": doc.MATHLIB_COMMIT})
+        (destination,) = [d for d in self.doc["destinations"] if d["declaration"] == "IsOpen"]
+        self.assertEqual(destination, {
+            "id": "doc_gen4:IsOpen", "declaration": "IsOpen", "site": "doc_gen4",
+            "href": "https://leanprover-community.github.io/mathlib4_docs/"
+                    "Mathlib/Topology/Defs/Basic.html",
+            "resolution": "exact", "fragment": "IsOpen"})
+        self.assertEqual([s for s in self.doc["snippets"] if s["declaration"] == "IsOpen"], [])
+        self.assertEqual(sorted(self.report.counts["references_without_source"]),
+                         ["IsOpen", "Set"])
+
+    def test_with_the_dependency_s_source_the_card_shows_the_statement_and_the_line(self):
+        document, report = self.fixture.export(packages_src=self.fixture.packages)
+        declarations = by_id(document, "declarations")
+        self.assertEqual(declarations["IsOpen"]["line"], 3)
+        (snippet,) = [s for s in document["snippets"] if s["declaration"] == "IsOpen"]
+        self.assertEqual(snippet["line"], 3)
+        self.assertIn("def IsOpen", snippet["text"])
+        (destination,) = [d for d in document["destinations"] if d["declaration"] == "IsOpen"]
+        self.assertEqual(destination["href"],
+                         f"https://github.com/leanprover-community/mathlib4/blob/"
+                         f"{doc.MATHLIB_COMMIT}/Mathlib/Topology/Defs/Basic.lean")
+        self.assertEqual((destination["site"], destination["fragment"]), ("other", "L3"))
+        # the other module is not in that directory: its card keeps the documentation page
+        self.assertEqual(report.counts["references_unlocated"], ["Set"])
+        self.assertEqual([d for d in document["destinations"]
+                          if d["declaration"] == "Set"][0]["site"], "doc_gen4")
+
     def test_the_provenance_is_the_fleet_s_and_names_the_four_files_it_read(self):
         (provenance,) = self.doc["provenance"]
         self.assertEqual(provenance["actor"], "agent")
@@ -331,9 +409,11 @@ class TestTheDocument(unittest.TestCase):
         self.assertEqual(report.counts["checkout_commit"], self.fixture.head)
         self.assertEqual(report.counts["library"],
                          {"repo": "example.org/lean-libs/ExampleLib", "commit": doc.COMMIT})
-        self.assertEqual(report.counts["links_by_role"], {"helper": 1, "key": 8})
+        self.assertEqual(report.counts["links_by_role"],
+                         {"helper": 1, "key": 8 + len(NOTIONS)})
         self.assertEqual(report.counts["items_with_parts"], 3)
-        self.assertEqual(len(document["links"]), 9)
+        self.assertEqual(report.counts["notions"], len(NOTIONS))
+        self.assertEqual(len(document["links"]), 9 + len(NOTIONS))
 
     def test_a_junk_value_and_a_leanref_outside_a_part_are_reported(self):
         items = copy.deepcopy(doc.ITEMS)
@@ -396,7 +476,7 @@ class TestItRefusesInputsThatDisagree(unittest.TestCase):
         self.fixture.write_markers(dict(self.fixture.markers(), x_note="re-extracted"))
         head = self.fixture.commit("markers again")
         document, _ = self.fixture.export(commit=head)
-        self.assertEqual(len(document["items"]), 8)
+        self.assertEqual(len(document["items"]), 8 + len(NOTIONS))
 
     def test_a_leanref_to_a_declaration_the_scope_does_not_hold(self):
         document = self.fixture.markers()
@@ -427,6 +507,38 @@ class TestItRefusesInputsThatDisagree(unittest.TestCase):
         self.fixture.write_markers(document)
         head = self.fixture.commit("a title the table does not give")
         self.assertIn("items.json", self.refusal(commit=head))
+
+    def _notion(self, name: str, words: str = "a notion") -> str:
+        document = self.fixture.markers()
+        document["entries"].append({"id": f"notion:{name}", "notion": name, "words": words,
+                                    "label": "notion:9", "number": "n9",
+                                    "boxes": [[1, 0.1, 0.95, 0.2, 0.02]]})
+        self.fixture.write_markers(document)
+        return self.refusal(commit=self.fixture.commit(f"a notion of {name}"))
+
+    def test_a_notion_naming_a_constant_declarations_json_does_not_hold(self):
+        self.assertIn("is neither a declaration of informal/declarations.json nor a constant "
+                      "of its `references`", self._notion("Mathlib.Imagined"))
+
+    def test_a_notion_naming_a_constructor_the_format_cannot_carry(self):
+        declarations = copy.deepcopy(doc.DECLARATIONS)
+        declarations["references"].append({"name": "Zoo.mk", "module": "Mathlib.Zoo",
+                                           "kind": "ctor", "doc_url": "", "package": "mathlib",
+                                           "repo": "github.com/leanprover-community/mathlib4",
+                                           "commit": doc.MATHLIB_COMMIT})
+        declarations["references"].sort(key=lambda r: r["name"])
+        fixture = Fixture(scratch(self), declarations=declarations)
+        document = fixture.markers()
+        document["entries"].append({"id": "notion:Zoo.mk", "notion": "Zoo.mk", "words": "a zoo",
+                                    "label": "notion:9", "number": "n9",
+                                    "boxes": [[1, 0.1, 0.95, 0.2, 0.02]]})
+        fixture.write_markers(document)
+        with self.assertRaises(common.ExportError) as caught:
+            fixture.export(commit=fixture.commit("a notion of a constructor"))
+        self.assertIn("which the annotation format does not carry", caught.exception.message)
+
+    def test_a_notion_that_prints_nothing(self):
+        self.assertIn("records no printed words", self._notion("IsOpen", words="  "))
 
     def test_an_items_table_drafted_against_another_library_commit(self):
         items = copy.deepcopy(doc.ITEMS)
@@ -545,13 +657,13 @@ class TestTheOverlayCarriesIt(unittest.TestCase):
 
     def test_every_record_converts_and_passes_the_literature_links_scan(self):
         self.assertEqual(self.conversion.problems, [])
-        self.assertEqual(self.conversion.counts["records"], 9)
+        self.assertEqual(self.conversion.counts["records"], 9 + len(NOTIONS))
         self.assertEqual(shards.scan_problems(shards.file_bytes(self.conversion)), [])
 
     def test_a_section_folder_per_section_of_the_text(self):
         """`shards.section_of`: an item whose section is one number goes to that folder."""
         self.assertEqual(sorted({path.split("/")[0] for path in self.conversion.files}),
-                         ["1", "2"])
+                         ["1", "2", "other"])    # the conventions' notions are unnumbered
         self.assertIn("1/definition-1.1__key__ExampleLib.GlueData.json", self.conversion.files)
         self.assertEqual(sorted(p for p in self.conversion.files if p.startswith("1/theorem-1.2-b")),
                          ["1/theorem-1.2-b/helper__ExampleLib.glue_map.json",
@@ -636,7 +748,7 @@ class TestTheCommand(unittest.TestCase):
         self.assertEqual(code, 0, text)
         document = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(document["companion"]["commit"], doc.COMMIT)
-        self.assertEqual(len(document["items"]), 8)
+        self.assertEqual(len(document["items"]), 8 + len(NOTIONS))
         counts = json.loads(report.read_text(encoding="utf-8"))["counts"]
         self.assertEqual(counts["checkout_commit"], self.fixture.head)
         self.assertEqual(V.canonical_dumps(V.canonicalize(copy.deepcopy(document))),
@@ -685,7 +797,7 @@ class TestCfOverlayExportRunsIt(unittest.TestCase):
                 extra=["--pdf", str(fixture.pdf), "--pdf-url", PDF_URL,
                        "--library-src", str(fixture.src), "--source-title", doc.SLOTS["title"],
                        "--items-approved"])
-        self.assertEqual(result.sections, {"1": 4, "2": 5})
+        self.assertEqual(result.sections, {"1": 4, "2": 5, "other": len(NOTIONS)})
         self.assertEqual(result.warnings, [])
         record = json.loads((fixture.repo / "pdf-overlay" / "GENERATED.json")
                             .read_text(encoding="utf-8"))["annotations"]
@@ -695,7 +807,7 @@ class TestCfOverlayExportRunsIt(unittest.TestCase):
         self.assertEqual([row["path"] for row in record["inputs"]],
                          ["informal/declarations.json", "informal/informalize.json",
                           "informal/items.json", "informal/markers.json"])
-        self.assertEqual(record["count"], 9)
+        self.assertEqual(record["count"], 9 + len(NOTIONS))
         written = sorted(p.relative_to(fixture.repo).as_posix()
                          for p in (fixture.repo / "annotations").rglob("*.json"))
         self.assertIn("annotations/1/definition-1.1__key__ExampleLib.GlueData.json", written)

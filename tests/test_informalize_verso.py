@@ -128,7 +128,8 @@ class TestTheVersoHostScript(unittest.TestCase):
         text = self.text
         self.assertLess(text.index("ls-files --error-unmatch literate.toml"),
                         text.index('lake build "$VERSO_TARGET"'))
-        self.assertIn('targets --bundle "$bundle" --out "$work/literate.toml"', text)
+        self.assertIn('targets --bundle "$bundle" --out "$work/literate.toml" --root "$module"',
+                      text)
         self.assertIn("the library has a literate.toml of its own", text)
 
     def test_the_pins_are_checked_before_anything_is_built(self):
@@ -244,6 +245,14 @@ class TestTheVersoRequire(unittest.TestCase):
         self.assertIn('[[targets]]\nmodule = "ExampleLib.A"\n', text)
         self.assertIn('[[targets]]\nmodule = "ExampleLib.B"\n', text)
         self.assertIn("verso-command", text)
+        # a card in a dependency's module (a notion of the conventions) is not rendered
+        with_mathlib = json.loads(path.read_text(encoding="utf-8"))
+        with_mathlib["annotations"][0]["annotation"]["object"][0]["location"]["module"] = \
+            "Mathlib.Topology.Defs.Basic"
+        path.write_text(json.dumps(with_mathlib), encoding="utf-8")
+        self.assertNotIn("Mathlib.Topology.Defs.Basic",
+                         verso_host.card_modules(path, "ExampleLib"))
+        self.assertIn("Mathlib.Topology.Defs.Basic", verso_host.card_modules(path))
         path.write_bytes(json.dumps({"annotations": [{"path": "a", "annotation": {}}]})
                          .encode("utf-8"))
         with self.assertRaises(verso_host.HostError) as caught:

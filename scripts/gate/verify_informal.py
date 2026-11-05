@@ -166,6 +166,19 @@ LINT = (
     (re.compile(r"\\(?:special|pdf[A-Za-z]*|zsavepos)(?![A-Za-z])"),
      "a raw PDF or position command"),
 )
+#: rule 2's second lint, on a text file with its comments stripped: what a section may not
+#: PRINT.  The informal text never prints a Lean declaration name or a link to the
+#: library's documentation -- Literature Links supplies both, from the markers -- so a
+#: notion the conventions fix is written as plain mathematics inside `\fcnotion`, whose
+#: first argument carries the constant and prints nothing.
+PRINTED_LINT = (
+    (re.compile(r"\\texttt(?![A-Za-z])"), "\\texttt"),
+    (re.compile(r"\\(?:href|url|nolinkurl|path)(?![A-Za-z])"), "a link"),
+    (re.compile(r"\\verb(?![A-Za-z*])"), "\\verb"),
+    (re.compile(r"https?://"), "a URL"),
+)
+#: the constant a `\fcnotion` marks, whose braces hold no brace of their own
+NOTION = re.compile(r"\\fcnotion(?![A-Za-z])\s*\{([^{}]*)\}")
 #: a `\label` key a text file may write: letters, digits and `:._-`; in a numbered section's
 #: file `eq:<id>-<word>` of one of its items (STYLE.md), so no two sections share a label
 LABEL = re.compile(r"\\label(?![A-Za-z])\s*(?:\{([A-Za-z0-9][A-Za-z0-9:._-]*)\})?")
@@ -282,6 +295,7 @@ class GateConfig:
             raise GateBroken("gate.json pins no file (files)")
         self.files = files
         self.declarations: dict[str, dict] = {}
+        self.references: dict[str, dict] = {}
         self.declarations_sha256 = ""
 
     @classmethod
@@ -326,6 +340,9 @@ class GateConfig:
             raise GateBroken(f"{path} holds no declarations list")
         self.declarations = {r["name"]: r for r in rows
                              if isinstance(r, dict) and isinstance(r.get("name"), str)}
+        refs = data.get("references") if isinstance(data, dict) else None
+        self.references = {r["name"]: r for r in refs if isinstance(r, dict)
+                           and isinstance(r.get("name"), str)} if isinstance(refs, list) else {}
         self.declarations_sha256 = self.files["declarations.json"]
 
     def manifest(self, task_id: str) -> dict | None:
@@ -625,6 +642,35 @@ def check_changed(cfg: GateConfig, entries: dict[str, str], tasks: list[str],
 def strip_comments(text: str) -> str:
     """TeX source with every `%` comment removed (a `\\%` is a percent sign, not one)."""
     return "\n".join(re.sub(r"(?<!\\)%.*", "", line) for line in text.splitlines())
+
+
+def lint_printed(cfg: GateConfig, path: str, text: str, problems: Problems) -> None:
+    """Rule 2's second lint: what a text file may not print, and the notions it marks.
+
+    The comments go first: they are not typeset, and a drafter's note about a declaration
+    is no part of the text.  What is left may hold no Lean name set in `\\texttt`, no link
+    and no URL; a notion the conventions fix is marked with `\\fcnotion`, which prints the
+    words alone, and its constant must be one `declarations.json` holds.
+    """
+    body = strip_comments(text)
+    for pattern, what in PRINTED_LINT:
+        found = pattern.search(body)
+        if found:
+            line = body.count("\n", 0, found.start()) + 1
+            problems.add(2, f"{path}:{line}", f"prints {what} ({found.group(0)[:40]}): the "
+                                              f"informal text names no Lean declaration and "
+                                              f"links to no documentation page -- the "
+                                              f"annotations supply both -- so a notion the "
+                                              f"conventions fix is plain mathematics inside "
+                                              f"\\fcnotion{{<constant>}}{{<the words>}}")
+    for found in NOTION.finditer(body):
+        name = found.group(1).strip()
+        if name in cfg.declarations or name in cfg.references:
+            continue
+        line = body.count("\n", 0, found.start()) + 1
+        problems.add(2, f"{path}:{line}", f"\\fcnotion{{{name[:80]}}} names no constant of "
+                                          f"declarations.json, as an entry or as a row of its "
+                                          f"`references`")
 
 
 def lint(path: str, text: str, problems: Problems) -> None:
@@ -1244,6 +1290,7 @@ def judge_task(cfg: GateConfig, manifest: dict, files: dict[str, bytes],
         check_conventions(files, problems)
     for rel, text in sorted(changed_tex.items()):
         lint(rel, text, problems)
+        lint_printed(cfg, rel, text, problems)
     if len(problems):
         return
     must_build = phase in WHOLE_BUILDS or (phase == "draft") or \

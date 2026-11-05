@@ -31,10 +31,13 @@ committed), both deterministic, and the I2 receipt.
 `declarations.json` also carries where a reader sees each definition: a member's own
 `source_url`, its line in the library at the pinned commit, and `references`, the constants
 from outside the library that the members' types name, each with the module DumpDeps found
-it in and, for a library the Lean doc site holds, its documentation URL.  The conventions
-task links from `00-conventions.tex` with these (`STYLE.md`, "The conventions section"):
-the probe indexes the library's own modules alone, so the dump's `referenced` table is the
-only place the module of `IsCompact` or `PseudoMetricSpace` is recorded.
+it in, for a library the Lean doc site holds its documentation URL, and the dependency that
+holds it at the commit `library/host/lake-manifest.json` pins.  The conventions task marks
+each notion it fixes with one of these constants (`STYLE.md`, "The conventions section"),
+and the annotation export turns the marker into a card pointing at the dependency at that
+commit: the probe indexes the library's own modules alone, so the dump's `referenced` table
+is the only place the module of `IsCompact` or `PseudoMetricSpace` is recorded, and the
+manifest the only place its commit is.
 """
 from __future__ import annotations
 
@@ -64,8 +67,10 @@ MEMBER_KEYS = ("name", "module", "path", "line", "kind", "depth", "reach", "proo
 ENTRY_KEYS = ("name", "module", "path", "line", "start_line", "end_line", "kind", "signature",
               "source_url")
 #: a row of declarations.json's `references`: a constant from outside the library that a
-#: member's type names, and where its definition is documented
-DOC_REFERENCE_KEYS = ("name", "module", "kind", "doc_url")
+#: member's type names, where its definition is documented, and which dependency of the
+#: library holds it, at the commit `lake-manifest.json` pins (empty for a constant of the
+#: Lean toolchain itself, which the manifest does not list)
+DOC_REFERENCE_KEYS = ("name", "module", "kind", "doc_url", "package", "repo", "commit")
 #: where the libraries the Lean toolchain and Mathlib ship are documented: a module's page is
 #: the module path with `/` for `.`, and a declaration's anchor its full name
 DOC_SITE = "https://leanprover-community.github.io/mathlib4_docs/"
@@ -197,9 +202,35 @@ def source_url(url: Any, commit: str, path: Any, line: Any) -> str:
     return f"https://{repo_id}/blob/{commit}/{path}#L{line}"
 
 
-def reference_table(graph: dict[str, dict], members: list[dict], referenced: Any) -> list[dict]:
+def dependency_packages(manifest: Any) -> dict[str, dict]:
+    """``{module root in lower case: {package, repo, commit}}`` from a `lake-manifest.json`.
+
+    Lake names a package in lower camel case (`mathlib`, `batteries`) and its library by
+    the module root it provides (`Mathlib`, `Batteries`); the two differ only in case for
+    every package a Lean library depends on, so the root is matched case-insensitively.
+    A constant of the toolchain itself (`Init`, `Lean`, `Std`) is in no package here and
+    gets no commit.
+    """
+    out: dict[str, dict] = {}
+    rows = manifest.get("packages") if isinstance(manifest, dict) else None
+    for row in rows if isinstance(rows, list) else []:
+        name = row.get("name") if isinstance(row, dict) else None
+        rev = row.get("rev") if isinstance(row, dict) else None
+        if not isinstance(name, str) or not name:
+            continue
+        repo = repo_id_from_url(row.get("url") or "") if isinstance(row.get("url"), str) else ""
+        out[name.lower()] = {"package": name,
+                             "repo": repo or "",
+                             "commit": rev if isinstance(rev, str) and re.fullmatch(
+                                 r"[0-9a-f]{40}", rev) else ""}
+    return out
+
+
+def reference_table(graph: dict[str, dict], members: list[dict], referenced: Any,
+                    packages: dict[str, dict] | None = None) -> list[dict]:
     """The constants from outside the library that the members' *types* name, each with the
-    module the dump found it in and its documentation URL, sorted by name.
+    module the dump found it in, its documentation URL and the dependency `packages` pins
+    it at (:func:`dependency_packages`), sorted by name.
 
     DumpDeps' `referenced` table (`scripts/detect/DumpDeps.lean.tmpl`) is the only place a
     module is recorded for a constant the probe does not index: the probe indexes the
@@ -220,15 +251,19 @@ def reference_table(graph: dict[str, dict], members: list[dict], referenced: Any
                 or any(part.startswith("_") for part in name.split(".")):
             continue
         kind = row.get("kind") if isinstance(row.get("kind"), str) else ""
+        found = (packages or {}).get(module.split(".")[0].lower()) or {}
         out.append({"name": name, "module": module, "kind": kind,
-                    "doc_url": doc_url(module, name)})
+                    "doc_url": doc_url(module, name),
+                    "package": found.get("package", ""), "repo": found.get("repo", ""),
+                    "commit": found.get("commit", "")})
     return out
 
 
-def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.SourceTree
+def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.SourceTree,
+            packages: dict[str, dict] | None = None
             ) -> tuple[list[dict], list[dict], list[dict], dict]:
-    """``(members, declarations, references, counts)``: section 6.2 on a dump, an index and a
-    source tree."""
+    """``(members, declarations, references, counts)``: section 6.2 on a dump, an index, a
+    source tree and the dependencies `lake-manifest.json` pins."""
     found = library.deps_problems(deps, cfg)
     if found:
         raise CfError(found[0], hint="fetch the library again, or correct informalize.yaml "
@@ -303,7 +338,7 @@ def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.So
         "by_proof_status": dict(sorted(Counter(m["proof_status"] for m in members).items())),
         "unsigned": unsigned,
     }
-    references = reference_table(graph, members, deps.get("referenced"))
+    references = reference_table(graph, members, deps.get("referenced"), packages)
     counts["references"] = len(references)
     return members, entries, references, counts
 
@@ -337,9 +372,16 @@ def scope(workspace, informalize_id: str) -> ScopeResult:
     except (OSError, json.JSONDecodeError) as exc:
         raise CfError(f"{deps_path} is not readable JSON ({exc})",
                       hint="fetch the library again (stage I1)") from None
+    manifest_path = lib / "host" / "lake-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CfError(f"{manifest_path} is not readable JSON ({exc})",
+                      hint="fetch the library again (stage I1)") from None
     members, entries, references, counts = compute(
         cfg, deps, public_records(index),
-        itemtable.SourceTree(paths.informalize_library_src(informalize_id)))
+        itemtable.SourceTree(paths.informalize_library_src(informalize_id)),
+        dependency_packages(manifest))
     library_block = {"commit": cfg["library"]["commit"], "module": cfg["library"]["module"],
                      "prefix": cfg["library"]["prefix"]}
     scope_doc = {"schema": SCOPE_SCHEMA, "schema_version": SCHEMA_VERSION, "id": informalize_id,
@@ -367,7 +409,8 @@ def scope(workspace, informalize_id: str) -> ScopeResult:
     stages.write_receipt(
         paths, informalize_id, "I2",
         inputs={k: sha256_file(home / k) for k in ("library/index/index.jsonl",
-                                                    "library/deps.json", "library/host/src.tar")},
+                                                    "library/deps.json", "library/host/src.tar",
+                                                    "library/host/lake-manifest.json")},
         outputs={"scope.json": sha256_file(scope_path), f"repo/{DECLARATIONS}": declarations_sha},
         checks={"theorem": cfg["library"]["theorem"], **counts})
     return ScopeResult(members=counts["members"], counts=counts, commit=commit,

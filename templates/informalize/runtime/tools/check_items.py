@@ -37,20 +37,22 @@ items of every section the build typeset; `--section N` checks section N's and
      star exactly when its source is "inferred", once, and appears nowhere else in the item;
   7. the log has no multiply defined label (warning: an undefined reference or citation; a
      reference into a section the build did not typeset is not one);
+ 11. every \\fcnotion names a constant declarations.json holds, as an entry or as a row of
+     its `references`, and no constant is marked twice;
 
 and, without --aux-only (these need poppler):
 
   8. OUTDIR/markers.json is current: its pdf_sha256 is the PDF's and its entries are the
      .aux's;
   9. every box, cropped with pdftotext -x -y -W -H at res_dpi, holds text: an item's first
-     box its head ("Theorem 1.2"), a part's first box its label ("(a)"), and an item's boxes
-     together the words of its title;
+     box its head ("Theorem 1.2"), a part's first box its label ("(a)"), an item's boxes
+     together the words of its title, and a notion's boxes some ink of their own;
  10. boxes of different items, and of two parts of one item, do not overlap, and a part's
      boxes lie inside its item's.
 
 --strict makes every warning a failure.  --conventions is for a build whose section files
-are still empty: it runs rule 7 and the \\fcdefhyp half of rule 5 only.  Exit status: 0
-pass, 1 fail, 2 an input is missing or unreadable.
+are still empty: it runs rules 7 and 11 and the \\fcdefhyp half of rule 5 only.  Exit
+status: 0 pass, 1 fail, 2 an input is missing or unreadable.
 
 Apache License 2.0.
 """
@@ -260,6 +262,29 @@ def check_item(aux: fc.Aux, meta: dict, decls: dict[str, dict], hyps: list[dict]
                                   f"{{{found[0]['number']}}} should be {spelled}")
 
 
+def check_notions(aux: fc.Aux, known: set[str], report: Report) -> None:
+    """Rule 11: a `\\fcnotion` names a constant declarations.json holds, once.
+
+    The conventions fix a notion in plain words and mark it with the Lean constant it is;
+    the constant is the marker's argument and never reaches the page, so the only check
+    that it is a real one is this.  `known` is the entries of declarations.json and the
+    rows of its `references`.
+    """
+    seen: set[str] = set()
+    for notion in aux.notions:
+        name = notion["name"]
+        where = f"notion {name}"
+        if name not in known:
+            report.fail(11, where, "is not a declaration of declarations.json, nor a constant "
+                                   "of its `references`")
+        if name in seen:
+            report.fail(11, where, "is marked twice; a notion is fixed once")
+        seen.add(name)
+        if not notion["words"].strip():
+            report.fail(11, where, "prints nothing; \\fcnotion takes the words as the text "
+                                   "prints them")
+
+
 def check_hypdefs(aux: fc.Aux, hyps: list[dict], problems: list[str], report: Report) -> None:
     """Rule 5's other half: hypotheses.json is well formed and every key has its \\fcdefhyp."""
     for problem in problems:
@@ -406,7 +431,14 @@ def check_boxes(build: fc.Build, aux: fc.Aux, checked: list[dict], scope: Scope,
                 if qid in entries and any(overlap(a, b) > 1e-6 for a in pe["boxes"]
                                           for b in entries[qid]["boxes"]):
                     report.fail(10, pid, f"its boxes overlap those of {qid}")
-    tops = [e for e in markers["entries"] if "parent" not in e]
+    for e in markers["entries"]:
+        if "notion" not in e:
+            continue
+        if not e["boxes"]:
+            report.fail(9, e["id"], "no boxes in markers.json")
+            continue
+        texts_of(e, e["id"])
+    tops = [e for e in markers["entries"] if "parent" not in e and "notion" not in e]
     for n, a in enumerate(tops):
         for b in tops[n + 1:]:
             if not (scope.has(a["id"], a.get("section")) or scope.has(b["id"], b.get("section"))):
@@ -444,15 +476,17 @@ def run(args: argparse.Namespace) -> int:
     aux = fc.read_aux(build.aux)
     log = build.log.read_text(encoding="utf-8", errors="replace") if build.log.is_file() else ""
     hyps, hyp_problems = fc.load_hypotheses(build.src / "hypotheses.json")
+    declarations = Path(args.declarations) if args.declarations else build.src / "declarations.json"
     report = Report()
     check_log(log, aux, report)
     check_hypdefs(aux, hyps, hyp_problems, report)
+    if aux.notions:
+        check_notions(aux, fc.notion_constants(declarations), report)
     checked: list[dict] = []
     n_boxes, what = 0, "conventions"
     if not args.conventions:
         items = fc.load_items(build.src / "items.json")
-        decls = fc.load_declarations(Path(args.declarations) if args.declarations
-                                     else build.src / "declarations.json")
+        decls = fc.load_declarations(declarations)
         scope = scope_of(args, aux, items)
         if args.items:
             what = f"items {args.items}"
@@ -482,7 +516,7 @@ def run(args: argparse.Namespace) -> int:
         print(line)
     fatal = report.failed(args.strict)
     if args.conventions:
-        detail = f"{len(hyps)} hypotheses"
+        detail = f"{len(hyps)} hypotheses, {len(aux.notions)} notions"
     else:
         n_parts = sum(len(aux.parts_of(it["id"])) for it in checked)
         detail = f"{len(checked)} of {expected} items, {n_parts} parts, {n_boxes} boxes"

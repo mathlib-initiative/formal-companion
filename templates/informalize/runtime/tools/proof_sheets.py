@@ -14,10 +14,11 @@ Reads OUTDIR/<job>.pdf, OUTDIR/<job>.aux and OUTDIR/markers.json (written by
 extract_markers.py) and writes, for every page NN:
 
   DIR/render/page-NN.png   the page as pdftoppm renders it at N dpi;
-  DIR/page-NN.png          the same image with every item box in red and every part box in
-                           blue, each a 2-pixel stroke centred on the box edge (as the
-                           overlay viewer draws it), with the item id in the left margin and
-                           the part id in the right margin at the top of the box;
+  DIR/page-NN.png          the same image with every item box in red, every part box in
+                           blue and every notion box in green, each a 2-pixel stroke centred
+                           on the box edge (as the overlay viewer draws it), with the item id
+                           in the left margin and the part id in the right margin at the top
+                           of the box;
   DIR/page-NN.svg          the same boxes and ids as vector shapes over render/page-NN.png.
 
 DIR defaults to OUTDIR/proof-sheets/ and N to 110 (a letter page is then 935 pixels
@@ -65,6 +66,7 @@ import fccommon as fc  # noqa: E402
 
 ITEM_RGB = (214, 40, 40)
 PART_RGB = (30, 90, 220)
+NOTION_RGB = (20, 130, 70)
 CLEAR_PX = 2       # wanted clearance between a horizontal edge and ink
 
 # A 5 x 7 bitmap font for box ids and page numbers.
@@ -209,6 +211,7 @@ class Box:
         self.id = entry["id"]
         self.item = entry.get("parent", entry["id"])
         self.is_part = "parent" in entry
+        self.is_notion = "notion" in entry
         self.number = entry["number"]
         self.page = box[0]
         self.fx, self.fy, self.fw, self.fh = box[1:]
@@ -325,8 +328,9 @@ def check_page(img: Image, boxes: list[Box], words: list[dict], page: int,
                 note("ink under a stroke", f"{b.id}: {name} edge (column {x} at res_dpi) runs "
                                            f"through {hits} ink pixels")
 
-    items = [b for b in boxes if not b.is_part]
+    items = [b for b in boxes if not b.is_part and not b.is_notion]
     parts = [b for b in boxes if b.is_part]
+    notions = [b for b in boxes if b.is_notion]
 
     # Ink outside its boxes: between the item's markers, every ink row lies in its boxes.
     for iid, (top, bottom) in sorted((bands or {}).items()):
@@ -358,7 +362,8 @@ def check_page(img: Image, boxes: list[Box], words: list[dict], page: int,
             if 0.25 < f < 0.75:
                 note("cut word", f"{wd['text']!r} lies across the box of {b.id} ({f:.0%} inside)")
         if in_item is None:
-            unboxed.setdefault(wd["line"], []).append(wd)
+            if not any(b.frac_of(*r) >= 0.5 for b in notions):
+                unboxed.setdefault(wd["line"], []).append(wd)
             continue
         mine = [b for b in parts if b.item == in_item.id]
         if mine and not any(b.frac_of(*r) > 0.25 for b in mine):
@@ -391,12 +396,18 @@ def check_page(img: Image, boxes: list[Box], words: list[dict], page: int,
                                      f"{'bottom' if nearest.is_part else 'top'} of {nearest.id}")
 
 
+def box_rgb(b: "Box") -> tuple[int, int, int]:
+    return NOTION_RGB if b.is_notion else PART_RGB if b.is_part else ITEM_RGB
+
+
 def draw(img: Image, boxes: list[Box], page: int) -> Image:
     sheet = img.copy()
     for b in sorted(boxes, key=lambda b: b.is_part):
-        rgb = PART_RGB if b.is_part else ITEM_RGB
+        rgb = box_rgb(b)
         sheet.stroke(b, rgb)
-        if b.is_part:
+        if b.is_notion:
+            sheet.text(b.x1 + 6, b.y0 + 2, b.number, rgb)
+        elif b.is_part:
             sheet.text(b.x1 + 6, b.y0 + 2, b.id, rgb)
         else:
             sheet.text(b.x0 - 6 - text_width(b.id), b.y0 + 2, b.id, rgb)
@@ -411,17 +422,20 @@ def svg(img: Image, boxes: list[Box], page: int) -> str:
            f'<image href="render/page-{page:02d}.png" x="0" y="0" '
            f'width="{img.w}" height="{img.h}"/>']
     for b in sorted(boxes, key=lambda b: b.is_part):
-        col = "#%02x%02x%02x" % (PART_RGB if b.is_part else ITEM_RGB)
+        col = "#%02x%02x%02x" % box_rgb(b)
+        what = "notion" if b.is_notion else "part" if b.is_part else "item"
         out.append(f'<rect x="{b.x0}" y="{b.y0}" width="{b.x1 - b.x0}" height="{b.y1 - b.y0}" '
                    f'fill="none" stroke="{col}" stroke-width="2">'
-                   f'<title>{"part" if b.is_part else "item"} {b.id}</title></rect>')
-        if b.is_part:
+                   f'<title>{what} {b.id}</title></rect>')
+        if b.is_notion:
+            out.append(f'<text x="{b.x1 + 6}" y="{b.y0 + 12}" fill="{col}">{b.number}</text>')
+        elif b.is_part:
             out.append(f'<text x="{b.x1 + 6}" y="{b.y0 + 12}" fill="{col}">{b.id}</text>')
         else:
             out.append(f'<text x="{b.x0 - 6}" y="{b.y0 + 12}" fill="{col}" '
                        f'text-anchor="end">{b.id}</text>')
     out.append(f'<text x="{img.w - 12}" y="24" text-anchor="end">p{page}</text>')
-    out.append('<text x="12" y="24" fill="#555">red: item, blue: part</text>')
+    out.append('<text x="12" y="24" fill="#555">red: item, blue: part, green: notion</text>')
     out.append("</svg>")
     return "\n".join(out) + "\n"
 

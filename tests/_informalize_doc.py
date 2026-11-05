@@ -11,9 +11,11 @@ lines the pilot's boxes got wrong are here too: a first line taller than a basel
 (a nested fraction in the head line of 1.1), ink below the last line (an underbrace label
 ending 1.1, a nested denominator ending 2.3), a tilde under a superscript at a part
 boundary (1.2) and stacked accents in a head line (2.3).  The proof sheets must find no
-ink under a stroke and none outside its item's boxes.  `stress_section_2` is section 2
-again with tall and deep lines at every item and part boundary, after prose that slides
-its page break.
+ink under a stroke and none outside its item's boxes.  `CONVENTIONS_NOTIONS` is three
+notions for the conventions, each marked with `\fcnotion` and printing the words alone; it
+is not written by default, since it would move the page break the boxes above are tuned on.
+`stress_section_2` is section 2 again with tall and deep lines at every item and part
+boundary, after prose that slides its page break.
 """
 from __future__ import annotations
 
@@ -32,6 +34,8 @@ if str(SKILL / "scripts") not in sys.path:
 from cflib.templates import render  # noqa: E402
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+#: the commit the fake library's lake-manifest.json pins Mathlib at
+MATHLIB_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
 JOB = "example-thm"
 
 #: what `cf informalize init` would fill the project templates' slots with
@@ -108,10 +112,14 @@ DECLARATIONS = {"declarations": sorted([
     "references": [
         {"name": "IsOpen", "module": "Mathlib.Topology.Defs.Basic", "kind": "def",
          "doc_url": "https://leanprover-community.github.io/mathlib4_docs/"
-                    "Mathlib/Topology/Defs/Basic.html#IsOpen"},
+                    "Mathlib/Topology/Defs/Basic.html#IsOpen",
+         "package": "mathlib", "repo": "github.com/leanprover-community/mathlib4",
+         "commit": MATHLIB_COMMIT},
         {"name": "Set", "module": "Mathlib.Data.Set.Defs", "kind": "inductive",
          "doc_url": "https://leanprover-community.github.io/mathlib4_docs/"
-                    "Mathlib/Data/Set/Defs.html#Set"},
+                    "Mathlib/Data/Set/Defs.html#Set",
+         "package": "mathlib", "repo": "github.com/leanprover-community/mathlib4",
+         "commit": MATHLIB_COMMIT},
     ]}
 
 
@@ -177,6 +185,15 @@ HYPOTHESES = {"schema": "formal-companion/informalize-hypotheses", "schema_versi
 
 NOTATION_HYPOTHESES = r"""
 \fcdefhyp{\hypOpen}{open}{$U$ and $V$ are open}
+"""
+
+#: the notions the conventions fix, each marked with the constant it is and printing the
+#: words alone: two of Mathlib (`references` rows) and one of the library itself
+CONVENTIONS_NOTIONS = r"""
+A \fcnotion{Set}{subset} of $X$ is a set of points of $X$, and it is
+\fcnotion{IsOpen}{open} when it is a neighbourhood of each of its points.
+\fcnotion{ExampleLib.GlueData}{Gluing data} on $X$ is a pair of subsets whose
+union is $X$.
 """
 
 SECTIONS_TEX = r"""\fcinputsection{1}{01-gluing-spaces}{Gluing spaces}
@@ -305,7 +322,8 @@ def write_json(path: Path, data) -> None:
 
 def write_repo(root: Path, *, sections: dict[str, str] | None = None,
                items: dict | None = None, hypotheses: dict | None = None,
-               notation_extra: str = NOTATION_HYPOTHESES, config: dict | None = None) -> Path:
+               notation_extra: str = NOTATION_HYPOTHESES, config: dict | None = None,
+               conventions_extra: str = "", declarations: dict | None = None) -> Path:
     """Lay out an output repository under ``root``; returns ``root``.
 
     The keyword arguments replace one file's content: ``sections`` maps a section file's
@@ -329,8 +347,11 @@ def write_repo(root: Path, *, sections: dict[str, str] | None = None,
     text = notation.read_text(encoding="utf-8")
     marker = "% Standing hypotheses (one \\fcdefhyp per key of hypotheses.json).\n"
     notation.write_text(text.replace(marker, marker + notation_extra), encoding="utf-8")
+    conventions = informal / "sections" / "00-conventions.tex"
+    conventions.write_text(conventions.read_text(encoding="utf-8") + conventions_extra,
+                           encoding="utf-8")
     write_json(informal / "informalize.json", config or CONFIG)
-    write_json(informal / "declarations.json", DECLARATIONS)
+    write_json(informal / "declarations.json", declarations or DECLARATIONS)
     write_json(informal / "items.json", items or ITEMS)
     write_json(informal / "hypotheses.json", hypotheses or HYPOTHESES)
     (informal / "sections.tex").write_text(SECTIONS_TEX, encoding="utf-8")

@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -97,9 +98,12 @@ class TestTheRegister(unittest.TestCase):
         self.assertIn("Add nothing the Lean does not have", self.STYLE)
         self.assertIn("Of two statements that say the same mathematics, the shorter is the "
                       "right one", self.STYLE)
-        # the links the conventions write come from the data the scope carries
-        self.assertIn("`source_url`", self.STYLE)
+        # the conventions print no name and no link: they mark the notion instead, with a
+        # constant the data the scope carries holds
+        self.assertIn("It never prints the\nLean name", self.STYLE)
+        self.assertIn("\\fcnotion{<constant>}{<the words as printed>}", self.STYLE)
         self.assertIn("`references`", self.STYLE)
+        self.assertIn("no `\\texttt`, no `\\verb`, no `\\href`, no `\\url`", self.STYLE)
         # the two halves agree on which binders a statement carries: "exactly the
         # hypotheses the signature binds" would ask back for the bookkeeping the other half
         # sends to the conventions
@@ -125,7 +129,8 @@ class TestTheRegister(unittest.TestCase):
         self.assertIn("never more", self.prompt("draft"))
         conventions = self.prompt("conventions")
         self.assertIn("`references`", conventions)
-        self.assertIn("source_url", conventions)
+        self.assertIn("\\fcnotion{<constant>}{<the words as printed>}", conventions)
+        self.assertIn("Print no Lean name and no link", conventions)
         self.assertIn("The conventions section", conventions)
         self.assertIn("the conventions grow so that the items do not", self.prompt("edit"))
 
@@ -488,6 +493,56 @@ class TestTheLint(unittest.TestCase):
                 problems = vi.Problems()
                 vi.lint(rel, text, problems)
                 self.assertEqual(problems.lines(), [])
+
+
+class TestThePrintedLint(unittest.TestCase):
+    """Rule 2's second lint: no Lean name and no link on the page, and a known notion."""
+
+    def setUp(self):
+        self.cfg = types.SimpleNamespace(
+            declarations={d["name"]: d for d in doc.DECLARATIONS["declarations"]},
+            references={r["name"]: r for r in doc.DECLARATIONS["references"]})
+
+    def lint(self, text: str, path: str = "informal/sections/00-conventions.tex") -> list[str]:
+        problems = vi.Problems()
+        vi.lint_printed(self.cfg, path, text, problems)
+        return problems.lines()
+
+    def test_a_printed_lean_name_or_link_is_refused(self):
+        for text in ("The \\texttt{IsOpen} sets are open.",
+                     "\\href{https://example.org/x.html}{open}",
+                     "\\url{https://example.org/x.html}",
+                     "See \\verb|IsOpen|.",
+                     "Its page is https://leanprover-community.github.io/x.html .",
+                     "\\nolinkurl{https://example.org}", "\\path{Mathlib/X.lean}"):
+            with self.subTest(text=text):
+                found = self.lint(text)
+                self.assertTrue(found and found[0].startswith("[2]"), found)
+                self.assertIn("names no Lean declaration", found[0])
+
+    def test_a_notion_declarations_json_does_not_carry_is_refused(self):
+        found = self.lint("A \\fcnotion{Mathlib.Imagined}{wish} is nowhere.")
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("\\fcnotion{Mathlib.Imagined} names no constant", found[0])
+
+    def test_a_notion_of_the_scope_or_of_the_references_passes(self):
+        self.assertEqual(self.lint(doc.CONVENTIONS_NOTIONS), [])
+
+    def test_a_comment_prints_nothing(self):
+        self.assertEqual(self.lint("% see \\texttt{IsOpen} at https://example.org\nPlain."), [])
+
+    def test_the_templates_and_the_fixture_s_text_print_no_name(self):
+        texts = {"informal/sections/01-gluing-spaces.tex": doc.SECTION_1,
+                 "informal/sections/02-covers.tex": doc.SECTION_2,
+                 "informal/notation.sty": doc.NOTATION_HYPOTHESES}
+        project = SKILL / "templates" / "informalize" / "project"
+        for rel in vi.CONVENTION_FILES:
+            path = project / rel.removeprefix("informal/")
+            if path.suffix in (".tex", ".sty"):
+                texts[rel] = path.read_text(encoding="utf-8")
+        for rel, text in texts.items():
+            with self.subTest(rel=rel):
+                self.assertEqual(self.lint(text, rel), [])
 
 
 class TestCopying(unittest.TestCase):

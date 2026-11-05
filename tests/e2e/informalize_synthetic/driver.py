@@ -359,6 +359,8 @@ class Pipeline:
         marker = "% Standing hypotheses (one \\fcdefhyp per key of hypotheses.json).\n"
         text = notation.read_text(encoding="utf-8")
         notation.write_text(text.replace(marker, marker + doc.NOTATION_HYPOTHESES), encoding="utf-8")
+        conventions = informal / "sections" / "00-conventions.tex"
+        self.write(conventions, conventions.read_text(encoding="utf-8") + doc.CONVENTIONS_NOTIONS)
         self.complete(wt, "conventions")
         self.passes("conventions", wt, "conventions")
         self.passes("conventions", wt, "", "--findings", "informal/hypotheses.json")
@@ -369,6 +371,18 @@ class Pipeline:
                             {"key": "closed", "macro": "\\hypClosed", "binder_head": "IsClosed"}]})
         self.complete(bad, "conventions")
         self.refused("conventions", bad, 5, "a hypothesis without its \\fcdefhyp", task="conventions")
+        # a notion marked with a constant declarations.json does not hold: rule 2's
+        # second lint, and a printed Lean name under the same rule
+        for name, added, what in (
+                ("notion", "\nA \\fcnotion{Mathlib.Imagined}{wish} is nowhere.\n",
+                 "a notion no constant backs"),
+                ("printed", "\nThe sets are \\texttt{IsOpen}.\n", "a printed Lean name")):
+            bad = self.worktree("conventions", "conventions", f"conventions-{name}")
+            self.write_json(bad / "informal" / "hypotheses.json", doc.HYPOTHESES)
+            path = bad / "informal" / "sections" / "00-conventions.tex"
+            self.write(path, path.read_text(encoding="utf-8") + added)
+            self.complete(bad, "conventions")
+            self.refused("conventions", bad, 2, what, task="conventions")
         # a forged record in notation.sty: rule 2's lint, before any build
         forged = self.worktree("conventions", "conventions", "conventions-forged")
         self.write_json(forged / "informal" / "hypotheses.json", doc.HYPOTHESES)

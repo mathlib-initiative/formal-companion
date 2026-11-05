@@ -548,8 +548,35 @@ class TestTheClosure(unittest.TestCase):
         # not Nat.zero, which no member's type names; not the constant no module holds; not
         # a private name
         self.assertEqual(counts["references"], 3)
+        # with no manifest the dependency is unknown: the rows carry the keys, empty
+        self.assertEqual({r["package"] for r in references}, {""})
         self.assertEqual([e["source_url"] for e in entries if e["name"] == THEOREM],
                          [f"{URL}/blob/{doc.COMMIT}/ExampleLib/Topology/Glue/Basic.lean#L20"])
+
+    def test_a_reference_names_the_dependency_the_manifest_pins(self):
+        """`lake-manifest.json` is the one place a dependency's commit is recorded, and the
+        package's name matches the module's root but for its case."""
+        manifest = {"version": "1.1.0", "packagesDir": ".lake/packages", "packages": [
+            {"name": "mathlib", "type": "git", "rev": "a" * 40,
+             "url": "https://github.com/leanprover-community/mathlib4"},
+            {"name": "otherLib", "type": "git", "rev": "not a commit",
+             "url": "https://example.org/lean-libs/OtherLib"}]}
+        packages = scope_mod.dependency_packages(manifest)
+        _members, _entries, references, _counts = self.compute()
+        rows = {r["name"]: r for r in scope_mod.reference_table(
+            scope_mod.constants(deps_doc()),
+            [{"name": m["name"]} for m in self.compute()[0]],
+            deps_doc().get("referenced"), packages)}
+        self.assertEqual([r["name"] for r in references], sorted(rows))
+        self.assertEqual({k: rows["Set"][k] for k in ("package", "repo", "commit")},
+                         {"package": "mathlib",
+                          "repo": "github.com/leanprover-community/mathlib4",
+                          "commit": "a" * 40})
+        # Init is the toolchain's: the manifest lists no package for it
+        self.assertEqual(rows["True"]["package"], "")
+        # a rev that is not 40 hex pins nothing, but the package is still named
+        self.assertEqual({k: rows["OtherLib.Widget"][k] for k in ("package", "commit")},
+                         {"package": "otherLib", "commit": ""})
 
     def test_a_library_that_is_no_web_url_gets_no_source_link(self):
         cfg = settings(url="git@example.org:lean-libs/ExampleLib.git")

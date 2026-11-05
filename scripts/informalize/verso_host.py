@@ -127,8 +127,14 @@ TOML_HEAD = ("# The modules the overlay's cards name, written by `cf informalize
              "and no others.\n")
 
 
-def card_modules(bundle: Path) -> list[str]:
-    """Every module an annotation bundle's object ends are in, in order, without repeats."""
+def card_modules(bundle: Path, root: str = "") -> list[str]:
+    """The library's modules an annotation bundle's object ends are in, without repeats.
+
+    With `root` (the library's own root module, which `verso_host.sh` reads from
+    `library.tsv`), a module outside it is left out: a card may point into a dependency --
+    a notion of the conventions is often a constant of Mathlib -- and rendering Mathlib
+    here is not cheap, so such a card keeps the plain statement the export cut for it.
+    """
     try:
         value = json.loads(_read(bundle, "the annotation bundle"))
     except json.JSONDecodeError as exc:
@@ -143,16 +149,18 @@ def card_modules(bundle: Path) -> list[str]:
             location = end.get("location") if isinstance(end, dict) else None
             module = location.get("module") if isinstance(location, dict) else None
             if isinstance(module, str) and MODULE.match(module.strip()):
-                out[module.strip()] = None
+                name = module.strip()
+                if not root or name == root or name.startswith(root + "."):
+                    out[name] = None
     if not out:
-        raise HostError(f"no card of {bundle.name} names a Lean module, so there is nothing "
-                        "to render")
+        raise HostError(f"no card of {bundle.name} names a Lean module of "
+                        f"{root or 'the library'}, so there is nothing to render")
     return sorted(out)
 
 
-def write_targets(bundle: Path, out: Path) -> list[str]:
+def write_targets(bundle: Path, out: Path, root: str = "") -> list[str]:
     """Write Verso's `literate.toml` for the bundle's modules; the modules it names."""
-    modules = card_modules(bundle)
+    modules = card_modules(bundle, root)
     body = "".join(f'[[targets]]\nmodule = "{module}"\n\n' for module in modules)
     out.write_text(TOML_HEAD + "\n" + body, encoding="utf-8")
     return modules
@@ -172,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("targets")
     p.add_argument("--bundle", required=True, type=Path)
     p.add_argument("--out", required=True, type=Path)
+    p.add_argument("--root", default="", help="the library's root module; a card in another "
+                                              "library's module is left out")
     args = parser.parse_args(argv)
     try:
         if args.command == "require":
@@ -179,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "pins":
             print(json.dumps(pins(args.manifest), sort_keys=True))
         elif args.command == "targets":
-            modules = write_targets(args.bundle, args.out)
+            modules = write_targets(args.bundle, args.out, args.root)
             print(f"{args.out.name}: {len(modules)} module(s) the cards name")
         else:
             try:

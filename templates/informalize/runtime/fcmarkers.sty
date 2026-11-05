@@ -14,6 +14,12 @@
 %   \itempart{a}{...}             one lettered part of the current item
 %   \leanref{Full.Lean.name}      records a declaration for the current item
 %                                 or part, and prints nothing
+%   \fcnotion{Full.Lean.name}{the interior of $A$}
+%       prints the words alone and records a box around them, for a notion
+%       the conventions fix.  The constant goes into the first argument and
+%       never onto the page: the informal text prints no Lean name and no
+%       link to the library's documentation, which Literature Links supplies
+%       from this marker.  Once per constant, and never inside an item
 %   \fcdefhyp{\hypOpen}{open}{$U$ and $V$ are open}      (in notation.sty)
 %       \hypOpen prints the words and records the hypothesis `open';
 %       \hypOpen* prints them only (one side of an equivalence, say).
@@ -41,11 +47,13 @@
 %   \fc@auxkind{id}{Kind}                  read back by \itemref
 %   \fc@auxpart{id}{letter}
 %   \fc@auxleanref{id}{letter or empty}{name}
+%   \fc@auxnotion{n}{constant}{the words as printed}
 %   \fc@auxhyp{id}{letter or empty}{key}
 %   \fc@auxhypdef{key}{\macro}
 %   \fc@auxref{id}{letter or empty}{number}{* or empty}
 %   \zref@newlabel{fc:<id>:start}{\posx{..}\posy{..}\abspage{..}}, and
-%   fc:<id>:above, :end and :below, and the same four for fc:<id>:<letter>.
+%   fc:<id>:above, :end and :below, and the same four for fc:<id>:<letter>;
+%   fc:notion:<n>:start and :end, the two ends of a notion's words.
 % A start marker sits on the baseline of the first line (in the theorem head
 % or the part label).  An above marker sits on the vertical list just before
 % the first line and its interline glue, so between the material before the
@@ -142,6 +150,7 @@
 \def\fc@auxitem#1#2#3#4{}
 \def\fc@auxpart#1#2{}
 \def\fc@auxleanref#1#2#3{}
+\def\fc@auxnotion#1#2#3{}
 \def\fc@auxhyp#1#2#3{}
 \def\fc@auxhypdef#1#2{}
 \def\fc@auxref#1#2#3#4{}
@@ -310,6 +319,43 @@
       {A declaration is recorded for the item or part it appears in.}%
   \fi
   \@esphack}
+
+% ---------------------------------------------------------------------------
+% Notions
+%
+% \fcnotion{<constant>}{<words>}: the words of a notion the conventions fix,
+% printed alone, with a box recorded around them.  The constant is the marker's
+% argument and nothing else: the text names no Lean declaration and links to no
+% documentation page, and the annotation export joins the box to the constant.
+% The two markers sit at the ends of the words, in the glue beside them, so the
+% box's side edges cross no ink; a notion broken over two lines gets one box per
+% line (extract_markers.py).
+\newcount\fc@notioncount
+\newif\iffc@innotion
+
+\newcommand\fcnotion[2]{%
+  \iffc@initem
+    \PackageError{fcmarkers}{\string\fcnotion{\detokenize{#1}} inside item \fc@curid}%
+      {The conventions fix the notions; an item prints mathematics alone.}%
+  \fi
+  \iffc@innotion
+    \PackageError{fcmarkers}{\string\fcnotion{\detokenize{#1}} inside another notion}%
+      {Notions cannot be nested.}%
+  \fi
+  \@ifundefined{fc@notion@\detokenize{#1}}{}{%
+    \PackageError{fcmarkers}{The notion \detokenize{#1} is marked twice}%
+      {A notion is fixed once, where the conventions introduce it.}}%
+  \expandafter\global\expandafter\let
+    \csname fc@notion@\detokenize{#1}\endcsname\@empty
+  \global\advance\fc@notioncount\@ne
+  \global\fc@innotiontrue
+  \fc@auxwrite{\string\fc@auxnotion{\the\fc@notioncount}{\detokenize{#1}}%
+    {\detokenize{#2}}}%
+  \leavevmode
+  \fc@savepos{fc:notion:\the\fc@notioncount:start}%
+  #2%
+  \fc@savepos{fc:notion:\the\fc@notioncount:end}%
+  \global\fc@innotionfalse}
 
 \newcommand*\fc@hyp[1]{%
   \iffc@initem

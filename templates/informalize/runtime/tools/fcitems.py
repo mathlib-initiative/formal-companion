@@ -343,7 +343,8 @@ def _order_problems(doc: dict, numbered: bool) -> list[str]:
 
 def declarations_problems(doc: Any) -> list[str]:
     """Section 5.3's `declarations.json`: one entry per scope member, sorted by name, and the
-    `references` the conventions link to (:func:`declaration_references_problems`)."""
+    `references` the conventions mark their notions with
+    (:func:`declaration_references_problems`)."""
     rows = doc.get("declarations") if isinstance(doc, dict) else None
     if not isinstance(rows, list):
         return ["declarations.json: no `declarations` list"]
@@ -386,8 +387,10 @@ def declarations_problems(doc: Any) -> list[str]:
 def declaration_references_problems(doc: Any) -> list[str]:
     """Section 5.3's `references`, which an older `declarations.json` may not carry: the
     constants from outside the library that a member's type names, sorted by name, each with
-    the module the dependency dump found it in and the URL of its documentation (empty for a
-    library the Lean doc site does not hold)."""
+    the module the dependency dump found it in, the URL of its documentation (empty for a
+    library the Lean doc site does not hold) and, where the skill's own scope step wrote
+    them, the dependency that holds it.  Only the name, the module and the URL are
+    checked here: the rest is the exporter's (docs/proposals/informalize.md section 10)."""
     rows = doc.get("references") if isinstance(doc, dict) else None
     if rows is None:
         return []

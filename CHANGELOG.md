@@ -43,6 +43,24 @@ release has something to say.
 
 ### Changed
 
+- **The informal text prints no Lean name and no link; a notion is marked instead.**
+  The conventions section used to introduce each notion it fixes as
+  `\href{<doc url>}{\texttt{<Name>}}`, which put Lean identifiers and documentation URLs on
+  a page of mathematics. The maintainer's rule (2026-11-05): Literature Links supplies the
+  name and the link, so the text supplies neither. `fcmarkers.sty` gains
+  `\fcnotion{<Lean constant>}{<the words as printed>}`, which prints the words alone and
+  records a box around them with zref savepos, as an item and a part record theirs; the
+  constant is the marker's argument and reaches no page. `extract_markers.py` fits one box
+  per line the words lie on and writes it to `markers.json`; `check_items.py` holds every
+  constant to `declarations.json` (rule 11) and every box to its ink (rule 9);
+  `proof_sheets.py` draws the notion boxes in green. The gate's rule 2 lints a second time
+  with the comments removed and refuses a `\texttt`, `\verb`, `\href`, `\url` or bare URL
+  in any `.tex` or `.sty` file of `informal/` a task writes, and a `\fcnotion` naming a
+  constant `declarations.json` does not hold. `cf export informal-markers` writes one Literature Links passage per notion box,
+  linked to the constant: a declaration of the library at the pinned commit, or a constant
+  of a dependency with the module and commit `references` now carries (below) and its
+  source line on that dependency's git host when `--packages-src` points at a
+  `.lake/packages` directory, else the documentation page.
 - **An informal statement is written as a textbook prints it.** The first informalize text
   came out painfully literal: every typeclass, index type and side condition spelled out in
   every item ("let $I$ be an index type, ... suppose that every point $x$ of $S$ has some
@@ -63,9 +81,11 @@ release has something to say.
 - **`declarations.json` says where each definition is documented.** `cf informalize scope`
   now writes `source_url` on every entry (its line in the library at the pinned commit) and
   a `references` list: every constant from outside the library that a member's *type* names,
-  with the module the dependency dump recorded for it and, for the libraries the Lean
-  documentation site holds, the URL of its page. The conventions task links each notion it
-  fixes to one of the two, so a reader can see the actual definition. The module came from
+  with the module the dependency dump recorded for it, for the libraries the Lean
+  documentation site holds the URL of its page, and the package, repository and commit the
+  library's `lake-manifest.json` pins that dependency at. The conventions task marks each
+  notion it fixes with one of these constants, and the annotation export turns the marker
+  into a card pointing at the definition itself. The module came from
   nowhere before: the probe indexes the library's own modules only, and the dump's
   `referenced` table was left in the workspace. A text that already has an approved item
   table gets the links by running the stage again, which re-keys the file: `items.json`

@@ -218,7 +218,10 @@ def markers_problems(doc: dict) -> list[str]:
     out: list[str] = []
     entries = {e["id"]: e for e in doc["entries"]}
     for entry in doc["entries"]:
-        if "parent" in entry:
+        if "notion" in entry:
+            if entry["id"] != f"notion:{entry['notion']}" or not entry["words"].strip():
+                out.append(f"{entry['id']}: a notion is notion:<constant>, with its words")
+        elif "parent" in entry:
             parent = entries.get(entry["parent"])
             if parent is None:
                 out.append(f"{entry['id']}: no parent entry {entry['parent']}")
@@ -483,6 +486,8 @@ class TestTheExamples(unittest.TestCase):
         markers = self.docs["formal-companion/informalize-markers"]
         items = {i["id"]: i for i in self.docs["formal-companion/informalize-items"]["items"]}
         for entry in markers["entries"]:
+            if "notion" in entry:
+                continue                      # a notion is of the conventions, not an item
             if "parent" in entry:
                 item = items[entry["parent"]]
                 keys = {d["name"] for d in item["declarations"] if d["part"] == entry["part"]}

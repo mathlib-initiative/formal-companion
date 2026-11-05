@@ -288,6 +288,7 @@ class Aux:
     items: list[dict] = field(default_factory=list)
     parts: list[dict] = field(default_factory=list)
     leanrefs: list[dict] = field(default_factory=list)
+    notions: list[dict] = field(default_factory=list)
     hyps: list[dict] = field(default_factory=list)
     hypdefs: list[dict] = field(default_factory=list)
     refs: list[dict] = field(default_factory=list)
@@ -306,8 +307,8 @@ class Aux:
 
 RECORDS = {
     "fc@auxgeometry": 1, "fc@auxsection": 4, "fc@auxitem": 4, "fc@auxpart": 2,
-    "fc@auxleanref": 3, "fc@auxhyp": 3, "fc@auxhypdef": 2, "fc@auxref": 4,
-    "zref@newlabel": 2,
+    "fc@auxleanref": 3, "fc@auxnotion": 3, "fc@auxhyp": 3, "fc@auxhypdef": 2,
+    "fc@auxref": 4, "zref@newlabel": 2,
 }
 _CMD = re.compile(r"\\(" + "|".join(re.escape(k) for k in RECORDS) + r")(?![A-Za-z@])")
 
@@ -336,6 +337,9 @@ def parse_aux(text: str) -> Aux:
             aux.parts.append({"id": g[0], "part": g[1]})
         elif name == "fc@auxleanref":
             aux.leanrefs.append({"id": g[0], "part": g[1], "name": g[2].strip()})
+        elif name == "fc@auxnotion":
+            aux.notions.append({"index": g[0].strip(), "name": g[1].strip(),
+                                "words": tex_text(g[2])})
         elif name == "fc@auxhyp":
             aux.hyps.append({"id": g[0], "part": g[1], "key": g[2]})
         elif name == "fc@auxhypdef":
@@ -439,6 +443,21 @@ def load_declarations(path: Path) -> dict[str, dict]:
     if not isinstance(rows, list):
         raise ToolError("declarations.json: no `declarations` list")
     return {d["name"]: d for d in rows if isinstance(d, dict) and isinstance(d.get("name"), str)}
+
+
+def load_references(path: Path) -> dict[str, dict]:
+    """declarations.json's `references` by name: the constants from outside the library that
+    a member's type names (section 5.3).  An older file that carries none reads as empty."""
+    data = read_json(path, "declarations.json")
+    rows = data.get("references") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    return {r["name"]: r for r in rows if isinstance(r, dict) and isinstance(r.get("name"), str)}
+
+
+def notion_constants(path: Path) -> set[str]:
+    """Every constant a `\\fcnotion` may name: a declaration of the scope, or a reference."""
+    return set(load_declarations(path)) | set(load_references(path))
 
 
 def load_hypotheses(path: Path) -> tuple[list[dict], list[str]]:

@@ -12,7 +12,8 @@ tools/build_pdf.sh left them, and writes OUTDIR/markers.json.  For every item an
 part it records the id, the LaTeX label, the printed number, the declarations the build
 recorded there and one or more boxes [page, x, y, w, h]: page is 1-based, and x, y, w, h
 are fractions of the page width and height, measured from the top left corner.  An item or
-part that crosses a page break gets one box per page.
+part that crosses a page break gets one box per page.  For every `\\fcnotion` it records
+the constant, the words as printed and the boxes around those words.
 
 The markers decide which lines belong to an item or part; the box is fitted to the ink of
 those lines.  Every page is rendered with pdftoppm at res_dpi (a pixel is ink when its gray
@@ -37,6 +38,16 @@ that, so the boxes of a column line up.  Moreover
     edge, halfway between their ink;
   * an item's box encloses the boxes of its parts, and a part edge closer than frame_bp to
     the item's edge is moved onto it (no double lines).
+
+A notion's box is fitted differently, because its words are a few on one line rather than
+whole lines: its side edges are the two positions the markers recorded, and its top and
+bottom are the ink of the line the words are on, padded as an item's is.  The left edge is
+moved half a pad into the glue before the words, since a letter's ink may begin at the pen
+(the f of "fundamental" does); the right edge stays at the pen after the last letter,
+where a comma or a full stop may follow with no glue at all.  Where a notion is broken
+over lines it gets one box per line, the first from its start marker to the text block's
+right edge and the last from its left edge to the end marker, those two padded as an
+item's sides are.
 
 It assumes what the document template gives: one column, items that span the text block,
 and lines at least 2pt apart (fcmarkers.sty sets \\lineskiplimit), so that an edge between
@@ -290,6 +301,65 @@ def region_spans(geo: Geometry, ink: list[PageInk], params: Params, start: dict,
     return out
 
 
+def line_runs(pg: PageInk, r0: int, r1: int) -> list[tuple[int, int]]:
+    """The maximal runs of ink rows between r0 and r1: one per line of text there."""
+    out: list[tuple[int, int]] = []
+    start: int | None = None
+    for r in range(max(0, r0), min(pg.h - 1, r1) + 1):
+        if pg.rows[r]:
+            if start is None:
+                start = r
+        elif start is not None:
+            out.append((start, r - 1))
+            start = None
+    if start is not None:
+        out.append((start, min(pg.h - 1, r1)))
+    return out
+
+
+def notion_spans(geo: Geometry, ink: list[PageInk], params: Params, start: dict, end: dict,
+                 name: str) -> list[Span]:
+    """The spans of a notion's words, from its start marker to its end marker.
+
+    One span per line the words lie on: the sides are the recorded positions where the
+    words begin and end, and the text block's edge where a line break cuts them.
+    """
+    pad = params.pad_bp
+    xs, xe = start["posx"] / fc.SP_PER_BP, end["posx"] / fc.SP_PER_BP
+    ys, ye = geo.from_top(start), geo.from_top(end)
+    out: list[Span] = []
+    for p in range(start["abspage"], end["abspage"] + 1):
+        pg = ink[p - 1]
+        first_page, last_page = p == start["abspage"], p == end["abspage"]
+        top = pg.cut(ys - geo.bskip, ys) + 1 if first_page else pg.row(geo.top - SLACK_BP)
+        bottom = pg.cut(ye, ye + geo.bskip) if last_page else pg.row(geo.floor)
+        runs = line_runs(pg, top, bottom)
+        if not runs:
+            print(f"extract_markers: no ink for {name} on page {p}; using the strut",
+                  file=sys.stderr)
+            runs = [(pg.row(ys - geo.ht), max(pg.row(ys - geo.ht), pg.row(ys + geo.dp)))]
+        for k, (r0, r1) in enumerate(runs):
+            left = xs - pad / 2 if first_page and k == 0 else geo.left - pad
+            right = xe if last_page and k == len(runs) - 1 else geo.left + geo.width + pad
+            if right <= left:
+                continue
+            reach = int(2 * pad * pg.sy)
+            above = pg.last_ink(r0 - reach - 1, r0 - 1)
+            below = pg.first_ink(r1 + 1, r1 + reach + 1)
+            span = Span(p, r0 / pg.sy, (r1 + 1) / pg.sy, left, right,
+                        None if above is None else (above + 1) / pg.sy,
+                        None if below is None else below / pg.sy)
+            span.top = span.ink_top - pad
+            if span.above is not None:
+                span.top = max(span.top, (span.above + span.ink_top) / 2)
+            span.bottom = span.ink_bottom + pad
+            if span.below is not None:
+                span.bottom = min(span.bottom, (span.ink_bottom + span.below) / 2)
+            span.left, span.right = left, right
+            out.append(span)
+    return out
+
+
 def share_edge(a: Span, b: Span, params: Params) -> None:
     """Consecutive parts a above b on one page: one edge, or frame_bp apart."""
     if b.ink_top - a.ink_bottom < 2 * params.pad_bp + params.frame_bp:
@@ -361,6 +431,9 @@ def entry_skeletons(aux: fc.Aux) -> list[dict]:
             out.append({"id": f"{iid}({p})", "parent": iid, "part": p,
                         "label": f"item:{iid}:{p}", "number": f"{iid}({p})",
                         "decls": aux.decls_of(iid, p)})
+    for n in aux.notions:
+        out.append({"id": f"notion:{n['name']}", "notion": n["name"], "words": n["words"],
+                    "label": f"notion:{n['index']}", "number": f"n{n['index']}"})
     return out
 
 
@@ -447,6 +520,11 @@ def extract(build: fc.Build) -> dict:
         boxes[item["id"]] = to_fractions(geo, [s.box() for s in item_spans])
         for p, spans in zip(parts, part_spans):
             boxes[f"{item['id']}({p})"] = to_fractions(geo, [s.box() for s in spans])
+    for n in aux.notions:
+        marker = f"fc:notion:{n['index']}"
+        spans = notion_spans(geo, ink, params, pos(marker + ":start"), pos(marker + ":end"),
+                             f"notion {n['name']}")
+        boxes[f"notion:{n['name']}"] = to_fractions(geo, [s.box() for s in spans])
     entries = [dict(e, boxes=boxes[e["id"]]) for e in entry_skeletons(aux)]
     return {
         "schema": fc.MARKERS_SCHEMA,
@@ -474,10 +552,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"extract_markers: {exc}", file=sys.stderr)
         return 2
     fc.write_json(build.markers, result)
-    n_items = sum(1 for e in result["entries"] if "parent" not in e)
-    n_parts = len(result["entries"]) - n_items
+    n_notions = sum(1 for e in result["entries"] if "notion" in e)
+    n_parts = sum(1 for e in result["entries"] if "parent" in e)
+    n_items = len(result["entries"]) - n_parts - n_notions
     n_boxes = sum(len(e["boxes"]) for e in result["entries"])
-    print(f"extract_markers: {n_items} items, {n_parts} parts, {n_boxes} boxes -> {build.markers}")
+    print(f"extract_markers: {n_items} items, {n_parts} parts, {n_notions} notions, "
+          f"{n_boxes} boxes -> {build.markers}")
     return 0
 
 

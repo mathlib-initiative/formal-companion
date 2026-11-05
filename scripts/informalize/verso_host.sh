@@ -35,8 +35,11 @@
 #   3. `lake exe cache get` when the library builds against Mathlib, then `lake build
 #      <the module the line names>`, which is what stage I1 built (never the whole
 #      library: the literate build pulls in what else the cards' modules need);
-#   4. Verso's literate.toml, naming the modules the bundle's cards are in and no others
-#      (verso_host.py targets; a library that ships one of its own keeps it), then
+#   4. Verso's literate.toml, naming the LIBRARY's modules the bundle's cards are in and
+#      no others (verso_host.py targets --root; a library that ships one of its own keeps
+#      it): a card in a dependency's module -- a notion of the conventions is often a
+#      constant of Mathlib -- is left out, since rendering Mathlib here is not cheap, and
+#      that card keeps the plain statement the export cut for it; then
 #      `lake build $VERSO_TARGET` (`:literateHtml`), whose pages hold Verso's hover table;
 #   5. templates/overlay/runtime/tools/verso_extract.py --pages over them, against the
 #      bundle, writing $VERSO_ROOT/host/verso.json;
@@ -217,7 +220,7 @@ log "3. lake build $module"
 if g -C "$work" ls-files --error-unmatch literate.toml >/dev/null 2>&1; then
   log "4. the library has a literate.toml of its own; it chooses the modules"
 else
-  targets=$(py "$tool" targets --bundle "$bundle" --out "$work/literate.toml") \
+  targets=$(py "$tool" targets --bundle "$bundle" --out "$work/literate.toml" --root "$module") \
     || fail 6 "could not write $work/literate.toml"
   log "4. $targets"
 fi

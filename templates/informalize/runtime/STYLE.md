@@ -1,10 +1,10 @@
 # Rules for the informal text
 
 This repository's `informal/` states, without proofs, the definitions and results a Lean
-theorem depends on, in the order in which they build on one another. Each item, and each
-part (a), (b), ... of an item, becomes a box in the PDF that is linked to the Lean
-declaration stating it. The tools find the boxes and the links through the macros below, so
-the macros are not optional.
+theorem depends on, in the order in which they build on one another. Each item, each
+part (a), (b), ... of an item, and each notion the conventions fix becomes a box in the PDF
+that is linked to the Lean declaration stating it. The tools find the boxes and the links
+through the macros below, so the macros are not optional.
 
 It is written for a mathematician: each statement says exactly what the Lean says, in the
 words a good textbook would print it in. Those two are one rule, and the section
@@ -181,20 +181,29 @@ their one meaning each, the notation, the standing hypotheses and their macros, 
 numbers against integers, the coercions the text leaves silent, and the junk values the
 items rely on. What it fixes, no item repeats.
 
-It also says which definition of the library each notion it fixes is, and links it, so a
-reader can see the definition itself:
+It also says which definition of the library each notion it fixes is. **It never prints the
+Lean name, and never links to the Lean documentation**: the text is mathematics, and the
+annotations supply the name and the link. The notion is written in plain words, and those
+words are marked:
 
-- a declaration of the library: `source_url` in its entry of `declarations.json`, its line
-  at the commit this text is written from;
-- a definition or class of a library underneath it: its row in `declarations.json`'s
-  `references`, which gives the module the constant is declared in and, for a library the
-  Lean documentation site holds, the URL of its page. A constant whose row has no URL is
-  named with its module instead.
+```latex
+The \fcnotion{interior}{interior of $A$} is written $\intr A$, and a subset of $X$
+may be \fcnotion{IsCompact}{compact} or \fcnotion{IsPathConnected}{path connected}.
+```
 
-Write a link as `\href{<url>}{\texttt{<Name>}}`, once, where the conventions introduce the
-notion, with `\_` for an underscore in the printed name. Copy every URL from
-`declarations.json`; never write one from memory, and never link a notion that file does
-not carry. The items link to nothing: they read as mathematics.
+`\fcnotion{<constant>}{<the words as printed>}` prints the words alone and records a box
+around them, the way an item records its own. The constant is the marker's first argument
+and reaches no page; the export joins the box to it.
+
+- The constant is one `declarations.json` holds: a declaration of the library, in its
+  `declarations`, or a constant of a library underneath it, in its `references`. Copy the
+  name from that file; never write one from memory. A name it does not carry is refused.
+- One `\fcnotion` per constant, where the conventions introduce the notion, and none
+  anywhere else: a second one is a LaTeX error, and the marker inside an item is one too.
+- The words are the ones the sentence prints: the term, or the notation, as a reader
+  meets it. Keep them short: the box is drawn around exactly them.
+
+The items mark nothing and link to nothing: they read as mathematics.
 
 ## The reference work
 
@@ -213,8 +222,7 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
 - Number an equation only if it is cited, and then always: use `equation` with
   `\label{eq:<id>-<word>}`, for example `eq:1.2-square`, and cite it with `\eqref`.
 - No asides: no digressions in parentheses, no footnotes, no "note that", no motivation,
-  history or proof sketches. The conventions section's links to the library's definitions
-  are not asides; nothing else in parentheses is a link.
+  history or proof sketches.
 - Connecting prose between items: at most a sentence or two, only to fix notation the
   next items need.
 - Plain English, short sentences.
@@ -227,7 +235,9 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
   subsections or hand-made numbering.
 - Write LaTeX, not Unicode symbols, in the source: `\le`, `\ell`, `\mathbb{Z}`, and `--`
   for an en dash.
-- Lean names belong in `\leanref`, not in the text. Use `\texttt{...}` for a Lean name only
-  when the statement itself needs it, or in a conventions link.
+- No Lean name and no URL is ever printed: no `\texttt`, no `\verb`, no `\href`, no `\url`,
+  no `http://` or `https://` anywhere in a section file or in `notation.sty`. A declaration
+  goes in `\leanref` and a notion's constant in `\fcnotion`, both invisible; the annotations
+  print them. The gate refuses a section that breaks this.
 - `\input`, `\include` and file names are the template's, not a section's: a section reads
   no file.

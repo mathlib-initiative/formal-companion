@@ -24,7 +24,25 @@ annotation per box:
 * one link per ``\\leanref`` the markers record in that box, with the role and
   the relation `items.json` gives the declaration, the declaration's keyword
   line as a destination on the library's git host, and its statement, cut by
-  `adapters.leansnippets`, as a snippet.
+  `adapters.leansnippets`, as a snippet;
+* one **passage** record per notion box -- a ``\\fcnotion`` of the conventions,
+  whose words the markers carry and whose Lean constant they carry beside them
+  -- with the markers' own id (``notion:<constant>``, a declared id, so that
+  rewording the notion does not re-key it) and the words as its ``title``,
+  linked to that constant with role ``key`` and relation ``exact``.  The
+  informal text prints neither the name nor a documentation link (`STYLE.md`,
+  "The conventions section"); this record is what supplies them.  A constant of
+  the library is a declaration like any other.  A constant of a **dependency**
+  (Mathlib's ``interior``, say) is a row of `declarations.json`'s ``references``,
+  which carries its module and, from the library's `lake-manifest.json`, the
+  package and the commit it is pinned at: its destination is its line on that
+  dependency's git host at that commit when ``--packages-src`` holds the
+  dependency's source to cut a snippet and a line from, and the documentation
+  page the row names when it does not.  The library mirror
+  (`cf informalize fetch-library`) carries the library's own `.lean` files and
+  no package of ``.lake/packages/``, so without ``--packages-src`` the notion
+  cards of a dependency show the documentation page and no statement, and the
+  report says how many.
 
 Nothing is written when an input disagrees with another: the markers must be
 of this PDF and of this `informal/`, every declaration must be one
@@ -59,6 +77,15 @@ RELATION_TOKENS = {"exactMatch": "exact", "broadMatch": "generalization",
 #: A declaration's page is a blob view of the library's git host, which is none of the
 #: rendered Lean sites the format names.
 SITE = "other"
+#: Where a dependency's constant is documented when its source is not on disk: the Lean
+#: documentation site `scripts/informalize/scope.py` builds `doc_url` from.
+DOC_SITE = "doc_gen4"
+#: A DumpDeps kind (`scripts/detect/DumpDeps.lean.tmpl`) as the annotation format's.  A
+#: constructor (`ctor`), a recursor (`rec`) or a quotient primitive (`quot`) is not a
+#: notion the conventions fix, and the format would want a `parent` for the first two, so
+#: a `\fcnotion` naming one is refused by name.
+DEPENDENCY_KINDS = {"def": "def", "theorem": "theorem", "axiom": "axiom", "opaque": "opaque",
+                    "inductive": "inductive"}
 #: The one provenance record: the fleet wrote the text and its `\leanref`s together.
 PROVENANCE_ID = "prov-informalize"
 TOOL_NAME = "cf informalize"
@@ -85,13 +112,15 @@ class _Export:
     """One export: the inputs, the records they make, and the report."""
 
     def __init__(self, checkout: Path, commit: str, *, pdf: Path, pdf_url: str,
-                 library_src: Path, items_approved: bool, name: str | None, repo_id: str | None,
+                 library_src: Path, packages_src: Path | None, items_approved: bool,
+                 name: str | None, repo_id: str | None,
                  site_name: str, source_id: str | None, source_title: str | None,
                  source_edition: str | None, page_offset: int | None) -> None:
         self.repo = checkout
         self.pdf = pdf
         self.pdf_url = pdf_url
         self.library_src = library_src
+        self.packages_src = packages_src
         self.items_approved = items_approved
         self.site_name = site_name or SITE
         self.overrides = {"name": name, "repo_id": repo_id, "source_id": source_id,
@@ -99,6 +128,7 @@ class _Export:
                           "offset": page_offset}
         self.report = Report()
         self._read = None
+        self._read_package = None
         self.head, self.head_date = common.pinned_checkout(checkout, commit)
         self.read_inputs()
         self.declarations: dict[str, dict] = {}
@@ -108,6 +138,8 @@ class _Export:
         self.locations: list[dict] = []
         self.links: list[dict] = []
         self.indexed: dict[str, dict] = {}
+        self.indexed_packages: dict[str, dict] = {}
+        self.notion_items: dict[str, str] = {}
         self.keyword_checked: set[str] = set()
         self.source_tree = None
 
@@ -133,6 +165,7 @@ class _Export:
             self.items_in = common.load_json(informal / "items.json")
             self.table = self.fc.load_items(informal / "items.json")
             self.decls_in = self.fc.load_declarations(informal / "declarations.json")
+            self.refs_in = self.fc.load_references(informal / "declarations.json")
         except self.fc.ToolError as exc:
             raise ExportError(f"{INFORMAL}/: {exc}") from exc
         if self.table.problems:
@@ -327,6 +360,9 @@ class _Export:
     def build(self) -> None:
         entries = {e["id"]: e for e in self.markers.get("entries") or []}
         for entry in self.markers.get("entries") or []:
+            if "notion" in entry:
+                self.add_notion(entry)
+                continue
             if "parent" in entry:
                 continue
             item = self.table.by_id.get(entry["id"])
@@ -352,6 +388,121 @@ class _Export:
                     raise ExportError(f"{entry['id']}: part {part_id} has no entry of its own "
                                       "in markers.json")
                 self.add(part, item, part.get("part"))
+
+    # -- the notions of the conventions ------------------------------------------------
+    def add_notion(self, entry: dict) -> None:
+        """One passage record for a notion box, linked to the constant it marks."""
+        where = entry["id"]
+        name = entry.get("notion")
+        words = str(entry.get("words") or "").strip()
+        if not isinstance(name, str) or not name:
+            raise ExportError(f"{where}: markers.json names no constant for the notion")
+        if not words:
+            raise ExportError(f"{where}: markers.json records no printed words for the notion",
+                              hint="\\fcnotion takes the words as the text prints them")
+        if common.has_url(words):
+            raise ExportError(f"{where}: the notion's words hold a URL: {words[:60]}")
+        rid = where                      # `notion:<constant>`, the markers' own id
+        if rid in self.notion_items:
+            raise ExportError(f"{where}: markers.json records the notion twice",
+                              hint="a notion is fixed once, where the conventions introduce it")
+        self.notion_items[rid] = name
+        decl = self.notion_declaration(name, where)
+        self.items.append({"id": rid, "id_source": "declared", "form": "passage",
+                           "source": self.source_id, "kind": "passage", "title": words,
+                           "coverage": COVERAGE})
+        self.links.append({"id": f"{rid}/key/{name}", "item": rid, "declaration": decl["id"],
+                           "role": "key", "relation": "exact", "provenance": PROVENANCE_ID})
+        self.locate(entry, rid, where)
+
+    def notion_declaration(self, name: str, where: str) -> dict:
+        """The declaration a notion marks: a member of the library, or a dependency's constant."""
+        if name in self.decls_in:
+            record = self.declaration(name, where)
+            self.check_keyword_line(name, where)
+            return record
+        if name in self.refs_in:
+            return self.dependency_declaration(name, where)
+        raise ExportError(f"{where}: {name} is neither a declaration of "
+                          f"{INFORMAL}/declarations.json nor a constant of its `references`")
+
+    def dependency_declaration(self, name: str, where: str) -> dict:
+        """A constant of a library underneath this one, at the commit its manifest pins."""
+        if name in self.declarations:
+            return self.declarations[name]
+        row = self.refs_in[name]
+        module, kind = row.get("module"), DEPENDENCY_KINDS.get(row.get("kind"))
+        if not isinstance(module, str) or not module:
+            raise ExportError(f"{where}: {name} has module {module!r} in `references`")
+        if kind is None:
+            raise ExportError(f"{where}: {name} of {module} is a {str(row.get('kind'))!r}, which "
+                              f"the annotation format does not carry as a declaration of its own",
+                              hint="mark the structure or the definition a reader meets, not a "
+                                   "constructor, a recursor or a quotient primitive")
+        # Lake's layout: a module's file is its name with `/` for each `.`
+        path = module.replace(".", "/") + ".lean"
+        record = {"id": name, "id_source": "name", "name": name, "kind": kind, "module": module,
+                  "file": path, "private": False, "anonymous": False}
+        package = str(row.get("package") or "")
+        if package:
+            record["x_package"] = package
+        if row.get("repo") and row.get("commit"):
+            record["x_repo"], record["x_commit"] = row["repo"], row["commit"]
+        self.declarations[name] = record
+        line = self.dependency_snippet(record, package)
+        destination = self.dependency_destination(name, row, path, line)
+        if destination is None:
+            self.report.lose("destination.reference", 1,
+                             "a reference row with neither a documentation URL nor a pinned "
+                             "dependency gives the card no page to open", [f"{where}: {name}"])
+        else:
+            self.destinations[name] = destination
+        return record
+
+    def dependency_snippet(self, record: dict, package: str) -> int | None:
+        """The constant's statement from `--packages-src`; its line, or None when it is not there.
+
+        The library mirror holds the library's own source alone, so this is the one input
+        that can carry a dependency's: a `.lake/packages` directory, where each package's
+        source is under its own name.
+        """
+        name = record["id"]
+        if self._read_package is None or not package:
+            self.report.counts.setdefault("references_without_source", []).append(name)
+            return None
+        rel = f"{package}/{record['file']}"
+        if rel not in self.indexed_packages:
+            try:
+                self.indexed_packages[rel] = leansnippets.index_text(self._read_package(rel))
+            except leansnippets.SnippetError:
+                self.indexed_packages[rel] = {}
+        found = self.indexed_packages[rel].get(name)
+        if found is None:
+            self.report.counts.setdefault("references_unlocated", []).append(name)
+            return None
+        line, text = found
+        record["line"] = line
+        self.snippets[name] = {"id": f"snippet:{name}", "declaration": name, "text": text,
+                               "line": line}
+        return line
+
+    def dependency_destination(self, name: str, row: dict, path: str,
+                               line: int | None) -> dict | None:
+        """Where a dependency's constant is read: its source line, else its documentation page."""
+        repo, commit = str(row.get("repo") or ""), str(row.get("commit") or "")
+        if repo and commit and line is not None:
+            return {"id": f"{self.site_name}:{name}", "declaration": name, "site": self.site_name,
+                    "href": f"https://{repo}/blob/{commit}/{path}", "resolution": "exact",
+                    "fragment": f"L{line}"}
+        page, _, anchor = str(row.get("doc_url") or "").partition("#")
+        if page.startswith("https://") and anchor:
+            return {"id": f"{DOC_SITE}:{name}", "declaration": name, "site": DOC_SITE,
+                    "href": page, "resolution": "exact", "fragment": anchor}
+        if repo and commit:
+            return {"id": f"{self.site_name}:{name}", "declaration": name, "site": self.site_name,
+                    "href": f"https://{repo}/blob/{commit}/{path}", "resolution": "fallback",
+                    "fallback_label": name}
+        return None
 
     def add(self, entry: dict, item: dict, letter: str | None) -> None:
         """One item record for a box group, its locations and one link per `\\leanref` there."""
@@ -467,14 +618,16 @@ class _Export:
                   "confirmed_by_human": bool(self.items_approved),
                   "tool": {"name": TOOL_NAME, "version": common.__version__},
                   "inputs": self.inputs(),
-                  "note": "the fleet wrote each statement and its `\\leanref`s against the Lean; "
-                          "the boxes are the build's position markers"}
+                  "note": "the fleet wrote each statement and its `\\leanref`s, and each notion "
+                          "and its `\\fcnotion`, against the Lean; the boxes are the build's "
+                          "position markers"}
         if not self.items_approved:
             self.report.counts["items_approval"] = "not pinned (--items-approved was not passed)"
         return record
 
     def run(self) -> dict:
         self._read = leansnippets.reader(self.library_src) if self.library_src else None
+        self._read_package = leansnippets.reader(self.packages_src) if self.packages_src else None
         self.source_tree = self.fcitems.SourceTree(self.library_src) if self.library_src else None
         companion = self.companion()
         self.check_markers()
@@ -502,6 +655,7 @@ class _Export:
                     "destinations", "provenance"):
             counts[key] = len(doc.get(key, []))
         counts["parts"] = sum(1 for item in self.items if "sub" in item)
+        counts["notions"] = len(self.notion_items)
         counts["pages"] = self.pages
         counts["boxes"] = len(self.locations)
         counts["links_by_role"] = dict(sorted(collections.Counter(
@@ -517,9 +671,12 @@ class _Export:
         counts["library"] = {"repo": self.repo_id, "commit": self.library_commit}
         counts.setdefault("snippets_unlocated", [])
         counts.setdefault("snippets_line_differs", [])
+        counts.setdefault("references_without_source", [])
+        counts.setdefault("references_unlocated", [])
 
 
 def export(checkout: Path, commit: str, *, pdf: Path, pdf_url: str, library_src: Path | None,
+           packages_src: Path | None = None,
            items_approved: bool = False, name: str | None = None, repo_id: str | None = None,
            site_name: str = SITE, source_id: str | None = None, source_title: str | None = None,
            source_edition: str | None = None, page_offset: int | None = None,
@@ -527,6 +684,7 @@ def export(checkout: Path, commit: str, *, pdf: Path, pdf_url: str, library_src:
     """The annotation document for an informalization companion, and the export's report."""
     exporter = _Export(Path(checkout), commit, pdf=Path(pdf), pdf_url=pdf_url,
                        library_src=Path(library_src) if library_src else None,
+                       packages_src=Path(packages_src) if packages_src else None,
                        items_approved=items_approved, name=name, repo_id=repo_id,
                        site_name=site_name, source_id=source_id, source_title=source_title,
                        source_edition=source_edition, page_offset=page_offset)

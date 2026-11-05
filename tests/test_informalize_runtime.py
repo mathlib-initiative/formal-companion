@@ -355,6 +355,13 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(aux.positions["fc:1.1:start"], {"posx": 10, "posy": 20, "abspage": 1})
         self.assertEqual(aux.geometry, {"textwidth": 5, "texttop": 7})
 
+    def test_a_notion_is_read_with_its_constant_and_its_words(self):
+        aux = fc.parse_aux("\\fc@auxnotion{1}{Metric.ball}{the open ball $\\ball {x}{r}$}\n"
+                           "\\fc@auxnotion{2}{ExampleLib.GlueData}{gluing data}\n")
+        self.assertEqual(aux.notions, [
+            {"index": "1", "name": "Metric.ball", "words": "the open ball $\\ball{x}{r}$"},
+            {"index": "2", "name": "ExampleLib.GlueData", "words": "gluing data"}])
+
     def test_a_title_is_read_in_the_spelling_a_person_types(self):
         # TeX's \write puts a space after every control word
         self.assertEqual(fc.tex_text("The map $\\pi _1(X)$ and \\emph {it}"),
@@ -458,6 +465,105 @@ class TestParsing(unittest.TestCase):
         # less: one edge halfway, never an edge within a pixel of ink, as frame_bp would put it
         self.assertEqual(pair(5.75), (2.875, 2.875))
         self.assertEqual(pair(3.0), (1.5, 1.5))
+
+
+#: a synthetic page for the box fitting: 1 pixel per bp, lines 14bp apart with 7 rows of
+#: ink each above the baseline, and the text block 100..500bp wide
+PAGE_GEOMETRY = {key: int(bp * fc.SP_PER_BP) for key, bp in
+                 (("textleft", 100), ("texttop", 100), ("textwidth", 400),
+                  ("textheight", 600), ("strutheight", 9), ("strutdepth", 4),
+                  ("baselineskip", 14))}
+BASELINES = [110 + 14 * n for n in range(20)]
+
+
+def synthetic_page():
+    """A `PageInk` of a page of plain lines, read from a PGM as the renderer writes one."""
+    w, h = 612, 792
+    rows = bytearray(b"\xff" * (w * h))
+    for baseline in BASELINES:
+        for y in range(baseline - 7, baseline):
+            rows[y * w + 100:y * w + 500] = b"\x00" * 400
+    pgm = b"P5\n%d %d\n255\n" % (w, h) + bytes(rows)
+    return extract_markers.PageInk(pgm, (float(w), float(h)), 224)
+
+
+def notion_marker(x: float, baseline: float, page: int = 1) -> dict:
+    """A position record, as zref savepos writes one: sp from the lower left corner."""
+    return {"posx": int(x * fc.SP_PER_BP), "posy": int((792 - baseline) * fc.SP_PER_BP),
+            "abspage": page}
+
+
+class TestNotionBoxes(unittest.TestCase):
+    """`notion_spans`: the words of a `\\fcnotion`, on one line and across a break."""
+
+    def setUp(self):
+        self.geo = extract_markers.Geometry(PAGE_GEOMETRY, [(612.0, 792.0)])
+        self.ink = [synthetic_page()]
+        self.params = extract_markers.Params.of(doc.CONFIG["boxes"])
+
+    def spans(self, start, end, params=None):
+        return [s.box() for s in extract_markers.notion_spans(
+            self.geo, self.ink, params or self.params, start, end, "notion Test")]
+
+    def test_one_line_is_one_box_between_the_two_markers(self):
+        box, = self.spans(notion_marker(200, 138), notion_marker(300, 138))
+        page, x, y, w, h = box
+        # the left edge is half a pad before the words, the right edge at the last pen
+        self.assertEqual((page, round(x, 3), round(x + w, 3)), (1, 198.5, 300.0))
+        # the line's ink is rows 131 to 137, padded by 3bp above and below
+        self.assertEqual((round(y, 3), round(y + h, 3)), (128.0, 141.0))
+
+    def test_a_pad_that_would_reach_the_line_above_stops_halfway(self):
+        wide = extract_markers.Params(res_dpi=72, ink_level=224, pad_bp=6.0, frame_bp=4.0)
+        box, = self.spans(notion_marker(200, 138), notion_marker(300, 138), wide)
+        # the line above ends at row 124, this one starts at 131: the edge goes between
+        self.assertEqual(round(box[2], 3), 127.5)
+
+    def test_a_notion_broken_over_two_lines_gets_a_box_on_each(self):
+        first, second = self.spans(notion_marker(400, 138), notion_marker(250, 152))
+        self.assertEqual((round(first[1], 3), round(first[1] + first[3], 3)), (398.5, 503.0))
+        self.assertEqual((round(second[1], 3), round(second[1] + second[3], 3)), (97.0, 250.0))
+        self.assertLess(first[2] + first[4], second[2])
+
+    def test_the_lines_of_a_band_are_its_runs_of_ink(self):
+        runs = extract_markers.line_runs(self.ink[0], 125, 152)
+        self.assertEqual(runs, [(131, 137), (145, 151)])
+
+
+def run_notion_rules(aux_text: str, decls: dict = doc.DECLARATIONS) -> check_items.Report:
+    """Rule 11 on an .aux text, against a declarations.json."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "declarations.json"
+        doc.write_json(path, decls)
+        known = fc.notion_constants(path)
+    report = check_items.Report()
+    check_items.check_notions(fc.parse_aux(aux_text), known, report)
+    return report
+
+
+class TestNotionRule(unittest.TestCase):
+    """Rule 11: a `\\fcnotion` names a constant declarations.json holds, once."""
+
+    def test_a_declaration_and_a_reference_are_both_constants_a_notion_may_name(self):
+        report = run_notion_rules("\\fc@auxnotion{1}{ExampleLib.GlueData}{gluing data}\n"
+                                  "\\fc@auxnotion{2}{IsOpen}{open}\n")
+        self.assertEqual((report.fails, report.warns), ([], []))
+
+    def test_a_constant_declarations_json_does_not_hold(self):
+        report = run_notion_rules("\\fc@auxnotion{1}{Mathlib.Imagined}{imagined}\n")
+        self.assertEqual(rules_of(report), {11})
+        self.assertIn("is not a declaration of declarations.json", report.fails[0])
+
+    def test_a_notion_marked_twice(self):
+        report = run_notion_rules("\\fc@auxnotion{1}{IsOpen}{open}\n"
+                                  "\\fc@auxnotion{2}{IsOpen}{open again}\n")
+        self.assertEqual(rules_of(report), {11})
+        self.assertIn("is marked twice", report.fails[0])
+
+    def test_a_notion_that_prints_nothing(self):
+        report = run_notion_rules("\\fc@auxnotion{1}{IsOpen}{}\n")
+        self.assertEqual(rules_of(report), {11})
+        self.assertIn("prints nothing", report.fails[0])
 
 
 class TestRulesWithoutTeX(unittest.TestCase):
@@ -852,6 +958,81 @@ and recall that \hypOpen* holds here too.
         out = self.check(repo, outdir, "--conventions")
         self.assertEqual(out.returncode, 1)
         self.assertIn("FAIL [5] notation: no \\fcdefhyp for the hypothesis open", out.stdout)
+
+
+class TestTheConventionsNotions(_Built):
+    """The notions of the conventions: the words alone on the page, a box around each."""
+
+    def built(self, name: str, extra: str = doc.CONVENTIONS_NOTIONS):
+        repo = self.repo(name, conventions_extra=extra)
+        outdir = self.root / f"{name}-out"
+        self.build(repo, outdir)
+        return repo, outdir
+
+    def test_the_boxes_hold_the_words_and_no_lean_name_is_printed(self):
+        if any(shutil.which(p) is None for p in POPPLER):     # pragma: no cover
+            self.skipTest("poppler is not installed")
+        repo, outdir = self.built("notions")
+        out = self.tool(repo, str(outdir), script="extract_markers")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("3 notions", out.stdout)
+        markers = json.loads((outdir / "markers.json").read_text())
+        entries = {e["id"]: e for e in markers["entries"] if "notion" in e}
+        self.assertEqual(sorted(entries), ["notion:ExampleLib.GlueData", "notion:IsOpen",
+                                           "notion:Set"])
+        self.assertEqual(entries["notion:IsOpen"]["words"], "open")
+        self.assertEqual(entries["notion:IsOpen"]["number"], "n2")
+        pdf = outdir / f"{doc.JOB}.pdf"
+        sizes = fc.pdf_pages(pdf)
+        for entry in entries.values():
+            with self.subTest(notion=entry["notion"]):
+                self.assertTrue(entry["boxes"])
+                cropped = " ".join(check_items.crop_text(pdf, box, sizes[int(box[0]) - 1], 288)
+                                   for box in entry["boxes"])
+                for word in re.findall(r"[A-Za-z]{3,}", entry["words"]):
+                    self.assertIn(word.lower(), cropped.lower())
+        # the constants are the marker's argument alone: no page prints one
+        text = subprocess.run(["pdftotext", str(pdf), "-"], capture_output=True, text=True,
+                              check=True).stdout
+        self.assertNotIn("ExampleLib.GlueData", text)
+        self.assertNotIn("IsOpen", text)
+        out = self.check(repo, outdir, "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        sheets = self.tool(repo, str(outdir), "--dest", str(self.root / "notion-sheets"),
+                           script="proof_sheets")
+        self.assertEqual(sheets.returncode, 0, sheets.stdout + sheets.stderr)
+        self.assertIn("0 ink under a stroke, 0 cut word", sheets.stdout)
+
+    def test_a_constant_declarations_json_does_not_hold_fails_rule_11(self):
+        repo, outdir = self.built(
+            "notions-unknown",
+            extra="\nA \\fcnotion{Mathlib.Imagined}{wish} is nowhere.\n")
+        out = self.check(repo, outdir, "--aux-only", "--strict")
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        self.assertIn("FAIL [11] notion Mathlib.Imagined: is not a declaration of", out.stdout)
+
+    def test_the_conventions_phase_checks_the_notions_too(self):
+        repo = self.repo("notions-conventions", sections={"01-gluing-spaces": "",
+                                                          "02-covers": ""},
+                         conventions_extra=doc.CONVENTIONS_NOTIONS)
+        outdir = self.root / "notions-conventions-out"
+        self.build(repo, outdir)
+        out = self.check(repo, outdir, "--conventions", "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("(conventions: 1 hypotheses, 3 notions;", out.stdout)
+
+    def test_a_notion_marked_twice_or_inside_an_item_stops_the_build(self):
+        twice = doc.CONVENTIONS_NOTIONS + "\nAgain \\fcnotion{IsOpen}{open}.\n"
+        repo = self.repo("notions-twice", conventions_extra=twice)
+        out = self.build(repo, self.root / "notions-twice-out", ok=False)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("The notion IsOpen is marked twice", out.stdout + out.stderr)
+        inside = doc.SECTION_1.replace("Gluing data on $X$",
+                                       "\\fcnotion{IsOpen}{Gluing data} on $X$")
+        repo = self.repo("notions-in-item", sections={"01-gluing-spaces": inside})
+        out = self.build(repo, self.root / "notions-in-item-out", ok=False)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("inside item 1.1", out.stdout + out.stderr)
 
 
 class TestTheBuildRefuses(_Built):

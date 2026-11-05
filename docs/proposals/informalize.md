@@ -319,16 +319,22 @@ same `annotations.export.common.repo_id_from_url` and so empty for a URL that na
 the cards' statements are cut from it (section 10).
 
 `references`, beside `declarations`, is where a reader sees the definitions the text leans
-on: one row `{name, module, kind, doc_url}`, sorted by name, for each constant from *outside*
-the library that a member's **type** names (`type_deps` in the dump; a proof term names
-hundreds of constants no reader of the text meets, and a generated or private name is left
-out). The probe indexes the library's own modules alone, so DumpDeps' `referenced` table is
+on: one row `{name, module, kind, doc_url, package, repo, commit}`, sorted by name, for
+each constant from *outside* the library that a member's **type** names (`type_deps` in the
+dump; a proof term names hundreds of constants no reader of the text meets, and a generated
+or private name is left out). The probe indexes the library's own modules alone, so DumpDeps' `referenced` table is
 the only place the module of `IsCompact` or of a typeclass is recorded. `doc_url` is
 `https://leanprover-community.github.io/mathlib4_docs/<Module/path>.html#<Name>` for the
 libraries that site documents (Mathlib, Init, Std, Lean, Batteries and the tools they ship
-with) and empty for any other, which keeps its module. The conventions task links each
-notion it fixes to one of these two URLs (`STYLE.md`, "The conventions section"); an older
-`declarations.json` that carries no `references` is read as before.
+with) and empty for any other, which keeps its module. `package`, `repo` and `commit` are
+the dependency that holds the constant, read from `library/host/lake-manifest.json`, which
+I1 brings home: the package whose name matches the module's root but for its case
+(`mathlib` for `Mathlib.Topology.Defs.Basic`), the repository its URL names and the
+40-hex revision the manifest pins. All three are empty for a constant of the Lean
+toolchain itself, which the manifest does not list. The conventions task marks each notion
+it fixes with one of these constants (`STYLE.md`, "The conventions section"), and the
+annotation export (section 10) turns the marker into a card pointing at the dependency at
+that commit; an older `declarations.json` that carries no `references` is read as before.
 
 `items.json` pins this file by the sha256 of its whole bytes (section 5.4), so running the
 stage again re-keys that pin even when it adds only a way of describing a member the table
@@ -495,11 +501,15 @@ Written by `tools/extract_markers.py`, committed by `fetch-pdf`:
    "title": "The glue theorem", "parts": ["1.2(a)", "1.2(b)"], "decls": [],
    "boxes": [[2, 0.13, 0.41, 0.74, 0.09]]},
   {"id": "1.2(a)", "parent": "1.2", "part": "a", "label": "item:1.2:a", "number": "1.2(a)",
-   "decls": ["ExampleLib.glue_theorem"], "boxes": [[2, 0.13, 0.45, 0.74, 0.02]]}]}
+   "decls": ["ExampleLib.glue_theorem"], "boxes": [[2, 0.13, 0.45, 0.74, 0.02]]},
+  {"id": "notion:Metric.ball", "notion": "Metric.ball", "words": "the open ball $B(x,r)$",
+   "label": "notion:3", "number": "n3", "boxes": [[1, 0.31, 0.22, 0.14, 0.02]]}]}
 ```
 
 An item or part across a page break has one box per page. `decls` are the `\leanref`s the
-build recorded there.
+build recorded there. A notion entry is one `\fcnotion` of the conventions: `notion` the
+Lean constant the marker carries, `words` the words the page prints, and one box per line
+those words lie on.
 
 ### 5.7 Receipts and approvals
 
@@ -700,12 +710,12 @@ Apache License 2.0, travels with it as `LICENSE-runtime`, whatever license the t
 
 | runtime file | ported from the pilot's | what changes |
 |---|---|---|
-| `fcmarkers.sty` | `rrmarkers.sty` | `fc@` prefixes; the id printed as the number; hypothesis macros defined per project; a reference macro; `\FCOnly` |
+| `fcmarkers.sty` | `rrmarkers.sty` | `fc@` prefixes; the id printed as the number; hypothesis macros defined per project; a reference macro; `\fcnotion`; `\FCOnly` |
 | `STYLE.md` | `STYLE.md`'s generic half | the project half is `STYLE-project.md` |
 | `tools/build_pdf.sh` | `build_pdf.sh` | main file and job from `informalize.json`; builds a snapshot; `-norc` and `openin_any=p`; refuses an unsafe `<outdir>` and a second build into one; a receipt |
 | `tools/canonical_pdf.sh` | the pilot's final-build steps | section 9 |
-| `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json`; a region's first and last line from the above and below markers |
-| `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check |
+| `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json`; a region's first and last line from the above and below markers; the notion boxes |
+| `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check; the notions (rule 11) |
 | `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py`; an edge through ink is judged at `res_dpi`, a stroke touching ink only reported; ink outside an item's boxes is fatal |
 | `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts` |
 | `tools/fcitems.py` | the pilot's item verifier | the rules of `items.json` and `declarations.json` and the keyword check (section 5.4), which `cf informalize check-items` and the gate (section 8.3 rule 4) share |
@@ -726,6 +736,13 @@ tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output re
   records `\fc@auxpart{<id>}{<letter>}`.
 - `\leanref{<full name>}` prints nothing and records `\fc@auxleanref{<id>}{<letter>}{<name>}`
   for the current part (empty letter in the item's own text).
+- `\fcnotion{<constant>}{<the words as printed>}`, in the conventions, prints the words
+  alone and records `\fc@auxnotion{<n>}{<constant>}{<the words>}` and the positions
+  `fc:notion:<n>:start` and `:end`, the two ends of the words. The constant is the
+  marker's argument and never reaches the page: the informal text prints no Lean name and
+  no link to the library's documentation, which the annotations supply from this marker
+  (section 10). A constant marked twice, a notion inside another, and a `\fcnotion` inside
+  an item are LaTeX errors.
 - `\fcdefhyp{<\macro>}{<key>}{<words>}`, used in `notation.sty`, defines `<\macro>` to print
   the words and record `\fc@auxhyp{<id>}{<letter>}{<key>}`, and `<\macro>*` to print them
   only (for a hypothesis named on one side of an equivalence); it records
@@ -746,9 +763,10 @@ tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output re
   With `\FCOnly` (a comma list that `build_pdf.sh --only` defines) a section it does not
   name, compared as numbers, only advances the counter and is recorded with `0`.
 - Positions: zref savepos and abspage labels `fc:<id>[:<letter>]:start`, `:above`, `:end`
-  and `:below`. The start marker sits on the first baseline, in the theorem head or the part
-  label. The above marker sits on the vertical list before the first line and its interline
-  glue (`\vadjust pre`, then `\nobreak`, so it adds no place to break the page). The end
+  and `:below`, and `fc:notion:<n>:start` and `:end`. The start marker sits on the first
+  baseline, in the theorem head or the part label. The above marker sits on the vertical
+  list before the first line and its interline glue (`\vadjust pre`, then `\nobreak`, so
+  it adds no place to break the page). The end
   marker sits on the last baseline in horizontal mode, or after a closing display or list in
   vertical mode; in horizontal mode the below marker follows the last line's box
   (`\vadjust`). The text block's geometry is written once per run in
@@ -812,26 +830,33 @@ job's own `.aux`, `.log`, `.out`, `.toc` and `.pdf`, is refused (exit 1).
    star exactly when its `source` is `inferred`, once, and appears nowhere else;
 7. the log has no multiply defined label (warning: an undefined reference or citation; a
    reference into a section a `--only` build did not typeset is not one);
+11. every `\fcnotion` names a constant `declarations.json` holds, as an entry or as a row
+    of its `references`, and no constant is marked twice;
 
 and, without `--aux-only` (these need poppler):
 
 8. `markers.json` is current: its `pdf_sha256` is the PDF's and its entries are the aux's;
 9. every box, cropped with `pdftotext -x -y -W -H` at 288 dpi, holds text: an item's first
-   box its head ("Theorem 1.2"), a part's first box its label ("(a)"), and an item's boxes
-   together the words of its title;
+   box its head ("Theorem 1.2"), a part's first box its label ("(a)"), an item's boxes
+   together the words of its title, and a notion's boxes some ink of their own;
 10. boxes of different items, and of two parts of one item, do not overlap, and a part's
     boxes lie inside its item's.
 
 `--strict` makes every warning a failure. `--conventions` is for a build whose section files
-are still empty (the conventions phase): it runs check 7 and the `\fcdefhyp` half of check 5
-only, since every check on items would fail there. `tools/extract_markers.py <outdir>`
+are still empty (the conventions phase): it runs checks 7 and 11 and the `\fcdefhyp` half of
+check 5 only, since every check on items would fail there. `tools/extract_markers.py <outdir>`
 (pdfinfo, pdftoppm) fits each box to the ink of its marked lines at `res_dpi`, as the pilot's
 does, but finds a region's first line from its above marker and its last from its below
 marker, so a line taller than a baselineskip and ink below the last baseline stay in the box;
-it states its assumptions: one column, boxes span the text block.
+it states its assumptions: one column, boxes span the text block. A notion's box is fitted
+differently, since its words are a few on one line: its sides are the two positions the
+markers recorded (the left one moved half a pad into the glue before the words, where a
+letter's ink may begin at the pen; the right one left at the pen after the last letter,
+where a comma may follow with no glue), and its top and bottom are the ink of the line the
+words lie on, padded as an item's is. Words broken over lines get one box per line.
 `tools/proof_sheets.py <outdir> [--dest DIR] [--dpi N] [--tight] [--list-unboxed]` draws the
-boxes over each page (PNG through zlib, and SVG) into `DIR` (default
-`<outdir>/proof-sheets/`) at `N` dpi (default 110) and exits 1 on ink under a stroke (a box
+boxes over each page (item red, part blue, notion green; PNG through zlib, and SVG) into
+`DIR` (default `<outdir>/proof-sheets/`) at `N` dpi (default 110) and exits 1 on ink under a stroke (a box
 edge whose own pixel row or column holds ink at `res_dpi`, the resolution the boxes are
 fitted at), a cut word, stray item text, or ink between an item's above and below markers
 that lies outside its boxes. A 2-pixel stroke at `N` dpi that touches ink (a tight edge,
@@ -1115,7 +1140,13 @@ standard library and its sibling files. Rules, each refusal naming its number:
    `eq:<id>-<word>` of one of its items (`STYLE.md`) and elsewhere never a numbered
    section's form, so no two sections share a label when the whole document is built (each
    section's own build catches a label it defines twice). `\newcommand`, which cannot
-   redefine a marker command, and `\DeclareMathOperator` stay. The lint is a list of what is
+   redefine a marker command, and `\DeclareMathOperator` stay.
+   A second lint runs on the same files with their comments *removed*, since a comment is
+   not typeset: what is left may print no Lean name and no link -- no `\texttt`, `\verb`,
+   `\href`, `\url`, `\nolinkurl`, `\path` or `http(s)://` -- and every `\fcnotion` must
+   name a constant `declarations.json` holds, as an entry or as a row of its `references`.
+   The text states the mathematics; the annotations carry the name and the link
+   (`STYLE.md`, "The conventions section"). The lint is a list of what is
    refused, not of what is allowed: what it cannot see, such as text a section typesets
    and then hides, is the reviewer's to refuse. The gate prints the error messages alone,
    never the input lines TeX shows around them, since its output reaches the reviewer and the
@@ -1173,8 +1204,8 @@ failure (a moved pinned file, a missing sibling or program, a refused command li
 is never a finding of the worker's; every call appends a line to the gate log. The reviewer is an LLM with the diff
 and the gate's output; it refuses what the brief forbids that no rule can see (the reference
 work's prose, asides, a letter with two meanings, a statement that spells out what a
-standard term or the conventions already say, a conventions link to a URL
-`declarations.json` does not give), and it never approves a change the gate refused.
+standard term or the conventions already say, a `\fcnotion` whose words are not the
+notion's), and it never approves a change the gate refused.
 
 ### 8.4 The briefs
 
@@ -1297,6 +1328,20 @@ vendored checker accepts in canonical form:
   `generalization`, `narrowMatch` → `special_case`, `relatedMatch` → `related` (the legacy
   format's relation is a snake_case token, and no token of it converts to `closeMatch`,
   which is why section 5.4 does not admit that one);
+- one **passage** item per notion box, `id_source: declared` with the markers' own id
+  (`notion:<constant>`, so that rewording the notion does not re-key it), `kind: passage`,
+  the words as its `title` and one location per box, linked to the constant the
+  `\fcnotion` names with role `key` and relation `exact`. A constant of the library is a
+  declaration like any other. A constant of a **dependency** is a row of `references`
+  (section 5.3): its declaration record carries the module, the file Lake's layout gives
+  it, and `x_package`, `x_repo` and `x_commit`; its destination is the line on that
+  dependency's git host at that commit when `--packages-src` (a `.lake/packages`
+  directory) holds the source to cut a snippet and a line from, and otherwise the
+  documentation page the row names (`site: doc_gen4`, the page as `href` and the name as
+  `fragment`). The library mirror holds the library's own `.lean` files and no package of
+  `.lake/packages/`, so without `--packages-src` those cards show the page and no
+  statement, and the report counts them (`references_without_source`,
+  `references_unlocated`);
 - snippets cut from `library/src/` by `adapters.leansnippets` (a theorem's statement through
   its `:=`, a definition whole), so a card shows its statement without Verso;
 - destinations `https://<host>/<org>/<lib>/blob/<commit>/<path>` with `resolution: exact`
@@ -1334,7 +1379,7 @@ approval at the current PDF's sha256, then, in the output repository:
    release URL is live.
 
 **The hovers.** A card made this way shows the declaration's plain source, cut from
-`library/src/`: the output repository's site has no Verso pages of its own, so the viewer
+`library/src/` (a dependency's from `--packages-src`, when the maintainer has it): the output repository's site has no Verso pages of its own, so the viewer
 has nothing to tint and no hover to show. `docs/overlay.md` section 5 lets such a companion
 commit a `pdf-overlay/verso.json` cut from a Verso build of the commit its cards pin, made
 elsewhere, and **`cf informalize verso-command <id> --host H [--verso-rev REV]
@@ -1360,10 +1405,13 @@ follows, and the run stops when it moved any package the library already had
 (`verso_host.py moved`) — the cards pin this tree, so the hovers are of this tree or there
 are none. Then `lake exe cache get` (when the library builds against Mathlib) and
 `lake build` of the module the library list names, which is what I1 built, never of the
-whole library; Verso's `literate.toml` naming the modules the bundle's cards are in and no
-others (`verso_host.py targets`, where the library ships no such file), since a statement
+whole library; Verso's `literate.toml` naming the **library's** modules the bundle's cards are in and no
+others (`verso_host.py targets --root <the library's root module>`, where the library ships
+no such file), since a statement
 is cut from its own module's page and a library of ten thousand modules would otherwise be
-rendered whole for a dozen pages; `lake build :literateHtml`; and `verso_extract.py
+rendered whole for a dozen pages; a card in a dependency's module -- a notion of the
+conventions is often a constant of Mathlib -- is left out, because rendering Mathlib with
+Verso is not cheap, and such a card keeps the plain statement the export cut for it; `lake build :literateHtml`; and `verso_extract.py
 --pages` over the pages it wrote, against the bundle, writing `verso/host/verso.json` with
 the counts beside it. A Verso that does not match the toolchain shows up at the literate
 build as `missing data file for module ...` from the pages' tool — it reads the library's

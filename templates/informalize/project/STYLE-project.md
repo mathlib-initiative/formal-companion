@@ -22,11 +22,12 @@ Each letter keeps one meaning in the whole text.
 
 ## Standard terms
 
-The term the text uses for each notion, the definition of the library it is, and the link
-`sections/00-conventions.tex` gives for it. An item uses the term; it never spells the
-definition out again.
+The term the text uses for each notion, the Lean constant `sections/00-conventions.tex`
+marks it with (`\fcnotion`, which prints the term alone) and the sentence that fixes it.
+An item uses the term; it never spells the definition out again, and no page prints the
+constant.
 
-| term | definition | where it is fixed |
+| term | constant | where it is fixed |
 |---|---|---|
 
 ## What the conventions carry

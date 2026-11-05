@@ -101,6 +101,10 @@ def register(subparsers) -> None:
     im.add_argument("--library-src", type=Path, required=True, metavar="DIR",
                     help="the library's source at the pinned commit, which the snippets on the "
                          "cards are cut from (<workspace>/informalize/<id>/library/src)")
+    im.add_argument("--packages-src", type=Path, metavar="DIR",
+                    help="a .lake/packages directory of the library's build, where a notion "
+                         "of a dependency (Mathlib's interior) is read: without it such a "
+                         "card shows the documentation page and no statement")
     im.add_argument("--items-approved", action="store_true",
                     help="the items approval pins this items.json, so the links are recorded as "
                          "confirmed by a person")
@@ -194,9 +198,12 @@ def run(args) -> int:
                 raise CfError(f"--pdf: {args.pdf} is not a file")
             if not args.library_src.is_dir():
                 raise CfError(f"--library-src: {args.library_src} is not a directory")
+            if args.packages_src is not None and not args.packages_src.is_dir():
+                raise CfError(f"--packages-src: {args.packages_src} is not a directory")
             doc, report = informal_markers.export(checkout, args.commit, pdf=args.pdf,
                                                   pdf_url=args.pdf_url,
                                                   library_src=args.library_src,
+                                                  packages_src=args.packages_src,
                                                   items_approved=args.items_approved, **options)
         else:
             from annotations.export import docstring_tags
