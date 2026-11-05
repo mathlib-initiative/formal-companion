@@ -41,13 +41,44 @@ Nothing is released yet: there is no tag, and the version has been `0.2.0`
 since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
+### Changed
+
+- **An informal statement is written as a textbook prints it.** The first informalize text
+  came out painfully literal: every typeclass, index type and side condition spelled out in
+  every item ("let $I$ be an index type, ... suppose that every point $x$ of $S$ has some
+  $U_i$ as a neighborhood"), because the rules asked for the signature rather than for the
+  mathematics, and the attackers were rewarded for making statements longer. The runtime's
+  `STYLE.md` now binds two halves of one task -- "exactly the Lean" and "in a
+  mathematician's words" -- with the conventions section carrying everything the items would
+  otherwise repeat, and the attack and judge briefs rule severity on *meaning*: `wrong` or
+  `imprecise` only where a competent reader could take the text to state other mathematics,
+  everything else `style`, and a `style` fix is shorter or more standard, never longer.
+  Faithfulness is unchanged and stated harder: a standard term may carry a hypothesis only
+  when it says exactly that hypothesis (no "open cover" where the Lean has neighborhoods, no
+  "unique" where it has existence). The conventions, draft, judge, edit, worker and reviewer
+  briefs, and sections 8.2 and 8.4 of the proposal, say the same thing.
+- **`declarations.json` says where each definition is documented.** `cf informalize scope`
+  now writes `source_url` on every entry (its line in the library at the pinned commit) and
+  a `references` list: every constant from outside the library that a member's *type* names,
+  with the module the dependency dump recorded for it and, for the libraries the Lean
+  documentation site holds, the URL of its page. The conventions task links each notion it
+  fixes to one of the two, so a reader can see the actual definition. The module came from
+  nowhere before: the probe indexes the library's own modules only, and the dump's
+  `referenced` table was left in the workspace.
+
 ### Fixed
 
+- **A hypothesis macro no longer eats the space after it.** `\hypCoverTwo and` printed
+  "cover $X$and" in the first informalize PDF: TeX drops the space after a control word, and
+  `\@ifstar` drops one before the token it looks at. `\fcdefhyp` now ends the words it
+  defines with `\xspace`, which puts the space back before a word and adds none before
+  punctuation; `xspace.sty` joins `tex_packages`, which the build checks with kpsewhich.
 - **`DumpDeps` records a theorem's proof again.** On newer toolchains `ConstantInfo.value?`
   leaves theorems out unless it is passed `allowOpaque`, so every theorem's `value_deps` came
   out empty. That blocked `cf informalize fetch-library`, and the dump missed every edge from a
-  proof (the first one was TauCeti at Lean v4.36.0-rc2). The template now matches
-  definitions and theorems directly, which works on old and new toolchains alike.
+  proof (the first one was the mode's first target library, at Lean v4.36.0-rc2). The
+  template now matches definitions and theorems directly, which works on old and new
+  toolchains alike.
 
 ### Added
 

@@ -6,6 +6,10 @@ part (a), (b), ... of an item, becomes a box in the PDF that is linked to the Le
 declaration stating it. The tools find the boxes and the links through the macros below, so
 the macros are not optional.
 
+It is written for a mathematician: each statement says exactly what the Lean says, in the
+words a good textbook would print it in. Those two are one rule, and the section
+"Statements: exactly the Lean, in a mathematician's words" is the whole of it.
+
 These are the rules every text follows. `STYLE-project.md` beside this file adds this
 text's own: its notation, its letters, its standing hypotheses and how it cites its
 reference work. This file is part of formal-companion's informalize runtime: it is copied
@@ -60,7 +64,7 @@ One environment per item of your section with `"in_v1": true`, in the order of
 ```latex
 \begin{theorem}[id=1.2]{The glue theorem}
 \fcref*{Theorem 4.1}
-Let $X$ be a space, and let $U$ and $V$ be subsets of $X$ that cover it.
+Let $U$ and $V$ be subsets of $X$ that cover it.
 \itempart{a}{%
   If \hypOpen, then the square of groups is a pushout.
   \leanref{ExampleLib.glue_theorem}}
@@ -99,12 +103,25 @@ Let $X$ be a space, and let $U$ and $V$ be subsets of $X$ that cover it.
 - A declaration with `"role": "helper"` may be `\leanref`'d where it states the same
   thing. Never `\leanref` a declaration that does not state the item or part.
 
-## Statements follow the Lean signature
+## Statements: exactly the Lean, in a mathematician's words
+
+Two rules bind every statement, and neither gives way to the other. It says exactly what
+the Lean says, and it reads as a textbook reads. A statement that adds or drops a
+hypothesis is wrong, however well it reads; a statement that spells out word by word what a
+standard term already says is unread, and an unread text states nothing.
+
+### Exactly the Lean
 
 - Read each key declaration's signature (`declarations.json`, and the source it points
   to), not only the gist. The statement carries exactly the hypotheses the signature binds,
   each in the part, or the item's own text, whose declaration binds it; `"hypotheses"` in
   `items.json` lists the ones it must carry.
+- Add nothing the Lean does not have: no "open" where the signature has neighborhoods, no
+  "unique" where it has existence, no finiteness, connectedness or nonemptiness that no
+  binder states. The usual form of a result is not what this text states; the library's
+  form is.
+- Drop nothing the Lean has. Every hypothesis is either written in the statement or carried
+  by a standard term that means it and nothing weaker.
 - A standing hypothesis of `hypotheses.json` is always written with its macro (for example
   `\hypOpen`), never in words typed by hand: "Suppose that \hypOpen." Put the macro in the
   part whose declaration binds the hypothesis, or in the item's own text when every part
@@ -112,6 +129,12 @@ Let $X$ be a space, and let $U$ and $V$ be subsets of $X$ that cover it.
   an equivalence rather than an assumption, write the starred form, `\hypOpen*`, which
   prints the same words and records nothing.
 - State every other hypothesis in words in the same place.
+- A standard term may carry a hypothesis when the two say the same thing: "the interiors of
+  the $U_{i}$ cover $S$" is exactly "every point of $S$ has some $U_{i}$ as a neighborhood",
+  and either may be written. "The $U_{i}$ are an open cover of $S$" is not: it assumes more
+  than the Lean does, so it is wrong here. When the usual reading of a term is stronger than
+  the hypothesis, write the hypothesis. An equivalence a reader does not see at once is
+  stated once in the conventions, and the items then use the term.
 - Quantifiers, coercions and number types follow the signature: say "in ℕ" when a Lean
   statement in the natural numbers involves subtraction or could be misread as one in ℤ.
 - Junk values: for each entry of a key declaration's `"junk"` list in `items.json`, add one
@@ -120,6 +143,52 @@ Let $X$ be a space, and let $U$ and $V$ be subsets of $X$ that cover it.
 - `"departures"` explain how the library's statement differs from the usual one, or why a
   key declaration is not an `exactMatch`. Use them to state the item correctly; mention a
   departure only when the statement would otherwise mislead, in one sentence of your own.
+
+### In a mathematician's words
+
+- Write the statement as a good textbook prints it: standard terms for standard notions
+  (an open cover, a compact set, a path-connected space, the fundamental group
+  $\pi_{1}(X,x)$), and the notation of `notation.sty` for them.
+- The conventions carry what the items share. The ambient objects and the structure they
+  bear, the letters, the notation, the coercions and the inclusions are fixed once in
+  `sections/00-conventions.tex`; an item repeats none of it and introduces only what is
+  particular to it.
+- Lean's bookkeeping is not mathematics. Typeclass and instance binders, universe
+  variables, the index type of a family, and the side conditions the library discharges
+  inside a statement (that an inclusion is injective, that a point lies where a basepoint
+  must lie) are not hypotheses a reader needs named. The conventions say once how the text
+  reads them.
+- Name the letters the statement uses, and no others. "Let $I$ be an index type" belongs in
+  the conventions: write a family as $(U_{i})$, and name its index only where the statement
+  quantifies over it.
+- Of two statements that say the same mathematics, the shorter is the right one. The only
+  reason to add words is that the mathematics needs them: a sentence that explains,
+  justifies or restates a hypothesis is not one of those reasons.
+- Your reader is a mathematician who has not read the Lean, and who will read it next if
+  the statement earns it.
+
+## The conventions section
+
+`sections/00-conventions.tex` is written once, by the conventions task, and every item
+rests on it. It fixes the ambient objects and the structure they bear, the letters and
+their one meaning each, the notation, the standing hypotheses and their macros, natural
+numbers against integers, the coercions the text leaves silent, and the junk values the
+items rely on. What it fixes, no item repeats.
+
+It also says which definition of the library each notion it fixes is, and links it, so a
+reader can see the definition itself:
+
+- a declaration of the library: `source_url` in its entry of `declarations.json`, its line
+  at the commit this text is written from;
+- a definition or class of a library underneath it: its row in `declarations.json`'s
+  `references`, which gives the module the constant is declared in and, for a library the
+  Lean documentation site holds, the URL of its page. A constant whose row has no URL is
+  named with its module instead.
+
+Write a link as `\href{<url>}{\texttt{<Name>}}`, once, where the conventions introduce the
+notion, with `\_` for an underscore in the printed name. Copy every URL from
+`declarations.json`; never write one from memory, and never link a notion that file does
+not carry. The items link to nothing: they read as mathematics.
 
 ## The reference work
 
@@ -132,13 +201,14 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
 ## Style
 
 - Name every object: introduce each letter before using it ("Let $n$ be a natural
-  number").
+  number"), unless the conventions already name it, in which case use it as they do.
 - No letter with two meanings (`STYLE-project.md` lists the letters and their one meaning
   each).
 - Number an equation only if it is cited, and then always: use `equation` with
   `\label{eq:<id>-<word>}`, for example `eq:1.2-square`, and cite it with `\eqref`.
 - No asides: no digressions in parentheses, no footnotes, no "note that", no motivation,
-  history or proof sketches.
+  history or proof sketches. The conventions section's links to the library's definitions
+  are not asides; nothing else in parentheses is a link.
 - Connecting prose between items: at most a sentence or two, only to fix notation the
   next items need.
 - Plain English, short sentences.
@@ -152,6 +222,6 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
 - Write LaTeX, not Unicode symbols, in the source: `\le`, `\ell`, `\mathbb{Z}`, and `--`
   for an en dash.
 - Lean names belong in `\leanref`, not in the text. Use `\texttt{...}` for a Lean name only
-  when the statement itself needs it.
+  when the statement itself needs it, or in a conventions link.
 - `\input`, `\include` and file names are the template's, not a section's: a section reads
   no file.

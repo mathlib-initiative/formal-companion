@@ -164,11 +164,22 @@ def deps_doc() -> dict:
         row("ExampleLib.GlueData.mk", "ctor", DEFS, ["ExampleLib.GlueData"]),
         row("ExampleLib.glue_map", "def", DEFS, ["ExampleLib.GlueData"], [SECRET]),
         row(SECRET, "def", DEFS, ["Nat"], ["ExampleLib.cover_mono", "Nat.zero"]),
-        row("ExampleLib.cover_mono", "theorem", DEFS, ["True"], ["trivial"]),
+        row("ExampleLib.cover_mono", "theorem", DEFS,
+            ["True", "OtherLib.Widget", "Mathlib.Nowhere", f"{SECRET}.aux"], ["trivial"]),
         row("ExampleLib.unused", "theorem", DEFS, ["True"], ["trivial"]),
     ]
+    # the module table DumpDeps writes for every constant the library's own mention: the
+    # only place the module of a constant the probe does not index is recorded
+    referenced = [
+        {"name": "Set", "module": "Mathlib.Data.Set.Defs", "kind": "def"},
+        {"name": "True", "module": "Init.Prelude", "kind": "inductive"},
+        {"name": "Nat.zero", "module": "Init.Prelude", "kind": "ctor"},
+        {"name": "OtherLib.Widget", "module": "OtherLib.Basic", "kind": "inductive"},
+        {"name": "Mathlib.Nowhere", "module": "<none>", "kind": "?"},
+        {"name": f"{SECRET}.aux", "module": "Mathlib.Data.Set.Defs", "kind": "theorem"},
+    ]
     return {"package": MODULE, "root_module": MODULE, "module_prefix": PREFIX,
-            "repo_constants": constants, "referenced": []}
+            "repo_constants": constants, "referenced": referenced}
 
 
 def settings(**library) -> dict:
@@ -499,7 +510,7 @@ class TestTheClosure(unittest.TestCase):
                                  src or self.src)
 
     def test_members_depth_and_reach(self):
-        members, entries, counts = self.compute()
+        members, entries, references, counts = self.compute()
         by_name = {m["name"]: m for m in members}
         self.assertEqual(sorted(by_name), ["ExampleLib.GlueData", "ExampleLib.cover_mono",
                                            "ExampleLib.glue_map", THEOREM])
@@ -518,7 +529,45 @@ class TestTheClosure(unittest.TestCase):
         self.assertEqual(counts["walked_through"], 3)
         self.assertEqual(counts["type_only"], 3)
         self.assertEqual(counts["max_depth"], 1)
-        self.assertEqual(itemtable.declarations_problems({"declarations": entries}), [])
+        self.assertEqual(itemtable.declarations_problems({"declarations": entries,
+                                                          "references": references}), [])
+
+    def test_the_references_are_what_the_members_types_name_elsewhere(self):
+        _members, entries, references, counts = self.compute()
+        self.assertEqual([tuple(r) for r in references], [scope_mod.REFERENCE_KEYS] * 3)
+        self.assertEqual({r["name"]: r["doc_url"] for r in references}, {
+            # a member's type names it, and the doc site holds its library
+            "Set": "https://leanprover-community.github.io/mathlib4_docs/"
+                   "Mathlib/Data/Set/Defs.html#Set",
+            "True": "https://leanprover-community.github.io/mathlib4_docs/"
+                    "Init/Prelude.html#True",
+            # another library: the module the dump found it in, and no URL
+            "OtherLib.Widget": "",
+        })
+        # not Nat.zero, which no member's type names; not the constant no module holds; not
+        # a private name
+        self.assertEqual(counts["references"], 3)
+        self.assertEqual([e["source_url"] for e in entries if e["name"] == THEOREM],
+                         [f"{URL}/blob/{doc.COMMIT}/ExampleLib/Topology/Glue/Basic.lean#L20"])
+
+    def test_a_library_that_is_no_web_url_gets_no_source_link(self):
+        cfg = settings(url="git@example.org:lean-libs/ExampleLib.git")
+        _members, entries, _references, _counts = self.compute(cfg=cfg)
+        self.assertEqual({e["source_url"] for e in entries}, {""})
+
+    def test_a_broken_reference_table_is_refused(self):
+        rows = [{"name": "Set", "module": "Mathlib.Data.Set.Defs", "kind": "def",
+                 "doc_url": ""}]
+        self.assertEqual(itemtable.declarations_problems({"declarations": [],
+                                                          "references": rows}), [])
+        for bad, needle in (({"references": "Set"}, "`references` is not a list"),
+                            ({"references": [{"name": "Set", "module": "Set Defs"}]},
+                             "is not a module name"),
+                            ({"references": [rows[0], dict(rows[0], name="A")]},
+                             "not sorted by name")):
+            with self.subTest(needle=needle):
+                found = itemtable.declarations_problems({"declarations": [], **bad})
+                self.assertTrue(any(needle in p for p in found), found)
 
     def test_the_walk_takes_the_cheapest_path(self):
         graph = {n: {"type_deps": [], "value_deps": []} for n in "tabcd"}
@@ -567,7 +616,7 @@ class TestTheClosure(unittest.TestCase):
                 self.compute(**kwargs)
             self.assertIn(needle, caught.exception.message)
         # the theorem's own body is there, but no other theorem's: that is no refusal
-        members, _entries, _counts = self.compute(deps=none_at_all)
+        members, _entries, _refs, _counts = self.compute(deps=none_at_all)
         self.assertEqual(len(members), 4)
         # a declaration that is no theorem, in a library none of whose theorems has a body
         stated_as_def = copy.deepcopy(none_at_all)
@@ -585,7 +634,7 @@ class TestTheClosure(unittest.TestCase):
                 "name": lemma, "module": module, "kind": "theorem", "instance": False,
                 "structure": False, "projection": False, "type_deps": ["ExampleLib.glue_map"],
                 "value_deps": [used]})
-        members, _entries, counts = self.compute(deps=deps)
+        members, _entries, _refs, counts = self.compute(deps=deps)
         by_name = {m["name"]: m for m in members}
         # the second copy's dependency is kept too, one level below the theorem
         self.assertEqual((by_name["ExampleLib.unused"]["depth"],

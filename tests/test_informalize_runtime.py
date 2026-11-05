@@ -224,6 +224,15 @@ class TestTheRuntimeFiles(unittest.TestCase):
         self.assertIn("t1lmr.fd", listed)                     # T1 with lmodern
         self.assertIn("\\usepackage[T1]{fontenc}", main)
 
+    def test_a_hypothesis_macro_keeps_the_space_after_its_words(self):
+        """TeX drops the space after a control word and `\\@ifstar` drops one before the
+        token it looks at, so `\\hypOpen and` printed "openand"; the words end with
+        `\\xspace`.  The built document is checked in TestPartialBuilds."""
+        sty = (RUNTIME / "fcmarkers.sty").read_text(encoding="utf-8")
+        (line,) = [ln for ln in sty.splitlines() if "\\DeclareRobustCommand#1" in ln]
+        self.assertIn("\\@ifstar{#3\\xspace}{\\fc@hyp{#2}#3\\xspace}", line)
+        self.assertIn("\\RequirePackage{xspace}", sty)
+
     def test_the_project_slots_are_the_readme_s(self):
         readme = (SKILL / "templates" / "informalize" / "README.md").read_text(encoding="utf-8")
         documented = set(re.findall(r"^\| `([a-z_]+)` \|", readme, re.M))
@@ -784,6 +793,28 @@ class TestPartialBuilds(_Built):
         out = self.check(repo, outdir, "--aux-only", "--strict")
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertIn("(all sections: 5 of 5 items", out.stdout)
+
+    def test_a_hypothesis_macro_keeps_the_space_after_it(self):
+        """`\\hypOpen and` prints "... open and", not "... openand": TeX drops the space
+        after a control word and `\\@ifstar` drops one before the token it looks at, so
+        `\\fcdefhyp` ends the words with `\\xspace`."""
+        if any(shutil.which(p) is None for p in POPPLER):     # pragma: no cover
+            self.skipTest("poppler is not installed")
+        section = r"""
+\begin{lemma}[id=1.1]{Spacing}
+Let $U$ and $V$ be subsets of $X$, suppose that \hypOpen and that $X$ is a space,
+and recall that \hypOpen* holds here too.
+\leanref{ExampleLib.GlueData}
+\end{lemma}
+"""
+        repo = self.repo("spacing", sections={"01-gluing-spaces": section, "02-covers": ""})
+        outdir = self.root / "spacing-out"
+        self.build(repo, outdir, "--only", "1")
+        text = subprocess.run(["pdftotext", str(outdir / f"{doc.JOB}.pdf"), "-"],
+                              capture_output=True, text=True, check=True).stdout
+        flat = " ".join(text.split())
+        self.assertIn("U and V are open and that X is a space", flat)
+        self.assertIn("are open holds here too", flat)
 
     def test_a_section_number_is_a_number_and_must_exist(self):
         repo = self.repo("numbers")

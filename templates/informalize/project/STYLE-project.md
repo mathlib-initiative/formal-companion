@@ -20,6 +20,21 @@ Each letter keeps one meaning in the whole text.
 | letter | meaning |
 |---|---|
 
+## Standard terms
+
+The term the text uses for each notion, the definition of the library it is, and the link
+`sections/00-conventions.tex` gives for it. An item uses the term; it never spells the
+definition out again.
+
+| term | definition | where it is fixed |
+|---|---|---|
+
+## What the conventions carry
+
+What `sections/00-conventions.tex` fixes once, so that no item repeats it: the ambient
+objects and their structure, the typeclass and universe binders, the index type of a
+family, the coercions, and the side conditions the library discharges inside a statement.
+
 ## Standing hypotheses
 
 One row per key of `hypotheses.json`: the macro, the words it prints, and the Lean binder

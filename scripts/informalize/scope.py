@@ -27,10 +27,19 @@ since the drafters and the cards read the statement there.
 
 It writes `scope.json` (workspace) and `informal/declarations.json` (output repository,
 committed), both deterministic, and the I2 receipt.
+
+`declarations.json` also carries where a reader sees each definition: a member's own
+`source_url`, its line in the library at the pinned commit, and `references`, the constants
+from outside the library that the members' types name, each with the module DumpDeps found
+it in and, for a library the Lean doc site holds, its documentation URL.  The conventions
+task links from `00-conventions.tex` with these (`STYLE.md`, "The conventions section"):
+the probe indexes the library's own modules alone, so the dump's `referenced` table is the
+only place the module of `IsCompact` or `PseudoMetricSpace` is recorded.
 """
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,7 +60,17 @@ DECLARATIONS_SCHEMA = "formal-companion/informalize-declarations"
 SCHEMA_VERSION = 1
 #: a member's fields in scope.json, and an entry's in declarations.json (section 5.3)
 MEMBER_KEYS = ("name", "module", "path", "line", "kind", "depth", "reach", "proof_status")
-ENTRY_KEYS = ("name", "module", "path", "line", "start_line", "end_line", "kind", "signature")
+ENTRY_KEYS = ("name", "module", "path", "line", "start_line", "end_line", "kind", "signature",
+              "source_url")
+#: a row of declarations.json's `references`: a constant from outside the library that a
+#: member's type names, and where its definition is documented
+REFERENCE_KEYS = ("name", "module", "kind", "doc_url")
+#: where the libraries the Lean toolchain and Mathlib ship are documented: a module's page is
+#: the module path with `/` for `.`, and a declaration's anchor its full name
+DOC_SITE = "https://leanprover-community.github.io/mathlib4_docs/"
+#: the roots that site documents; a constant from any other library gets its module and no URL
+DOC_SITE_ROOTS = ("Mathlib", "Init", "Std", "Lean", "Batteries", "Aesop", "Qq", "Plausible",
+                  "ImportGraph", "LeanSearchClient", "Cli")
 #: how many names a refusal lists
 _SHOWN = 5
 
@@ -149,9 +168,62 @@ def public_records(index: Path) -> dict[str, dict]:
     return out
 
 
+def doc_url(module: Any, name: str) -> str:
+    """Where a constant of another library is documented, or `""` for a library the doc site
+    does not hold.  `Mathlib.Topology.Basic` and `IsCompact` ->
+    `.../Mathlib/Topology/Basic.html#IsCompact`."""
+    if not isinstance(module, str) or not module:
+        return ""
+    if module.split(".")[0] not in DOC_SITE_ROOTS:
+        return ""
+    return f"{DOC_SITE}{module.replace('.', '/')}.html#{name}"
+
+
+def source_url(url: Any, commit: str, path: Any, line: Any) -> str:
+    """A declaration's line in the library's own source at the pinned commit, as a web URL.
+
+    `informalize.yaml`'s `library.url` is an https URL (`config.URL_PATTERN`), and the
+    annotation cards build their destination the same way
+    (`annotations.export.informal_markers`); anything else gets no link."""
+    if not isinstance(url, str) or not re.match(config.URL_PATTERN, url):
+        return ""
+    if not isinstance(path, str) or not isinstance(line, int) or isinstance(line, bool):
+        return ""
+    return f"{url.rstrip('/').removesuffix('.git')}/blob/{commit}/{path}#L{line}"
+
+
+def reference_table(graph: dict[str, dict], members: list[dict], referenced: Any) -> list[dict]:
+    """The constants from outside the library that the members' *types* name, each with the
+    module the dump found it in and its documentation URL, sorted by name.
+
+    DumpDeps' `referenced` table (`scripts/detect/DumpDeps.lean.tmpl`) is the only place a
+    module is recorded for a constant the probe does not index: the probe indexes the
+    library's own modules alone.  Types, not values: what a statement can mention is what the
+    conventions have to explain (`00-conventions.tex`), and a proof term names hundreds of
+    constants no reader of the text meets.  A generated or private name (a component starting
+    with `_`) is left out, and so is a constant no module holds."""
+    modules: dict[str, dict] = {}
+    for row in referenced if isinstance(referenced, list) else []:
+        if isinstance(row, dict) and isinstance(row.get("name"), str):
+            modules[row["name"]] = row
+    out: list[dict] = []
+    for name in sorted({dep for member in members for dep in graph[member["name"]]["type_deps"]
+                        if dep not in graph}):
+        row = modules.get(name)
+        module = row.get("module") if isinstance(row, dict) else None
+        if not isinstance(module, str) or module == "<none>" \
+                or any(part.startswith("_") for part in name.split(".")):
+            continue
+        kind = row.get("kind") if isinstance(row.get("kind"), str) else ""
+        out.append({"name": name, "module": module, "kind": kind,
+                    "doc_url": doc_url(module, name)})
+    return out
+
+
 def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.SourceTree
-            ) -> tuple[list[dict], list[dict], dict]:
-    """``(members, declarations, counts)``: section 6.2 on a dump, an index and a source tree."""
+            ) -> tuple[list[dict], list[dict], list[dict], dict]:
+    """``(members, declarations, references, counts)``: section 6.2 on a dump, an index and a
+    source tree."""
     found = library.deps_problems(deps, cfg)
     if found:
         raise CfError(found[0], hint="fetch the library again, or correct informalize.yaml "
@@ -207,7 +279,10 @@ def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.So
         entries.append({"name": name, "module": rec.get("module"), "path": rec.get("path"),
                         "line": rec.get("line"), "start_line": rec.get("start_line"),
                         "end_line": rec.get("end_line"), "kind": rec.get("kind"),
-                        "signature": signature if isinstance(signature, str) else ""})
+                        "signature": signature if isinstance(signature, str) else "",
+                        "source_url": source_url(cfg["library"].get("url"),
+                                                 cfg["library"]["commit"], rec.get("path"),
+                                                 rec.get("line"))})
     if problems:
         raise CfError(f"{len(problems)} member(s) of the scope are not where library/src/ says: "
                       + problems[0], hint="; ".join(problems[1:_SHOWN]) or
@@ -223,7 +298,9 @@ def compute(cfg: dict, deps: Any, records: dict[str, dict], source: itemtable.So
         "by_proof_status": dict(sorted(Counter(m["proof_status"] for m in members).items())),
         "unsigned": unsigned,
     }
-    return members, entries, counts
+    references = reference_table(graph, members, deps.get("referenced"))
+    counts["references"] = len(references)
+    return members, entries, references, counts
 
 
 @dataclass
@@ -255,9 +332,9 @@ def scope(workspace, informalize_id: str) -> ScopeResult:
     except (OSError, json.JSONDecodeError) as exc:
         raise CfError(f"{deps_path} is not readable JSON ({exc})",
                       hint="fetch the library again (stage I1)") from None
-    members, entries, counts = compute(cfg, deps, public_records(index),
-                                       itemtable.SourceTree(paths.informalize_library_src(
-                                           informalize_id)))
+    members, entries, references, counts = compute(
+        cfg, deps, public_records(index),
+        itemtable.SourceTree(paths.informalize_library_src(informalize_id)))
     library_block = {"commit": cfg["library"]["commit"], "module": cfg["library"]["module"],
                      "prefix": cfg["library"]["prefix"]}
     scope_doc = {"schema": SCOPE_SCHEMA, "schema_version": SCHEMA_VERSION, "id": informalize_id,
@@ -266,8 +343,9 @@ def scope(workspace, informalize_id: str) -> ScopeResult:
                  "counts": counts, "members": members}
     declarations = {"schema": DECLARATIONS_SCHEMA, "schema_version": SCHEMA_VERSION,
                     "library": {"commit": cfg["library"]["commit"],
-                                "theorem": cfg["library"]["theorem"]},
-                    "declarations": entries}
+                                "theorem": cfg["library"]["theorem"],
+                                "url": cfg["library"].get("url") or ""},
+                    "declarations": entries, "references": references}
     found = itemtable.declarations_problems(declarations)
     if found:
         raise CfError(f"the scope would write a declarations.json the item table refuses: "

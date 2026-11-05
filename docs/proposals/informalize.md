@@ -268,7 +268,7 @@ never by an agent:
              "prefix": "ExampleLib"},
  "source_date_epoch": null,
  "boxes": {"res_dpi": 288, "ink_level": 224, "pad_bp": 3.0, "frame_bp": 4.0},
- "tex_packages": ["amsmath.sty", "amssymb.sty", "amsthm.sty", "keyval.sty",
+ "tex_packages": ["amsmath.sty", "amssymb.sty", "amsthm.sty", "keyval.sty", "xspace.sty",
                   "zref-savepos.sty", "zref-abspage.sty", "lmodern.sty", "t1lmr.fd",
                   "geometry.sty", "xcolor.sty", "hyperref.sty"]}
 ```
@@ -304,11 +304,24 @@ dependency path from the theorem (the theorem is a member, at 0; a constant walk
 but not listed, section 6.2, counts nothing), and `reach` `type` when the member is reached
 through types alone, else `value`.
 `declarations.json` (output repository; `schema` `formal-companion/informalize-declarations`,
-`schema_version` 1, and `library` with the `commit` and the `theorem`) is what the runtime
-and the gate read, one entry per scope member sorted by name:
-`{name, module, path, line, start_line, end_line, kind, signature}` (`signature` empty for an
-unsigned member). It carries no docstrings: drafters read those in the library's source,
-and the cards' statements are cut from it (section 10).
+`schema_version` 1, and `library` with the `commit`, the `theorem` and the `url`) is what the
+runtime and the gate read, one entry per scope member sorted by name:
+`{name, module, path, line, start_line, end_line, kind, signature, source_url}` (`signature`
+empty for an unsigned member; `source_url` the member's line in the library at the pinned
+commit, empty when `library.url` is not a web URL). It carries no docstrings: drafters read
+those in the library's source, and the cards' statements are cut from it (section 10).
+
+`references`, beside `declarations`, is where a reader sees the definitions the text leans
+on: one row `{name, module, kind, doc_url}`, sorted by name, for each constant from *outside*
+the library that a member's **type** names (`type_deps` in the dump; a proof term names
+hundreds of constants no reader of the text meets, and a generated or private name is left
+out). The probe indexes the library's own modules alone, so DumpDeps' `referenced` table is
+the only place the module of `IsCompact` or of a typeclass is recorded. `doc_url` is
+`https://leanprover-community.github.io/mathlib4_docs/<Module/path>.html#<Name>` for the
+libraries that site documents (Mathlib, Init, Std, Lean, Batteries and the tools they ship
+with) and empty for any other, which keeps its module. The conventions task links each
+notion it fixes to one of these two URLs (`STYLE.md`, "The conventions section"); an older
+`declarations.json` that carries no `references` is read as before.
 
 ### 5.4 `informal/items.json`
 
@@ -648,7 +661,8 @@ hold, or holds with fewer lines than the index's range: the index and the archiv
 one tree, and the drafters and the cards read the statement there. It writes `scope.json` and
 `repo/informal/declarations.json` (section 5.3), both deterministic, commits the latter, and
 writes the I2 receipt (inputs the index, `deps.json` and `src.tar`; outputs the two files;
-checks the counts, among them how many members were reached through types alone). It warns
+checks the counts, among them how many members were reached through types alone, and how many
+constants from outside the library the members' types name). It warns
 when `items.json` was drafted against another `declarations.json`, which `check-items` then
 refuses.
 
@@ -698,7 +712,9 @@ tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output re
 - `\fcdefhyp{<\macro>}{<key>}{<words>}`, used in `notation.sty`, defines `<\macro>` to print
   the words and record `\fc@auxhyp{<id>}{<letter>}{<key>}`, and `<\macro>*` to print them
   only (for a hypothesis named on one side of an equivalence); it records
-  `\fc@auxhypdef{<key>}{<\macro>}`.
+  `\fc@auxhypdef{<key>}{<\macro>}`. The words end with `\xspace`, so a macro followed by a
+  word keeps the space TeX drops after a control word (`\hypOpen and` prints "... open and")
+  and one followed by punctuation gains none.
 - `\fcref{<number>}` prints the citation `[<label>, <number>]` of the bibliography entry
   `reference` and records `\fc@auxref{<id>}{<letter>}{<number>}{}`; `\fcref*{<number>}`,
   for a number whose `source` is `inferred`, adds a dagger and records `*` as the fourth
@@ -960,22 +976,40 @@ is not known, so no phase relies on `depends_on`.
   a key was left out). Its timeout is long (`--agent-timeout 2h`).
 - **conventions.** Fixes the notation, the letters and their one meaning each, the standing
   hypotheses (`hypotheses.json` and their `\fcdefhyp` lines) and the junk-value conventions
-  in `00-conventions.tex`; writes the project half of the style rules.
+  in `00-conventions.tex`; writes the project half of the style rules. It carries everything
+  the items would otherwise repeat -- the ambient objects and their structure, the typeclass
+  and universe binders, the index type of a family, the coercions, the side conditions the
+  library discharges inside a statement -- and says which definition of the library each
+  standard term it fixes is, linked to `declarations.json`'s `source_url` or to the matching
+  row of its `references` (section 5.3). The items link to nothing.
 - **draft.** Writes its section's items in `items.json` order, following `STYLE.md` and
   `STYLE-project.md`: statements follow the elaborated signature (hypotheses, quantifiers,
-  ℕ versus ℤ, coercions), one `\itempart` per part, a `\leanref` per key declaration, a
+  ℕ versus ℤ, coercions) and read as a good textbook prints them (standard terms, the
+  conventions' notation, nothing the conventions already fix, and no term that assumes more
+  than the signature binds), one `\itempart` per part, a `\leanref` per key declaration, a
   sentence per junk value, `\fcref` where a reference number is given, at most a sentence or
   two of connecting prose.
 - **attack.** Two independent attackers per section edit nothing: `lean-first` starts from
   each key declaration and asks whether the text says it, `tex-first` from the text and asks
   whether the Lean proves it. A statement is right only when each side follows from the
-  other by logic alone, read as a mathematician reads it. Severity is `wrong` (a reader
-  infers something false or misses a hypothesis), `imprecise` (ambiguous) or `style`.
+  other by logic alone, read as a mathematician reads it. Severity is a judgment on
+  *meaning*: `wrong` when a competent reader could take the text to state mathematics the
+  Lean does not prove (a hypothesis dropped or added, a quantifier the wrong way round, a
+  junk value stated as a fact), `imprecise` when such a reader could take it two ways and
+  one is not the Lean's, and `style` for everything else. Unidiomatic, wordy or
+  unconventional wording, and a statement silent about what the conventions fix, are
+  `style`, and a `style` finding's fix makes the text shorter or more standard, never
+  longer. An attacker who cannot state the misreading writes `style`.
 - **judge.** Rules on every finding of its section's two attack documents, checking each
   against the Lean, fixes the real ones in its own section with the smallest change, and
-  turns a fix outside its section into a request for the editor.
+  turns a fix outside its section into a request for the editor. A `wrong` or `imprecise`
+  finding is real only when the ruling's reason says what the reader would take the text to
+  mean; a `style` finding is real only when its fix is shorter or more standard and no less
+  faithful.
 - **edit.** One editor applies the judge run's requests to the shared files and the sections
-  they name, and answers each (`done` or `declined`, with the reason). A change to
+  they name, and answers each (`done` or `declined`, with the reason). A notion a statement
+  leans on that the conventions do not fix is fixed in `00-conventions.tex`, with its link,
+  and the statement stays as it is: the conventions grow so that the items do not. A change to
   `items.json` is never made in a run: it is a proposal the maintainer applies by hand and
   approves again (section 13). After the judge run and its edit run, `attack` runs again on
   the touched sections, the judges' own fixes among them (section 8.1), and `judge` and
@@ -1121,8 +1155,9 @@ Exit 0 passes, 1 is a verdict with its `VALIDATION FAILED` list, and 3 is the ga
 failure (a moved pinned file, a missing sibling or program, a refused command line), which
 is never a finding of the worker's; every call appends a line to the gate log. The reviewer is an LLM with the diff
 and the gate's output; it refuses what the brief forbids that no rule can see (the reference
-work's prose, asides, a letter with two meanings), and it never approves a change the gate
-refused.
+work's prose, asides, a letter with two meanings, a statement that spells out what a
+standard term or the conventions already say, a conventions link to a URL
+`declarations.json` does not give), and it never approves a change the gate refused.
 
 ### 8.4 The briefs
 
@@ -1133,7 +1168,8 @@ paths; commit in the task's worktree as you go; build only with the gate's tools
 never write or closely paraphrase the reference work's prose, and cite its numbers only
 through `\fcref`; adapt the library's docstrings only under its license; plain English, name
 every object, no letter with two meanings, number an equation only when it is cited, no
-asides, no notes about the drafting process in the text. Context comes from `items.json`,
+asides, no notes about the drafting process in the text; and a statement that reads as a
+good textbook prints it while saying exactly what the Lean says (section 8.2, `STYLE.md`). Context comes from `items.json`,
 `declarations.json`, `data/` and the library's source under
 `<remote_root>/library-src/<id>-<commit>/`,
 never from pasted reports.

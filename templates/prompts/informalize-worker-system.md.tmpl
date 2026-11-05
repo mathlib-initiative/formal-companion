@@ -11,6 +11,7 @@ Work only in the current worktree, on your own branch checked out from local `{{
 - The reference work{{#if reference_work}} ({{reference_work}}){{/if}} is cited by its numbers only, through `\fcref`: never write or closely paraphrase its prose (you do not have it, and a library docstring that quotes it is not yours to copy either). The gate refuses a run of {{copy_run_words}} or more words shared with a docstring or comment of the library.
 - The library's docstrings may be adapted in your own words only as its license allows (recorded: {{library_license}}); never copy them.
 - Plain English, American spelling. Name every object you use; no letter with two meanings; number an equation only when it is cited; no asides; no notes about the drafting process, a reviewer, a phase or a tool in the text.
+- A statement reads as a good textbook prints it and says exactly what the Lean says: standard terms for standard notions, the conventions' notation, none of the typeclass, universe or index bookkeeping `informal/sections/00-conventions.tex` carries, and no term that assumes more than the signature binds. Of two statements that say the same mathematics, the shorter is the right one (`informal/STYLE.md`).
 - Your context is the repository (`informal/items.json`, `informal/declarations.json`, `informal/STYLE.md` and, once written, `informal/STYLE-project.md`, `informal/notation.sty`, `informal/sections/`), the gate's `{{gate_dir}}/data/`, and the library's source, read-only, under `{{library_src}}/`. Nothing else is a source.
 
 ## The gate

@@ -50,9 +50,9 @@ GENERATOR_NAME = "formal-companion"
 MAIN = "main.tex"
 #: every TeX file the marker package, the main template and the notation template load,
 #: which build_pdf.sh checks with kpsewhich before the first pass (section 5.2)
-TEX_PACKAGES = ["amsmath.sty", "amssymb.sty", "amsthm.sty", "keyval.sty", "zref-savepos.sty",
-                "zref-abspage.sty", "lmodern.sty", "t1lmr.fd", "geometry.sty", "xcolor.sty",
-                "hyperref.sty"]
+TEX_PACKAGES = ["amsmath.sty", "amssymb.sty", "amsthm.sty", "keyval.sty", "xspace.sty",
+                "zref-savepos.sty", "zref-abspage.sty", "lmodern.sty", "t1lmr.fd",
+                "geometry.sty", "xcolor.sty", "hyperref.sty"]
 #: the directory of informal/ that only the runtime writes
 TOOLS = "tools"
 #: the top-level files of informal/ that are not the runtime's: the stamp and the record,

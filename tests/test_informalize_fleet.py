@@ -5,6 +5,8 @@ New code, for docs/proposals/informalize.md sections 8.1 to 8.3 (component 5a of
 tests/test_e2e_informalize_synthetic.py; this module holds the parts to their rules one at a
 time:
 
+* the register the briefs and `STYLE.md` ask for: a statement that reads as a textbook
+  prints it and says exactly what the Lean says, and a severity ruled on meaning;
 * the gate's copies of the vocabulary are cflib's, and it stands alone (standard library and
   its siblings only; a missing sibling is exit 3, never a verdict);
 * the document rules (6 and 7) on the specification's own attack and ruling examples, and
@@ -67,6 +69,59 @@ def scratch(case: unittest.TestCase) -> Path:
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# what the briefs and the style rules ask for
+
+class TestTheRegister(unittest.TestCase):
+    """Section 8.2: a statement reads as a good textbook prints it and says exactly what the
+    Lean says, and a finding is `wrong` or `imprecise` only on meaning.  The rules live in
+    `STYLE.md` and in the prompts, so these are the only place they can be held to the
+    specification."""
+
+    STYLE = (SKILL / "templates" / "informalize" / "runtime" / "STYLE.md").read_text(
+        encoding="utf-8")
+
+    @staticmethod
+    def prompt(name: str) -> str:
+        return (SKILL / "templates" / "prompts" / f"informalize-{name}.md.tmpl").read_text(
+            encoding="utf-8")
+
+    def test_style_md_binds_both_halves(self):
+        for heading in ("## Statements: exactly the Lean, in a mathematician's words",
+                        "### Exactly the Lean", "### In a mathematician's words",
+                        "## The conventions section"):
+            self.assertIn(heading, self.STYLE)
+        # the two halves, each in one sentence a drafter can act on
+        self.assertIn("Add nothing the Lean does not have", self.STYLE)
+        self.assertIn("Of two statements that say the same mathematics, the shorter is the "
+                      "right one", self.STYLE)
+        # the links the conventions write come from the data the scope carries
+        self.assertIn("`source_url`", self.STYLE)
+        self.assertIn("`references`", self.STYLE)
+
+    def test_the_attackers_and_the_judge_rule_on_meaning(self):
+        attack = self.prompt("attack")
+        self.assertIn("Rule on meaning, not on wording", attack)
+        self.assertIn("never `wrong` or `imprecise`", attack)
+        self.assertIn("shorter or more standard, never longer", attack)
+        self.assertIn("the severity is `style`", attack)
+        judge = self.prompt("judge")
+        self.assertIn("You rule on meaning", judge)
+        self.assertIn("shorter or more standard and no less faithful", judge)
+        self.assertIn("`not_real`", judge)
+
+    def test_the_writing_briefs_ask_for_a_textbook_statement(self):
+        for name in ("draft", "worker-system", "reviewer-system"):
+            with self.subTest(prompt=name):
+                self.assertIn("textbook", self.prompt(name))
+        self.assertIn("never more", self.prompt("draft"))
+        conventions = self.prompt("conventions")
+        self.assertIn("`references`", conventions)
+        self.assertIn("source_url", conventions)
+        self.assertIn("The conventions section", conventions)
+        self.assertIn("the conventions grow so that the items do not", self.prompt("edit"))
 
 
 # ---------------------------------------------------------------------------

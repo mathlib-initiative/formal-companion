@@ -52,9 +52,9 @@ SLOTS = {
                        "through `\\fcref`.",
 }
 
-TEX_PACKAGES = ["amsmath.sty", "amssymb.sty", "amsthm.sty", "keyval.sty", "zref-savepos.sty",
-                "zref-abspage.sty", "lmodern.sty", "t1lmr.fd", "geometry.sty", "xcolor.sty",
-                "hyperref.sty"]
+TEX_PACKAGES = ["amsmath.sty", "amssymb.sty", "amsthm.sty", "keyval.sty", "xspace.sty",
+                "zref-savepos.sty", "zref-abspage.sty", "lmodern.sty", "t1lmr.fd",
+                "geometry.sty", "xcolor.sty", "hyperref.sty"]
 
 CONFIG = {
     "schema": "formal-companion/informalize-runtime", "schema_version": 1,
@@ -70,9 +70,11 @@ CONFIG = {
 
 def _decl(name: str, kind: str, line: int, signature: str) -> dict:
     module = "ExampleLib.Topology.Glue.Basic"
-    return {"name": name, "module": module, "path": module.replace(".", "/") + ".lean",
+    path = module.replace(".", "/") + ".lean"
+    return {"name": name, "module": module, "path": path,
             "line": line, "start_line": line - 2, "end_line": line + 6, "kind": kind,
-            "signature": signature}
+            "signature": signature,
+            "source_url": f"{SLOTS['library_url']}/blob/{COMMIT}/{path}#L{line}"}
 
 
 DECLARATIONS = {"declarations": sorted([
@@ -100,7 +102,17 @@ DECLARATIONS = {"declarations": sorted([
           "∀ (n : ℕ), ExampleLib.chain n"),
     _decl("ExampleLib.chain_short", "theorem", 90,
           "∀ (n : ℕ), ExampleLib.chain (n + 1) → ExampleLib.chain n"),
-], key=lambda d: d["name"])}
+], key=lambda d: d["name"]),
+    # what the conventions link to: the constants from outside ExampleLib its statements
+    # name, as `cf informalize scope` writes them (section 5.3)
+    "references": [
+        {"name": "IsOpen", "module": "Mathlib.Topology.Defs.Basic", "kind": "def",
+         "doc_url": "https://leanprover-community.github.io/mathlib4_docs/"
+                    "Mathlib/Topology/Defs/Basic.html#IsOpen"},
+        {"name": "Set", "module": "Mathlib.Data.Set.Defs", "kind": "inductive",
+         "doc_url": "https://leanprover-community.github.io/mathlib4_docs/"
+                    "Mathlib/Data/Set/Defs.html#Set"},
+    ]}
 
 
 def _key(name: str, part: str | None, hypotheses: list[str] | None = None) -> dict:

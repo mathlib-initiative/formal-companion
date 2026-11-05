@@ -16,7 +16,11 @@
 %                                 or part, and prints nothing
 %   \fcdefhyp{\hypOpen}{open}{$U$ and $V$ are open}      (in notation.sty)
 %       \hypOpen prints the words and records the hypothesis `open';
-%       \hypOpen* prints them only (one side of an equivalence, say)
+%       \hypOpen* prints them only (one side of an equivalence, say).
+%       TeX drops the space after a control word, and \@ifstar drops one
+%       before the token it looks at, so the words end with \xspace: it puts
+%       the space back before a letter ("\hypOpen and" prints "... open and")
+%       and adds none before punctuation ("\hypOpen." prints "... open.")
 %   \fcref{Theorem 4.1}           "[1, Theorem 4.1]": a number of the
 %   \fcref*{Theorem 4.1}          reference work (bibliography key
 %                                 `reference'); the star adds a dagger, which
@@ -57,6 +61,7 @@
 
 \RequirePackage{amsthm}
 \RequirePackage{keyval}
+\RequirePackage{xspace}
 \RequirePackage{zref-savepos}
 \RequirePackage{zref-abspage}
 
@@ -313,6 +318,8 @@
 
 % \fcdefhyp{\macro}{key}{words}: a standing hypothesis, in fixed words that
 % the checks can find.  Used in notation.sty, once per key of hypotheses.json.
+% The words end with \xspace, so "\hypOpen and" keeps the space TeX drops
+% after a control word, and "\hypOpen." gains none.
 \newcommand\fcdefhyp[3]{%
   \ifdefined#1%
     \PackageError{fcmarkers}{\string#1 is already defined}%
@@ -322,7 +329,7 @@
     \PackageError{fcmarkers}{Hypothesis `#2' is defined twice}%
       {Each key of hypotheses.json has one \string\fcdefhyp.}}%
   \expandafter\global\expandafter\let\csname fc@hypkey@#2\endcsname\@empty
-  \DeclareRobustCommand#1{\@ifstar{#3}{\fc@hyp{#2}#3}}%
+  \DeclareRobustCommand#1{\@ifstar{#3\xspace}{\fc@hyp{#2}#3\xspace}}%
   \global\fc@hypdefs\expandafter{\the\fc@hypdefs
     \fc@auxwrite{\string\fc@auxhypdef{#2}{\string#1}}}}
 

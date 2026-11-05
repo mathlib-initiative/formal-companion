@@ -339,7 +339,8 @@ def _order_problems(doc: dict, numbered: bool) -> list[str]:
 # declarations.json, and the table against it and the library's source
 
 def declarations_problems(doc: Any) -> list[str]:
-    """Section 5.3's `declarations.json`: one entry per scope member, sorted by name."""
+    """Section 5.3's `declarations.json`: one entry per scope member, sorted by name, and the
+    `references` the conventions link to (:func:`references_problems`)."""
     rows = doc.get("declarations") if isinstance(doc, dict) else None
     if not isinstance(rows, list):
         return ["declarations.json: no `declarations` list"]
@@ -369,11 +370,47 @@ def declarations_problems(doc: Any) -> list[str]:
                        f"({', '.join(KEYWORDS)})")
         if not isinstance(row.get("signature"), str):
             out.append(f"{at}: signature is not text")
+        if not isinstance(row.get("source_url", ""), str):
+            out.append(f"{at}: source_url is not text")
     if len(set(names)) != len(names):
         twice = sorted({n for n in names if names.count(n) > 1})
         out.append(f"declarations.json: listed twice: {', '.join(twice[:5])}")
     if names != sorted(names):
         out.append("declarations.json: the entries are not sorted by name")
+    return out + references_problems(doc)
+
+
+def references_problems(doc: Any) -> list[str]:
+    """Section 5.3's `references`, which an older `declarations.json` may not carry: the
+    constants from outside the library that a member's type names, sorted by name, each with
+    the module the dependency dump found it in and the URL of its documentation (empty for a
+    library the Lean doc site does not hold)."""
+    rows = doc.get("references") if isinstance(doc, dict) else None
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        return ["declarations.json: `references` is not a list"]
+    out: list[str] = []
+    names: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            out.append(f"declarations.json: a reference that is not an object: {row!r}")
+            continue
+        name = row.get("name")
+        if not isinstance(name, str) or not re.match(DECLARATION_PATTERN, name):
+            out.append(f"declarations.json: reference name {name!r} is not a full name")
+            continue
+        names.append(name)
+        at = f"declarations.json reference {name}"
+        if not isinstance(row.get("module"), str) or not re.match(MODULE_PATTERN, row["module"]):
+            out.append(f"{at}: module {row.get('module')!r} is not a module name")
+        if not isinstance(row.get("doc_url", ""), str):
+            out.append(f"{at}: doc_url is not text")
+    if len(set(names)) != len(names):
+        twice = sorted({n for n in names if names.count(n) > 1})
+        out.append(f"declarations.json: a reference listed twice: {', '.join(twice[:5])}")
+    if names != sorted(names):
+        out.append("declarations.json: the references are not sorted by name")
     return out
 
 

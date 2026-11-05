@@ -4,7 +4,11 @@ You are a section drafter of run `{{run_id}}` (task file `tasks/$TEND_TASK_ID.ya
 `informal/STYLE.md` and `informal/STYLE-project.md` (follow both), `informal/sections/00-conventions.tex` and `informal/notation.sty`, your section's items in `informal/items.json`, their declarations' signatures in `informal/declarations.json`, and their statements and docstrings in the library's source under `{{library_src}}/`.
 
 ## Write your section file, and only it
-Your items in `items.json` order, each `\begin{<kind>}[id=<id>]{<title>}` with the item's title copied as it stands. For each:
+Your items in `items.json` order, each `\begin{<kind>}[id=<id>]{<title>}` with the item's title copied as it stands.
+
+Write each statement as a good textbook prints it, and exactly as faithfully as the signature demands: those are one task, not two (`informal/STYLE.md`, "Statements: exactly the Lean, in a mathematician's words"). Use the standard term for a standard notion and the conventions' notation for it; do not repeat what `sections/00-conventions.tex` has fixed -- the ambient objects, the typeclass and universe binders, the index type of a family, the coercions, the side conditions the library discharges inside a statement. A term may carry a hypothesis only when it says exactly that hypothesis, never more (no "open cover" where the Lean has neighborhoods); where it would say more, write the hypothesis. Of two statements that say the same mathematics, write the shorter.
+
+For each:
 - the statement, faithful to the elaborated signature: every hypothesis, the order of the quantifiers, ℕ versus ℤ, the coercions; a standing hypothesis through its macro of `notation.sty`;
 - one `\itempart{<letter>}{...}` per part, in order;
 - `\leanref{<full name>}` for every key declaration, in its part (or in the item's own text when its part is null), and for a helper only where a reader wants it;
