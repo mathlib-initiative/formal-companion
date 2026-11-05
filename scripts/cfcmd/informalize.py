@@ -10,7 +10,8 @@ section 3:
     cf informalize status <id>
     cf informalize build-command <id> --host H [--min-free-gb 60] [--lean-threads 16]
     cf informalize fetch-library <id> --host H --execute --i-have-consent
-    cf informalize verso-command <id> --host H [--verso-rev v4.36.0-rc2] [--lean-threads 16]
+    cf informalize verso-command <id> --host H [--verso-rev v4.36.0-rc2] [--min-free-gb 60]
+        [--lean-threads 16]
     cf informalize scope <id>
     cf informalize check-items <id>
     cf informalize approve <id> items --by <name> --in-v1 <ids|all>
@@ -131,6 +132,11 @@ def register(subparsers) -> None:
     vc.add_argument("--verso-rev", metavar="REV",
                     help="the Verso revision to build against (default: the tag of the "
                          "library's own toolchain, e.g. v4.36.0-rc2)")
+    vc.add_argument("--min-free-gb", type=int, default=library.DEFAULT_MIN_FREE_GB,
+                    metavar="GB",
+                    help="the host's disk floor in GiB, which the job never goes below "
+                         f"(default {library.DEFAULT_MIN_FREE_GB}; it copies I1's built "
+                         "checkout, a second whole library)")
     vc.add_argument("--lean-threads", type=int, default=library.DEFAULT_LEAN_THREADS,
                     metavar="N", help="LEAN_NUM_THREADS of the build (default "
                                       f"{library.DEFAULT_LEAN_THREADS})")
@@ -229,6 +235,7 @@ def _build_command(args) -> int:
 def _verso_command(args) -> int:
     workspace = from_args(args)
     built = library.verso_command(workspace, args.id, args.host, verso_rev=args.verso_rev,
+                                  min_free_gb=args.min_free_gb,
                                   lean_threads=args.lean_threads)
     for line in built.lines:
         print(line)

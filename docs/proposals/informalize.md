@@ -1338,7 +1338,8 @@ approval at the current PDF's sha256, then, in the output repository:
 has nothing to tint and no hover to show. `docs/overlay.md` section 5 lets such a companion
 commit a `pdf-overlay/verso.json` cut from a Verso build of the commit its cards pin, made
 elsewhere, and **`cf informalize verso-command <id> --host H [--verso-rev REV]
-[--lean-threads N]`** is that build, in the shape of `build-command`: it writes
+[--min-free-gb 60] [--lean-threads N]`** is that build, in the shape of `build-command`: it
+writes
 `verso/to-host/` — the drivers (`scripts/informalize/verso_host.sh` and `verso_host.py`,
 `scripts/corpus/universe_host.py`, and the overlay's own
 `templates/overlay/runtime/tools/verso_extract.py` with the module it imports), the same
@@ -1346,7 +1347,9 @@ one-line `library.tsv` I1 read, and `verso-command.sh` — and prints the lines 
 them and the output repository's `pdf-overlay/annotations.bundle.json` to the host and
 start the job there, detached. It runs nothing, and the revision it names is the tag of the
 library's own toolchain (`library/host/lean-toolchain`, which I1 brought back) unless
-`--verso-rev` says otherwise: Verso is released once per Lean release.
+`--verso-rev` says otherwise: Verso is released once per Lean release, so `v<version>`
+answers for a *released* version and for nothing else — against a nightly or a pr-release
+toolchain the command refuses to guess and asks for the commit Verso built against it.
 
 On the host, `verso_host.sh` works in `verso/libs/<id>-lib`, a copy of I1's checkout (with
 its built dependencies) or a clone when I1's is gone, never in I1's tree, because the next
@@ -1365,6 +1368,17 @@ rendered whole for a dozen pages; `lake build :literateHtml`; and `verso_extract
 the counts beside it. A Verso that does not match the toolchain shows up at the literate
 build as `missing data file for module ...` from the pages' tool — it reads the library's
 build at another level than the toolchain writes it — and the script says so there.
+
+**What it costs the host.** The copy is a second whole built library — tens of GiB — and
+where I1's `.lake` is already gone the clone that replaces it must fetch Mathlib's cache
+and build instead, which costs more. So the script reads `MIN_FREE_GB` as the universe
+driver does (the same default, and the printed line passes `--min-free-gb`, 60), measures
+the checkout it is about to copy, and stops above the floor (exit 3) rather than fill the
+filesystem that also holds I1's tree; it raises the open-file limit before `lake exe cache
+get`, which is what Mathlib's cache unpacker needs it for; and it takes I1's own
+`library_host.lock` for the copy alone, so the tree it copies is never one a concurrent
+`library_host.sh` is still writing — opened for reading, so even that writes nothing in
+`$ATLAS_ROOT`. The last printed line takes the copy away again.
 
 The maintainer brings that file back with the printed `rsync` line, commits it in the
 output repository as `pdf-overlay/verso.json` — the one file of `pdf-overlay/` that is the
@@ -1421,7 +1435,9 @@ network, and no Claude attribution anywhere.
 9. The overlay's hovers (section 10), after 7: `cf informalize verso-command`,
    `scripts/informalize/verso_host.sh` and `verso_host.py`, and the documented step that
    commits `pdf-overlay/verso.json` in the output repository. Tests on invented lakefiles,
-   manifests and bundles; the Verso build itself runs on the host (built).
+   manifests and bundles, and step 1 -- the copy of I1's checkout, its floor and I1's lock --
+   run as the host runs it against a stub `lake`; the Verso build itself runs on the host
+   (built).
 
 Optional later: blueprint-style `\lean{}` and `\label{}` from `fcmarkers.sty`, so the audit's
 `blueprint_tex` adapter can give the text a second, independent reading.

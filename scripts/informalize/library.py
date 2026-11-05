@@ -81,6 +81,8 @@ VERSO_COMMAND_FILE = "verso-command.sh"
 #: build is for (docs/overlay.md section 5)
 BUNDLE = "pdf-overlay/annotations.bundle.json"
 VERSO_FILE = "pdf-overlay/verso.json"
+#: a released Lean version, the only kind whose Verso tag `default_verso_rev` may assume
+RELEASE_VERSION = re.compile(r"\d+\.\d+\.\d+(-rc\d+)?\Z")
 DEFAULT_MIN_FREE_GB = 60
 DEFAULT_LEAN_THREADS = 16
 #: the license files library_host.sh copies from the checkout's root, in its order
@@ -267,6 +269,27 @@ class BuildCommand:
     files: dict[str, str] = field(default_factory=dict)
 
 
+def _write_to_host(to_host: Path, files: list[str], fields: list[str]) -> dict[str, str]:
+    """`<to-host>/drivers/` from this checkout and the one-line `library.tsv` beside it, as
+    both build-command and verso-command send them, with the sha256 of each.  The drivers
+    are rewritten whole every time, so a file this checkout dropped does not linger."""
+    drivers = to_host / "drivers"
+    if drivers.exists():
+        shutil.rmtree(drivers)
+    drivers.mkdir(parents=True)
+    root = skill_root()
+    written: dict[str, str] = {}
+    for relative in files:
+        target = drivers / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((root / relative).read_bytes())
+        os.chmod(target, 0o644)
+        written[f"drivers/{relative}"] = sha256_file(target)
+    (to_host / LIBRARY_LIST).write_text("\t".join(fields) + "\n", encoding="utf-8")
+    written[LIBRARY_LIST] = sha256_file(to_host / LIBRARY_LIST)
+    return written
+
+
 def build_command(workspace, informalize_id: str, host_name: str, *,
                   min_free_gb: int = DEFAULT_MIN_FREE_GB,
                   lean_threads: int = DEFAULT_LEAN_THREADS) -> BuildCommand:
@@ -280,20 +303,7 @@ def build_command(workspace, informalize_id: str, host_name: str, *,
     fields = universe_fields(cfg)
     _check_home(workspace, informalize_id)
     to_host = workspace.paths.informalize_library_to_host(informalize_id)
-    drivers = to_host / "drivers"
-    if drivers.exists():
-        shutil.rmtree(drivers)
-    drivers.mkdir(parents=True)
-    root = skill_root()
-    written: dict[str, str] = {}
-    for relative in host_files():
-        target = drivers / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((root / relative).read_bytes())
-        os.chmod(target, 0o644)
-        written[f"drivers/{relative}"] = sha256_file(target)
-    (to_host / LIBRARY_LIST).write_text("\t".join(fields) + "\n", encoding="utf-8")
-    written[LIBRARY_LIST] = sha256_file(to_host / LIBRARY_LIST)
+    written = _write_to_host(to_host, host_files(), fields)
     lines = _command_lines(cfg, host, remote, to_host, min_free_gb, lean_threads)
     script = "#!/bin/sh\nset -eu\n" + "\n".join(lines) + "\n"
     (to_host / COMMAND_FILE).write_text(script, encoding="utf-8")
@@ -359,23 +369,30 @@ def verso_host_files() -> list[str]:
 def default_verso_rev(paths, informalize_id: str) -> str:
     """The Verso revision of the library's toolchain: `v<version>` of `library/host/
     lean-toolchain`, which stage I1 brought back.  Verso is released once per Lean
-    release, so the tag of the toolchain's version is the one that builds against it."""
+    release, so the tag of the toolchain's version is the one that builds against it --
+    but only for a released version, since no Verso tag answers to a nightly or a
+    pr-release and `vnightly-2026-01-01` would be printed as if one did."""
     path = paths.informalize_library(informalize_id) / "host" / "lean-toolchain"
     toolchain = path.read_text(encoding="utf-8").strip() if path.is_file() else ""
     version = lean_version(toolchain)
-    if not version:
-        raise CfError(f"nothing says which Verso revision to build: no {path}",
+    if not RELEASE_VERSION.match(version):
+        said = f"{path} says {toolchain!r}, not a released version" if version else f"no {path}"
+        raise CfError(f"nothing says which Verso revision to build: {said}",
                       hint="run stage I1 first (`cf informalize fetch-library`), or name the "
                            "revision with --verso-rev (the tag of the library's toolchain, "
-                           "e.g. v4.36.0-rc2)")
+                           "e.g. v4.36.0-rc2; a nightly or a pr-release has no tag of its "
+                           "own, so name the commit Verso built against it)")
     return f"v{version}"
 
 
 def verso_command(workspace, informalize_id: str, host_name: str, *, verso_rev: str | None = None,
+                  min_free_gb: int = DEFAULT_MIN_FREE_GB,
                   lean_threads: int = DEFAULT_LEAN_THREADS) -> BuildCommand:
     """Write `verso/to-host/` and return the lines that build the library's literate HTML
     on the host and cut `pdf-overlay/verso.json` out of it."""
     cfg = config.load(workspace.paths, informalize_id, sessions=config.session_limit(workspace))
+    if isinstance(min_free_gb, bool) or not isinstance(min_free_gb, int) or min_free_gb < 0:
+        raise CfError(f"--min-free-gb {min_free_gb!r} is not a whole number of GiB")
     if isinstance(lean_threads, bool) or not isinstance(lean_threads, int) or lean_threads < 1:
         raise CfError(f"--lean-threads {lean_threads!r} is not a positive number")
     rev = verso_rev or default_verso_rev(workspace.paths, informalize_id)
@@ -392,41 +409,33 @@ def verso_command(workspace, informalize_id: str, host_name: str, *, verso_rev: 
     bundle = repo.target(BUNDLE)
     if bundle.is_symlink() or not bundle.is_file():
         raise CfError(f"the output repository has no {BUNDLE}",
-                      hint=f"`cf informalize overlay {informalize_id}` writes it (stage I7); "
-                           "the Verso build is cut to its cards")
+                      hint="`cf overlay export --convention informal-markers` and `cf overlay "
+                           "sync` write it (stage I7; `cf informalize overlay`, which will run "
+                           "them, is not implemented yet -- docs/overlay.md); the Verso build "
+                           "is cut to its cards")
     records = overlay_sync.bundle_records(bundle.read_bytes())
     if records is None:
         raise CfError(f"{BUNDLE} is not a readable annotation bundle",
-                      hint=f"`cf informalize overlay {informalize_id}` writes it")
+                      hint="`cf overlay export --convention informal-markers` writes it; "
+                           "`cf overlay check` says what is wrong with this one")
     cards = len(records)
-    drivers = to_host / "drivers"
-    if drivers.exists():
-        shutil.rmtree(drivers)
-    drivers.mkdir(parents=True)
-    root = skill_root()
-    written: dict[str, str] = {}
-    for relative in verso_host_files():
-        target = drivers / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((root / relative).read_bytes())
-        os.chmod(target, 0o644)
-        written[f"drivers/{relative}"] = sha256_file(target)
-    (to_host / LIBRARY_LIST).write_text("\t".join(fields) + "\n", encoding="utf-8")
-    written[LIBRARY_LIST] = sha256_file(to_host / LIBRARY_LIST)
-    lines = _verso_lines(cfg, host, remote, to_host, bundle, rev, lean_threads, cards)
+    written = _write_to_host(to_host, verso_host_files(), fields)
+    lines = _verso_lines(cfg, host, remote, to_host, bundle, rev, lean_threads, cards,
+                         min_free_gb)
     script = "#!/bin/sh\nset -eu\n" + "\n".join(lines) + "\n"
     (to_host / VERSO_COMMAND_FILE).write_text(script, encoding="utf-8")
     return BuildCommand(to_host=to_host, lines=lines, files=written)
 
 
 def _verso_lines(cfg: dict, host: dict, remote: RemoteRoot, to_host: Path, bundle: Path,
-                 rev: str, lean_threads: int, cards: int) -> list[str]:
+                 rev: str, lean_threads: int, cards: int, min_free_gb: int) -> list[str]:
     library = cfg["library"]
     ssh = shlex.quote(host["ssh"])
     repo = bundle.parent.parent
     bundle_name = PurePosixPath(BUNDLE).name
     start = (f"cd {remote.shell()} && mkdir -p verso/host && setsid -f env "
              f'ATLAS_ROOT="$PWD/library" VERSO_ROOT="$PWD/verso" VERSO_REV={shlex.quote(rev)} '
+             f"MIN_FREE_GB={min_free_gb} "
              f"LEAN_THREADS={lean_threads} bash verso/drivers/{VERSO_HOST_SCRIPT} "
              f"verso/{LIBRARY_LIST} verso/{bundle_name} >> verso/host/verso_host.log 2>&1 "
              "< /dev/null")
@@ -448,7 +457,10 @@ def _verso_lines(cfg: dict, host: dict, remote: RemoteRoot, to_host: Path, bundl
         "# and start the job there, detached. The library is built on the host, never here,",
         f"# in a copy of stage I1's checkout under {remote.text}/verso: the Verso require "
         "edits",
-        "# the lakefile, and I1's tree is left as it is.",
+        "# the lakefile, and I1's tree is left as it is. That copy is a second whole built",
+        f"# library (tens of GiB); the job stops above the {min_free_gb}G floor rather than "
+        "fill the",
+        "# disk, and the last line below takes the copy away again.",
         f"ssh -n {ssh} {shlex.quote('mkdir -p ' + remote.shell('verso/host'))}",
         f"rsync -a --delete {_quote_local(to_host / 'drivers')}/ "
         f"{ssh}:{remote.rsync('verso/drivers')}/",
