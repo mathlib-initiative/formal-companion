@@ -72,6 +72,7 @@ SUBCOMMANDS = {
     "apply": "5b",
     "pdf-command": "6", "fetch-pdf": "6",
     "overlay": "7", "check-site": "7",
+    "verso-command": "9",
 }
 #: The fleet phases (section 8.2), in the order they run.
 PHASES = ("items", "conventions", "draft", "attack", "judge", "edit")

@@ -88,6 +88,28 @@ release has something to say.
 
 ### Added
 
+- **An informal companion's cards can show the library's own hovers.** `cf export
+  informal-markers` cuts each card's snippet out of `library/src/`, so a card shows the
+  declaration as a text file spells it: no colour, no hover, no link to a definition. The
+  overlay has had the other kind since the Verso work -- a committed `pdf-overlay/verso.json`
+  cut by `tools/verso_extract.py --pages` from a Verso build of the commit the cards pin,
+  made elsewhere (`docs/overlay.md` section 5) -- but nothing in the informalize mode made
+  that build. `cf informalize verso-command <id> --host H [--verso-rev REV] [--lean-threads
+  N]` now does, in the shape of `build-command`: it writes `informalize/<id>/verso/to-host/`
+  (the drivers, among them the overlay's own `verso_extract.py` byte for byte, the same
+  one-line `library.tsv` stage I1 read, and `verso-command.sh`) and prints the lines that
+  copy them and the output repository's annotation bundle to the host, start the job there
+  detached, and bring the file back to be committed; it runs nothing, and its default
+  revision is the tag of the library's own toolchain. On the host,
+  `scripts/informalize/verso_host.sh` works in a copy of I1's checkout, never in I1's tree,
+  because the Verso require edits the lakefile -- and it writes that require *before* the
+  library's first one, since Lake lets the last require of a shared dependency win and a
+  Verso appended at the end moves the pins the library was built against; `verso_host.py
+  moved` stops the run when any of them moved, so the hovers are of the tree the cards pin
+  or there are none. Then `lake build`, `lake build :literateHtml` and `verso_extract.py
+  --pages` over the pages, against the bundle. `docs/proposals/informalize.md` section 10 is
+  the step, component 9 of its section 11, and `tests/test_informalize_verso.py` holds the
+  command, the script and its Python half to it.
 - **The overlay viewer's PDF text can be selected and copied.** The page was a canvas and
   nothing else, so a reader could read a statement on it but not quote it. Every rendered page
   now carries PDF.js's own text layer -- the vendored build's `TextLayer`, which the viewer

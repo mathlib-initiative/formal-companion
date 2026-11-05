@@ -11,7 +11,9 @@ option (section 6); and the fleet's first half (section 8): `cf plan-informalize
 the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`; of
 component 5b, `cf run` sends a phase and `cf harvest` brings one home (section 8.5); and of
 component 7, the exporter `cf export informal-markers` with the two `scripts/overlay/`
-changes of section 10; and of component 8, `SKILL.md`'s command index and its
+changes of section 10; component 9, `cf informalize verso-command` with
+`scripts/informalize/verso_host.sh` and `verso_host.py`, the overlay's hovers (section 10);
+and of component 8, `SKILL.md`'s command index and its
 Informalization section, `README.md`, `docs/status.md` and the trigger eval. These
 are not implemented yet: the watchdog `cf run` starts at the smoke stage (section 8.1),
 the runbook section of component 8,
@@ -129,7 +131,7 @@ a second informalize id on the same host needs that entry changed first.
 | I4 conventions | phase `conventions`; `apply` | host, Mac | the approved `items.json`, `declarations.json`, `library/src/` | `notation.sty`, `sections/00-conventions.tex`, `STYLE-project.md`, `hypotheses.json` | `stages/I4.json` |
 | I5 writing | phases `draft`, `attack`, `judge`, `edit`, then `attack` again on touched sections; `apply` after each | host, Mac | the above, the previous phase's findings | `sections/NN-<slug>.tex`; findings in `corpus/<run>/` | `stages/I5-<phase>-<run>.json` |
 | I6 PDF | `pdf-command` (prints); `canonical_pdf.sh` on the host; `fetch-pdf --execute --i-have-consent`; `approve <id> proof-sheets` | host, Mac | `repo/` at HEAD | `pdf/<commit12>/`, `repo/informal/markers.json` | `stages/I6.json` |
-| I7 overlay | `overlay --pdf-url`; `serve.py --build-only` (by name); `check-site`; `approve <id> publish` | Mac | `informal/`, the canonical PDF, `library/src/` | `annotations/`, `pdf-overlay/`, `site/index.html`, the workflow directory | `stages/I7.json` |
+| I7 overlay | `overlay --pdf-url`; `verso-command` (writes `verso/to-host/`, prints); `verso_host.sh` on the host; `serve.py --build-only` (by name); `check-site`; `approve <id> publish` | Mac, host | `informal/`, the canonical PDF, `library/src/`, the library at the commit | `annotations/`, `pdf-overlay/` (`verso.json` committed by hand), `site/index.html`, the workflow directory | `stages/I7.json` |
 
 Every command takes the informalize id first and may be re-run: a stage whose inputs'
 sha256 match its receipt changes nothing; one whose inputs changed refuses until the stage
@@ -153,6 +155,9 @@ informalize/<id>/
                             files, the commit and its time, the driver's state, the canary's
                             index, src.tar
     .incoming/              a fetch in progress, or one that failed a check (kept for a look)
+  verso/                  I7, ignored (every file in it is a copy of this checkout's):
+    to-host/                what verso-command copies to the host: drivers/, library.tsv,
+                            and verso-command.sh, the lines it printed
   scope.json              I2
   pdf/<commit12>/         I6 (ignored): the canonical PDF, pdf-receipt.json, proof-sheets/
   stages/                 I*.json receipts and approve-*.json approvals (section 5.7)
@@ -179,8 +184,8 @@ repo/
   annotations/ pdf-overlay/ site/index.html .github/workflows/   I7
 ```
 
-`cf init`'s `.gitignore` gains `informalize/*/repo/`, `informalize/*/library/` and
-`informalize/*/pdf/`. The output repository's own `.gitignore` ignores `*.pdf`, `.lake/`,
+`cf init`'s `.gitignore` gains `informalize/*/repo/`, `informalize/*/library/`,
+`informalize/*/verso/` and `informalize/*/pdf/`. The output repository's own `.gitignore` ignores `*.pdf`, `.lake/`,
 `/build/`, `/site/*` and `__pycache__/`, and keeps `!/site/index.html`. The library is
 never cloned on the Mac: `library/src/` is an archive's contents, not a checkout.
 
@@ -1328,6 +1333,47 @@ approval at the current PDF's sha256, then, in the output repository:
    checking it against the annotations' sha256 and bytes, so the site builds before the
    release URL is live.
 
+**The hovers.** A card made this way shows the declaration's plain source, cut from
+`library/src/`: the output repository's site has no Verso pages of its own, so the viewer
+has nothing to tint and no hover to show. `docs/overlay.md` section 5 lets such a companion
+commit a `pdf-overlay/verso.json` cut from a Verso build of the commit its cards pin, made
+elsewhere, and **`cf informalize verso-command <id> --host H [--verso-rev REV]
+[--lean-threads N]`** is that build, in the shape of `build-command`: it writes
+`verso/to-host/` — the drivers (`scripts/informalize/verso_host.sh` and `verso_host.py`,
+`scripts/corpus/universe_host.py`, and the overlay's own
+`templates/overlay/runtime/tools/verso_extract.py` with the module it imports), the same
+one-line `library.tsv` I1 read, and `verso-command.sh` — and prints the lines that copy
+them and the output repository's `pdf-overlay/annotations.bundle.json` to the host and
+start the job there, detached. It runs nothing, and the revision it names is the tag of the
+library's own toolchain (`library/host/lean-toolchain`, which I1 brought back) unless
+`--verso-rev` says otherwise: Verso is released once per Lean release.
+
+On the host, `verso_host.sh` works in `verso/libs/<id>-lib`, a copy of I1's checkout (with
+its built dependencies) or a clone when I1's is gone, never in I1's tree, because the next
+step edits the library's lakefile: the Verso require goes **before** the library's own
+first require, since Lake lets the last require of a shared dependency win and a Verso
+appended at the end would move the pins the library was built against. `lake update verso`
+follows, and the run stops when it moved any package the library already had
+(`verso_host.py moved`) — the cards pin this tree, so the hovers are of this tree or there
+are none. Then `lake exe cache get` (when the library builds against Mathlib) and
+`lake build` of the module the library list names, which is what I1 built, never of the
+whole library; Verso's `literate.toml` naming the modules the bundle's cards are in and no
+others (`verso_host.py targets`, where the library ships no such file), since a statement
+is cut from its own module's page and a library of ten thousand modules would otherwise be
+rendered whole for a dozen pages; `lake build :literateHtml`; and `verso_extract.py
+--pages` over the pages it wrote, against the bundle, writing `verso/host/verso.json` with
+the counts beside it. A Verso that does not match the toolchain shows up at the literate
+build as `missing data file for module ...` from the pages' tool — it reads the library's
+build at another level than the toolchain writes it — and the script says so there.
+
+The maintainer brings that file back with the printed `rsync` line, commits it in the
+output repository as `pdf-overlay/verso.json` — the one file of `pdf-overlay/` that is the
+companion's own input, which `cf overlay sync` never writes or removes — and builds the
+site again. `build_site.py` then publishes it in place of the empty file, after checking
+that it is of a commit the cards pin and cutting it to the cards whose snippets its
+statements still join (`verso.source: committed` in the site receipt); `check_generated.py`
+holds it to the same rules in the output repository's CI.
+
 The maintainer then runs `python3 pdf-overlay/tools/serve.py --build-only` in the output
 repository (it builds `site/` and publishes the PDF there under `pdf.publish`), and
 `cf informalize check-site <id>` reads the built site: the PDF at `pdf-overlay/<job>.pdf` at
@@ -1371,6 +1417,11 @@ network, and no Claude attribution anywhere.
    `cf informalize overlay | check-site`, the site and workflow templates.
 8. `SKILL.md`'s command index, `README.md`, `docs/status.md`, a runbook section in
    `references/runbook-server.md`, and trigger evals.
+
+9. The overlay's hovers (section 10), after 7: `cf informalize verso-command`,
+   `scripts/informalize/verso_host.sh` and `verso_host.py`, and the documented step that
+   commits `pdf-overlay/verso.json` in the output repository. Tests on invented lakefiles,
+   manifests and bundles; the Verso build itself runs on the host (built).
 
 Optional later: blueprint-style `\lean{}` and `\label{}` from `fcmarkers.sty`, so the audit's
 `blueprint_tex` adapter can give the text a second, independent reading.

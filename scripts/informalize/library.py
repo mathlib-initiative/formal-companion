@@ -1,4 +1,5 @@
-"""Stage I1 on the operator's machine: `cf informalize build-command` and `fetch-library`.
+"""The library's builds on the operator's machine: `cf informalize build-command`,
+`fetch-library` and `verso-command`.
 
 New code, for docs/proposals/informalize.md section 6.1.  The pilot built its library by a
 hand-written script on the host and dumped it with a Lean file that named its library,
@@ -19,6 +20,12 @@ machine:
   previous one as it was.
   It writes the library's license into `informalize.yaml` when the license file names one,
   the commit's time into `informal/informalize.json` (committed), and the I1 receipt.
+* **verso-command** is the same shape for the overlay's hovers (section 10): it writes
+  `informalize/<id>/verso/to-host/` -- the drivers of the Verso build
+  (:data:`VERSO_HOST_FILES`, the overlay's own `verso_extract.py` among them), the same
+  one-line `library.tsv`, and `verso-command.sh` -- and prints the lines that copy them and
+  the output repository's annotation bundle to the host, start the job there detached, and
+  bring `pdf-overlay/verso.json` back to be committed.  It runs nothing either.
 
 ssh and rsync run only under `fetch-library --execute --i-have-consent`, against a host of
 `hosts.allowlist` (`run.manifest.resolve_host`), the one network exception CLAUDE.md
@@ -45,9 +52,10 @@ from cflib.paths import skill_root
 from cfcmd.corpus import DRIVERS as CORPUS_DRIVERS
 from corpus import ingest, universe_host
 from corpus.universe import lean_version
+from overlay import sync as overlay_sync
 from run import manifest
 
-from informalize import config, library_host, runtime, stages
+from informalize import config, library_host, runtime, stages, verso_host
 from informalize.outrepo import OutputRepo
 
 #: what build-command copies to the host besides the canary, beside each other there as in
@@ -60,6 +68,19 @@ CANARY_DIR = "templates/corpus/canary"
 HOST_SCRIPT = "scripts/informalize/library_host.sh"
 LIBRARY_LIST = "library.tsv"
 COMMAND_FILE = "build-command.sh"
+#: what verso-command copies to the host: the universe line's parser, the Verso build's own
+#: pair, and the overlay's extractor with the module it imports
+VERSO_HOST_FILES = ("scripts/corpus/universe_host.py", "scripts/corpus/probe_merge.py",
+                    "scripts/informalize/verso_host.sh",
+                    "scripts/informalize/verso_host.py",
+                    "templates/overlay/runtime/tools/verso_extract.py",
+                    "templates/overlay/runtime/tools/overlay_annotations.py")
+VERSO_HOST_SCRIPT = "scripts/informalize/verso_host.sh"
+VERSO_COMMAND_FILE = "verso-command.sh"
+#: the output repository's annotation bundle, which the host reads, and the file the Verso
+#: build is for (docs/overlay.md section 5)
+BUNDLE = "pdf-overlay/annotations.bundle.json"
+VERSO_FILE = "pdf-overlay/verso.json"
 DEFAULT_MIN_FREE_GB = 60
 DEFAULT_LEAN_THREADS = 16
 #: the license files library_host.sh copies from the checkout's root, in its order
@@ -217,15 +238,15 @@ def host_files() -> list[str]:
     return sorted(set(out))
 
 
-def _check_home(workspace, informalize_id: str) -> Path:
+def _check_home(workspace, informalize_id: str, extra: tuple[Path, ...] = ()) -> Path:
     """`informalize/<id>/library/`, refusing one that is a link or lives elsewhere, and a
-    link where this module writes a directory of its own."""
+    link where this module writes a directory of its own (`extra`: another command's)."""
     paths = workspace.paths
     home = paths.informalize_dir(informalize_id)
     library = paths.informalize_library(informalize_id)
     top = os.path.realpath(paths.root)
     for path in (home, library, paths.informalize_library_to_host(informalize_id),
-                 library / INCOMING):
+                 library / INCOMING, *extra):
         if path.is_symlink():
             raise CfError(f"{path} is a symlink", hint="it is written in place; remove the link")
     if not os.path.realpath(home).startswith(top + os.sep):
@@ -239,7 +260,7 @@ def _quote_local(path: Path) -> str:
 
 @dataclass
 class BuildCommand:
-    """What build-command wrote, and the lines it prints."""
+    """What build-command or verso-command wrote, and the lines it prints."""
 
     to_host: Path
     lines: list[str]
@@ -316,6 +337,136 @@ def _command_lines(cfg: dict, host: dict, remote: RemoteRoot, to_host: Path, min
         "# Once it is fetched the build may go; the index and the dump stay:",
         f"#   ssh -n {ssh} "
         + shlex.quote("rm -rf " + remote.shell(f"library/libs/{library_id(cfg)}/.lake")),
+    ]
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# verso-command: the Verso build the overlay's hovers are cut from
+# ---------------------------------------------------------------------------
+
+def verso_host_files() -> list[str]:
+    """Every file verso-command copies to the host, relative to this checkout."""
+    root = skill_root()
+    for relative in VERSO_HOST_FILES:
+        path = root / relative
+        if path.is_symlink() or not path.is_file():
+            raise CfError(f"{path} is not an ordinary file",
+                          hint="this is not a whole formal-companion checkout")
+    return sorted(VERSO_HOST_FILES)
+
+
+def default_verso_rev(paths, informalize_id: str) -> str:
+    """The Verso revision of the library's toolchain: `v<version>` of `library/host/
+    lean-toolchain`, which stage I1 brought back.  Verso is released once per Lean
+    release, so the tag of the toolchain's version is the one that builds against it."""
+    path = paths.informalize_library(informalize_id) / "host" / "lean-toolchain"
+    toolchain = path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+    version = lean_version(toolchain)
+    if not version:
+        raise CfError(f"nothing says which Verso revision to build: no {path}",
+                      hint="run stage I1 first (`cf informalize fetch-library`), or name the "
+                           "revision with --verso-rev (the tag of the library's toolchain, "
+                           "e.g. v4.36.0-rc2)")
+    return f"v{version}"
+
+
+def verso_command(workspace, informalize_id: str, host_name: str, *, verso_rev: str | None = None,
+                  lean_threads: int = DEFAULT_LEAN_THREADS) -> BuildCommand:
+    """Write `verso/to-host/` and return the lines that build the library's literate HTML
+    on the host and cut `pdf-overlay/verso.json` out of it."""
+    cfg = config.load(workspace.paths, informalize_id, sessions=config.session_limit(workspace))
+    if isinstance(lean_threads, bool) or not isinstance(lean_threads, int) or lean_threads < 1:
+        raise CfError(f"--lean-threads {lean_threads!r} is not a positive number")
+    rev = verso_rev or default_verso_rev(workspace.paths, informalize_id)
+    if not verso_host.REV.match(rev):
+        raise CfError(f"--verso-rev {rev!r} is not a tag, a branch or a commit")
+    host, remote = host_folder(workspace, host_name, informalize_id)
+    fields = universe_fields(cfg)
+    paths = workspace.paths
+    verso_dir = paths.informalize_verso(informalize_id)
+    to_host = paths.informalize_verso_to_host(informalize_id)
+    _check_home(workspace, informalize_id, extra=(verso_dir, to_host))
+    repo = OutputRepo(paths, informalize_id)
+    repo.require_stamp()
+    bundle = repo.target(BUNDLE)
+    if bundle.is_symlink() or not bundle.is_file():
+        raise CfError(f"the output repository has no {BUNDLE}",
+                      hint=f"`cf informalize overlay {informalize_id}` writes it (stage I7); "
+                           "the Verso build is cut to its cards")
+    records = overlay_sync.bundle_records(bundle.read_bytes())
+    if records is None:
+        raise CfError(f"{BUNDLE} is not a readable annotation bundle",
+                      hint=f"`cf informalize overlay {informalize_id}` writes it")
+    cards = len(records)
+    drivers = to_host / "drivers"
+    if drivers.exists():
+        shutil.rmtree(drivers)
+    drivers.mkdir(parents=True)
+    root = skill_root()
+    written: dict[str, str] = {}
+    for relative in verso_host_files():
+        target = drivers / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((root / relative).read_bytes())
+        os.chmod(target, 0o644)
+        written[f"drivers/{relative}"] = sha256_file(target)
+    (to_host / LIBRARY_LIST).write_text("\t".join(fields) + "\n", encoding="utf-8")
+    written[LIBRARY_LIST] = sha256_file(to_host / LIBRARY_LIST)
+    lines = _verso_lines(cfg, host, remote, to_host, bundle, rev, lean_threads, cards)
+    script = "#!/bin/sh\nset -eu\n" + "\n".join(lines) + "\n"
+    (to_host / VERSO_COMMAND_FILE).write_text(script, encoding="utf-8")
+    return BuildCommand(to_host=to_host, lines=lines, files=written)
+
+
+def _verso_lines(cfg: dict, host: dict, remote: RemoteRoot, to_host: Path, bundle: Path,
+                 rev: str, lean_threads: int, cards: int) -> list[str]:
+    library = cfg["library"]
+    ssh = shlex.quote(host["ssh"])
+    repo = bundle.parent.parent
+    bundle_name = PurePosixPath(BUNDLE).name
+    start = (f"cd {remote.shell()} && mkdir -p verso/host && setsid -f env "
+             f'ATLAS_ROOT="$PWD/library" VERSO_ROOT="$PWD/verso" VERSO_REV={shlex.quote(rev)} '
+             f"LEAN_THREADS={lean_threads} bash verso/drivers/{VERSO_HOST_SCRIPT} "
+             f"verso/{LIBRARY_LIST} verso/{bundle_name} >> verso/host/verso_host.log 2>&1 "
+             "< /dev/null")
+    watch = (f"tail -n 20 {remote.shell('verso/host/verso_host.log')}; "
+             f"cat {remote.shell('verso/host/DONE')}")
+    lines = [
+        f"# The overlay's hovers for {cfg['id']} (docs/proposals/informalize.md section 10):",
+        f"# on {host['name']}, build the literate HTML of {library['module']} of "
+        f"{library['url']}",
+        f"# at {library['commit']} with Verso {rev}, and cut the",
+        f"# statement of each of the {cards} cards of the output repository's annotation "
+        "bundle out of",
+        f"# it, with its hovers, as {VERSO_FILE} (docs/overlay.md section 5).",
+        "# Written by `cf informalize verso-command`, which runs nothing: run these lines on",
+        "# this machine, as the operator, once the box owner has agreed. They copy the "
+        "drivers and",
+        f"# the bundle (the output repository's own file, published with its site) to "
+        f"{remote.text},",
+        "# and start the job there, detached. The library is built on the host, never here,",
+        f"# in a copy of stage I1's checkout under {remote.text}/verso: the Verso require "
+        "edits",
+        "# the lakefile, and I1's tree is left as it is.",
+        f"ssh -n {ssh} {shlex.quote('mkdir -p ' + remote.shell('verso/host'))}",
+        f"rsync -a --delete {_quote_local(to_host / 'drivers')}/ "
+        f"{ssh}:{remote.rsync('verso/drivers')}/",
+        f"rsync -a {_quote_local(to_host / LIBRARY_LIST)} "
+        f"{ssh}:{remote.rsync('verso/' + LIBRARY_LIST)}",
+        f"rsync -a {_quote_local(bundle)} {ssh}:{remote.rsync('verso/' + bundle_name)}",
+        f"ssh -n {ssh} {shlex.quote(start)}",
+        "# The job writes verso/host/DONE, its exit status, last. To watch it:",
+        f"#   ssh -n {ssh} {shlex.quote(watch)}",
+        "# When DONE holds 0, bring the file back, commit it, and build the site again:",
+        f"#   rsync -a {ssh}:{remote.rsync('verso/host/verso.json')} "
+        f"{_quote_local(repo / VERSO_FILE)}",
+        f"#   git -C {_quote_local(repo)} add {VERSO_FILE} && git -C {_quote_local(repo)} "
+        f"commit -m 'Add the Verso hovers of {library['commit'][:12]}'",
+        f"#   (cd {_quote_local(repo)} && python3 pdf-overlay/tools/serve.py --build-only)",
+        "# Once it is fetched the Verso build may go; nothing else reads it:",
+        f"#   ssh -n {ssh} "
+        + shlex.quote("rm -rf " + remote.shell(f"verso/libs/{library_id(cfg)}")),
     ]
     return lines
 

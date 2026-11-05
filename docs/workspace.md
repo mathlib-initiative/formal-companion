@@ -43,7 +43,9 @@ registry"), and no command writes the shipped registry.
                              stages/ (receipts and approvals), reference-checklist.md,
                              scope.json; library/ (GITIGNORED: to-host/, what
                              build-command sends the host, and the build's outputs,
-                             index, dump and source fetch-library brings back), pdf/
+                             index, dump and source fetch-library brings back), verso/
+                             (GITIGNORED: to-host/, what verso-command sends the host for
+                             the overlay's hovers), pdf/
                              (GITIGNORED, rebuilt from the host) and repo/, the output
                              repository, its own git repository (gitignored here)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl

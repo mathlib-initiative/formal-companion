@@ -338,6 +338,16 @@ class WorkspacePaths:
         one-line library list and the printed lines."""
         return self.informalize_library(informalize_id) / "to-host"
 
+    def informalize_verso(self, informalize_id: str) -> Path:
+        """The overlay's Verso build (`cf informalize verso-command`), which never shares
+        a directory with I1's: the Verso require edits the library's lakefile."""
+        return self.informalize_dir(informalize_id) / "verso"
+
+    def informalize_verso_to_host(self, informalize_id: str) -> Path:
+        """What `cf informalize verso-command` copies to the host: the drivers, the same
+        one-line library list and the printed lines."""
+        return self.informalize_verso(informalize_id) / "to-host"
+
     def informalize_scope(self, informalize_id: str) -> Path:
         """I2's closure of the theorem (`cf informalize scope`)."""
         return self.informalize_dir(informalize_id) / "scope.json"

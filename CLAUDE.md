@@ -70,8 +70,9 @@ scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
 scripts/informalize/ the informalize mode behind `cf informalize`: informalize.yaml, the
                      output repository and the exception it is written under, the runtime
                      sync, the item table and `check-items`, receipts and approvals, the
-                     library's build (`library.py`; `library_host.sh` and `library_host.py`
-                     run on the host beside locate's drivers, with no cflib), the scope, and
+                     library's builds (`library.py`; `library_host.sh` and `library_host.py`,
+                     and for the overlay's hovers `verso_host.sh` and `verso_host.py`, run on
+                     the host beside locate's drivers, with no cflib), the scope, and
                      the fleet's planner (`plan.py`, behind `cf plan-informalize`), whose
                      gate is scripts/gate/verify_informal.py (docs/proposals/informalize.md)
 scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and

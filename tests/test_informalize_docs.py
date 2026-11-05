@@ -70,7 +70,7 @@ def informalize_subcommands() -> set[str]:
 #: Every subcommand the specification's sections 3 and 11 name, built or not.
 SPECIFIED = {"init", "sync", "status", "build-command", "fetch-library", "scope",
              "check-items", "approve", "reference-checklist", "apply", "pdf-command",
-             "fetch-pdf", "overlay", "check-site"}
+             "fetch-pdf", "overlay", "check-site", "verso-command"}
 
 
 class TestTheCommandIndexIsThisCheckout(unittest.TestCase):

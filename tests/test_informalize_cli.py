@@ -194,8 +194,8 @@ class TestTheVocabulary(unittest.TestCase):
         from informalize.bootstrap import WORKSPACE_IGNORES
         for line in WORKSPACE_IGNORES:
             self.assertIn(f"\n{line}\n", GITIGNORE)
-        self.assertIn("`informalize/*/repo/`, `informalize/*/library/` and\n`informalize/*/pdf/`",
-                      SPEC)
+        self.assertIn("`informalize/*/repo/`, `informalize/*/library/`,\n"
+                      "`informalize/*/verso/` and `informalize/*/pdf/`", SPEC)
 
 
 class TestTheSettings(unittest.TestCase):

@@ -29,9 +29,11 @@ from informalize.outrepo import OutputRepo
 
 #: what `cf init`'s .gitignore ignores of an informalize directory (section 4); a workspace
 #: made before this mode existed gets the lines from the first `init`
-WORKSPACE_IGNORES = ("informalize/*/repo/", "informalize/*/library/", "informalize/*/pdf/")
+WORKSPACE_IGNORES = ("informalize/*/repo/", "informalize/*/library/",
+                     "informalize/*/verso/", "informalize/*/pdf/")
 IGNORE_COMMENT = ("# Informalize: the output repository is its own git repository (cf informalize\n"
-                  "# init), and the library's copy and the canonical PDF are rebuilt from the host:\n")
+                  "# init), and the library's copy, the Verso build's folder and the canonical PDF\n"
+                  "# are rebuilt from the host:\n")
 
 
 @dataclass

@@ -126,14 +126,17 @@ figure for Wikipedia appears in this repository.
 ## Informalization
 
 **Built.** Components 1 to 5a of `docs/proposals/informalize.md` section 11, the
-`cf run` and `cf harvest` half of 5b, and the exporter of 7: the specification with
-`tests/test_informalize_spec.py`, which holds it to the code it names; the LaTeX
+`cf run` and `cf harvest` half of 5b, the exporter of 7, and component 9: the
+specification with `tests/test_informalize_spec.py`, which holds it to the code it names; the LaTeX
 runtime and the project templates
 (`templates/informalize/`); `cf informalize init | sync | status | build-command |
-fetch-library | scope | check-items | approve | reference-checklist`; `cf
-plan-informalize` with the out-of-tree gate `scripts/gate/verify_informal.py`, the
+fetch-library | verso-command | scope | check-items | approve | reference-checklist`;
+`cf plan-informalize` with the out-of-tree gate `scripts/gate/verify_informal.py`, the
 phase prompts and the tend config; and `cf export informal-markers`, which turns a
-canonical PDF's boxes into one annotation document.
+canonical PDF's boxes into one annotation document, with `cf informalize verso-command`,
+which prints the lines that build the library's literate HTML with Verso on a host and cut
+the committed `pdf-overlay/verso.json` of section 10 out of it, so that a card shows its
+declaration as the literate page does.
 
 **Tested on synthetic inputs only.** `tests/e2e/informalize_synthetic/driver.py` takes
 an informalize id over a fake library through every phase: the planner, contributions

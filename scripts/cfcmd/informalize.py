@@ -10,6 +10,7 @@ section 3:
     cf informalize status <id>
     cf informalize build-command <id> --host H [--min-free-gb 60] [--lean-threads 16]
     cf informalize fetch-library <id> --host H --execute --i-have-consent
+    cf informalize verso-command <id> --host H [--verso-rev v4.36.0-rc2] [--lean-threads 16]
     cf informalize scope <id>
     cf informalize check-items <id>
     cf informalize approve <id> items --by <name> --in-v1 <ids|all>
@@ -23,8 +24,11 @@ informalize.json`'s `source_date_epoch`, `scope` writes `informal/declarations.j
 files, each committed.  Those are the only writes into a repository, under the exception
 docs/proposals/informalize.md section 1.3 words (SKILL.md rule 10).  `build-command` runs
 nothing: it writes what the host needs into `library/to-host/` and prints the lines that
-copy it there and start the library's build; `fetch-library --execute` is the mode's one
-use of ssh and rsync (CLAUDE.md section 3).  The other subcommands of section 3 (apply,
+copy it there and start the library's build; `verso-command` is the same for the Verso
+build the overlay's hovers are cut from (section 10), into `verso/to-host/`, and the file
+it ends with is committed by hand, as docs/overlay.md section 5 has a companion commit
+one; `fetch-library --execute` is the mode's one use of ssh and rsync (CLAUDE.md
+section 3).  The other subcommands of section 3 (apply,
 pdf-command, fetch-pdf, overlay, check-site) are later components' and not implemented yet.
 """
 from __future__ import annotations
@@ -118,6 +122,19 @@ def register(subparsers) -> None:
     fl.add_argument("--i-have-consent", action="store_true",
                     help="say that the host's owner agreed to the build (recorded in the receipt)")
 
+    vc = sub.add_parser("verso-command",
+                        help="write verso/to-host/ and print the lines that build the "
+                             "library's literate HTML with Verso on the host and cut the "
+                             "overlay's pdf-overlay/verso.json from it; runs nothing")
+    vc.add_argument("id")
+    vc.add_argument("--host", required=True, help="a host of workspace.yaml hosts.allowlist")
+    vc.add_argument("--verso-rev", metavar="REV",
+                    help="the Verso revision to build against (default: the tag of the "
+                         "library's own toolchain, e.g. v4.36.0-rc2)")
+    vc.add_argument("--lean-threads", type=int, default=library.DEFAULT_LEAN_THREADS,
+                    metavar="N", help="LEAN_NUM_THREADS of the build (default "
+                                      f"{library.DEFAULT_LEAN_THREADS})")
+
     sc = sub.add_parser("scope", help="stage I2: the theorem's dependency closure inside the "
                                       "library; writes scope.json and informal/declarations.json")
     sc.add_argument("id")
@@ -146,8 +163,8 @@ def run(args) -> int:
     if not command:
         raise CfError("say which informalize subcommand to run",
                       hint="cf informalize init | sync | status | build-command | "
-                           "fetch-library | scope | check-items | approve | reference-checklist "
-                           "(`cf informalize --help`)")
+                           "fetch-library | verso-command | scope | check-items | approve | "
+                           "reference-checklist (`cf informalize --help`)")
     return _DISPATCH[command](args)
 
 
@@ -206,6 +223,18 @@ def _build_command(args) -> int:
         print(line)
     log.ok(f"wrote {built.to_host}: {len(built.files) - 1} driver files, "
            f"{library.LIBRARY_LIST} and {library.COMMAND_FILE} (the lines above); nothing ran")
+    return 0
+
+
+def _verso_command(args) -> int:
+    workspace = from_args(args)
+    built = library.verso_command(workspace, args.id, args.host, verso_rev=args.verso_rev,
+                                  lean_threads=args.lean_threads)
+    for line in built.lines:
+        print(line)
+    log.ok(f"wrote {built.to_host}: {len(built.files) - 1} driver files, "
+           f"{library.LIBRARY_LIST} and {library.VERSO_COMMAND_FILE} (the lines above); "
+           "nothing ran")
     return 0
 
 
@@ -306,6 +335,7 @@ _DISPATCH = {
     "status": _status,
     "build-command": _build_command,
     "fetch-library": _fetch_library,
+    "verso-command": _verso_command,
     "scope": _scope,
     "check-items": _check_items,
     "approve": _approve,

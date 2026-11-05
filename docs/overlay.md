@@ -308,7 +308,10 @@ bytecode writing off.
   statement would go for a spelling, so the producer gives the commit. A card
   with no statement in the file may pin what it likes. `verso_extract.py
   --pages <dir> --bundle <bundle> --out pdf-overlay/verso.json --commit
-  <sha>` writes that file from a Verso build elsewhere: a card is found by
+  <sha>` writes that file from a Verso build elsewhere (for an informal
+  companion, `cf informalize verso-command` prints the lines that make that
+  build on a host and run this tool there: `docs/proposals/informalize.md`
+  section 10): a card is found by
   its module's page and its declaration's anchor (the build's `xref.json`,
   else Verso's slug of the name), no token keeps a link, and `build`
   records the commit and the build's Verso revision; it stops before
