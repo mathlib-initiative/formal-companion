@@ -401,7 +401,14 @@ export function fakeElement(tag = "div") {
     disabled: false,
     hidden: false,
     listeners,
-    style: {},
+    style: {
+      setProperty(name, value) {
+        this[name] = String(value);
+      },
+      getPropertyValue(name) {
+        return this[name] ?? "";
+      },
+    },
     tagName: tag.toUpperCase(),
     textContent: "",
     title: "",
@@ -511,21 +518,64 @@ export function fakeViewport({ rotation = 0, scale = 1 } = {}) {
     convertToViewportPoint: (x, y) => [x * scale, (800 - y) * scale],
     height: 800 * scale,
     rotation,
+    scale,
+    userUnit: 1,
     width: 600 * scale,
   };
 }
 
-export function fakePdfjs({ numPages = 12 } = {}) {
+/** The two text items the fake page yields, one span each. */
+export const PAGE_TEXT = ["Theorem 1.1 (Volume bound). ", "Every box has a volume."];
+
+/**
+ * A PDF.js stand-in. Its `TextLayer` records what the viewer asked it for and
+ * appends one span per item of `PAGE_TEXT`; `textLayer: false` leaves it out,
+ * as a build without one would, and `textLayerError` makes its render fail.
+ */
+export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = null } = {}) {
+  const streams = [];
   const page = {
     getViewport: (options) => fakeViewport(options),
     render: () => ({ cancel() {}, promise: Promise.resolve() }),
     rotate: 0,
+    streamTextContent: (options) => {
+      streams.push(options);
+      return { items: PAGE_TEXT };
+    },
     view: [0, 0, 600, 800],
   };
   const calls = [];
+  const textLayers = [];
+  class FakeTextLayer {
+    constructor(options) {
+      this.cancelled = 0;
+      this.options = options;
+      this.rendered = false;
+      textLayers.push(this);
+    }
+
+    async render() {
+      if (textLayerError) {
+        throw new Error(textLayerError);
+      }
+      this.options.container.append(...this.options.textContentSource.items.map((text) => {
+        const span = fakeElement("span");
+        span.textContent = text;
+        return span;
+      }));
+      this.rendered = true;
+    }
+
+    cancel() {
+      this.cancelled += 1;
+    }
+  }
   return {
     calls,
+    streams,
+    textLayers,
     GlobalWorkerOptions: {},
+    ...(textLayer ? { TextLayer: FakeTextLayer } : {}),
     getDocument: (options) => {
       calls.push(options);
       return { promise: Promise.resolve({ getPage: async () => page, numPages }) };

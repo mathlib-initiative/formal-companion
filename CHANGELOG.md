@@ -88,6 +88,19 @@ release has something to say.
 
 ### Added
 
+- **The overlay viewer's PDF text can be selected and copied.** The page was a canvas and
+  nothing else, so a reader could read a statement on it but not quote it. Every rendered page
+  now carries PDF.js's own text layer -- the vendored build's `TextLayer`, which the viewer
+  gives a container of its own between the canvas and the region boxes -- and `viewer.css`
+  carries the rules its spans are written for, since only the build's two JavaScript files are
+  vendored. The text is copied as the PDF spells it (`disableNormalization`). The boxes stay
+  the one thing on the page that takes a pointer, so clicking a box still opens its card, the
+  hover, the keyboard and the zoom are untouched, and a selection started off a box runs
+  through the boxes as through any other text; the SVG the boxes live in no longer swallows
+  the pointer over the rest of the page. A page whose text cannot be read renders without a
+  layer and nothing else changes. `templates/overlay/tests/text-layer.test.mjs` runs the real
+  `TextLayer` over a synthetic PDF in a small DOM shim and pins every custom property and
+  rotation it writes against `viewer.css`; `docs/overlay.md` section 4 is the contract.
 - **The informalize mode in the documents a reader starts from** (component 8 of
   `docs/proposals/informalize.md`): an `Informalization` section, a "When to use this"
   bullet and the command index entries in `SKILL.md`, a tool row and the write rule in

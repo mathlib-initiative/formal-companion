@@ -16,6 +16,7 @@ import {
   BUNDLE_PATH,
   BUNDLE_URL,
   ORIGIN,
+  PAGE_TEXT,
   PAGE_URL,
   PDF_BYTES,
   PDF_URL,
@@ -314,6 +315,48 @@ test("pdf: with no pdf.publish the shell's note that the PDF stays on loopback i
   await start({ documentRef });
   assert.equal(el(documentRef, "status-note").textContent, "The shell's own note.");
   assert.match(SHELL, /<p id="status-note" class="status-pop">\s*The PDF is served only on loopback/);
+});
+
+// --- the text layer ---------------------------------------------------------
+
+test("text: a rendered page carries PDF.js's text layer, in the viewer's own container", async () => {
+  const pdfjs = fakePdfjs();
+  const { documentRef } = await start({ pdfjs });
+  const layer = el(documentRef, "text-layer");
+  assert.deepEqual(layer.children.map((span) => span.textContent), PAGE_TEXT);
+  assert.equal(pdfjs.textLayers.length, 1);
+  const [{ options }] = pdfjs.textLayers;
+  assert.equal(options.container, layer, "the layer fills the shell's own div, under the boxes");
+  assert.equal(options.viewport.scale, 1);
+  assert.equal(layer.style["--total-scale-factor"], "1", "the layer is sized through CSSOM");
+  assert.deepEqual(pdfjs.streams, [{ disableNormalization: true }], "the text is copied as the PDF spells it");
+});
+
+test("text: a page turn, a zoom and a rotation each cancel the layer they leave and start another", async () => {
+  const pdfjs = fakePdfjs();
+  const { documentRef } = await start({ pdfjs });
+  const layer = el(documentRef, "text-layer");
+  await fire(el(documentRef, "next-page"), "click");
+  assert.equal(pdfjs.textLayers.length, 2);
+  assert.equal(pdfjs.textLayers[0].cancelled, 1, "the page being left stops streaming");
+  assert.deepEqual(layer.children.map((span) => span.textContent), PAGE_TEXT, "and its spans are gone");
+  await fire(el(documentRef, "zoom-in"), "click");
+  assert.equal(pdfjs.textLayers[2].options.viewport.scale, 1.1);
+  assert.equal(layer.style["--total-scale-factor"], "1.1");
+  await fire(el(documentRef, "rotate-right"), "click");
+  assert.equal(pdfjs.textLayers[3].options.viewport.rotation, 90);
+  assert.deepEqual(pdfjs.textLayers.map((one) => one.cancelled), [1, 1, 1, 0]);
+});
+
+test("text: a layer that fails, or a build without one, leaves a page that still renders", async () => {
+  for (const pdfjs of [fakePdfjs({ textLayerError: "no text" }), fakePdfjs({ textLayer: false })]) {
+    const { documentRef, result } = await start({ pdfjs });
+    assert.equal(el(documentRef, "error").hidden, true);
+    assert.equal(el(documentRef, "status").textContent, "Verified PDF");
+    assert.equal(el(documentRef, "text-layer").children.length, 0);
+    await fire(el(documentRef, "next-page"), "click");
+    assert.equal(result.state.currentPage, 2, "and the page still turns");
+  }
 });
 
 // --- the page index ---------------------------------------------------------

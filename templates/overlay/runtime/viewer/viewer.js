@@ -14,14 +14,18 @@
  * without a DOM; this file keeps the injectable `fetch` / `document` /
  * `storage` seams the tests drive it through.
  *
+ * Each rendered page carries PDF.js's own text layer (`startTextLayer`) under
+ * the region boxes, so the page's text can be selected and copied; the spans
+ * are the vendored build's, and viewer.css has the rules they are written for.
+ *
  * Security (docs/overlay.md section 4): every string from those files reaches
  * the DOM through `textContent` or an attribute setter, never `innerHTML`; an
  * `href` is used only when a card's page resolves to an `https:` URL or a
  * page of this site, and a token's only when it is a page of this site; the
- * hover card is placed through CSSOM, never a style attribute; the PDF is
- * requested only from `pdf.route`, or, when `pdf.publish` names an open
- * license, from `../<file_name>` beside the config; PDF.js runs with
- * `isEvalSupported: false`.
+ * hover card and the text layer's scale are placed through CSSOM, never a
+ * style attribute; the PDF is requested only from `pdf.route`, or, when
+ * `pdf.publish` names an open license, from `../<file_name>` beside the
+ * config; PDF.js runs with `isEvalSupported: false`.
  */
 import {
   CARD_PAGE_SIZE,
@@ -248,6 +252,31 @@ export function isViewerShortcut(event) {
   return !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
 }
 
+/**
+ * Start PDF.js's own text layer for `page` in `container`: the page's text as
+ * transparent spans over the canvas, which the reader selects and copies. The
+ * vendored build's `TextLayer` writes every span and sizes the container from
+ * `--total-scale-factor`, which is the viewport's scale times the page's user
+ * unit (viewer.css says what each value it sets is read by). The returned
+ * layer renders on `render()` and stops on `cancel()`; with no `TextLayer` —
+ * an older vendored build — the page renders without one and nothing else
+ * changes.
+ */
+export function startTextLayer({ TextLayer, container, page, viewport }) {
+  container.replaceChildren();
+  container.removeAttribute?.("data-main-rotation");
+  if (typeof TextLayer !== "function" || typeof page?.streamTextContent !== "function") {
+    return null;
+  }
+  container.style?.setProperty?.("--total-scale-factor", String(viewport.scale * (viewport.userUnit || 1)));
+  return new TextLayer({
+    container,
+    // The text as the PDF spells it: normalization is for searching, not for copying.
+    textContentSource: page.streamTextContent({ disableNormalization: true }),
+    viewport,
+  });
+}
+
 
 /** Statements longer than this many lines are clamped to it, with a "Show all" button. */
 const STATEMENT_LINES = 14;
@@ -307,7 +336,7 @@ export async function bootstrapViewer({
       "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness",
-      "page-scroller", "page-stage", "pdf-canvas", "overlay", "region-bar", "region-peek",
+      "page-scroller", "page-stage", "pdf-canvas", "text-layer", "overlay", "region-bar", "region-peek",
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
@@ -336,6 +365,8 @@ export async function bootstrapViewer({
     rotation: 0,
     selected: null,
     siteUrl: "",
+    textLayer: null,
+    TextLayer: null,
     verso: null,
     zoom: 100,
   };
@@ -1582,6 +1613,10 @@ export async function bootstrapViewer({
     }
     const epoch = ++state.renderEpoch;
     state.renderTask?.cancel();
+    // A text layer still streaming is the page being left: its spans would land on this one.
+    state.textLayer?.cancel();
+    state.textLayer = null;
+    ui["text-layer"].replaceChildren();
     const page = await state.pdfDocument.getPage(state.currentPage);
     // Records place regions on the displayed page: after the page's own
     // rotation, which the reader's rotation adds to.
@@ -1637,6 +1672,15 @@ export async function bootstrapViewer({
     ui["zoom-value"].textContent = `${state.zoom}%`;
     setStatus("ok", "Verified PDF");
     rememberPage(state.config.storageKey, state.currentPage, { historyRef, storage });
+    // The text comes after the page it belongs to: it streams, and nothing on
+    // the page waits for it. A layer that fails leaves a page that cannot be
+    // selected, and a viewer that works.
+    try {
+      state.textLayer = startTextLayer({ TextLayer: state.TextLayer, container: ui["text-layer"], page, viewport });
+      await state.textLayer?.render();
+    } catch {
+      // `cancel()` on the next render rejects this one; so does a page whose text cannot be read.
+    }
   }
 
   /** Verdicts are hidden until asked for; the choice is remembered beside the page. */
@@ -1713,6 +1757,7 @@ export async function bootstrapViewer({
       "../vendor/pdfjs/pdf.worker.min.mjs",
       import.meta.url,
     ).href;
+    state.TextLayer = pdfjs.TextLayer ?? null;
     state.pdfDocument = await pdfjs.getDocument({
       data: bytes.slice(),
       isEvalSupported: false,

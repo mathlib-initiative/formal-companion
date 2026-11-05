@@ -157,7 +157,16 @@ with the warning `JpxError: OpenJPEG failed to initialize`, because the vendored
 has no OpenJPEG decoder beside it. Commit `75fa8aa` records that Firefox
 on macOS draws a box for some script characters after a letter, which is why titles set
 scripts as markup. The tests of `templates/overlay/tests/` run under Node with a fake
-DOM and a fake PDF.js, so they cannot see a browser's limits.
+DOM and a fake PDF.js — except `text-layer.test.mjs`, which runs the vendored PDF.js
+itself over a synthetic PDF in a DOM shim — so they cannot see a browser's limits.
+
+The **text layer** has been checked that way and not yet in a browser: under Node, with
+the viewer and PDF.js a `cf overlay sync` had copied into a built site, every page of a
+six-page PDF came out as positioned spans whose text matched `pdftotext` character for
+character (the layer keeps the hyphen of a hyphenated line break, which `pdftotext`
+joins). What a shim cannot show is how a span sits over its glyphs, since the vertical
+offset uses the browser's own font ascent: check a selection against the page in a
+browser before trusting it on a new companion.
 
 ## Checking it in CI
 

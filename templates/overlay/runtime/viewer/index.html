@@ -72,6 +72,12 @@
           >
             <div id="page-stage" class="page-stage" hidden>
               <canvas id="pdf-canvas" aria-label="Rendered PDF page"></canvas>
+              <!--
+                PDF.js's own text layer, filled by viewer.js on every render: the
+                page's text as transparent spans over the canvas and under the
+                region boxes, so the reader can select and copy it.
+              -->
+              <div id="text-layer" class="text-layer"></div>
               <svg
                 id="overlay"
                 class="overlay"

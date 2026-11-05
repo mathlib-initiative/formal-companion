@@ -67,8 +67,9 @@ and `lint` are designed and documented. The audit reports findings only.
 ## PDF overlay
 
 **Built and tested.** `cf overlay init`, `export`, `sync` and `check`; the runtime
-tools; the viewer. `templates/overlay/tests/` holds 158 tests under Node, with a fake
-DOM and a fake PDF.js, and six Python modules test the generator
+tools; the viewer. `templates/overlay/tests/` holds 174 tests under Node, with a fake
+DOM and a fake PDF.js (and, for the text layer, the vendored PDF.js itself over a
+synthetic PDF), and six Python modules test the generator
 (`tests/test_overlay_*.py`). All run in CI. CI tests the parts separately:
 `tests/test_export.py` runs the real exporters on synthetic companions, and
 `tests/test_overlay_cli.py` runs `cf overlay` with a stand-in for the export child.

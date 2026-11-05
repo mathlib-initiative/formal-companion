@@ -242,6 +242,23 @@ with no region left adds nothing. Every string reaches the DOM through
 `textContent` or attribute setters. `viewer-core.js` is the pure half;
 `viewer.js` the controller.
 
+Every rendered page carries PDF.js's own **text layer** over the canvas and
+under the region boxes: the page's text as transparent spans, which a reader
+selects and copies as in any PDF reader, with no normalization, so a ligature
+or a dash is copied as the PDF spells it. The boxes stay the only thing on the
+page that takes a pointer — a click on one opens its card, as before, and the
+SVG the boxes live in takes none — so a drag that *starts* on a box selects
+nothing, while a selection started anywhere else runs through the boxes as
+through any other text. The spans are the vendored build's: its `TextLayer`
+places each one as a percentage of the page before the reader's rotation and
+leaves the scale, the rotation and the font height to CSS, so `viewer.css`
+carries the rules they are written for (only the build's two JavaScript files
+are vendored) and `viewer.js` sets `--total-scale-factor` through CSSOM.
+`templates/overlay/tests/text-layer.test.mjs` runs that real `TextLayer` over
+a synthetic PDF and pins every value it writes against those rules. A page
+whose text cannot be read, or a build with no `TextLayer`, renders without a
+text layer and changes nothing else.
+
 ## 5. Runtime tools (`runtime/tools/`)
 
 Run from the companion root as `python3 pdf-overlay/tools/<tool>.py`; they find

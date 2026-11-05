@@ -453,12 +453,77 @@ kbd {
   display: block;
 }
 
+/*
+ * PDF.js's text layer: the page's own text, transparent, above the canvas and
+ * below the region boxes, so it can be selected and copied. The vendored
+ * build's `TextLayer` writes the spans and sets, on each of them, `left` and
+ * `top` as percentages of the UNROTATED page, `font-family`, `--font-height`
+ * (in page units), `--scale-x` and `--rotate`; on the container it sets
+ * `width` and `height` from `--total-scale-factor` and `--scale-round-*`, and
+ * `data-main-rotation`. viewer.js sets `--total-scale-factor` (the viewport's
+ * scale times its user unit). Only the two build files are vendored
+ * (`vendor/pdfjs/PINNED.md`), so the rules that read all of that are these,
+ * which follow PDF.js's own text layer stylesheet. The one value they leave
+ * alone is `--min-font-size`, the build's measurement of the browser's own
+ * minimum font size: a browser that enforces one draws a very small span
+ * larger than its glyphs, and the selection there is a line or so coarse.
+ */
+.text-layer {
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  caret-color: CanvasText;
+  forced-color-adjust: none;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+}
+
+/* The spans are placed on the unrotated page; the layer turns with the reader's rotation. */
+.text-layer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.text-layer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.text-layer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.text-layer span,
+.text-layer br {
+  position: absolute;
+  color: transparent;
+  cursor: text;
+  font-size: calc(var(--font-height, 1px) * var(--total-scale-factor, 1));
+  transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1));
+  transform-origin: 0 0;
+  white-space: pre;
+}
+
+.text-layer ::selection {
+  /* The page is white in both themes, so the selection uses an on-page token. */
+  background: var(--on-page-hot);
+}
+
+/*
+ * The boxes take the pointer, the rest of the page passes it to the text layer:
+ * a click on a box opens its card, and a drag anywhere else selects text. An
+ * SVG root with no `pointer-events` would take every pointer in its own box,
+ * selection included, since it covers the whole page.
+ */
 .overlay {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   overflow: visible;
+  pointer-events: none;
 }
 
 /* Regions: coverage sets the stroke's dash, a verdict (when shown) its color. */
