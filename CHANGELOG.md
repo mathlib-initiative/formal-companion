@@ -93,7 +93,8 @@ release has something to say.
   now carries PDF.js's own text layer -- the vendored build's `TextLayer`, which the viewer
   gives a container of its own between the canvas and the region boxes -- and `viewer.css`
   carries the rules its spans are written for, since only the build's two JavaScript files are
-  vendored. The text is copied as the PDF spells it (`disableNormalization`). The boxes stay
+  vendored; `runtime/THIRD_PARTY.md` names those rules as following PDF.js's own text layer
+  stylesheet, under the licence already shipped beside it. The text is copied as the PDF spells it (`disableNormalization`). The boxes stay
   the one thing on the page that takes a pointer, so clicking a box still opens its card, the
   hover, the keyboard and the zoom are untouched, and a selection started off a box runs
   through the boxes as through any other text; the SVG the boxes live in no longer swallows

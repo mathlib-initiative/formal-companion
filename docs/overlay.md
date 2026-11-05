@@ -247,9 +247,11 @@ under the region boxes: the page's text as transparent spans, which a reader
 selects and copies as in any PDF reader, with no normalization, so a ligature
 or a dash is copied as the PDF spells it. The boxes stay the only thing on the
 page that takes a pointer — a click on one opens its card, as before, and the
-SVG the boxes live in takes none — so a drag that *starts* on a box selects
-nothing, while a selection started anywhere else runs through the boxes as
-through any other text. The spans are the vendored build's: its `TextLayer`
+SVG the boxes live in takes none — so a selection started anywhere but on a box
+runs through the boxes as through any other text. Where a drag that *starts* on
+a box anchors its selection is the browser's own call, and no browser has been
+watched making it (`docs/generating-an-overlay.md`); the rest is what the CSS
+asks for. The spans are the vendored build's: its `TextLayer`
 places each one as a percentage of the page before the reader's rotation and
 leaves the scale, the rotation and the font height to CSS, so `viewer.css`
 carries the rules they are written for (only the build's two JavaScript files

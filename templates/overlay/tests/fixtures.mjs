@@ -390,6 +390,18 @@ export function makeConfig(overrides = {}) {
 
 // --- a DOM stand-in ---------------------------------------------------------
 
+/** A style that takes both `style.left = x` and `style.setProperty("--x", y)`, and reports what it was given. */
+export function fakeStyle() {
+  return {
+    setProperty(name, value) {
+      this[name] = String(value);
+    },
+    getPropertyValue(name) {
+      return this[name] ?? "";
+    },
+  };
+}
+
 export function fakeElement(tag = "div") {
   const listeners = new Map();
   const element = {
@@ -401,14 +413,7 @@ export function fakeElement(tag = "div") {
     disabled: false,
     hidden: false,
     listeners,
-    style: {
-      setProperty(name, value) {
-        this[name] = String(value);
-      },
-      getPropertyValue(name) {
-        return this[name] ?? "";
-      },
-    },
+    style: fakeStyle(),
     tagName: tag.toUpperCase(),
     textContent: "",
     title: "",

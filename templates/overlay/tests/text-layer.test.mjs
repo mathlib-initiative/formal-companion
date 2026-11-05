@@ -6,9 +6,11 @@
  * a DOM shim with just what it touches (an element with a style, a body to
  * append a measuring canvas to, and a 2d context that can measure text). It
  * then pins `viewer.css` against what that run wrote: every custom property
- * and every `data-main-rotation` the build sets is a value the stylesheet
- * reads, since only the build files are vendored (`vendor/pdfjs/PINNED.md`)
- * and the rules they are written for are the viewer's own.
+ * and every `data-main-rotation` the build sets is read by a rule, since only
+ * the build files are vendored (`vendor/pdfjs/PINNED.md`) and the rules they
+ * are written for are the viewer's own. The one exception is
+ * `--min-font-size`, which those rules leave alone on purpose and which this
+ * suite pins as unread.
  *
  * viewer.js is imported before the shim is installed, deliberately: it
  * bootstraps itself when a `document` is already there.
@@ -19,7 +21,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { startTextLayer } from "../runtime/viewer/viewer.js";
-import { VIEWER_DIR } from "./fixtures.mjs";
+import { VIEWER_DIR, fakeStyle } from "./fixtures.mjs";
 
 const VENDOR = new URL("../runtime/vendor/pdfjs/", import.meta.url);
 
@@ -37,24 +39,16 @@ const PDF = [
   "trailer << /Root 1 0 R >>",
 ].join("\n");
 
-/** A style that takes both `style.left = x` and `style.setProperty("--x", y)`, and reports what it was given. */
-function shimStyle() {
-  return {
-    setProperty(name, value) {
-      this[name] = String(value);
-    },
-    getPropertyValue(name) {
-      return this[name] ?? "";
-    },
-  };
-}
-
+/**
+ * What this run touches, which is not what the controller's `fakeElement`
+ * touches: a tree with parents, a measuring 2d context and a bounding box.
+ */
 function shimElement(tag) {
   const element = {
     attributes: {},
     children: [],
     parent: null,
-    style: shimStyle(),
+    style: fakeStyle(),
     tagName: tag.toUpperCase(),
     textContent: "",
     append(...nodes) {
@@ -183,8 +177,15 @@ test("text layer: the shell holds the container under the boxes, and viewer.css 
   const properties = [...Object.keys(container.style), ...Object.keys(span.style)].filter((key) => key.startsWith("--"));
   assert.ok(properties.includes("--font-height") && properties.includes("--min-font-size"),
             "the run has to set properties, or this test proves nothing");
+  // A rule has to read them, not a comment about them.
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
   for (const property of properties) {
-    assert.ok(css.includes(property), `viewer.css says nothing about ${property}`);
+    if (property === "--min-font-size") {
+      assert.ok(!rules.includes(property) && css.includes(property),
+                "--min-font-size is the one value the rules leave alone, and viewer.css says why");
+      continue;
+    }
+    assert.ok(rules.includes(property), `viewer.css says nothing about ${property}`);
   }
   for (const rotation of [0, 90, 180, 270]) {
     const { container: turned } = await renderedLayer({ rotation, scale: 1 });

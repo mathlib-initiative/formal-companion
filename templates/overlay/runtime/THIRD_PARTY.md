@@ -2,7 +2,8 @@
 
 Two third-party components are vendored here: PDF.js and Literature Links.
 Everything else under this directory was written for the formal-companion
-overlay.
+overlay, except the one block of stylesheet rules named under "PDF.js" below,
+which follows PDF.js's own.
 
 ## PDF.js
 
@@ -24,6 +25,13 @@ overlay.
   commands that reproduce the extraction, so the bytes above can be checked
   against the published package without trusting this directory. It also says
   why the legacy build.
+- Not a copied file, but not the overlay's own work either: the `.text-layer`
+  rules of `viewer/viewer.css` follow PDF.js's own text layer stylesheet,
+  `web/text_layer_builder.css` of the same release (Apache License 2.0), which
+  the two vendored build files do not carry. The build's spans are written for
+  those rules, so the viewer has to provide them; the three
+  `data-main-rotation` transforms are upstream's, and the span rule is
+  upstream's without `--min-font-size`.
 - Bundled in both files by the legacy build: core-js 3.49.0,
   <https://github.com/zloirock/core-js>, under the MIT License
   (<https://github.com/zloirock/core-js/blob/v3.49.0/LICENSE>), Copyright (c)
@@ -34,9 +42,10 @@ The viewer loads `pdf.min.mjs` and `pdf.worker.min.mjs` from this directory
 only: no CDN is contacted at run time, and the page's Content-Security-Policy
 allows no other origin. PDF.js is started with `isEvalSupported: false`.
 
-Nothing here is modified, so the Apache 2.0 notice requirement is met by
-shipping `vendor/pdfjs/LICENSE` beside the files it covers; this file is the
-notice that says which files it covers and where they came from.
+None of the copied files is modified, and the stylesheet rules above are under
+the same licence, so the Apache 2.0 notice requirement is met by shipping
+`vendor/pdfjs/LICENSE` beside the files it covers; this file is the notice that
+says which files it covers and where they came from.
 
 ## Literature Links
 
