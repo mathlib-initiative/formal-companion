@@ -155,7 +155,7 @@ def markers(source_commit: str, pdf_sha256: str, boxes: dict[str, list] | None =
 PAGE = (612.0, 792.0)
 #: the characters the fixture prints outside ASCII, by the glyph name an encoding gives
 #: them: poppler reads a glyph name back as the character the Adobe glyph list names
-GLYPHS = {"ρ": "rho", "∪": "union"}
+GLYPHS = {"ρ": "rho", "∪": "union", "–": "endash"}
 CODES = {char: code for code, char in enumerate(GLYPHS, start=1)}
 
 
@@ -552,6 +552,9 @@ class TestTheDocument(unittest.TestCase):
 TITLED = "1.2"
 TITLE_TEX = r"$\glued{U}{V}$"
 TITLE_HEAD = "Theorem 1.2 (U ∪ρ V). Suppose that"
+#: the same item titled with a ligature alone, which the page prints as one character
+TITLE_LIGATURE = "The Seifert--van Kampen theorem"
+TITLE_LIGATURE_HEAD = "Theorem 1.2 (The Seifert–van Kampen theorem). Suppose that"
 
 
 def no_poppler():
@@ -560,18 +563,19 @@ def no_poppler():
         boxtext, "PROGRAMS", ("pdftotext-is-not-installed", "pdfinfo-is-not-installed"))
 
 
-def retitled_fixture(case: unittest.TestCase, prints: dict | None = None) -> "Fixture":
+def retitled_fixture(case: unittest.TestCase, prints: dict | None = None,
+                     title: str = TITLE_TEX) -> "Fixture":
     """A fixture whose item :data:`TITLED` is titled in TeX, in `items.json` and the
     markers both, with `prints` on its page."""
     items = copy.deepcopy(doc.ITEMS)
     for item in items["items"]:
         if item["id"] == TITLED:
-            item["title"] = TITLE_TEX
+            item["title"] = title
     fixture = Fixture(scratch(case), items=items, prints=prints)
     written = fixture.markers()
     for entry in written["entries"]:
         if entry["id"] == TITLED:
-            entry["title"] = TITLE_TEX
+            entry["title"] = title
     fixture.write_markers(written)
     fixture.commit("the markers of the item titled in TeX")
     return fixture
@@ -609,6 +613,22 @@ class TestTheTitlesAreTheOnesThePagePrints(unittest.TestCase):
         self.assertEqual(items["definition-1.1"]["title"], "Gluing data")
         self.assertEqual(report.counts["titles_from_pdf"], len(NOTIONS) + 1)
 
+    def test_an_item_titled_with_a_ligature_is_read_from_the_page_too(self):
+        """`Seifert--van Kampen` is a source spelling: the page prints an en dash."""
+        fixture = retitled_fixture(self, prints={TITLED: TITLE_LIGATURE_HEAD},
+                                   title=TITLE_LIGATURE)
+        items = by_id(fixture.export()[0], "items")
+        self.assertEqual(items["theorem-1.2-a"]["title"], "The Seifert–van Kampen theorem")
+
+    def test_a_crop_that_caught_a_url_falls_back_and_says_so(self):
+        """A box is padded, so a crop can hold a URL the title has none of; a title
+        holding one would fail the format's `external-urls` lint."""
+        fixture = Fixture(scratch(self), prints={"notion:IsOpen": "open https://example.org/x"})
+        document, report = fixture.export()
+        self.assertEqual(by_id(document, "items")["notion:IsOpen"]["title"], "open")
+        self.assertEqual(report.counts["titles_not_printed"], ["notion:IsOpen"])
+        self.assertIn("the crop holds a URL", report.lossy["title.printed_text"]["examples"][0])
+
     def test_an_item_head_the_page_does_not_print_falls_back_to_the_words(self):
         """Nothing is printed in that box, so there is no head to read the title from."""
         document, report = retitled_fixture(self).export()
@@ -641,15 +661,25 @@ class TestTheTitlesWithoutPoppler(unittest.TestCase):
         self.assertEqual(items["notion:ExampleLib.GlueData"]["title"], "U V")
         self.assertEqual(items["notion:IsOpen"]["title"], "open")     # no markup to strip
         self.assertEqual(report.counts["titles_from_pdf"], 0)
-        self.assertEqual(report.counts["titles_not_printed"],
-                         [f"notion:{name}" for name, _, _ in NOTIONS])
+        # a notion whose words are plain prose is titled by them and lost nothing
+        self.assertEqual(report.counts["titles_not_printed"], ["notion:ExampleLib.GlueData"])
         bucket = report.lossy["title.printed_text"]
-        self.assertEqual(bucket["count"], len(NOTIONS))
+        self.assertEqual(bucket["count"], 1)
         self.assertIn("pdftotext", bucket["examples"][0])
-        self.assertIn("notion:Set: subset -> subset", bucket["examples"][0])
+        self.assertIn(r"notion:ExampleLib.GlueData: $\glued{U}{V}$ -> U V", bucket["examples"][0])
         (warning,) = [line for line in common.report_warnings(report.counts)
                       if "title" in line]
-        self.assertIn(f"{len(NOTIONS)} title(s) could not be read from the PDF", warning)
+        self.assertIn("1 title(s) could not be read from the PDF", warning)
+
+    def test_the_fallback_writes_a_ligature_as_the_character_it_prints(self):
+        """`--` is the source of an en dash, and the one piece of markup the fallback
+        can read as well as the page does."""
+        with no_poppler():
+            document, report = retitled_fixture(self, title=TITLE_LIGATURE).export()
+        self.assertEqual(by_id(document, "items")["theorem-1.2-a"]["title"],
+                         "The Seifert–van Kampen theorem")
+        self.assertEqual(report.counts["titles_not_printed"],
+                         [TITLED, "notion:ExampleLib.GlueData"])
 
 
 class TestTheTextInsideABox(unittest.TestCase):
@@ -664,6 +694,14 @@ class TestTheTextInsideABox(unittest.TestCase):
         self.assertEqual(boxtext.strip_tex(r"$\ball{x}{\rho}$"), "x")
         # nothing is left of a title that is all markup, so it stays as it was written
         self.assertEqual(boxtext.strip_tex(r"$\R$"), r"$\R$")
+
+    def test_a_ligature_is_markup_and_the_fallback_prints_it(self):
+        """A dash or a quotation mark is typed as a pair of characters and printed as one."""
+        self.assertTrue(boxtext.has_tex("Seifert--van Kampen"))
+        self.assertTrue(boxtext.has_tex("the ``glued'' space"))
+        self.assertEqual(boxtext.strip_tex("Seifert--van Kampen"), "Seifert–van Kampen")
+        self.assertEqual(boxtext.strip_tex("a quotient---a pushout"), "a quotient—a pushout")
+        self.assertEqual(boxtext.strip_tex("the ``glued'' space"), "the “glued” space")
 
     def test_it_joins_a_crop_and_ends_a_title_at_the_notion(self):
         self.assertEqual(boxtext.printed("the composite of\ntwo  homomorphisms,\n"),

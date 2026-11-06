@@ -733,6 +733,13 @@ root as `python3 informal/tools/<tool>.py` (or `bash`), and import only their si
 Python tool sets `sys.dont_write_bytecode = True` before it imports one, as the overlay's
 tools do, so a run leaves no `__pycache__/` to dirty a worktree or the output repository.
 
+A change to a runtime file here has a price in a repository whose canonical PDF is already
+approved: `cf plan-informalize` refuses a repository whose runtime is not this checkout's,
+the `cf informalize sync` it names writes under `informal/`, and the PDF was built from
+that directory, so `check_markers` then refuses it and stage I6 is run again. Nothing of
+the overlay needs it — `cf informalize overlay` syncs no runtime and exports against the
+approved PDF (section 10) — but a **further fleet phase** after a runtime change does.
+
 ### 7.2 `fcmarkers.sty`
 
 - `\begin{<kind>}[id=<id>]{<title>}` for the seven kinds prints "<Kind> <id> (<title>)" and
@@ -1393,11 +1400,14 @@ vendored checker accepts in canonical form:
   (Greek, operators, subscripts); only white space is collapsed, a line break closed up,
   and a sentence's comma or full stop that the box's padding caught dropped. An item
   whose `items.json` title holds TeX markup is titled the same way, from the parenthesis
-  its head prints (`Lemma 1.2 (…)`), and a part carries its item's. Where poppler is
-  absent or a crop holds no text the title is the words with their markup stripped, and
-  the report names every title that took it (`counts.titles_from_pdf`,
-  `counts.titles_not_printed`, and the lossy `title.printed_text`). The id is the
-  markers' either way. A constant of the library is a
+  its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a ligature counts as
+  markup, since `Seifert--van Kampen` is as much a source spelling as `$\ball{x}{\rho}$`
+  is. Where poppler is absent, a crop holds no text, or a crop caught a URL the box's
+  padding reached, the title is the words with their markup stripped and each ligature
+  written as the character it prints, and the report names every title that took it whose
+  words hold markup (`counts.titles_from_pdf`, `counts.titles_not_printed`, and the lossy
+  `title.printed_text`); a notion whose words are plain prose is titled by them and
+  reported nowhere. The id is the markers' either way. A constant of the library is a
   declaration like any other. A constant of a **dependency** is a row of `references`
   (section 5.3): its declaration record carries the module, the file Lake's layout gives
   it, and `x_package`, `x_repo` and `x_commit`; its destination is the line on that

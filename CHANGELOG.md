@@ -150,14 +150,19 @@ release has something to say.
   character for character -- Greek, operators, subscripts -- and only its white space is
   collapsed, a line break closed up and a sentence's comma or full stop that the box's
   padding caught dropped. An item or part whose `items.json` title holds TeX markup is
-  titled the same way, from the parenthesis its head prints. The titles are read at
+  titled the same way, from the parenthesis its head prints, and a ligature counts as
+  markup: the run's headline theorem was titled `The based Seifert--van Kampen theorem`
+  where page 5 prints an en dash. The titles are read at
   **export** time from the approved PDF and `markers.json`, so an existing canonical PDF
   and its proof-sheets approval stay valid and nothing is built again; where poppler is
-  absent or a crop holds no text the title is the words with their markup stripped, and the
-  export report names every title that took it (`counts.titles_from_pdf`,
-  `counts.titles_not_printed`, the lossy `title.printed_text`). The annotation id is the
+  absent, a crop holds no text, or a crop caught a URL the box's padding reached, the title
+  is the words with their markup stripped and each ligature written as the character it
+  prints, and the export report names every title that took it whose words hold markup
+  (`counts.titles_from_pdf`, `counts.titles_not_printed`, the lossy `title.printed_text`).
+  The annotation id is the
   markers' either way (`notion:<constant>`), so no title re-keys anything. On the
-  acceptance run's 54 notions, 25 titles changed and none fell back.
+  acceptance run, 26 titles changed -- 25 of the 54 notions and the headline theorem --
+  and none fell back.
 
 - **The informal text prints no Lean name and no link; a notion is marked instead.**
   The conventions section used to introduce each notion it fixes as

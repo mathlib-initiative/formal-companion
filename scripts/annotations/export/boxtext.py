@@ -21,8 +21,14 @@ from pathlib import Path
 
 #: poppler's two programs: the crop needs pdftotext, the page sizes pdfinfo
 PROGRAMS = ("pdftotext", "pdfinfo")
-#: TeX markup in a title: a control word or symbol, a math shift, a group, an accent
-_MARKUP = re.compile(r"\\[A-Za-z@]+|\\.|[${}~^_&%#]")
+#: what TeX prints for the ligatures a title is written with: a dash is typed as two or
+#: three hyphens and a quotation mark as a pair of them, and the page prints one character
+LIGATURES = (("---", "—"), ("--", "–"), ("``", "“"), ("''", "”"))
+#: TeX markup in a title: a control word or symbol, a math shift, a group, an accent, or a
+#: ligature -- `Seifert--van Kampen` is as much the source of what the page prints as
+#: `$\ball{x}{\rho}$` is, and a title holding one is read from the page like any other
+_MARKUP = re.compile(r"\\[A-Za-z@]+|\\.|[${}~^_&%#]|"
+                     + "|".join(re.escape(tex) for tex, _ in LIGATURES))
 
 
 def has_tex(title: str | None) -> bool:
@@ -31,8 +37,15 @@ def has_tex(title: str | None) -> bool:
 
 
 def strip_tex(title: str) -> str:
-    """A title with its TeX markup removed, and the title itself when nothing is left."""
-    plain = re.sub(r"\s+", " ", _MARKUP.sub(" ", title)).strip()
+    """A title with its TeX markup removed, and the title itself when nothing is left.
+
+    A ligature is replaced by the character it prints rather than dropped: it is the one
+    piece of markup this fallback can read as well as the page does.
+    """
+    plain = title
+    for tex, char in LIGATURES:
+        plain = plain.replace(tex, char)
+    plain = re.sub(r"\s+", " ", _MARKUP.sub(" ", plain)).strip()
     return plain or title.strip()
 
 

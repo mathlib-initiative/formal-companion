@@ -422,13 +422,22 @@ class _Export:
         A title is what the reader of the page sees; the words a `\\fcnotion` or an item
         was written with are LaTeX, and `$\\ball{x}{\\rho}$` is no title for a card.  The
         stripped words are the fallback for a PDF no box of can be read -- poppler absent,
-        or a crop with no text in it -- and the report names every title that took it.
+        or a crop with no text in it -- and the report names every title that took it,
+        unless the words hold no markup at all and the page prints what they say.
         """
+        why = None
+        if found and common.has_url(found):
+            # a box is padded by `boxes.pad_bp`, so a crop can catch a URL the title
+            # itself has none of, and a title holding one fails the `external-urls` lint
+            found, why = None, "the crop holds a URL, which the format's lint refuses"
         if found:
             self.report.counts["titles_from_pdf"] = self.report.counts.get("titles_from_pdf", 0) + 1
             return found
         plain = boxtext.strip_tex(title)
-        why = self.box_text.why if not self.box_text.available else f"{what} hold no text"
+        if why is None and not boxtext.has_tex(title):
+            return plain                # plain prose: the words are what the page prints
+        why = why or (self.box_text.why if not self.box_text.available
+                      else f"{what} hold no text")
         self.report.lose("title.printed_text", 1,
                          "a title the canonical PDF could not be read for is the words of the "
                          "source with their TeX markup stripped, which is not what the page "

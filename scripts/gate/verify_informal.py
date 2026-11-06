@@ -641,8 +641,13 @@ def check_changed(cfg: GateConfig, entries: dict[str, str], tasks: list[str],
 # --------------------------------------------------------------------------- #
 
 def strip_comments(text: str) -> str:
-    """TeX source with every `%` comment removed (a `\\%` is a percent sign, not one)."""
-    return "\n".join(re.sub(r"(?<!\\)%.*", "", line) for line in text.splitlines())
+    """TeX source with every `%` comment removed, through the runtime's one definition.
+
+    `fccommon` stands alone in an output repository, where it reads a text file as it is
+    typeset, and the gate imports it: the rule that a comment is not part of the text is
+    stated there once, and this is the gate's name for it.
+    """
+    return fc.strip_comments(text)
 
 
 def lint_printed(cfg: GateConfig, path: str, text: str, problems: Problems) -> None:

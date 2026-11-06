@@ -434,13 +434,18 @@ since nothing here can tell it from one TeX broke a word at) and a sentence's
 comma or full stop that the box's padding caught dropped. An **item** whose
 `items.json` title holds TeX markup is titled the same way, from the
 parenthesis its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a
-title that is plain prose is the table's, with nothing cropped. Where poppler
-is absent, or a crop holds no text, the title is the words with their TeX
-markup stripped: `counts.titles_from_pdf` counts the titles read from the page,
-`counts.titles_not_printed` names every one that fell back (which `cf export`
-and `cf overlay export` print as a warning), and the lossy
-`title.printed_text` says why of each. The annotation's **id** is the markers'
-either way, so a title that moves re-keys nothing.
+title that is plain prose is the table's, with nothing cropped. A ligature is
+markup here like any other (`Seifert--van Kampen` is the source of a title the
+page prints with an en dash). Where poppler is absent, or a crop holds no text,
+or the crop caught a URL the box's padding reached, the title is the words with
+their TeX markup stripped and each ligature written as the character it prints:
+`counts.titles_from_pdf` counts the titles read from the page,
+`counts.titles_not_printed` names every one whose words hold markup and fell
+back (which `cf export` and `cf overlay export` print as a warning), and the
+lossy `title.printed_text` says why of each. A notion whose words are plain
+prose is titled by them, and reported nowhere, when no crop can be had. The
+annotation's **id** is the markers' either way, so a title that moves re-keys
+nothing.
 
 Lossy: `link.junk` (the junk values `items.json` lists have no field in the
 format; the text states each in a sentence of its own), `link.relation` (a

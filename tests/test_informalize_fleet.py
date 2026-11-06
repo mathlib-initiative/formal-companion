@@ -34,6 +34,7 @@ import sys
 import tempfile
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -190,6 +191,12 @@ class TestTheGateStandsAlone(unittest.TestCase):
         allowed = set(sys.stdlib_module_names) | {"__future__", "verify_findings", "fccommon",
                                                   "fcitems"}
         self.assertLessEqual(names, allowed)
+
+    def test_it_strips_a_comment_through_the_runtime_s_one_definition(self):
+        """A comment is not typeset; `fccommon` says so once and the gate imports it."""
+        self.assertEqual(vi.strip_comments("a % b\nc \\% d"), "a \nc \\% d")
+        with unittest.mock.patch.object(vi.fc, "strip_comments", return_value="the runtime's"):
+            self.assertEqual(vi.strip_comments("a % b"), "the runtime's")
 
     def test_a_gate_directory_without_a_sibling_is_exit_3(self):
         tmp = scratch(self)
