@@ -74,9 +74,14 @@ scripts/informalize/ the informalize mode behind `cf informalize`: informalize.y
                      and for the overlay's hovers `verso_host.sh` and `verso_host.py`, run on
                      the host beside locate's drivers, with no cflib), the scope,
                      the fleet's planner (`plan.py`, behind `cf plan-informalize`), whose
-                     gate is scripts/gate/verify_informal.py, and `apply.py`, which puts a
+                     gate is scripts/gate/verify_informal.py, `apply.py`, which puts a
                      harvested phase's files into the output repository and writes the
-                     phase's stage receipt (docs/proposals/informalize.md)
+                     phase's stage receipt, `pdf.py`, the canonical PDF's two ends
+                     (`cf informalize pdf-command` and `fetch-pdf`, around the runtime's
+                     `tools/canonical_pdf.sh` on the host), and `overlay.py`, the
+                     annotations, the generated site and its checks
+                     (`cf informalize overlay` and `check-site`)
+                     (docs/proposals/informalize.md)
 scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
                      its three presets, outcomes with the derived status, and the
                      Literature Links export (references/locate-documents.md);
@@ -89,11 +94,13 @@ scripts/bench/       locate's benchmark (`cf bench`; references/locate-bench.md)
 templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
                      tests/ holds its node --test suites
 templates/informalize/ runtime/ is copied verbatim into an output repository's informal/
-                     (fcmarkers.sty, STYLE.md, the build and check tools); project/
-                     holds the templates `cf informalize init` renders once, licenses/
+                     (fcmarkers.sty, STYLE.md, the build, check and canonical-PDF tools);
+                     project/ holds the templates `cf informalize init` renders once,
+                     site/ the landing page and the two workflows `cf informalize overlay`
+                     writes, licenses/
                      the text of each open license it writes as LICENSE, and schema/
                      informalize.yaml's and items.json's JSON Schemas, for a reader
-                     (docs/proposals/informalize.md section 7)
+                     (docs/proposals/informalize.md sections 7 and 10)
 templates/campaign/  the host-side sequencer `cf campaign render` writes
 templates/tend/      the tend root's config, faithfulness, locate (`*-locate*`) and
                      informalize (`*-informalize*`)
@@ -121,7 +128,8 @@ Those two lines move together or not at all.
 - No network in library code. The only exceptions are the errata fetcher
   (curl, raw HTML kept, never a summarising fetch), an explicit
   `cf onboard --download` of a PDF the author publishes himself, the
-  run/harvest commands and `cf informalize fetch-library --execute --i-have-consent`
+  run/harvest commands and `cf informalize fetch-library` and `fetch-pdf`, each
+  `--execute --i-have-consent`
   (ssh/rsync to an allowlisted host), and the Wikipedia
   fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — `scripts/sources/wikinet.py`,
   the one module that may reach Wikipedia: curl, the raw bytes kept, one fixed
@@ -388,7 +396,11 @@ HOME alone); good contributions pass, bad ones are refused under the rule they b
 task at the attempt cap is ended by `attempt_cap.py` and admitted. Between phases each run is
 harvested with `cf harvest` from that entrypoint and applied with `cf informalize apply`,
 which commits what it wrote in the output repository and writes the phase's stage
-receipt. The phases that build need TeX, every package of
-`tex_packages` included, and are skipped without them.
+receipt. Then stage I6 — the tree `cf informalize pdf-command` writes,
+`informal/tools/canonical_pdf.sh` run in a copy of it as the host runs it, a run without
+poppler stopping at exit 4, and `fetch-pdf` over a local ssh and rsync — and stage I7,
+`cf informalize overlay` and `check-site` with the two approvals. The phases that build
+need TeX, every package of `tex_packages` included, and are skipped without them; I6 and
+I7 need poppler besides.
 Run it with `python3 tests/e2e/informalize_synthetic/driver.py [--keep <dir>]`; the suite
 runs it as `tests/test_e2e_informalize_synthetic.py`.

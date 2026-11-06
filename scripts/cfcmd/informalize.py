@@ -1,8 +1,8 @@
 """cf informalize -- an informal companion written from a Lean library.
 
 New code (CLAUDE.md section 5 is the contract for adding a command), implementing
-components 3, 4 and 5b's `apply` of docs/proposals/informalize.md section 11; the stages
-are its section 3:
+components 3, 4, 5b's `apply`, 6, 7 and 9 of docs/proposals/informalize.md section 11;
+the stages are its section 3:
 
     cf informalize init <id> --library URL --commit SHA --module M --theorem T --prefix P \\
         --text-license Apache-2.0 --title T --author A [--reference "<citation line>"]
@@ -14,6 +14,10 @@ are its section 3:
         [--lean-threads 16]
     cf informalize scope <id>
     cf informalize apply <id> --run <run>
+    cf informalize pdf-command <id> --host H
+    cf informalize fetch-pdf <id> --host H --execute --i-have-consent
+    cf informalize overlay <id> --pdf-url URL [--packages-src DIR]
+    cf informalize check-site <id>
     cf informalize check-items <id>
     cf informalize approve <id> items --by <name> --in-v1 <ids|all>
     cf informalize reference-checklist <id>
@@ -22,21 +26,26 @@ are its section 3:
 `init` and `sync` write `informalize/<id>/informalize.yaml`, the output repository
 `informalize/<id>/repo/` and the I0 receipt; `fetch-library` writes `informal/
 informalize.json`'s `source_date_epoch`, `scope` writes `informal/declarations.json`,
-`apply` writes the files a harvested phase wrote and its stage receipt, and
+`apply` writes the files a harvested phase wrote and its stage receipt,
 `approve <id> items` writes the renumbered table, `sections.tex` and the empty section
-files, each committed.  Those are the only writes into a repository, under the exception
+files, `fetch-pdf` writes `informal/markers.json`, and `overlay` writes the overlay's
+configuration, the annotations, the landing page and the two workflows -- each committed.
+Those are the only writes into a repository, under the exception
 docs/proposals/informalize.md section 1.3 words (SKILL.md rule 10).  `build-command` runs
 nothing: it writes what the host needs into `library/to-host/` and prints the lines that
 copy it there and start the library's build; `verso-command` is the same for the Verso
 build the overlay's hovers are cut from (section 10), into `verso/to-host/`, and the file
 it ends with is committed by hand, as docs/overlay.md section 5 has a companion commit
-one; `fetch-library --execute` is the mode's one use of ssh and rsync (CLAUDE.md
-section 3).  The other subcommands of section 3 (pdf-command, fetch-pdf, overlay,
-check-site) are later components' and not implemented yet.
+one; `pdf-command` is the same again for the canonical PDF's two host builds (section 9),
+into `pdf/<commit12>/to-host/`.  `fetch-library --execute` and `fetch-pdf --execute` are
+the mode's only uses of ssh and rsync (CLAUDE.md section 3); `overlay` and `check-site`
+run wholly on this machine and reach no network, building the site with the companion's
+own `serve.py --build-only` from the PDF `fetch-pdf` brought home.
 """
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 
 from cflib import log
 from cflib.errors import CfError
@@ -47,6 +56,8 @@ from overlay.config import OPEN_LICENSES
 from informalize import apply as apply_mod
 from informalize import approve as gates
 from informalize import bootstrap, config, library, status
+from informalize import overlay as overlay_mod
+from informalize import pdf as pdf_mod
 from informalize import scope as scope_mod
 
 
@@ -158,6 +169,42 @@ def register(subparsers) -> None:
                          "cost_usd is then 0 and the receipt says so); by default a "
                          "harvest with no cost block is refused")
 
+    pc = sub.add_parser("pdf-command",
+                        help="stage I6: write pdf/<commit12>/to-host/ (the output repository "
+                             "at HEAD) and print the lines that copy it to the host and build "
+                             "the canonical PDF there twice; runs nothing")
+    pc.add_argument("id")
+    pc.add_argument("--host", required=True, help="a host of workspace.yaml hosts.allowlist")
+
+    fp = sub.add_parser("fetch-pdf",
+                        help="stage I6: bring the canonical PDF, its markers, its receipt and "
+                             "the proof sheets home, commit markers.json, write the I6 receipt")
+    fp.add_argument("id")
+    fp.add_argument("--host", required=True, help="the host pdf-command named")
+    fp.add_argument("--execute", action="store_true",
+                    help="run ssh and rsync; without it, print what would run")
+    fp.add_argument("--i-have-consent", action="store_true",
+                    help="say that the host's owner agreed to the build (recorded in the "
+                         "receipt)")
+
+    ov = sub.add_parser("overlay",
+                        help="stage I7: configure the overlay, write the landing page and the "
+                             "workflows, export the annotations, sync and check them, and "
+                             "seed the PDF cache")
+    ov.add_argument("id")
+    ov.add_argument("--pdf-url", required=True, metavar="URL",
+                    help="the https URL the maintainer publishes the canonical PDF at (a "
+                         "release asset); the viewer fetches it and verifies its sha256")
+    ov.add_argument("--packages-src", type=Path, metavar="DIR",
+                    help="a .lake/packages directory of the library's build, where a notion "
+                         "of a dependency is read: without it such a card shows the "
+                         "documentation page and no statement")
+
+    cs = sub.add_parser("check-site",
+                        help="stage I7: run the companion's check_generated.py and "
+                             "serve.py --build-only, read the built site, write the I7 receipt")
+    cs.add_argument("id")
+
     chk = sub.add_parser("check-items", help="check informal/items.json against "
                                              "declarations.json and the library's source")
     chk.add_argument("id")
@@ -182,8 +229,9 @@ def run(args) -> int:
     if not command:
         raise CfError("say which informalize subcommand to run",
                       hint="cf informalize init | sync | status | build-command | "
-                           "fetch-library | verso-command | scope | apply | check-items | "
-                           "approve | reference-checklist (`cf informalize --help`)")
+                           "fetch-library | verso-command | scope | apply | pdf-command | "
+                           "fetch-pdf | overlay | check-site | check-items | approve | "
+                           "reference-checklist (`cf informalize --help`)")
     return _DISPATCH[command](args)
 
 
@@ -334,6 +382,74 @@ def _apply(args) -> int:
     return 0
 
 
+def _pdf_command(args) -> int:
+    workspace = from_args(args)
+    built = pdf_mod.pdf_command(workspace, args.id, args.host)
+    for line in built.lines:
+        print(line)
+    log.ok(f"wrote {built.to_host}: {len(built.files)} file(s) of the output repository at "
+           f"HEAD and {pdf_mod.COMMAND_FILE} (the lines above); nothing ran")
+    return 0
+
+
+def _fetch_pdf(args) -> int:
+    workspace = from_args(args)
+    result = pdf_mod.fetch_pdf(workspace, args.id, args.host, execute=args.execute,
+                               consent=args.i_have_consent)
+    if not args.execute:
+        log.info(f"dry run: fetch-pdf {args.id} would run, then check what came back:")
+        for argv in result.commands:
+            print("  " + " ".join(shlex.quote(a) for a in argv))
+        log.info("pass --execute --i-have-consent to run them")
+        return 0
+    facts = result.facts
+    log.ok(f"fetched {result.directory}: {facts['job']}.pdf, {facts['pdf']['bytes']} bytes, "
+           f"{facts['pdf']['pages']} pages, sha256 {facts['pdf']['sha256'][:12]}; "
+           f"{len(facts['proof_sheets'])} proof sheet file(s)")
+    log.info("  the host's checks: "
+             + ", ".join(f"{k} {v}" for k, v in facts["checks"].items()))
+    log.info(f"  built with {facts['pdftex']}, {facts['latexmk']}, {facts['poppler']} over "
+             f"{facts['inputs']} recorded input(s)")
+    if result.committed:
+        log.info(f"  committed {result.committed[:12]}: informal/markers.json")
+    log.info(f"next: read the proof sheets and the PDF, then `cf informalize approve "
+             f"{args.id} proof-sheets --by <name>`")
+    return 0
+
+
+def _overlay(args) -> int:
+    workspace = from_args(args)
+    result = overlay_mod.overlay(workspace, args.id, pdf_url=args.pdf_url,
+                                 packages_src=args.packages_src)
+    log.ok(f"{result.counts.get('annotation_files', 0)} annotation files in "
+           f"{result.counts.get('sections', 0)} section folder(s), the overlay synced and "
+           f"checked, {len(result.commits)} commit(s) ({result.head[:12]})")
+    for relative in result.written:
+        log.detail(f"wrote {relative}")
+    if result.cache:
+        log.info(f"seeded {result.cache} with the canonical PDF, so the site builds "
+                 "before the release URL is live")
+    for warning in result.warnings:
+        log.warn(warning)
+    log.info(f"next: cf informalize check-site {args.id}")
+    return 0
+
+
+def _check_site(args) -> int:
+    workspace = from_args(args)
+    result = overlay_mod.check_site(workspace, args.id)
+    checks = result.checks
+    log.ok(f"the built site: {checks['site_files']} overlay file(s) and "
+           f"{checks['annotation_files']} annotation file(s) at their sha256, the PDF "
+           f"published as {checks['pdf']['published_as']} under {checks['license']}, "
+           f"{checks['verso']} Verso hovers")
+    log.info(f"  index {checks['index']['path']} links to {checks['index']['href']}")
+    log.info(f"  wrote {result.receipt}")
+    log.info(f"next: look at the site in a browser, then `cf informalize approve {args.id} "
+             "publish --by <name>`")
+    return 0
+
+
 def _check_items(args) -> int:
     workspace = from_args(args)
     problems, doc = gates.check_items(workspace, args.id)
@@ -384,6 +500,10 @@ _DISPATCH = {
     "verso-command": _verso_command,
     "scope": _scope,
     "apply": _apply,
+    "pdf-command": _pdf_command,
+    "fetch-pdf": _fetch_pdf,
+    "overlay": _overlay,
+    "check-site": _check_site,
     "check-items": _check_items,
     "approve": _approve,
     "reference-checklist": _reference_checklist,

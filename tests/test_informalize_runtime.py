@@ -104,8 +104,7 @@ class TestTheRuntimeFiles(unittest.TestCase):
         listed = set(re.findall(r"^\| `([^`]+)` \|", table, re.M))
         shipped = {p.relative_to(RUNTIME).as_posix() for p in RUNTIME.rglob("*") if p.is_file()
                    and "__pycache__" not in p.parts}
-        # canonical_pdf.sh is component 6's (section 11)
-        self.assertEqual(listed - shipped, {"tools/canonical_pdf.sh"})
+        self.assertEqual(listed - shipped, set())
         self.assertEqual(shipped - listed, set())
 
     def test_the_runtime_carries_its_license(self):
@@ -233,16 +232,33 @@ class TestTheRuntimeFiles(unittest.TestCase):
         self.assertIn("\\@ifstar{#3\\xspace}{\\fc@hyp{#2}#3\\xspace}", line)
         self.assertIn("\\RequirePackage{xspace}", sty)
 
-    def test_the_project_slots_are_the_readme_s(self):
+    @staticmethod
+    def _documented(heading: str) -> set[str]:
+        """The slots one section of templates/informalize/README.md names."""
         readme = (SKILL / "templates" / "informalize" / "README.md").read_text(encoding="utf-8")
-        documented = set(re.findall(r"^\| `([a-z_]+)` \|", readme, re.M))
-        used = set()
-        for path in PROJECT.rglob("*"):
-            if path.is_file():
-                used |= set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}",
-                                       path.read_text(encoding="utf-8")))
-        self.assertEqual(used, documented)
+        section = readme.split(f"\n## {heading}", 1)[1].split("\n## ", 1)[0]
+        return set(re.findall(r"^\| `([a-z_]+)` \|", section, re.M))
+
+    @staticmethod
+    def _used(*paths: Path) -> set[str]:
+        out: set[str] = set()
+        for root in paths:
+            for path in ([root] if root.is_file() else root.rglob("*")):
+                if path.is_file():
+                    out |= set(re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}",
+                                          path.read_text(encoding="utf-8")))
+        return out
+
+    def test_the_project_slots_are_the_readme_s(self):
+        used = self._used(PROJECT)
+        self.assertEqual(used, self._documented("`project/`"))
         self.assertEqual(used, set(doc.SLOTS))
+
+    def test_the_landing_pages_slots_are_the_readme_s(self):
+        """`templates/informalize/site/` is rendered by `cf informalize overlay`, not by
+        `init`, and its slots are documented in their own section (section 10)."""
+        index = SKILL / "templates" / "informalize" / "site" / "index.html"
+        self.assertEqual(self._used(index), self._documented("`site/`"))
 
     def test_nothing_of_the_pilot_s_own_text_is_left(self):
         # the provenance lines name the pilot's files ("ported from the pilot's

@@ -43,6 +43,38 @@ release has something to say.
 
 ### Added
 
+- **The canonical PDF and the overlay by command: `cf informalize pdf-command`,
+  `fetch-pdf`, `overlay` and `check-site`.** Components 6, 7 and 8's runbook section of
+  `docs/proposals/informalize.md` (its sections 9 and 10), the last two stages of the mode
+  and the two the first acceptance run did entirely by hand. **I6**: `pdf-command <id>
+  --host H` writes the output repository's files at HEAD into `pdf/<commit12>/to-host/src/`
+  — from git's objects, never the worktree's — and prints the lines that copy them to the
+  host and start the runtime's new `informal/tools/canonical_pdf.sh --source-commit <sha>`
+  there, detached; that script builds twice from clean, refuses two PDFs with different
+  sha256, runs `extract_markers.py`, `check_items.py --strict` and `proof_sheets.py`, and
+  writes `pdf-receipt.json` (`fccommon.py pdf-receipt`, the third command of the runtime's
+  shared module) and `DONE` with its exit status, last, on a failure too — exit 4 without
+  poppler, after the builds. `fetch-pdf <id> --host H --execute --i-have-consent` brings
+  the PDF, its markers, that receipt and the proof sheets home, checks each against the
+  others, commits `informal/markers.json` and writes `stages/I6.json`, which
+  `approve <id> proof-sheets` pins; its own markers commit moves HEAD, so a second fetch
+  takes the commit before HEAD when the only thing between them is that file, as the
+  exporter does. **I7**: `overlay <id> --pdf-url URL` writes the overlay's configuration
+  from `informalize.yaml` (the text's license, `site` as the output root, no build command,
+  the library's prefix stripped), a generated landing page that already carries the link
+  block `build_site.py` injects — written by that tool's own `link_block`, so the build
+  replaces it in place and the tracked `site/index.html` does not change, which by hand it
+  did — and the Pages and check workflows, then exports with `cf export informal-markers`,
+  syncs and checks the overlay, commits each step, and seeds the PDF cache so the site
+  builds before the release URL is live; a `pdf-overlay/verso.json` the Verso step left is
+  committed with it. `check-site <id>` runs the companion's own `check_generated.py` and
+  `pdf-overlay/tools/serve.py --build-only`, refuses if either left a tracked file changed,
+  and reads the built site against its receipt — every file at its sha256, the published
+  PDF at the one the annotations state, every region on a page of it, the index link, and a
+  declaration and a destination on every card — then writes `stages/I7.json`, which
+  `approve <id> publish` pins. `references/runbook-server.md` section 10 is the whole run
+  from `init` to publish, and `tests/e2e/informalize_synthetic/driver.py` now goes that far
+  on synthetic inputs, building for real where the machine has TeX and poppler.
 - **`cf informalize apply <id> --run <run>`: a harvested phase goes into the output
   repository by command.** Component 5b of `docs/proposals/informalize.md` section 8.5.
   `cf harvest` already brings a phase's own files home under `corpus/<run>/tree/` and says

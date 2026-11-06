@@ -1,26 +1,26 @@
 # Informalize: an informal companion written from a Lean library
 
-**Status: specification, 2026-11-06. Components 2, 3, 4, 5a and 5b of section 11 are built: the
+**Status: specification, 2026-11-06. Every component of section 11 is built: the
 LaTeX runtime and the project templates under `templates/informalize/`; `cf informalize
 init`, `sync`, `status`, `check-items`, `approve` and `reference-checklist` with the formats
 of section 5 they read and write, the vocabulary and the rule exception of section 1.3
 (`scripts/informalize/`); the Lean side, `cf informalize build-command`, `fetch-library`
 and `scope` with `scripts/informalize/library_host.sh` and the driver's `LIBRARY_CACHE`
-option (section 6); and the fleet's first half (section 8): `cf plan-informalize`, the gate
+option (section 6); the fleet (section 8): `cf plan-informalize`, the gate
 `scripts/gate/verify_informal.py`, the prompts, the tend config, the bridge's second switch,
-the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`;
-component 5b, `cf run` (with the spend watchdog it starts at the smoke stage),
-`cf harvest` and `cf informalize apply` (sections 8.1 and 8.5); and of
-component 7, the exporter `cf export informal-markers` with the two `scripts/overlay/`
-changes of section 10; component 9, `cf informalize verso-command` with
-`scripts/informalize/verso_host.sh` and `verso_host.py`, the overlay's hovers (section 10);
-and of component 8, `SKILL.md`'s command index and its
-Informalization section, `README.md`, `docs/status.md` and the trigger eval. These
-are not implemented yet: the runbook section of component 8,
-`cf informalize pdf-command`, `cf informalize fetch-pdf`,
-`cf informalize overlay` and `cf informalize check-site`, and
-paths into this repository written in *italics* do not exist yet. Section 11 lists the components
-in the order they land; a component whose code shows this file wrong changes it in the same
+the attempt cap's informalize form, `cf run` (with the spend watchdog it starts at the smoke
+stage), `cf harvest` and `cf informalize apply` (sections 8.1 and 8.5);
+the canonical PDF of section 9, `cf informalize pdf-command` and `fetch-pdf` with the
+runtime's `tools/canonical_pdf.sh`; the annotations, the overlay and the site of section 10,
+the exporter `cf export informal-markers` with the two `scripts/overlay/` changes,
+`cf informalize overlay` and `check-site` with the templates under
+`templates/informalize/site/`, and `cf informalize verso-command` with
+`scripts/informalize/verso_host.sh` and `verso_host.py` for the hovers; component 8's
+`SKILL.md` command index and Informalization section, `README.md`, `docs/status.md`, the
+trigger eval and `references/runbook-server.md` section 9; and
+`tests/e2e/informalize_synthetic/driver.py`, which runs stages I0 to I7 on synthetic
+inputs. Nothing has run against a real library. Section 11 lists the components
+in the order they landed; a component whose code shows this file wrong changes it in the same
 commit and says so in its message.**
 
 The skill so far reads a companion against a source. This mode runs the other way: from a
@@ -130,8 +130,8 @@ a second informalize id on the same host needs that entry changed first.
 | I3 items | phase `items`; `apply`; `check-items`; `reference-checklist`; `approve <id> items`, `approve <id> references` | host, Mac | `scope.json`, `declarations.json`, `library/src/` | `informal/items.json`, `items-review.md`, `sections.tex`, empty section files | `stages/I3.json` |
 | I4 conventions | phase `conventions`; `apply` | host, Mac | the approved `items.json`, `declarations.json`, `library/src/` | `notation.sty`, `sections/00-conventions.tex`, `STYLE-project.md`, `hypotheses.json` | `stages/I4.json` |
 | I5 writing | phases `draft`, `attack`, `judge`, `edit`, then `attack` again on touched sections; `apply` after each | host, Mac | the above, the previous phase's findings | `sections/NN-<slug>.tex`; findings in `corpus/<run>/` | `stages/I5-<phase>-<run>.json` |
-| I6 PDF | `pdf-command` (prints); `canonical_pdf.sh` on the host; `fetch-pdf --execute --i-have-consent`; `approve <id> proof-sheets` | host, Mac | `repo/` at HEAD | `pdf/<commit12>/`, `repo/informal/markers.json` | `stages/I6.json` |
-| I7 overlay | `overlay --pdf-url`; `verso-command` (writes `verso/to-host/`, prints); `verso_host.sh` on the host; `serve.py --build-only` (by name); `check-site`; `approve <id> publish` | Mac, host | `informal/`, the canonical PDF, `library/src/`, the library at the commit | `annotations/`, `pdf-overlay/` (`verso.json` committed by hand), `site/index.html`, the workflow directory | `stages/I7.json` |
+| I6 PDF | `pdf-command` (writes `pdf/<commit12>/to-host/`, prints); `canonical_pdf.sh` on the host; `fetch-pdf --execute --i-have-consent`; `approve <id> proof-sheets` | host, Mac | `repo/` at HEAD | `pdf/<commit12>/`, `repo/informal/markers.json` | `stages/I6.json` |
+| I7 overlay | `overlay --pdf-url`; `verso-command` (writes `verso/to-host/`, prints); `verso_host.sh` on the host; `check-site` (which runs `check_generated.py` and `serve.py --build-only`); `approve <id> publish` | Mac, host | `informal/`, the canonical PDF, `library/src/`, the library at the commit | `annotations/`, `pdf-overlay/` (`verso.json` brought back by hand, committed by the next `overlay`), `site/index.html`, the workflow directory | `stages/I7.json` |
 
 Every command takes the informalize id first and may be re-run: a stage whose inputs'
 sha256 match its receipt changes nothing; one whose inputs changed refuses until the stage
@@ -160,6 +160,10 @@ informalize/<id>/
                             and verso-command.sh, the lines it printed
   scope.json              I2
   pdf/<commit12>/         I6 (ignored): the canonical PDF, pdf-receipt.json, proof-sheets/
+    to-host/                what pdf-command copies to the host: src/, the output
+                            repository's files at that commit, and pdf-command.sh,
+                            the lines it printed
+    .incoming/              a fetch in progress, or one that failed a check
   stages/                 I*.json receipts and approve-*.json approvals (section 5.7)
   reference-checklist.md  I3, for the maintainer
   repo/                   the output repository (its own git repository, ignored)
@@ -1300,26 +1304,42 @@ HEAD is applied again as a no-op, so the command may be re-run.
 
 ## 9. The canonical PDF (I6)
 
-`cf informalize pdf-command <id> --host <host>` prints the rsync of a `git archive` of the
-output repository's HEAD to `<remote_root>/pdf/<commit12>/src/` and the detached
-`bash informal/tools/canonical_pdf.sh <remote_root>/pdf/<commit12>` that follows. That
-script, run in the copy:
+`cf informalize pdf-command <id> --host <host>` writes the output repository's files at
+HEAD into `pdf/<commit12>/to-host/src/` -- read from git's objects through `cflib.gitsafe`
+(a link or a submodule is refused), never the worktree's own files -- and prints the rsync
+of that tree to `<remote_root>/pdf/<commit12>/src/` and the detached
+`bash informal/tools/canonical_pdf.sh --source-commit <sha> <remote_root>/pdf/<commit12>`
+that follows; the commit comes in on the line because the copy is an archive and runs no
+git. It runs nothing, and it refuses an output repository with an uncommitted change (the
+PDF is of a commit), a harvested phase nobody applied (the PDF would be of the text before
+it) and a runtime that is not this checkout's, since the host builds with the runtime the
+copy holds. That script, run in the copy:
 
 1. builds twice from clean, into `a/` and `b/`, and refuses unless the two PDFs have one
    sha256;
 2. runs `extract_markers.py a`, `check_items.py a --strict` and
    `proof_sheets.py a --dest a/proof-sheets`;
-3. writes `pdf-receipt.json`: the source commit, the PDF's sha256, bytes and pages, the
+3. writes `pdf-receipt.json` (`fccommon.py pdf-receipt`, the third command of the runtime's
+   shared module): the source commit, the PDF's sha256, bytes and pages, the
    pdfTeX, latexmk and poppler versions, the inputs' sha256 from the build receipt, and each
-   check's result; then `DONE` with its exit status.
+   check's result; then `DONE` with its exit status, last, on a failure too (0 done; 2 a
+   usage or configuration error; 3 a program or a TeX file is missing; 4 poppler;
+   5 the two builds differ; 6 a check of step 2; 7 the receipt).
 
 Without poppler it stops after step 1 with exit 4, naming the three programs: the host is
 expected to have them (section 12, precondition).
 `cf informalize fetch-pdf <id> --host <host> --execute --i-have-consent` brings
-`a/<job>.pdf`, `a/markers.json`, the proof sheets and the receipt back to `pdf/<commit12>/`,
-checks that the receipt's, the markers' and the file's sha256 agree and that the source commit
-is the output repository's HEAD, copies `markers.json` into `repo/informal/`, commits, and
-writes the I6 receipt.
+`a/<job>.pdf`, `a/markers.json`, the proof sheets and the receipt back to
+`pdf/<commit12>/.incoming/`,
+checks that the receipt's, the markers' and the file's sha256 agree, that the receipt
+records every check as passed, that each proof sheet it lists came back, and that the
+source commit is the output repository's HEAD, puts them in place, copies `markers.json`
+into `repo/informal/`, commits, and
+writes the I6 receipt, whose outputs are the PDF, the markers, the receipt and each proof
+sheet -- what `approve <id> proof-sheets` then pins. That commit moves HEAD past the
+commit the PDF was built from, so a second fetch takes the commit before HEAD when the
+only thing between them is that `markers.json`, as the exporter does (section 10); a
+commit with anything else in it is refused, and `pdf-command` is run again.
 
 The canonical PDF is the host's. A rebuild elsewhere, or on the same host after a TeX
 upgrade, is a different PDF: its sha256 changes and every annotation with it. The receipt's
@@ -1384,20 +1404,28 @@ report names it, since `cf overlay` runs no git in the companion) and, when the 
 companion is another repository, `export.lean: {repo, commit}`; `shards.section_of` puts an
 item whose `section` is one number into that folder.
 
-**`cf informalize overlay <id> --pdf-url <url>`** refuses without the proof-sheets
-approval at the current PDF's sha256, then, in the output repository:
+**`cf informalize overlay <id> --pdf-url <url> [--packages-src <dir>]`** refuses without
+the proof-sheets
+approval at the current PDF's sha256, and an output repository with an uncommitted change,
+then, in the output repository:
 
 1. writes `pdf-overlay/overlay.config.json` through `overlay.sync.init` (`source_id` the
-   informalize id, the title, `<job>.pdf`) and sets `pdf.publish.license` to the text's
+   informalize id, the title from `text.title`, `<job>.pdf`) and sets `pdf.publish.license`
+   to the text's
    license, `site.output_root` to `site`, `build.commands` to none, `display.strip_prefix`
    to `<prefix>.` and `display.minimal` to true; writes `site/index.html`, the `.gitignore`
    lines and the workflow directory's `pages.yml` (a Pages workflow artifact, never a branch
-   deploy) and `check.yml` (`check_generated.py`) from the templates component 7 adds to
-   `templates/informalize/project/`;
-   commits;
+   deploy) and `check.yml` (`check_generated.py`) from `templates/informalize/site/`
+   (the landing page is rendered from `informalize.yaml`, the two workflows are copied
+   whole); commits. Nothing here is edited by hand, so a second run writes the same bytes.
+   The landing page carries the overlay link block `build_site.py` would inject -- its
+   bytes from that tool's own `link_block`, at the href its `link_href` gives -- so the
+   build replaces it in place and the tracked `site/index.html` does not change;
 2. exports through `overlay.export.export` with the convention `informal-markers`, the
-   commit just made and the exporter arguments above, then `overlay.sync.sync` and
-   `overlay.sync.check`; commits;
+   commit just made and the exporter arguments above (`--items-approved` when the items
+   approval pins the exported table), then `overlay.sync.sync` and
+   `overlay.sync.check`; commits what `annotations/` and `pdf-overlay/` hold or held,
+   `verso.json` among them once `verso-command`'s file is there;
 3. copies the canonical PDF into the config's cache directory (`.lake/overlay-pdf/`), after
    checking it against the annotations' sha256 and bytes, so the site builds before the
    release URL is live.
@@ -1460,12 +1488,21 @@ that it is of a commit the cards pin and cutting it to the cards whose snippets 
 statements still join (`verso.source: committed` in the site receipt); `check_generated.py`
 holds it to the same rules in the output repository's CI.
 
-The maintainer then runs `python3 pdf-overlay/tools/serve.py --build-only` in the output
-repository (it builds `site/` and publishes the PDF there under `pdf.publish`), and
-`cf informalize check-site <id>` reads the built site: the PDF at `pdf-overlay/<job>.pdf` at
-the pinned sha256, every annotation's region on a page of that PDF, the viewer's files at
-`GENERATED.json`'s sha256s, and the index link. A browser check on a loopback server is the
-last look (section 12).
+**`cf informalize check-site <id>`** runs the last two steps itself and reads what they
+wrote. In the output repository, which must be clean: `python3
+pdf-overlay/tools/check_generated.py`, the check the companion's own CI runs; then
+`python3 pdf-overlay/tools/serve.py --build-only`, which builds `site/` and publishes the
+PDF there under `pdf.publish` (from the cache step 3 seeded, so nothing is fetched). The
+repository must still be clean afterwards: that is what says the build's injected link
+left the landing page as it was. Then the built site against its own
+`site/<mount>/receipt.json`: every file and every annotation file at the sha256 the build
+recorded, the index at its sha256 with the marker and the viewer's href, the published PDF
+at `site/pdf-overlay/<job>.pdf` at the sha256 the annotations state, every annotation's
+region on a page of that PDF and inside it, and a declaration and a destination on every
+card of the bundle. It writes `stages/I7.json` -- its inputs the four `informal/` files
+and the I6 receipt, its outputs the config, `GENERATED.json`, the bundle, the landing page,
+the two workflows and `verso.json` where there is one -- which `approve <id> publish`
+pins. A browser check on a loopback server is the last look (section 12).
 
 ## 11. Components, in order
 
@@ -1499,11 +1536,13 @@ network, and no Claude attribution anywhere.
    `python3 -I`, a bare environment), `tests/e2e/informalize_synthetic/driver.py` (built);
    (b) `cf run` (with the watchdog it starts at the smoke stage), `cf harvest` and
    `cf informalize apply`, which the synthetic driver runs between its phases (built).
-6. I6: `pdf-command | fetch-pdf` and `canonical_pdf.sh`.
+6. I6: `pdf-command | fetch-pdf`, `canonical_pdf.sh` and `fccommon.py pdf-receipt`
+   (built).
 7. I7: the exporter, the two `scripts/overlay/` changes,
-   `cf informalize overlay | check-site`, the site and workflow templates.
+   `cf informalize overlay | check-site`, the site and workflow templates under
+   `templates/informalize/site/` (built).
 8. `SKILL.md`'s command index, `README.md`, `docs/status.md`, a runbook section in
-   `references/runbook-server.md`, and trigger evals.
+   `references/runbook-server.md`, and trigger evals (built).
 
 9. The overlay's hovers (section 10), after 7: `cf informalize verso-command`,
    `scripts/informalize/verso_host.sh` and `verso_host.py`, and the documented step that
@@ -1599,9 +1638,9 @@ cf informalize check-site svk-tauceti
 cf informalize approve svk-tauceti publish --by "<the maintainer>"
 ```
 
-Between `overlay` and `check-site`, in the output repository:
-`python3 pdf-overlay/tools/check_generated.py` and
-`python3 pdf-overlay/tools/serve.py --build-only`.
+`check-site` runs `python3 pdf-overlay/tools/check_generated.py` and
+`python3 pdf-overlay/tools/serve.py --build-only` in the output repository itself, and
+refuses if either leaves a tracked file changed.
 Then a loopback static server over `site/` and a browser: the PDF loads through the published
 path, the theorem's box opens a card naming `TauCeti.isPushout_fundamentalGroup` with its
 statement and its link at the commit, and the console has no error.

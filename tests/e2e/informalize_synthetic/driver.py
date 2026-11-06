@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""The informalize fleet on a fake library, with the gate run as the run host runs it.
+"""The informalize mode on a fake library, with the gate run as the run host runs it.
 
-New code, for docs/proposals/informalize.md sections 8.1 to 8.3 (component 5a of its
+New code, for docs/proposals/informalize.md sections 8.1 to 8.3, 9 and 10 (components 5a,
+5b, 6 and 7 of its
 section 11).  On synthetic inputs and with nothing outside the checkout: a workspace with
 an informalize id, a fake library source (`tests/_informalize_doc.py`'s `ExampleLib`, with
 docstrings) and its `declarations.json`; then each phase planned with `cf
@@ -18,8 +19,21 @@ with `cf informalize apply` (component 5b): those files into the output reposito
 committed, and the phase's stage receipt.  The maintainer's approvals run through
 `cf informalize approve`.
 
+Then the two stages that make the thing a reader sees.  **I6**: `cf informalize
+pdf-command` writes the output repository's tree at HEAD, this machine plays the host and
+runs `informal/tools/canonical_pdf.sh` in a copy of it (twice from clean, the two sha256
+compared, the markers, `check_items --strict`, the proof sheets, a receipt and DONE), a
+run without poppler stops at exit 4 after the builds, and `cf informalize fetch-pdf`
+brings it home over a local ssh and rsync and commits `informal/markers.json`.  **I7**:
+`cf informalize overlay` writes the overlay's configuration, the landing page and the
+workflows, exports the annotations from the markers, syncs and checks them and seeds the
+PDF cache; `cf informalize check-site` runs the companion's own `check_generated.py` and
+`serve.py --build-only` and reads the built site; both run twice, and the repository is
+clean after each.
+
 The phases that build need pdflatex, latexmk and kpsewhich (`TEX`); without them the driver
-stops after the items phase and says so.  Run it on its own with
+stops after the items phase and says so, and without poppler (`POPPLER`) it leaves out I6
+and I7.  Run it on its own with
 ``python3 tests/e2e/informalize_synthetic/driver.py [--keep <dir>]``; the suite runs it as
 tests/test_e2e_informalize_synthetic.py.
 """
@@ -47,10 +61,19 @@ for _entry in (str(TESTS), str(SKILL / "scripts")):
 import _informalize_doc as doc  # noqa: E402
 import cf as cf_main  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
+from cflib.workspace import Workspace  # noqa: E402
 from informalize import apply as iapply  # noqa: E402
+from informalize import pdf as ipdf  # noqa: E402
 from informalize import stages  # noqa: E402
 
 ID = "example-thm"
+#: the host of stage I6, which this machine plays: an ssh alias of workspace.yaml's
+#: allowlist, and a folder whose last part is this id's
+HOST = "box"
+SSH = "box-alias"
+#: where the maintainer would publish the canonical PDF (nothing fetches it: the overlay
+#: builds from the cache `cf informalize overlay` seeds)
+PDF_URL = "https://example.org/releases/example-thm/example-thm.pdf"
 MODULE = "ExampleLib.Topology.Glue.Basic"
 SOURCE_PATH = "ExampleLib/Topology/Glue/Basic.lean"
 INIT = ["--library", doc.SLOTS["library_url"], "--commit", doc.COMMIT, "--module", MODULE,
@@ -75,20 +98,69 @@ DOCSTRING = ("/-- The square formed by the intersection of two open sets, the tw
 COPIED = ("The square formed by the intersection of two open sets, the two sets and the space "
           "they cover is a pushout of topological spaces in the category of spaces.")
 TEX = ("pdflatex", "latexmk", "kpsewhich")
+#: what stage I6 needs beside TeX: the markers, the item checks and the proof sheets
+POPPLER = ("pdftotext", "pdftoppm", "pdfinfo")
+#: The three TeX trees that hang off the operator's home: a package the distribution does
+#: not ship often lives in TEXMFHOME, and the font map updmap writes lives in TEXMFVAR.
+#: They are part of this machine's TeX installation, and the gate runs with HOME at a
+#: scratch directory, where kpsewhich would look for neither.  `texmf_env` resolves them
+#: once, here, and both `have_tex` and the gate are given them, so the two agree about
+#: what TeX can find; nothing else of the operator's home reaches either.
+TEXMF_VARIABLES = ("TEXMFHOME", "TEXMFVAR", "TEXMFCONFIG")
+#: filled in below, once kpsewhich has been asked
+TEXMF: dict[str, str] = {}
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
            "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_NOSYSTEM": "1"}
 #: the stages, in order; the ones after `items` build
-STAGES = ("workspace", "items", "conventions", "draft", "attack", "judge", "edit", "cap",
-          "broken")
+STAGES = ("workspace", "items", "conventions", "draft", "attack", "judge", "edit", "pdf",
+          "site", "cap", "broken")
 
 
 class Failed(AssertionError):
     pass
 
 
+class FakeHost:
+    """ssh and rsync against a local folder: `test -f` asked of it, rsync run locally.
+
+    `cf informalize fetch-pdf` is the one part of stage I6 that reaches a host; this
+    machine is the host, so its ssh alias is a prefix to strip and its rsync is a copy.
+    """
+
+    def __init__(self, ssh: str = SSH):
+        self.ssh = ssh
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess:
+        self.calls.append(list(argv))
+        if argv[0] == "ssh":
+            path = argv[-1].split(" ", 2)[2]
+            return subprocess.CompletedProcess(argv, 0 if Path(path).is_file() else 1, "", "")
+        if argv[0] == "rsync":
+            local = [a[len(self.ssh) + 1:] if a.startswith(self.ssh + ":") else a for a in argv]
+            return subprocess.run(local, capture_output=True, text=True)
+        raise Failed(f"unexpected command {argv}")
+
+
 def check(condition: bool, message: str) -> None:
     if not condition:
         raise Failed(message)
+
+
+def texmf_env() -> dict[str, str]:
+    """``{TEXMFHOME: ..., TEXMFVAR: ..., TEXMFCONFIG: ...}`` as kpsewhich resolves them here."""
+    out: dict[str, str] = {}
+    if not shutil.which("kpsewhich"):
+        return out
+    for name in TEXMF_VARIABLES:
+        done = subprocess.run(["kpsewhich", f"-var-value={name}"], capture_output=True,
+                              text=True)
+        if done.returncode == 0 and done.stdout.strip():
+            out[name] = done.stdout.strip()
+    return out
+
+
+TEXMF.update(texmf_env())
 
 
 def have_tex() -> bool:
@@ -101,8 +173,24 @@ def have_tex() -> bool:
     """
     if not all(shutil.which(p) for p in TEX):
         return False
-    return all(subprocess.run(["kpsewhich", name], capture_output=True).returncode == 0
+    env = {**os.environ, **TEXMF}
+    return all(subprocess.run(["kpsewhich", name], capture_output=True, env=env).returncode == 0
                for name in doc.TEX_PACKAGES)
+
+
+def have_poppler() -> bool:
+    """Stages I6 and I7 measure the boxes and read the built pages: poppler's three."""
+    return all(shutil.which(p) for p in POPPLER)
+
+
+def stages_here() -> tuple[str, ...]:
+    """The stages this machine can run: the ones after `items` build, and I6 and I7 read
+    the PDF they built."""
+    if not have_tex():
+        return ("workspace", "items", "cap", "broken")
+    if not have_poppler():
+        return tuple(name for name in STAGES if name not in ("pdf", "site"))
+    return STAGES
 
 
 class Pipeline:
@@ -232,7 +320,7 @@ class Pipeline:
         tools = sorted({str(Path(shutil.which(p)).parent) for p in ("git", "python3", *TEX)
                         if shutil.which(p)})
         env = {"PATH": ":".join(tools + ["/usr/bin", "/bin"]), "HOME": str(wt),
-               "TEND_TASK_ID": task}
+               **TEXMF, "TEND_TASK_ID": task}
         done = subprocess.run([sys.executable, "-I", str(gate / "verify_informal.py"),
                                "--gate-config", str(gate / "gate.json"), "--root", str(wt),
                                *argv], cwd=str(wt), capture_output=True, text=True, env=env)
@@ -648,6 +736,160 @@ class Pipeline:
         self.harvest("edit")
         self.apply("edit")
 
+    # -- I6 and I7 ---------------------------------------------------------------
+    def host_root(self) -> Path:
+        """The host folder of this id, which workspace.yaml names: `informalize-<id>`."""
+        return self.made / "host-root" / f"informalize-{ID}"
+
+    def set_host(self) -> None:
+        workspace = Workspace.load(self.ws, validate=False)
+        workspace.data["hosts"] = {"allowlist": [HOST],
+                                   HOST: {"ssh": SSH, "remote_root": str(self.host_root())}}
+        workspace.save()
+
+    def run_on_host(self, work: Path, head: str, *, poppler: bool = True,
+                    commit: str | None = None) -> subprocess.CompletedProcess:
+        """`canonical_pdf.sh` in the copied tree, as the detached host line runs it."""
+        src = work / "src"
+        if not src.is_dir():
+            shutil.copytree(self.paths.informalize_pdf_to_host(ID, head[:12]) / "src", src)
+        wanted = ("python3", "bash", *TEX, *(POPPLER if poppler else ()))
+        path = [str(Path(found).parent) for name in wanted
+                if (found := shutil.which(name))] + ["/usr/bin", "/bin"]
+        env = {"PATH": ":".join(dict.fromkeys(path)),
+               "HOME": os.environ.get("HOME", str(self.made)), **TEXMF}
+        argv = ["bash", "informal/tools/canonical_pdf.sh"]
+        if commit is not None:
+            argv += ["--source-commit", commit]
+        return subprocess.run([*argv, str(work)], cwd=str(src), capture_output=True,
+                              text=True, env=env)
+
+    def pdf(self) -> None:
+        """Stage I6: the tree pdf-command writes, canonical_pdf.sh run in it as the host
+        runs it, fetch-pdf over a local ssh and rsync, and the proof-sheets approval."""
+        self.set_host()
+        head = self.git(self.repo, "rev-parse", "HEAD").strip()
+        # an uncommitted change is refused: the PDF is of a commit
+        self.write(self.repo / "informal" / "sections" / "01-gluing-spaces.tex",
+                   (self.repo / "informal/sections/01-gluing-spaces.tex")
+                   .read_text(encoding="utf-8") + "% an edit\n")
+        code, text = self.cf("informalize", "pdf-command", ID, "--host", HOST, ok=False)
+        check(code != 0 and "uncommitted change" in text,
+              f"pdf-command planned a build of a dirty repository:\n{text}")
+        self.git(self.repo, "checkout", "--", "informal/sections/01-gluing-spaces.tex")
+        _code, text = self.cf("informalize", "pdf-command", ID, "--host", HOST)
+        work = self.host_root() / "pdf" / head[:12]
+        check(f"{work}/src/" in text, f"pdf-command named another work folder:\n{text}")
+        check(f"--source-commit {head}" in text,
+              f"pdf-command printed no --source-commit:\n{text}")
+        to_host = self.paths.informalize_pdf_to_host(ID, head[:12])
+        for relative in ("informal/main.tex", "informal/items.json",
+                         "informal/tools/canonical_pdf.sh"):
+            check((to_host / "src" / relative).is_file(),
+                  f"pdf-command did not write {relative} into to-host/src/")
+        # before the job: fetch-pdf finds no DONE and says so
+        workspace = Workspace.load(self.ws)
+        try:
+            ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True, runner=FakeHost())
+        except Exception as exc:                             # CfError, by name below
+            check("DONE" in str(exc), f"fetch-pdf failed for another reason: {exc}")
+        else:
+            raise Failed("fetch-pdf fetched a PDF the host had not built")
+        # a work folder with no poppler stops after the two builds, with exit 4
+        bare = self.host_root() / "pdf" / "no-poppler"
+        done = self.run_on_host(bare, head, poppler=False, commit=head)
+        check(done.returncode == 4 and (bare / "DONE").read_text(encoding="utf-8").strip() == "4",
+              f"canonical_pdf.sh without poppler exited {done.returncode}:\n{done.stderr}")
+        check((bare / "a" / f"{doc.JOB}.pdf").is_file(), "it stopped before the two builds")
+        done = self.run_on_host(work, head, commit=head)
+        check(done.returncode == 0, f"canonical_pdf.sh exited {done.returncode}:\n"
+                                    f"{done.stdout}{done.stderr}")
+        check((work / "DONE").read_text(encoding="utf-8").strip() == "0",
+              "canonical_pdf.sh wrote no DONE of 0")
+        receipt = json.loads((work / "pdf-receipt.json").read_text(encoding="utf-8"))
+        check(receipt["pdf"]["sha256"] == receipt["second_build_sha256"],
+              "the two clean builds of the canonical PDF differ")
+        check(receipt["source_commit"] == head, "the receipt is of another commit")
+        check(sorted(receipt["checks"]) == ["check_items", "extract_markers", "proof_sheets",
+                                            "two_builds"],
+              f"the receipt records {sorted(receipt['checks'])}")
+        check(receipt["proof_sheets"], "the receipt lists no proof sheet")
+
+        result = ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True,
+                                runner=FakeHost())
+        here = self.paths.informalize_pdf(ID, head[:12])
+        for relative in (f"{doc.JOB}.pdf", "markers.json", "pdf-receipt.json",
+                         f"proof-sheets/{receipt['proof_sheets'][0]}"):
+            check((here / relative).is_file(), f"fetch-pdf did not land {relative}")
+        check(not (here / ".incoming").exists(), "fetch-pdf left its .incoming/")
+        check(result.committed and (self.repo / "informal/markers.json").is_file(),
+              "fetch-pdf committed no markers.json")
+        check(self.git(self.repo, "status", "--porcelain").strip() == "",
+              "fetch-pdf left the output repository dirty")
+        written = stages.read_receipt(self.paths, ID, "I6")
+        check(written is not None and written["checks"]["pdf"]["sha256"]
+              == receipt["pdf"]["sha256"], "the I6 receipt is of another PDF")
+        check("repo/informal/markers.json" in written["outputs"],
+              f"the I6 receipt does not pin markers.json: {sorted(written['outputs'])[:4]}")
+        # it may be re-run: the second fetch changes nothing
+        before = self.git(self.repo, "rev-parse", "HEAD").strip()
+        ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True, runner=FakeHost())
+        check(self.git(self.repo, "rev-parse", "HEAD").strip() == before,
+              "a second fetch-pdf committed again")
+        self.cf("informalize", "approve", ID, "proof-sheets", "--by", "A. Maintainer")
+
+    def site(self) -> None:
+        """Stage I7: the overlay, the annotations, the built site and the publish gate."""
+        code, text = self.cf("informalize", "overlay", ID, "--pdf-url", "http://x/y.pdf",
+                             ok=False)
+        check(code != 0 and "https" in text, f"a plain-http release URL was taken:\n{text}")
+        self.cf("informalize", "overlay", ID, "--pdf-url", PDF_URL)
+        repo = self.repo
+        for relative in ("pdf-overlay/overlay.config.json", "pdf-overlay/GENERATED.json",
+                         "pdf-overlay/annotations.bundle.json", "site/index.html",
+                         ".github/workflows/pages.yml", ".github/workflows/check.yml"):
+            check((repo / relative).is_file(), f"cf informalize overlay wrote no {relative}")
+        settings = json.loads((repo / "pdf-overlay/overlay.config.json")
+                              .read_text(encoding="utf-8"))
+        check(settings["pdf"]["publish"]["license"] == "Apache-2.0"
+              and settings["site"]["output_root"] == "site"
+              and settings["build"]["commands"] == []
+              and settings["display"] == {"strip_prefix": "ExampleLib.", "minimal": True},
+              f"the generated config is not the mode's: {settings}")
+        cached = repo / settings["pdf"]["cache_dir"] / settings["pdf"]["file_name"]
+        check(cached.is_file(), "the PDF cache was not seeded")
+        check(self.git(repo, "status", "--porcelain").strip() == "",
+              "cf informalize overlay left the output repository dirty")
+        notions = sorted(p.name for p in (repo / "annotations").rglob("notion-*.json"))
+        check(len(notions) == 3, f"the conventions' three notions became {notions}")
+        self.cf("overlay", "sync", str(repo), "--check")
+        self.cf("overlay", "check", str(repo))
+        self.cf("informalize", "check-site", ID)
+        index = (repo / "site/index.html").read_text(encoding="utf-8")
+        check("formal-companion-overlay-link" in index,
+              "the landing page carries no overlay link block")
+        check(self.git(repo, "status", "--porcelain").strip() == "",
+              "the site build changed a tracked file; the landing link would need fixing")
+        written = stages.read_receipt(self.paths, ID, "I7")
+        check(written is not None, "check-site wrote no I7 receipt")
+        check(written["checks"]["check_generated"] == "ok"
+              and written["checks"]["build_only"] == "ok",
+              f"the I7 receipt does not record both checks: {written['checks']}")
+        check("repo/site/index.html" in written["outputs"],
+              f"the I7 receipt pins no landing page: {sorted(written['outputs'])}")
+        # it may be re-run, and the second run writes the same bytes
+        self.cf("informalize", "overlay", ID, "--pdf-url", PDF_URL)
+        self.cf("informalize", "check-site", ID)
+        check(self.git(repo, "status", "--porcelain").strip() == "",
+              "a second overlay and check-site left the repository dirty")
+        self.cf("informalize", "approve", ID, "publish", "--by", "A. Maintainer")
+        approval = json.loads(
+            self.paths.informalize_approval(ID, "publish").read_text(encoding="utf-8"))
+        check(approval["head"] == self.git(repo, "rev-parse", "HEAD").strip(),
+              "the publish approval pins another commit")
+        _code, text = self.cf("informalize", "status", ID)
+        check("publish:" in text, f"status does not say what is left:\n{text}")
+
     def cap(self) -> None:
         """A task at the attempt cap: the bridge's helper ends it, and the gate admits it."""
         phase = "draft" if "draft" in self.runs else "items"
@@ -710,9 +952,11 @@ def main(argv: list[str] | None = None) -> int:
     root = args.keep or Path(tempfile.mkdtemp(prefix="cf-informalize-e2e-"))
     root.mkdir(parents=True, exist_ok=True)
     pipe = Pipeline(root)
-    names = STAGES if have_tex() else ("workspace", "items", "cap", "broken")
+    names = stages_here()
     if not have_tex():
         print("no TeX here: the phases that build are skipped", file=sys.stderr)
+    elif not have_poppler():
+        print("no poppler here: stages I6 and I7 are skipped", file=sys.stderr)
     try:
         for name in names:
             getattr(pipe, name)()

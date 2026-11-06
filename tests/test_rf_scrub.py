@@ -283,6 +283,13 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
     ("schema/companion.schema.json",
      "the Literature Links repository's schema, which sync_format.py vendors as "
      "vendor/literature_links/schema/companion.schema.json"),
+    (".github/workflows/pages.yml",
+     "a path in the informalize OUTPUT repository, where `cf informalize overlay` writes "
+     "templates/informalize/site/workflows/pages.yml; this repository's own workflow is "
+     ".github/workflows/tests.yml"),
+    (".github/workflows/check.yml",
+     "the same: templates/informalize/site/workflows/check.yml, written into the output "
+     "repository beside it"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:

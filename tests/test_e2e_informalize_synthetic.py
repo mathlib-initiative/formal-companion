@@ -1,15 +1,19 @@
-"""The informalize fleet end to end on a fake library, as one test of the suite.
+"""The informalize mode end to end on a fake library, as one test of the suite.
 
-New code, for docs/proposals/informalize.md sections 8.1 to 8.3 (component 5a of its section
-11).  The driver is tests/e2e/informalize_synthetic/driver.py, which also runs on its own:
+New code, for docs/proposals/informalize.md sections 8.1 to 8.3, 9 and 10 (components 5a,
+5b, 6 and 7 of its section 11).  The driver is tests/e2e/informalize_synthetic/driver.py,
+which also runs on its own:
 each phase planned with `cf plan-informalize`, its contributions written in worktrees of an
 entrypoint made as `cf run` makes one, judged by the staged gate as the host runs it
 (`python3 -I` from a copy of the planned `gate/`, a bare environment), good ones passed and
 bad ones refused under the rule they break, the batched pre-merge check, a task at the
 attempt cap, a gate whose pinned file moved, and each run harvested by `cf harvest` from
-that entrypoint.  The phases that build need pdflatex, latexmk, kpsewhich and every package
-of `tex_packages`, and are skipped without them; CF_REQUIRE_TEX=1 (CI's TeX job) makes that
-skip a failure.
+that entrypoint; then stage I6 -- the tree `cf informalize pdf-command` writes,
+`canonical_pdf.sh` run in it as the host runs it, `fetch-pdf` over a local ssh and rsync --
+and stage I7, `cf informalize overlay` and `check-site` with the maintainer's two
+approvals.  The phases that build need pdflatex, latexmk, kpsewhich and every package
+of `tex_packages`, and are skipped without them; I6 and I7 need poppler besides;
+CF_REQUIRE_TEX=1 (CI's TeX job) makes those skips failures.
 """
 from __future__ import annotations
 
@@ -46,9 +50,7 @@ class TestTheSyntheticInformalizeFleet(unittest.TestCase):
         cls.root = Path(tempfile.mkdtemp(prefix="cf-informalize-e2e-"))
         cls.pipe = pipeline.Pipeline(cls.root)
         cls.done: list[str] = []
-        names = pipeline.STAGES if pipeline.have_tex() else (
-            "workspace", "items", "cap", "broken")
-        for name in names:
+        for name in pipeline.stages_here():
             getattr(cls.pipe, name)()
             cls.done.append(name)
 
@@ -66,6 +68,14 @@ class TestTheSyntheticInformalizeFleet(unittest.TestCase):
                 self.fail("CF_REQUIRE_TEX=1 and pdflatex, latexmk, kpsewhich or a package of "
                           "tex_packages is missing")
             self.skipTest("no pdflatex, latexmk, kpsewhich or a package of tex_packages")
+        self.assertEqual(tuple(self.done), pipeline.stages_here())
+
+    def test_the_canonical_pdf_and_the_site_ran(self):
+        """Stages I6 and I7 read the PDF they built, which needs poppler too."""
+        if not (pipeline.have_tex() and pipeline.have_poppler()):
+            if REQUIRE_TEX:
+                self.fail("CF_REQUIRE_TEX=1 and TeX or poppler is missing")
+            self.skipTest("no TeX, or no poppler (pdftotext, pdftoppm, pdfinfo)")
         self.assertEqual(tuple(self.done), pipeline.STAGES)
 
     def test_every_phase_was_planned_once(self):

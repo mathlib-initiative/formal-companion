@@ -352,6 +352,20 @@ class WorkspacePaths:
         """I2's closure of the theorem (`cf informalize scope`)."""
         return self.informalize_dir(informalize_id) / "scope.json"
 
+    def informalize_pdf_root(self, informalize_id: str) -> Path:
+        """I6's canonical PDFs, one directory per output repository commit."""
+        return self.informalize_dir(informalize_id) / "pdf"
+
+    def informalize_pdf(self, informalize_id: str, commit12: str) -> Path:
+        """``pdf/<commit12>/``: the canonical PDF of one commit, its receipt, its
+        markers and its proof sheets (`cf informalize fetch-pdf`)."""
+        return self.informalize_pdf_root(informalize_id) / _safe_id(commit12, "commit")
+
+    def informalize_pdf_to_host(self, informalize_id: str, commit12: str) -> Path:
+        """What `cf informalize pdf-command` copies to the host: the output repository's
+        files at that commit, and the printed lines."""
+        return self.informalize_pdf(informalize_id, commit12) / "to-host"
+
     def informalize_stages_dir(self, informalize_id: str) -> Path:
         return self.informalize_dir(informalize_id) / "stages"
 

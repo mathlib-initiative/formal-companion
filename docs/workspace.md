@@ -45,8 +45,11 @@ registry"), and no command writes the shipped registry.
                              build-command sends the host, and the build's outputs,
                              index, dump and source fetch-library brings back), verso/
                              (GITIGNORED: to-host/, what verso-command sends the host for
-                             the overlay's hovers), pdf/
-                             (GITIGNORED, rebuilt from the host) and repo/, the output
+                             the overlay's hovers), pdf/<commit12>/
+                             (GITIGNORED: to-host/, the repository's files at that commit
+                             which pdf-command sends the host, and the canonical PDF, its
+                             markers, pdf-receipt.json and proof-sheets/ fetch-pdf brings
+                             back) and repo/, the output
                              repository, its own git repository (gitignored here)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl
   detect/<name>/             proxy-detection artifacts

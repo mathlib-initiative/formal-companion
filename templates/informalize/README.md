@@ -15,10 +15,11 @@ from this checkout could leave here; the tools themselves write no bytecode.
 | `fcmarkers.sty` | items, parts, `\leanref`, `\fcdefhyp`, `\fcref`, `\itemref`, `\fcinputsection`, and the position markers the tools read back from the `.aux` |
 | `STYLE.md` | the rules every text is written to; `STYLE-project.md` adds the project's |
 | `tools/build_pdf.sh` | the reproducible build into a directory of its own |
+| `tools/canonical_pdf.sh` | the canonical PDF of stage I6: two clean builds compared, the markers, the checks, the proof sheets and `pdf-receipt.json` |
 | `tools/extract_markers.py` | the boxes, fitted to the ink of a 288 dpi render: `markers.json` |
 | `tools/check_items.py` | the build against `items.json`, `declarations.json` and `hypotheses.json` (rules 1 to 10) |
 | `tools/proof_sheets.py` | the boxes drawn over the pages, and the checks a person would make by eye |
-| `tools/fccommon.py` | what the three Python tools share, and the two commands `build_pdf.sh` runs |
+| `tools/fccommon.py` | what the three Python tools share, the two commands `build_pdf.sh` runs and the `pdf-receipt` one `canonical_pdf.sh` runs |
 | `LICENSE-runtime` | the Apache License 2.0, which the files above are under; a copy of this repository's `LICENSE`, so that the output repository carries it whatever license its text has |
 
 The tools are standard-library Python 3.11 and POSIX shell, run from the output
@@ -63,6 +64,29 @@ group holding the slot `name`.
 `CC-BY-SA-4.0.txt`, `CC0-1.0.txt` and `MIT.txt`. Each is the license's own text, unchanged;
 only MIT's has slots, `year` (the year of `init`) and `holder` (`text.author`). The runtime
 keeps its own Apache-2.0 notice, `runtime/LICENSE-runtime`, whatever the text's license is.
+
+## `site/`: the landing page and the workflows
+
+`cf informalize overlay` renders `index.html` into the output repository's `site/index.html`
+and copies `templates/informalize/site/workflows/pages.yml` and its `check.yml` sibling
+into the output repository's workflow directory
+(`docs/proposals/informalize.md` section 10). They belong to stage I7, not to `init`, which is
+why they are not under `project/`: the landing page is rewritten whenever the overlay is, so a
+second `cf informalize overlay` writes the same bytes. The two workflows are copied whole (a
+`${{ ... }}` expression is a workflow's, not a slot); `index.html` has these slots, each
+already escaped for HTML:
+
+| slot | holds |
+|---|---|
+| `title` | `text.title` |
+| `theorem` | the theorem's full Lean name |
+| `library_name` | the library's name (the last component of `library.url`) |
+| `library_url` | `library.url` |
+| `library_commit` | the 40-hex `library.commit` |
+| `license_name` | the license's name in a sentence, such as `the Apache License, Version 2.0` |
+| `viewer_href` | the viewer's href as the site index spells it (`pdf-overlay/viewer/index.html`) |
+| `pdf_href` | the published PDF's href beside it |
+| `link_block` | the overlay link block `build_site.py` would inject, written by that tool's own `link_block`, so the site build replaces it in place and the tracked file does not change |
 
 ## `schema/`: the formats, for a reader
 

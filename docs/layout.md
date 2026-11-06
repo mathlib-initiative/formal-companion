@@ -87,9 +87,11 @@ scripts/informalize/
                   and approvals, the library's build on the host (library_host.sh and
                   library_host.py run there, with no cflib), the scope, the
                   fleet's planner, plan.py (`cf plan-informalize`), whose gate is
-                  scripts/gate/verify_informal.py, and apply.py, which puts a
-                  harvested phase's files into the output repository
-                  (proposals/informalize.md)
+                  scripts/gate/verify_informal.py, apply.py, which puts a
+                  harvested phase's files into the output repository, pdf.py, the
+                  canonical PDF's two ends (`pdf-command`, `fetch-pdf`), and
+                  overlay.py, the annotations and the built site (`overlay`,
+                  `check-site`) (proposals/informalize.md)
 scripts/corpus/   locate's universes of libraries and corpus.sqlite (`cf corpus`)
 scripts/locate/   locate's candidates, planner, outcomes and export
                   (`cf locate`, `cf plan-locate`, `cf tally --locate`,
@@ -106,12 +108,15 @@ templates/overlay/
                   viewer, its tools and schemas, PDF.js), and tests/ (its node suites)
 templates/informalize/
                   runtime/, copied verbatim into an informalize output repository's
-                  informal/ (fcmarkers.sty, STYLE.md, the build and check tools, and
-                  fcitems.py, the item table's rules the gate shares), and
+                  informal/ (fcmarkers.sty, STYLE.md, the build, check and
+                  canonical-PDF tools, and fcitems.py, the item table's rules the
+                  gate shares),
                   project/, the templates `cf informalize init` renders once,
+                  site/, the landing page and the two workflows `cf informalize
+                  overlay` writes,
                   licenses/, the text of each open license it writes as LICENSE,
                   and schema/, informalize.yaml's and items.json's JSON Schemas
-                  (proposals/informalize.md section 7)
+                  (proposals/informalize.md sections 7 and 10)
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local,
                   and locate-label, the bench's frozen labeler)
 tests/            the test suite; baseline regressions skip unless the env names the baseline

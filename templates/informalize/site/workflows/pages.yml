@@ -1,0 +1,44 @@
+# Build the overlay site and publish it to GitHub Pages as a workflow artifact.
+#
+# Written once by `cf informalize overlay` (docs/proposals/informalize.md section 10) and
+# the output repository's from then on. It deploys an artifact, never a branch: nothing
+# commits into this repository. `serve.py --build-only` fetches the canonical PDF from the
+# release URL the annotations pin and verifies its sha256 before it publishes it, so the
+# release asset must be up before the first run.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the site
+        run: python3 pdf-overlay/tools/serve.py --build-only
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

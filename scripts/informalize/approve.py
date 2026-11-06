@@ -18,7 +18,7 @@ New code, for docs/proposals/informalize.md sections 5.4, 5.7 and 13.
   there stays ticked); `approve <id> references` pins that list (not the whole table), and
   only the list the checklist on disk shows.
 * `approve <id> proof-sheets` and `approve <id> publish` pin what the I6 and I7 receipts
-  list, once those stages have run (components 6 and 7 write them).
+  list, once `cf informalize fetch-pdf` and `check-site` have written them.
 
 An approval is the maintainer's: it is refused inside a fleet task (an agent's wrapper
 sets `CF_ROLE`, tend sets `TEND_TASK_ID`) and inside a Claude Code session (which sets
@@ -51,7 +51,7 @@ CONVENTIONS_FILE = "00-conventions.tex"
 REFERENCES_PIN = f"repo/{ITEMS}#references"
 #: the stage whose receipt a gate pins from, for the two gates of components 6 and 7
 RECEIPT_GATES = {"proof-sheets": ("I6", "cf informalize fetch-pdf"),
-                 "publish": ("I7", "cf informalize overlay")}
+                 "publish": ("I7", "cf informalize check-site")}
 #: what a fleet's wrappers and tend set in an agent's environment, and what Claude Code sets
 #: for a local session, its subagents and the shells they run
 AGENT_ENVIRONMENT = ("CF_ROLE", "TEND_TASK_ID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
@@ -347,10 +347,10 @@ def approve_from_receipt(workspace, informalize_id: str, gate: str, *, by: str,
                          note: str = "") -> dict:
     """The proof-sheets and publish gates: the files their stage's receipt lists.
 
-    TODO(components 6 and 7): the I6 and I7 receipts are written by `fetch-pdf` and
-    `overlay`, which are not built; this pins the receipt and every output it lists
-    (section 13: the PDF and markers.json; the output repository's HEAD and the PDF), each
-    checked on disk first.
+    `cf informalize fetch-pdf` writes the I6 receipt and `cf informalize check-site` the
+    I7 one; this pins the receipt and every output it lists (section 13: the PDF, its
+    markers and the proof sheets; the overlay's configuration, annotations, landing page
+    and workflows, with the output repository's HEAD), each checked on disk first.
     """
     paths = workspace.paths
     stage, writer = RECEIPT_GATES[gate]

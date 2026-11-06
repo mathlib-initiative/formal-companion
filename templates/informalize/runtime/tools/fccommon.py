@@ -27,6 +27,14 @@ The two commands, for build_pdf.sh:
         exits 2 when a section --only names was not typeset, and 1 when the build read or
         wrote a file of OUTDIR it may not (`recorded_inputs`)
 
+and the one canonical_pdf.sh runs:
+
+    python3 fccommon.py pdf-receipt <workdir> [--source-commit SHA]
+            [--second-build FILE] [--check NAME=STATUS]...
+        writes WORKDIR/pdf-receipt.json for the build in WORKDIR/a: the source commit, the
+        PDF's sha256, bytes and pages, the pdfTeX, latexmk and poppler versions, the
+        inputs' sha256 from the build receipt and each check's result (section 9)
+
 Standard library only, and no import of a sibling. Apache License 2.0.
 """
 from __future__ import annotations
@@ -49,6 +57,7 @@ ITEMS_SCHEMA = "formal-companion/informalize-items"
 HYPOTHESES_SCHEMA = "formal-companion/informalize-hypotheses"
 MARKERS_SCHEMA = "formal-companion/informalize-markers"
 BUILD_SCHEMA = "formal-companion/informalize-build"
+PDF_SCHEMA = "formal-companion/informalize-pdf"
 SCHEMA_VERSION = 1
 
 #: what informalize.json's `boxes` holds when it says nothing: the pilot's figures, tuned to
@@ -738,6 +747,74 @@ def write_receipt(outdir: Path, only: list[str], source_commit: str | None) -> d
     return receipt
 
 
+#: the canonical build's directory under WORKDIR, and the proof sheets inside it
+CANONICAL_BUILD = "a"
+PROOF_SHEETS = "proof-sheets"
+PDF_RECEIPT = "pdf-receipt.json"
+
+
+def write_pdf_receipt(workdir: Path, *, source_commit: str | None, second_build: Path | None,
+                      checks: dict[str, str]) -> dict:
+    """`WORKDIR/pdf-receipt.json` for the canonical build in `WORKDIR/a` (section 9).
+
+    Poppler is on PATH by the time this runs: canonical_pdf.sh stops at exit 4 without it,
+    so the page count and the proof sheets are there to record.
+    """
+    workdir = Path(workdir).resolve()
+    build = Build(workdir / CANONICAL_BUILD)
+    build.need(build.pdf, build.markers)
+    if source_commit is not None and not _COMMIT.match(source_commit):
+        raise ToolError(f"--source-commit {source_commit!r} is not a 40-hex commit")
+    built = build.receipt()
+    recorded = built.get("source_commit")
+    if source_commit is not None and recorded != source_commit:
+        raise ToolError(f"the build recorded source commit {recorded!r}, not {source_commit}")
+    sheets = sorted(p.name for p in (build.outdir / PROOF_SHEETS).glob("page-*.*")) \
+        if (build.outdir / PROOF_SHEETS).is_dir() else []
+    pages = pdf_pages(build.pdf)
+    receipt = {
+        "schema": PDF_SCHEMA,
+        "schema_version": SCHEMA_VERSION,
+        "job": build.config.job,
+        "source_commit": source_commit if source_commit is not None else recorded,
+        "source_date_epoch": build.config.source_date_epoch,
+        "pdf": {"sha256": sha256_file(build.pdf), "bytes": build.pdf.stat().st_size,
+                "pages": len(pages)},
+        "page_size_pt": list(pages[0]) if pages else [],
+        "second_build_sha256": sha256_file(second_build) if second_build is not None else None,
+        "markers_sha256": sha256_file(build.markers),
+        "proof_sheets": sheets,
+        "pdftex": _version(["pdflatex", "--version"], build.outdir),
+        "latexmk": _version(["latexmk", "-norc", "-v"], build.outdir),
+        "poppler": _version(["pdftoppm", "-v"], build.outdir),
+        "inputs": built.get("inputs") or {},
+        "checks": dict(sorted(checks.items())),
+    }
+    if receipt["second_build_sha256"] not in (None, receipt["pdf"]["sha256"]):
+        raise ToolError("the second build's PDF is not the first's; the build is not "
+                        "reproducible on this machine")
+    write_json(workdir / PDF_RECEIPT, receipt)
+    return receipt
+
+
+def _pdf_receipt_cli(workdir: str, argv: list[str]) -> int:
+    rest, commit, second, checks = list(argv), None, None, {}
+    while rest:
+        if rest[0] == "--source-commit" and len(rest) > 1:
+            commit, rest = rest[1] or None, rest[2:]
+        elif rest[0] == "--second-build" and len(rest) > 1:
+            second, rest = Path(rest[1]), rest[2:]
+        elif rest[0] == "--check" and len(rest) > 1:
+            name, _, value = rest[1].partition("=")
+            if not name or not value:
+                raise ToolError(f"--check takes NAME=STATUS, not {rest[1]!r}")
+            checks[name], rest = value, rest[2:]
+        else:
+            raise ToolError(f"pdf-receipt: unknown argument {rest[0]!r}")
+    write_pdf_receipt(Path(workdir), source_commit=commit, second_build=second, checks=checks)
+    return 0
+
+
 def _cli(argv: list[str]) -> int:
     if len(argv) == 2 and argv[0] == "config":
         config = load_config(Path(argv[1]))
@@ -761,9 +838,12 @@ def _cli(argv: list[str]) -> int:
                 raise ToolError(f"receipt: unknown argument {rest[0]!r}")
         write_receipt(Path(argv[1]), only, commit)
         return 0
+    if argv and argv[0] == "pdf-receipt" and len(argv) >= 2:
+        return _pdf_receipt_cli(argv[1], argv[2:])
     print(__doc__.split("\n\n")[0], file=sys.stderr)
     print("usage: fccommon.py config <informal dir> | receipt <outdir> [--only N,M] "
-          "[--source-commit SHA]", file=sys.stderr)
+          "[--source-commit SHA] | pdf-receipt <workdir> [--source-commit SHA] "
+          "[--second-build FILE] [--check NAME=STATUS]...", file=sys.stderr)
     return 2
 
 

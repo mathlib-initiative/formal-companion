@@ -124,4 +124,17 @@ def next_step(workspace, informalize_id: str) -> str:
     if empty:
         return (f"cf plan-informalize {informalize_id} --phase draft --sections "
                 f"{','.join(empty)} (stage I5)")
-    return f"cf plan-informalize {informalize_id} --phase attack (stage I5)"
+    if stages.read_receipt(paths, informalize_id, "I6") is None:
+        return (f"cf plan-informalize {informalize_id} --phase attack (stage I5), or "
+                f"`cf informalize pdf-command {informalize_id} --host <host>` once no "
+                "`wrong` or `imprecise` finding stands (stage I6)")
+    if approve.gate_state(workspace, informalize_id, "proof-sheets")[0] != "current":
+        return f"cf informalize approve {informalize_id} proof-sheets --by <name>"
+    if stages.read_receipt(paths, informalize_id, "I7") is None:
+        return (f"cf informalize overlay {informalize_id} --pdf-url <the release asset URL> "
+                "(stage I7)")
+    if approve.gate_state(workspace, informalize_id, "publish")[0] != "current":
+        return (f"cf informalize check-site {informalize_id}, then `cf informalize approve "
+                f"{informalize_id} publish --by <name>`")
+    return "publish: create the repository, push, upload the PDF as the release asset the " \
+           "annotations pin, and turn on Pages (the maintainer's, section 13)"
