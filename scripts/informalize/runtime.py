@@ -93,6 +93,8 @@ def template_files() -> dict[str, bytes]:
 FCCOMMON_MODULE = "informalize_runtime_fccommon"
 #: and its fcitems.py, the rules of items.json and declarations.json (section 5.4)
 FCITEMS_MODULE = "informalize_runtime_fcitems"
+#: and its check_items.py, whose `crop` is the one reader of the text inside a box
+CHECK_ITEMS_MODULE = "informalize_runtime_check_items"
 
 
 def _tool_module(name: str, file_name: str, siblings: dict | None = None):
@@ -141,6 +143,13 @@ def fcitems():
     """The runtime's own `tools/fcitems.py`: the rules of items.json and declarations.json
     and the keyword check, which `informalize.itemtable` and the gate both use."""
     return _tool_module(FCITEMS_MODULE, "fcitems.py", {"fccommon": fccommon()})
+
+
+def check_items():
+    """The runtime's own `tools/check_items.py`, for its `crop`: the text poppler finds
+    inside one box of `markers.json`, which rule 9 of the box check and the export of the
+    boxes (`annotations.export.boxtext`) read through one cropper."""
+    return _tool_module(CHECK_ITEMS_MODULE, "check_items.py", {"fccommon": fccommon()})
 
 
 def config_document(cfg: dict, previous: dict | None) -> dict:

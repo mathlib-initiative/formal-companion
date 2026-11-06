@@ -25,8 +25,9 @@ The rules, each refusal naming its number:
    session, stopped as a group at the limit or when the gate is stopped; and a lint of the
    text files, comments included: no `\\makeatletter`, control sequence holding `@`, `^^`,
    expl3, `\\write`, `\\openout`, `\\def`, `\\csname`, `\\string`, `\\input` or their kin,
-   with which a section could forge the records the checks read, and a `\\label` key only
-   of its own section's form.
+   with which a section could forge the records the checks read, a `\\label` key only
+   of its own section's form, and, of what the file PRINTS, no monospace font, link, URL
+   or name of `declarations.json` -- the text names no Lean declaration.
 3. **Aux checks** -- the gate's `check_items.py --aux-only --strict` on that build, against
    the gate's `declarations.json` (`--conventions` in the conventions phase).
 4. **Items** -- `items.json` keeps section 5.4's rules and passes `check-items` against the
@@ -648,12 +649,20 @@ def lint_printed(cfg: GateConfig, path: str, text: str, problems: Problems) -> N
     """Rule 2's second lint: what a text file may not print, and the notions it marks.
 
     The comments go first: they are not typeset, and a drafter's note about a declaration
-    is no part of the text.  What is left may hold no Lean name set in a monospace font
+    is no part of the text.  What is left may print no name of `declarations.json`, as
+    `main.tex`'s introduction once printed the theorem's
+    (`fccommon.printed_lean_names`), no Lean name set in a monospace font
     (`\\texttt`, `\\mathtt`, `\\ttfamily`, `\\tt`), no `\\verb`, no link
     and no URL; a notion the conventions fix is marked with `\\fcnotion`, which prints the
     words alone, and its constant must be one `declarations.json` holds.
     """
     body = strip_comments(text)
+    for line, name in fc.printed_lean_names(text, set(cfg.declarations) | set(cfg.references)):
+        problems.add(2, f"{path}:{line}", f"prints the Lean name {name}: the informal text names "
+                                          f"no declaration of the library -- the annotations "
+                                          f"supply the names -- so name it by what it states, or "
+                                          f"mark it with \\fcnotion{{{name}}}{{<the words>}}, "
+                                          f"whose first argument prints nothing")
     for pattern, what in PRINTED_LINT:
         found = pattern.search(body)
         if found:

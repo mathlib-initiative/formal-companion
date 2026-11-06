@@ -112,6 +112,17 @@ release has something to say.
 
 ### Fixed
 
+- **`main.tex`'s introduction printed the theorem's Lean name.** The template `cf
+  informalize init` renders wrote "the theorem `\texttt{<Lean name>}` of the Lean library
+  ...", against the rule the rest of the text keeps: the annotations carry the names, and
+  the page carries mathematics. It now names the theorem as the one that closes the text,
+  as the acceptance run's repository was corrected to by hand, and the `theorem_tex` slot
+  is gone. The rule is now checked where it was not: `fccommon.printed_lean_names` reads a
+  text file as it is typeset (comments gone, the arguments that print nothing blanked, a
+  `\_` read as `_`) and reports every name of `declarations.json` left in it; the gate's
+  rule 2 asks it of each text file a task changes, and `cf informalize check-items` asks it
+  of `informal/main.tex`, which is the maintainer's from `init` on and which no task
+  changes.
 - **A `remote_root` that is not absolute is refused.** Every remote path of a run is built
   from `hosts.<host>.remote_root` and quoted for the host's shell, so a `~` never expands
   there: a `remote_root` of `~/informalize-<id>` made a literal directory named `~` in the
@@ -126,6 +137,27 @@ release has something to say.
   `cf plan-informalize <id> --phase items`, which has been built since.
 
 ### Changed
+
+- **A notion's card is titled with what the page prints, not with the LaTeX behind it.**
+  The first acceptance run's site showed `$\ball{x}{\rho}$`, `$\incl{S}$`, `$\intr A$` and
+  `$\gamma \ptrans \delta$` on its cards and in its page lists -- the second argument of
+  `\fcnotion`, which is the drafter's source in the project's own notation, where the page
+  prints B(x, ρ), ιS, int A and γ·δ. `cf export informal-markers` now titles each notion
+  with the text the canonical PDF prints inside its boxes: it crops them with poppler at
+  `boxes.res_dpi` and joins the crops in reading order, through the box check's own cropper
+  (`check_items.crop`, which rule 9 already runs over every box, now split from the
+  normalising `crop_text` so there is still one of them). What poppler gives is kept
+  character for character -- Greek, operators, subscripts -- and only its white space is
+  collapsed, a line break closed up and a sentence's comma or full stop that the box's
+  padding caught dropped. An item or part whose `items.json` title holds TeX markup is
+  titled the same way, from the parenthesis its head prints. The titles are read at
+  **export** time from the approved PDF and `markers.json`, so an existing canonical PDF
+  and its proof-sheets approval stay valid and nothing is built again; where poppler is
+  absent or a crop holds no text the title is the words with their markup stripped, and the
+  export report names every title that took it (`counts.titles_from_pdf`,
+  `counts.titles_not_printed`, the lossy `title.printed_text`). The annotation id is the
+  markers' either way (`notion:<constant>`), so no title re-keys anything. On the
+  acceptance run's 54 notions, 25 titles changed and none fell back.
 
 - **The informal text prints no Lean name and no link; a notion is marked instead.**
   The conventions section used to introduce each notion it fixes as

@@ -48,7 +48,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 sys.dont_write_bytecode = True
 
@@ -92,6 +92,14 @@ _COMMIT = re.compile(r"\A[0-9a-f]{40}\Z")
 _SECTIONS = re.compile(r"\A[0-9]+(?:,[0-9]+)*\Z")
 _MACRO = re.compile(r"\A\\[A-Za-z]+\Z")
 _HYP_KEY = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9-]{0,39}\Z")
+#: what a text file writes that prints nothing: the commands whose braced argument is a
+#: Lean name, a label key, or the name of a file or a package
+_SILENT = re.compile(r"\\(?:leanref|fcnotion|label|ref|eqref|autoref|cite|input|include"
+                     r"|usepackage|documentclass|bibliographystyle)(?![A-Za-z])"
+                     r"\s*(?:\[[^]\n]*\])?\s*\{[^{}]*\}")
+#: a dotted identifier as a TeX file prints one, its `_` escaped as `\_`
+_NAME_PART = r"[A-Za-z0-9'!?]+(?:(?:\\_|_)[A-Za-z0-9'!?]*)*"
+_DOTTED = re.compile(rf"(?<![A-Za-z0-9_.\\]){_NAME_PART}(?:\.{_NAME_PART})+")
 
 
 class ToolError(Exception):
@@ -169,6 +177,36 @@ def tex_text(text: str) -> str:
     """
     text = re.sub(r"(\\[A-Za-z@]+) (?=[^A-Za-z@\s])", r"\1", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def strip_comments(text: str) -> str:
+    """TeX source with every `%` comment removed (a `\\%` is a percent sign, not one)."""
+    return "\n".join(re.sub(r"(?<!\\)%.*", "", line) for line in text.splitlines())
+
+
+def printed_lean_names(text: str, names: Iterable[str]) -> list[tuple[int, str]]:
+    """Every name of `names` this TeX file PRINTS, as ``(line number, name)``.
+
+    The informal text names no Lean declaration: the annotations supply the names, and
+    the reader of the page meets mathematics (`STYLE.md`, and rule 2 of the gate,
+    docs/proposals/informalize.md section 8.3).  The comments go first, since they are
+    not typeset, then the commands whose braced argument prints nothing -- `\\leanref`,
+    `\\fcnotion`'s constant, a `\\label` key, a file or package name -- blanked where
+    they stand so the line numbers still hold.  What is left is searched for dotted
+    identifiers, a `\\_` read as the `_` it prints, and one is reported when it is a
+    name of `names`; nothing is guessed from the shape of a word.  A name with no
+    namespace (Mathlib's `Set`, `Path`, `Monotone`) is an ordinary English word too
+    often to be read as a name here; a monospace font around one is refused by the
+    gate's own lint.
+    """
+    wanted = set(names)
+    body = _SILENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), strip_comments(text))
+    out = []
+    for found in _DOTTED.finditer(body):
+        name = found.group(0).replace("\\_", "_")
+        if name in wanted:
+            out.append((body.count("\n", 0, found.start()) + 1, name))
+    return out
 
 
 # ---------------------------------------------------------------------------

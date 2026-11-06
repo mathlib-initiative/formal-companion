@@ -82,7 +82,6 @@ def slots(cfg: dict) -> dict[str, str]:
         "title_tex": tex_escape(title),
         "author_tex": tex_escape(author),
         "license_tex": tex_name,
-        "theorem_tex": rf"\texttt{{{tex_escape(library['theorem'])}}}",
         "library_name_tex": tex_escape(name),
         "library_url": library["url"],
         "library_commit": library["commit"],

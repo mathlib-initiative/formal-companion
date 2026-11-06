@@ -206,7 +206,8 @@ def register(subparsers) -> None:
     cs.add_argument("id")
 
     chk = sub.add_parser("check-items", help="check informal/items.json against "
-                                             "declarations.json and the library's source")
+                                             "declarations.json and the library's source, and "
+                                             "main.tex for a printed Lean name")
     chk.add_argument("id")
 
     app = sub.add_parser("approve", help="record the maintainer's approval of a gate")
@@ -375,8 +376,8 @@ def _apply(args) -> int:
     for problem in done.check_items:
         log.error(problem)
     if done.check_items:
-        log.error(f"{len(done.check_items)} problem(s) in informal/items.json: the items are "
-                  f"in, and `cf informalize approve {args.id} items` will refuse them")
+        log.error(f"{len(done.check_items)} problem(s) in informal/: the items are in, and "
+                  f"`cf informalize approve {args.id} items` will refuse them")
         return 1
     log.info(f"next: cf informalize status {args.id}")
     return 0
@@ -457,11 +458,11 @@ def _check_items(args) -> int:
         log.error(problem)
     items = doc.get("items") or []
     if problems:
-        log.error(f"{len(problems)} problem(s) in informal/items.json")
+        log.error(f"{len(problems)} problem(s) in informal/")
         return 1
     log.ok(f"informal/items.json: {len(items)} items in {len(doc.get('sections') or [])} "
-           "sections keep section 5.4's rules, and every declaration is in declarations.json "
-           "at its keyword line")
+           "sections keep section 5.4's rules, every declaration is in declarations.json "
+           "at its keyword line, and main.tex prints no Lean name")
     return 0
 
 

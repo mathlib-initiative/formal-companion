@@ -45,6 +45,7 @@ for _entry in (str(HERE), str(SKILL / "scripts"), str(SKILL / "scripts" / "gate"
 import _informalize_doc as doc  # noqa: E402
 import test_locate_review_turns as tlr  # noqa: E402
 from cflib import vocab  # noqa: E402
+from cflib.templates import render  # noqa: E402
 from informalize import plan as iplan  # noqa: E402
 from run import attempt_cap  # noqa: E402
 
@@ -521,6 +522,31 @@ class TestThePrintedLint(unittest.TestCase):
                 found = self.lint(text)
                 self.assertTrue(found and found[0].startswith("[2]"), found)
                 self.assertIn("names no Lean declaration", found[0])
+
+    def test_a_lean_name_printed_as_plain_text_is_refused(self):
+        """It need not be set in a monospace font: the introduction of `main.tex` once
+        printed the theorem's name in the running prose."""
+        for text in (r"The theorem ExampleLib.glue\_theorem closes this text.",
+                     "The structure ExampleLib.GlueData is two open sets.",
+                     "A cover of the whole space\nis ExampleLib.cover\\_univ.\n"):
+            with self.subTest(text=text):
+                found = self.lint(text)
+                self.assertTrue(found and "prints the Lean name" in found[0], found)
+        self.assertIn(":2:", self.lint("One line.\nExampleLib.GlueData is two open sets.")[0])
+        # a dotted word that is no name of declarations.json is prose, not a name
+        self.assertEqual(self.lint("A set, i.e. a subset of $X$, is open."), [])
+        self.assertEqual(self.lint(r"\leanref{ExampleLib.GlueData} states it."), [])
+
+    def test_the_rendered_main_tex_prints_no_lean_name(self):
+        """Its introduction once printed the theorem's own name, and now names it as the
+        one that closes the text.  The rest of the printed lint is not main.tex's rule:
+        its bibliography cites the library by URL and sets the commit in monospace."""
+        main = render((SKILL / "templates" / "informalize" / "project" / "main.tex")
+                      .read_text(encoding="utf-8"), doc.SLOTS)
+        names = set(self.cfg.declarations) | set(self.cfg.references)
+        self.assertIn(doc.SLOTS["theorem"], names)
+        self.assertEqual(vi.fc.printed_lean_names(main, names), [])
+        self.assertIn("the theorem closing this\ntext depends on", main)
 
     def test_a_notion_declarations_json_does_not_carry_is_refused(self):
         found = self.lint("A \\fcnotion{Mathlib.Imagined}{wish} is nowhere.")

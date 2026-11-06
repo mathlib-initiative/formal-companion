@@ -43,7 +43,6 @@ SLOTS = {
     "title_tex": "The glue theorem, after ExampleLib",
     "author_tex": "A. Maintainer",
     "license_tex": "the Apache License, Version~2.0",
-    "theorem_tex": r"\texttt{ExampleLib.glue\_theorem}",
     "library_name_tex": "ExampleLib",
     "library_url": "https://example.org/lean-libs/ExampleLib",
     "library_commit": COMMIT,

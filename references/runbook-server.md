@@ -506,7 +506,10 @@ host entry serves one informalize id and a second id needs that entry changed fi
      two workflows from `informalize.yaml` — no file of the overlay is edited by hand — exports
      the annotations with `cf export informal-markers`, syncs and checks the overlay, commits
      each step, and seeds `.lake/overlay-pdf/` with the canonical PDF so the site builds before
-     the URL is live. `check-site` runs the companion's own `check_generated.py` and
+     the URL is live. Run it where **poppler** is: the export titles each notion with the text
+     the canonical PDF prints inside its boxes, and without `pdftotext` and `pdfinfo` it falls
+     back to the words of the `\fcnotion` with their TeX markup stripped and says so in the
+     export report (`counts.titles_not_printed`). `check-site` runs the companion's own `check_generated.py` and
      `pdf-overlay/tools/serve.py --build-only`, refuses if either left a tracked file changed,
      reads the built site back against its receipt and writes `stages/I7.json`. Then look at
      `site/` in a browser over a loopback static server — the PDF loads, a box opens a card

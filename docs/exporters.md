@@ -415,16 +415,41 @@ file `--library-src` does not hold at all is a refusal naming that flag.
 | each entry of `markers.json` | one item per part, and one per item without parts: `id_source: label`, so its id is `ids.item_label_id` (`theorem-1.2-a`), its `number` the printed number, its `sub` the letter, its `title` the item's (a part carries its item's, as the printed label repeats it) and its `section` the section the text prints it in. An item with parts is boxed around them, so its own box is not annotated. One location per box, a `PdfRegionSelector` of the fractions the markers give |
 | the `\leanref`s the build recorded in a box | one link each, with the role and the relation `items.json` gives the declaration (`exactMatch` as `exact`, `broadMatch` as `generalization`, `narrowMatch` as `special_case`, `relatedMatch` as `related`), and the declaration from `declarations.json` |
 | `declarations.json` and `--library-src` | one declaration record per linked declaration, its statement cut by `adapters.leansnippets` as a snippet, and a destination on the library's git host: `https://<host>/<org>/<lib>/blob/<commit>/<path>` with `resolution: exact` and the fragment `L<keyword line>` (site kind `other`: a blob page is none of the rendered Lean sites). `common.repo_id_from_url` reads the `<host>/<org>/<lib>`, and `cf informalize scope` builds each entry's `source_url` through the same reader, so the two agree on which URLs have a blob page (`docs/proposals/informalize.md` section 5.3) |
-| each notion entry of `markers.json` | one passage item: `id_source: declared` with the markers' id (`notion:<constant>`, so that rewording the notion does not re-key it), `kind: passage`, the words the page prints as its `title`, one location per box, and one link to the constant the `\fcnotion` names, role `key`, relation `exact`. The conventions fix the notions and print neither the name nor a link; this record is what supplies them (`informal/STYLE.md`, "The conventions section") |
+| each notion entry of `markers.json` | one passage item: `id_source: declared` with the markers' id (`notion:<constant>`, so that rewording the notion does not re-key it), `kind: passage`, **the text the canonical PDF prints inside its boxes** as its `title` (below), one location per box, and one link to the constant the `\fcnotion` names, role `key`, relation `exact`. The conventions fix the notions and print neither the name nor a link; this record is what supplies them (`informal/STYLE.md`, "The conventions section") |
 | a notion of a **dependency** | its row in `declarations.json`'s `references`: the declaration record carries the module, the file Lake's layout gives it, and `x_package`, `x_repo`, `x_commit`. Its destination is the source line on that dependency's git host at the pinned commit when `--packages-src` holds the package's source (a snippet is cut there too), and otherwise the documentation page the row names, `site: doc_gen4`, with the page as `href` and the constant as `fragment`. The library mirror carries no `.lake/packages/`, so without `--packages-src` those cards show the page and no statement, and the report counts them |
 | the items approval | one provenance record, `actor: agent`, `method: agent_annotation`, `tool.name` `cf informalize`, and `confirmed_by_human` true with `--items-approved`, which the maintainer passes when the items approval pins the exported `items.json` (`cf informalize overlay`, which will pass it for him, is not implemented yet) |
+
+A **title is what the page prints**, never the LaTeX it was written with. The
+words a `\fcnotion` records are a drafter's source (`$\ball{x}{\rho}$`), and a
+card titled with those is a card no reader of the page recognises, so the
+export crops each of the notion's boxes out of the canonical PDF with poppler,
+at the `boxes.res_dpi` of `informalize.json`, and joins the crops in the order
+the markers list them, which is reading order. The cropper is the box check's
+own (`check_items.crop`, which rule 9 already runs over every box), so nothing
+is measured a second way and an approved PDF and its proof sheets stay valid:
+the titles are read at export time and nothing is rebuilt. What poppler gives
+is kept character for character (Greek, operators, subscripts), and only its
+white space is collapsed, a line break closed up (a hyphen at a line end kept,
+since nothing here can tell it from one TeX broke a word at) and a sentence's
+comma or full stop that the box's padding caught dropped. An **item** whose
+`items.json` title holds TeX markup is titled the same way, from the
+parenthesis its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a
+title that is plain prose is the table's, with nothing cropped. Where poppler
+is absent, or a crop holds no text, the title is the words with their TeX
+markup stripped: `counts.titles_from_pdf` counts the titles read from the page,
+`counts.titles_not_printed` names every one that fell back (which `cf export`
+and `cf overlay export` print as a warning), and the lossy
+`title.printed_text` says why of each. The annotation's **id** is the markers'
+either way, so a title that moves re-keys nothing.
 
 Lossy: `link.junk` (the junk values `items.json` lists have no field in the
 format; the text states each in a sentence of its own), `link.relation` (a
 relation no legacy token converts back to), `markers.leanrefs_outside_a_part`
 (a `\leanref` in the text of an item with parts, outside every part, which no
 box annotates), `item.title` (a title holding a URL, which the
-`external-urls` lint refuses), `source.page_size` (markers with no page
+`external-urls` lint refuses), `title.printed_text` (a title the canonical PDF
+could not be read for, written as the words with their TeX markup stripped),
+`source.page_size` (markers with no page
 size in points) and `destination.reference` (a reference row with neither a
 documentation URL nor a pinned dependency, whose card has no page to open).
 Bent: `declaration.x_dependency` (the package, repository and pinned commit

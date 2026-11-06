@@ -634,7 +634,10 @@ class TestInit(_Workspace):
         style = (self.repo / "informal/STYLE-project.md").read_text(encoding="utf-8")
         for text in (main, readme, style):
             self.assertNotIn("{{", text)
-        self.assertIn(r"\texttt{ExampleLib.glue\_theorem}", main)
+        # the introduction names the theorem as the one that closes the text: the text
+        # prints no Lean name, and `check-items` holds main.tex to that
+        self.assertIn("the theorem closing this\ntext depends on", main)
+        self.assertNotIn("glue_theorem", main.replace(r"\_", "_"))
         self.assertIn(r"\bibitem{reference} A. Author, Gluing, Example Press, 2001.", main)
         self.assertIn("the Apache License, Version~2.0", main)
         self.assertIn(f"[ExampleLib]({URL})", readme)
@@ -997,6 +1000,22 @@ class TestCheckItems(_Table):
         self.write_items(table)
         out = self.cf("informalize", "check-items", ID, code=1)
         self.assertIn("keyword line is 12", out)
+
+    def test_check_items_refuses_a_main_tex_that_prints_a_lean_name(self):
+        """The text names no Lean declaration, the maintainer's own file no more than a
+        task's: the gate asks this of a changed text file (rule 2), `check-items` of
+        `main.tex`, which no task changes."""
+        self.assertIn("main.tex prints no Lean name", self.cf("informalize", "check-items", ID))
+        path = self.repo / "informal/main.tex"
+        text = path.read_text(encoding="utf-8")
+        written = text.replace("the theorem closing this",
+                               r"the theorem \texttt{ExampleLib.glue\_theorem} closing this")
+        self.assertNotEqual(written, text)
+        path.write_text(written, encoding="utf-8")
+        line = 1 + written.count("\n", 0, written.index(r"\texttt{ExampleLib"))
+        out = self.cf("informalize", "check-items", ID, code=1)
+        self.assertIn(f"informal/main.tex:{line}: prints the Lean name "
+                      "ExampleLib.glue_theorem", out)
 
     def test_check_items_names_the_stage_that_is_missing(self):
         shutil.rmtree(self.paths.informalize_library(ID))

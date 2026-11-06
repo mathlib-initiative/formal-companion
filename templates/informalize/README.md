@@ -43,7 +43,6 @@ group holding the slot `name`.
 | `title_tex` | `main.tex` | the text's title (`text.title`), escaped for LaTeX |
 | `author_tex` | `main.tex` | `text.author`, escaped for LaTeX |
 | `license_tex` | `main.tex` | the license's name in a sentence, such as `the Apache License, Version~2.0` |
-| `theorem_tex` | `main.tex` | the theorem's full Lean name, as `\texttt{...}` with `_` escaped |
 | `library_name_tex` | `main.tex` | the library's name (the last component of `library.url`), escaped for LaTeX |
 | `library_url` | `main.tex`, `README.md` | `library.url`, as it is (`\url` reads it verbatim) |
 | `library_commit` | `main.tex`, `README.md`, `STYLE-project.md` | the 40-hex `library.commit` |

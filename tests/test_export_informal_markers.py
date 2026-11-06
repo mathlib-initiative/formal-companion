@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -49,7 +50,7 @@ from cflib import vocab as cf_vocab                                # noqa: E402
 from cflib.errors import CfError                                   # noqa: E402
 from formal_companion_annotations import ids                       # noqa: E402
 from formal_companion_annotations import validate as V             # noqa: E402
-from annotations.export import common, informal_markers            # noqa: E402
+from annotations.export import boxtext, common, informal_markers   # noqa: E402
 from overlay import export as overlay_export                       # noqa: E402
 from overlay import shards                                         # noqa: E402
 
@@ -89,19 +90,24 @@ def library_source() -> str:
 
 
 #: the notions `tests/_informalize_doc.py`'s conventions fix: two constants of Mathlib
-#: (rows of `declarations.json`'s `references`) and one declaration of the library
-NOTIONS = [("Set", "subset"), ("IsOpen", "open"), ("ExampleLib.GlueData", "gluing data")]
+#: (rows of `declarations.json`'s `references`) and one declaration of the library, as
+#: ``(constant, the words of the `\fcnotion`, what the page prints inside its box)``.  The
+#: last is written in mathematics, as a notation section mostly is: the page prints the
+#: glued space, the source says `$\glued{U}{V}$`, and the title is the page's.
+NOTIONS = [("Set", "subset", "subset"), ("IsOpen", "open", "open"),
+           ("ExampleLib.GlueData", r"$\glued{U}{V}$", "U ∪ρ V")]
 #: where a package's source lies under a `.lake/packages` directory
 MATHLIB_PATH = "mathlib/Mathlib/Topology/Defs/Basic.lean"
 
 
-def markers(source_commit: str, pdf_sha256: str) -> dict:
+def markers(source_commit: str, pdf_sha256: str, boxes: dict[str, list] | None = None) -> dict:
     """A `markers.json` for the fixture: one box per item, part and notion, two pages.
 
     The boxes are the ones `extract_markers.py` would write, laid out by hand;
     a part's `decls` are the `\\leanref`s the section files put in it, so part
     (b) of 1.2 names the helper as well as its key.  The notion boxes are the
-    conventions', a few words wide each.
+    conventions', a few words wide each; `boxes` adds a box to an entry, as the
+    build writes one per line of a notion the line broke.
     """
     entries: list[dict] = []
     page, y = 1, 0.1
@@ -126,10 +132,12 @@ def markers(source_commit: str, pdf_sha256: str) -> dict:
             y += 0.08
         if y > 0.75:
             page, y = page + 1, 0.1
-    for n, (name, words) in enumerate(NOTIONS, start=1):
+    for n, (name, words, _) in enumerate(NOTIONS, start=1):
         entries.append({"id": f"notion:{name}", "notion": name, "words": words,
                         "label": f"notion:{n}", "number": f"n{n}",
-                        "boxes": [[1, 0.1 + 0.2 * (n - 1), 0.9, 0.15, 0.02]]})
+                        "boxes": [[1, 0.05 + 0.22 * (n - 1), 0.9, 0.18, 0.02]]})
+    for entry in entries:
+        entry["boxes"] += [list(box) for box in (boxes or {}).get(entry["id"], [])]
     return {"schema": "formal-companion/informalize-markers", "schema_version": 1,
             "job": doc.JOB, "source_commit": source_commit, "pdf_sha256": pdf_sha256,
             "pages": page, "page_size_pt": [612.0, 792.0],
@@ -137,6 +145,86 @@ def markers(source_commit: str, pdf_sha256: str) -> dict:
             "box_format": "[page, x, y, w, h]; page 1-based; fractions of the page from the "
                           "top left",
             "entries": entries}
+
+
+# ---------------------------------------------------------------------------
+# the canonical PDF: a real one, since the export reads the text inside the boxes
+# ---------------------------------------------------------------------------
+
+#: the page, in points: the size `markers()` records
+PAGE = (612.0, 792.0)
+#: the characters the fixture prints outside ASCII, by the glyph name an encoding gives
+#: them: poppler reads a glyph name back as the character the Adobe glyph list names
+GLYPHS = {"ρ": "rho", "∪": "union"}
+CODES = {char: code for code, char in enumerate(GLYPHS, start=1)}
+
+
+def _escape(text: str) -> str:
+    """One string for a PDF content stream, its parentheses escaped and its Greek encoded."""
+    out = []
+    for char in text:
+        if char in CODES:
+            out.append(chr(CODES[char]))
+        elif char in "()\\":
+            out.append("\\" + char)
+        elif char.isascii() and char.isprintable():
+            out.append(char)
+        else:                                       # pragma: no cover - a broken fixture
+            raise AssertionError(f"the fixture's font has no glyph for {char!r}")
+    return "".join(out)
+
+
+def minimal_pdf(pages: list[list[tuple[float, float, float, str]]]) -> bytes:
+    """A PDF of `pages`, each a list of ``(x, y, size, text)`` in points from the bottom left.
+
+    Written by hand rather than built: the suite may not need TeX, and the export's
+    titles are the text poppler finds inside a box, which needs a PDF that really
+    carries text.  One Helvetica font, with the glyph names of the characters the
+    fixture prints outside Latin-1 in its encoding.
+    """
+    objects = ["<</Type/Catalog/Pages 2 0 R>>",
+               "<</Type/Pages/Kids[%s]/Count %d>>" % (
+                   " ".join(f"{3 + n} 0 R" for n in range(len(pages))), len(pages))]
+    streams = len(pages)
+    for n, page in enumerate(pages):
+        objects.append(f"<</Type/Page/Parent 2 0 R/MediaBox[0 0 {PAGE[0]:g} {PAGE[1]:g}]"
+                       f"/Resources<</Font<</F1 {3 + 2 * streams} 0 R>>>>"
+                       f"/Contents {3 + streams + n} 0 R>>")
+    for page in pages:
+        content = "BT\n" + "".join(
+            f"/F1 {size:g} Tf 1 0 0 1 {x:g} {y:g} Tm ({_escape(text)}) Tj\n"
+            for x, y, size, text in page) + "ET\n"
+        objects.append(f"<</Length {len(content)}>>stream\n{content}endstream")
+    objects.append(f"<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding "
+                   f"{4 + 2 * streams} 0 R>>")
+    objects.append("<</Type/Encoding/BaseEncoding/WinAnsiEncoding/Differences[1"
+                   + "".join(f"/{name}" for name in GLYPHS.values()) + "]>>")
+    out, offsets = "%PDF-1.4\n", []
+    for n, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{n} 0 obj{body}endobj\n"
+    start = len(out)
+    out += (f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n"
+            + "".join(f"{offset:010d} 00000 n \n" for offset in offsets)
+            + f"trailer<</Size {len(objects) + 1}/Root 1 0 R>>\nstartxref\n{start}\n%%EOF\n")
+    return out.encode("latin-1")
+
+
+def printed_pages(document: dict, prints: dict) -> list:
+    """What the fixture's PDF prints: `prints[<entry id>]` inside that entry's boxes.
+
+    One string goes in the entry's first box, a list one string per box.
+    """
+    pages: list[list[tuple[float, float, float, str]]] = [[] for _ in range(document["pages"])]
+    for entry in document["entries"]:
+        shown = prints.get(entry["id"])
+        lines = [shown] if isinstance(shown, str) else list(shown or [])
+        for (page, x, y, _, h), text in zip(entry["boxes"], lines):
+            if not text:
+                continue
+            size = min(10.0, 0.6 * h * PAGE[1])
+            pages[page - 1].append((x * PAGE[0] + 2, (1 - y - h) * PAGE[1] + 2, size, text))
+    return pages
 
 
 def git(root: Path, *args: str) -> str:
@@ -155,8 +243,10 @@ class Fixture:
     """An output repository at a commit, its canonical PDF and the library's source."""
 
     def __init__(self, root: Path, *, items: dict | None = None,
-                 declarations: dict | None = None):
+                 declarations: dict | None = None, prints: dict | None = None,
+                 boxes: dict[str, list] | None = None):
         self.root = root
+        self.boxes = boxes
         self.repo = root / "repo"
         doc.write_repo(self.repo, items=items, declarations=declarations)
         self.src = root / "library-src"
@@ -168,12 +258,17 @@ class Fixture:
         (self.packages / MATHLIB_PATH).write_text(
             "-- line 1\n-- line 2\ndef IsOpen (s : Set X) : Prop :=\n  TopologicalSpace.IsOpen s\n",
             encoding="utf-8")
+        # the boxes first (they do not depend on the PDF), then the PDF that prints
+        # inside them, and last the markers, which name that PDF's sha256
+        layout = markers("", "", boxes)
+        shown = {f"notion:{name}": text for name, _, text in NOTIONS}
+        shown.update(prints or {})
         self.pdf = root / f"{doc.JOB}.pdf"
-        self.pdf.write_bytes(b"%PDF-1.5\n% the canonical PDF of the fixture\n%%EOF\n")
+        self.pdf.write_bytes(minimal_pdf(printed_pages(layout, shown)))
         self.pdf_sha256 = common.sha256_bytes(self.pdf.read_bytes())
         git(root, "init", "-q", str(self.repo))
         self.commit("the text")
-        self.write_markers(markers(self.head, self.pdf_sha256))
+        self.write_markers(markers(self.head, self.pdf_sha256, boxes))
         self.commit("the canonical PDF's markers")
 
     def commit(self, message: str) -> str:
@@ -450,6 +545,154 @@ class TestTheDocument(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# the titles: what the page prints
+# ---------------------------------------------------------------------------
+
+#: the item whose title the fixture rewrites in TeX, and the head its page then prints
+TITLED = "1.2"
+TITLE_TEX = r"$\glued{U}{V}$"
+TITLE_HEAD = "Theorem 1.2 (U ∪ρ V). Suppose that"
+
+
+def no_poppler():
+    """A machine with no poppler: the programs `BoxText` looks for are on no PATH."""
+    return unittest.mock.patch.object(
+        boxtext, "PROGRAMS", ("pdftotext-is-not-installed", "pdfinfo-is-not-installed"))
+
+
+def retitled_fixture(case: unittest.TestCase, prints: dict | None = None) -> "Fixture":
+    """A fixture whose item :data:`TITLED` is titled in TeX, in `items.json` and the
+    markers both, with `prints` on its page."""
+    items = copy.deepcopy(doc.ITEMS)
+    for item in items["items"]:
+        if item["id"] == TITLED:
+            item["title"] = TITLE_TEX
+    fixture = Fixture(scratch(case), items=items, prints=prints)
+    written = fixture.markers()
+    for entry in written["entries"]:
+        if entry["id"] == TITLED:
+            entry["title"] = TITLE_TEX
+    fixture.write_markers(written)
+    fixture.commit("the markers of the item titled in TeX")
+    return fixture
+
+
+@unittest.skipIf(shutil.which("pdftotext") is None, "poppler's pdftotext is not on PATH")
+class TestTheTitlesAreTheOnesThePagePrints(unittest.TestCase):
+    """A card is titled with the text of the PDF inside its boxes, never with LaTeX."""
+
+    def test_a_notion_is_titled_with_the_text_inside_its_boxes(self):
+        fixture = Fixture(scratch(self))
+        document, report = fixture.export()
+        items = by_id(document, "items")
+        self.assertEqual(items["notion:ExampleLib.GlueData"]["title"], "U ∪ρ V")
+        self.assertEqual(report.counts["titles_from_pdf"], len(NOTIONS))
+        self.assertEqual(report.counts["titles_not_printed"], [])
+        self.assertNotIn("title.printed_text", report.lossy)
+
+    def test_the_boxes_of_one_notion_join_in_reading_order(self):
+        """A notion the line broke has a box per line; its title is the lines, joined."""
+        fixture = Fixture(scratch(self), boxes={"notion:Set": [[1, 0.05, 0.93, 0.18, 0.02]]},
+                          prints={"notion:Set": ["a point", "of S"]})
+        items = by_id(fixture.export()[0], "items")
+        self.assertEqual(items["notion:Set"]["title"], "a point of S")
+
+    def test_an_item_title_written_in_tex_is_the_head_the_page_prints(self):
+        """`items.json`'s title is LaTeX, so the title is the parenthesis of the head;
+        a part carries its item's, as the printed label repeats it."""
+        fixture = retitled_fixture(self, prints={TITLED: TITLE_HEAD})
+        document, report = fixture.export()
+        items = by_id(document, "items")
+        self.assertEqual(items["theorem-1.2-a"]["title"], "U ∪ρ V")
+        self.assertEqual(items["theorem-1.2-b"]["title"], "U ∪ρ V")
+        # an item whose title is plain prose is titled by the table, with nothing cropped
+        self.assertEqual(items["definition-1.1"]["title"], "Gluing data")
+        self.assertEqual(report.counts["titles_from_pdf"], len(NOTIONS) + 1)
+
+    def test_an_item_head_the_page_does_not_print_falls_back_to_the_words(self):
+        """Nothing is printed in that box, so there is no head to read the title from."""
+        document, report = retitled_fixture(self).export()
+        self.assertEqual(by_id(document, "items")["theorem-1.2-a"]["title"], "U V")
+        self.assertEqual(report.counts["titles_not_printed"], [TITLED])
+        self.assertIn("the item's head hold no text",
+                      report.lossy["title.printed_text"]["examples"][0])
+
+    def test_the_title_moves_and_the_ids_do_not(self):
+        """The annotation id of a notion is `notion:<constant>`, whatever it is titled."""
+        fixture = Fixture(scratch(self))
+        with no_poppler():
+            stripped, _ = fixture.export()
+        printed, _ = fixture.export()
+        self.assertNotEqual([i.get("title") for i in printed["items"]],
+                            [i.get("title") for i in stripped["items"]])
+        for array in ("items", "locations", "links", "declarations"):
+            self.assertEqual([record["id"] for record in printed[array]],
+                             [record["id"] for record in stripped[array]])
+
+
+class TestTheTitlesWithoutPoppler(unittest.TestCase):
+    """Without poppler nothing can be cropped: the words lose their markup, and say so."""
+
+    def test_the_fallback_is_the_words_with_their_tex_markup_stripped(self):
+        fixture = Fixture(scratch(self))
+        with no_poppler():
+            document, report = fixture.export()
+        items = by_id(document, "items")
+        self.assertEqual(items["notion:ExampleLib.GlueData"]["title"], "U V")
+        self.assertEqual(items["notion:IsOpen"]["title"], "open")     # no markup to strip
+        self.assertEqual(report.counts["titles_from_pdf"], 0)
+        self.assertEqual(report.counts["titles_not_printed"],
+                         [f"notion:{name}" for name, _, _ in NOTIONS])
+        bucket = report.lossy["title.printed_text"]
+        self.assertEqual(bucket["count"], len(NOTIONS))
+        self.assertIn("pdftotext", bucket["examples"][0])
+        self.assertIn("notion:Set: subset -> subset", bucket["examples"][0])
+        (warning,) = [line for line in common.report_warnings(report.counts)
+                      if "title" in line]
+        self.assertIn(f"{len(NOTIONS)} title(s) could not be read from the PDF", warning)
+
+
+class TestTheTextInsideABox(unittest.TestCase):
+    """`annotations.export.boxtext`, the piece around the runtime's one cropper."""
+
+    def test_it_reads_tex_markup_and_strips_it(self):
+        self.assertTrue(boxtext.has_tex(r"$\ball{x}{\rho}$"))
+        self.assertTrue(boxtext.has_tex("a point of $S$"))
+        self.assertFalse(boxtext.has_tex("the composite of two homomorphisms"))
+        self.assertFalse(boxtext.has_tex(None))
+        self.assertEqual(boxtext.strip_tex("a point of $S$"), "a point of S")
+        self.assertEqual(boxtext.strip_tex(r"$\ball{x}{\rho}$"), "x")
+        # nothing is left of a title that is all markup, so it stays as it was written
+        self.assertEqual(boxtext.strip_tex(r"$\R$"), r"$\R$")
+
+    def test_it_joins_a_crop_and_ends_a_title_at_the_notion(self):
+        self.assertEqual(boxtext.printed("the composite of\ntwo  homomorphisms,\n"),
+                         "the composite of two homomorphisms")
+        self.assertEqual(boxtext.printed("path-\nconnected space."), "path-connected space")
+        self.assertEqual(boxtext.printed("  \n "), "")
+        self.assertEqual(boxtext.printed("..."), "...")     # a title that is all punctuation
+
+    def test_it_reads_the_title_out_of_an_item_head(self):
+        self.assertEqual(boxtext.parenthesis_after("Theorem 1.2 (B(x, ρ)). Suppose", "Theorem 1.2"),
+                         "B(x, ρ)")
+        self.assertIsNone(boxtext.parenthesis_after("Theorem 1.2. Suppose", "Theorem 1.2"))
+        self.assertIsNone(boxtext.parenthesis_after("Lemma 1.3 (a title)", "Theorem 1.2"))
+
+    def test_without_poppler_it_crops_nothing_and_says_which_program(self):
+        with no_poppler():
+            text = boxtext.BoxText(Path("/nowhere.pdf"), 288)
+            self.assertFalse(text.available)
+            self.assertEqual(text.of([[1, 0.1, 0.1, 0.1, 0.1]]), "")
+            self.assertIn("pdftotext", text.why)
+
+    def test_the_cropper_is_the_runtime_s_own(self):
+        """One cropper: rule 9 of the box check reads a box through the same function."""
+        from informalize import runtime as informalize_runtime
+        check_items = informalize_runtime.check_items()
+        self.assertIs(boxtext.cropper(), check_items.crop)
+
+
+# ---------------------------------------------------------------------------
 # what it refuses
 # ---------------------------------------------------------------------------
 
@@ -633,7 +876,9 @@ class TestItRefusesInputsThatDisagree(unittest.TestCase):
         _, report = self.fixture.export()
         self.assertEqual(report.counts["snippets_line_differs"],
                          ["ExampleLib.glue_map: 33 and 30"])
-        self.assertEqual(common.report_warnings(report.counts),
+        # on a machine with no poppler every notion title falls back, which is a warning
+        # of its own (TestTheTitlesWithoutPoppler)
+        self.assertEqual([w for w in common.report_warnings(report.counts) if "title" not in w],
                          ["1 snippet(s) were cut at a line the document does not give for the "
                           "declaration, so the source read may not be the pinned one: "
                           "ExampleLib.glue_map: 33 and 30"])
@@ -813,7 +1058,7 @@ class TestCfOverlayExportRunsIt(unittest.TestCase):
                        "--library-src", str(fixture.src), "--source-title", doc.SLOTS["title"],
                        "--items-approved"])
         self.assertEqual(result.sections, {"1": 4, "2": 5, "other": len(NOTIONS)})
-        self.assertEqual(result.warnings, [])
+        self.assertEqual([w for w in result.warnings if "title" not in w], [])
         record = json.loads((fixture.repo / "pdf-overlay" / "GENERATED.json")
                             .read_text(encoding="utf-8"))["annotations"]
         self.assertEqual(record["export"], {

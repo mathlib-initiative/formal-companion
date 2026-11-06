@@ -28,8 +28,15 @@ annotation per box:
 * one **passage** record per notion box -- a ``\\fcnotion`` of the conventions,
   whose words the markers carry and whose Lean constant they carry beside them
   -- with the markers' own id (``notion:<constant>``, a declared id, so that
-  rewording the notion does not re-key it) and the words as its ``title``,
-  linked to that constant with role ``key`` and relation ``exact``.  The
+  rewording the notion does not re-key it) and, as its ``title``, the text the
+  canonical PDF prints inside its boxes (`boxtext`, the box check's own
+  cropper): the page shows ``B(x, rho)`` where the source says
+  ``$\\ball{x}{\\rho}$``, and a card titled with the LaTeX would be a card no
+  reader of the page recognises.  An item whose title is written with TeX
+  markup is titled the same way, from the parenthesis its head prints; the
+  fallback, for a PDF no box of can be read, is the words with their markup
+  stripped, and the report names every title that took it.  The record is
+  linked to the notion's constant with role ``key`` and relation ``exact``.  The
   informal text prints neither the name nor a documentation link (`STYLE.md`,
   "The conventions section"); this record is what supplies them.  A constant of
   the library is a declaration like any other.  A constant of a **dependency**
@@ -62,6 +69,7 @@ from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids
 from formal_companion_annotations import vocab
 
+from . import boxtext
 from . import common
 from .common import ExportError, Report, file_lock
 
@@ -140,8 +148,10 @@ class _Export:
         self.indexed: dict[str, dict] = {}
         self.indexed_packages: dict[str, dict] = {}
         self.notion_items: dict[str, str] = {}
+        self.titles: dict[str, str | None] = {}
         self.keyword_checked: set[str] = set()
         self.source_tree = None
+        self.box_text = boxtext.BoxText(self.pdf, self.runtime_config.boxes["res_dpi"])
 
     # -- the inputs -----------------------------------------------------------------
     def read_inputs(self) -> None:
@@ -160,7 +170,7 @@ class _Export:
                                   hint="this convention reads an informalize output repository "
                                        "after its I6 stage (docs/proposals/informalize.md)")
         try:
-            self.fc.load_config(informal)
+            self.runtime_config = self.fc.load_config(informal)
             self.config = common.load_json(informal / "informalize.json")
             self.items_in = common.load_json(informal / "items.json")
             self.table = self.fc.load_items(informal / "items.json")
@@ -372,6 +382,7 @@ class _Export:
                 raise ExportError(f"{entry['id']}: markers.json gives "
                                   f"({entry.get('kind')!r}, {entry.get('title')!r}), items.json "
                                   f"({item.get('kind')!r}, {item.get('title')!r})")
+            self.titles[item["id"]] = self.item_title(entry, item)
             parts = entry.get("parts") or []
             if not parts:
                 self.add(entry, item, None)
@@ -388,6 +399,42 @@ class _Export:
                     raise ExportError(f"{entry['id']}: part {part_id} has no entry of its own "
                                       "in markers.json")
                 self.add(part, item, part.get("part"))
+
+    # -- the titles the page prints ------------------------------------------------------
+    def item_title(self, entry: dict, item: dict) -> str | None:
+        """The item's title: `items.json`'s, and for one written with TeX markup what the
+        page prints in the item's head (`Lemma 1.2 (the title).`)."""
+        title = item.get("title")
+        if not title or not boxtext.has_tex(title):
+            return title
+        head = f"{self.fc.KIND_NAMES.get(item['kind'], item['kind'])} {item['id']}"
+        found = boxtext.parenthesis_after(self.box_text.of((entry.get("boxes") or [])[:1]), head)
+        return self.printed(entry["id"], found, title, "the item's head")
+
+    def notion_title(self, entry: dict, words: str) -> str:
+        """The notion's title: the text the page prints inside its boxes, in reading order."""
+        return self.printed(entry["id"], self.box_text.of(entry.get("boxes") or []), words,
+                            "the notion's boxes")
+
+    def printed(self, where: str, found: str | None, title: str, what: str) -> str:
+        """``found``, or the words of the source with their TeX markup stripped, reported.
+
+        A title is what the reader of the page sees; the words a `\\fcnotion` or an item
+        was written with are LaTeX, and `$\\ball{x}{\\rho}$` is no title for a card.  The
+        stripped words are the fallback for a PDF no box of can be read -- poppler absent,
+        or a crop with no text in it -- and the report names every title that took it.
+        """
+        if found:
+            self.report.counts["titles_from_pdf"] = self.report.counts.get("titles_from_pdf", 0) + 1
+            return found
+        plain = boxtext.strip_tex(title)
+        why = self.box_text.why if not self.box_text.available else f"{what} hold no text"
+        self.report.lose("title.printed_text", 1,
+                         "a title the canonical PDF could not be read for is the words of the "
+                         "source with their TeX markup stripped, which is not what the page "
+                         "prints", [f"{where}: {title} -> {plain} ({why})"])
+        self.report.counts.setdefault("titles_not_printed", []).append(where)
+        return plain
 
     # -- the notions of the conventions ------------------------------------------------
     def add_notion(self, entry: dict) -> None:
@@ -409,8 +456,8 @@ class _Export:
         self.notion_items[rid] = name
         decl = self.notion_declaration(name, where)
         self.items.append({"id": rid, "id_source": "declared", "form": "passage",
-                           "source": self.source_id, "kind": "passage", "title": words,
-                           "coverage": COVERAGE})
+                           "source": self.source_id, "kind": "passage",
+                           "title": self.notion_title(entry, words), "coverage": COVERAGE})
         self.links.append({"id": f"{rid}/key/{name}", "item": rid, "declaration": decl["id"],
                            "role": "key", "relation": "exact", "provenance": PROVENANCE_ID})
         self.locate(entry, rid, where)
@@ -520,7 +567,7 @@ class _Export:
                   "section": str(item.get("section") or "")}
         if letter:
             record["sub"] = letter
-        title = item.get("title")
+        title = self.titles.get(item["id"], item.get("title"))
         if common.has_url(title):
             self.report.lose("item.title", 1,
                              "a title holding a URL would fail the format's `external-urls` "
@@ -674,6 +721,8 @@ class _Export:
         counts["checkout_commit"] = self.head
         counts["source_commit"] = self.source_commit
         counts["library"] = {"repo": self.repo_id, "commit": self.library_commit}
+        counts.setdefault("titles_from_pdf", 0)
+        counts.setdefault("titles_not_printed", [])
         counts.setdefault("snippets_unlocated", [])
         counts.setdefault("snippets_line_differs", [])
         counts.setdefault("references_without_source", [])

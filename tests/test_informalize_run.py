@@ -676,7 +676,8 @@ class TestTheApply(ItemsPhaseCase):
         # the table is in and `check-items` cannot pass it
         shutil.rmtree(self.pipe.paths.informalize_library_src(self.id))
         text = self.apply(ok=False)
-        self.assertIn("items.json", text)
+        self.assertIn("stage I1 has not run", text)
+        self.assertIn("1 problem(s) in informal/", text)
         receipt = self.receipt_of("I3")
         self.assertNotEqual(receipt["checks"]["check_items"], "ok")
         self.assertEqual(receipt["checks"]["files"], 2)

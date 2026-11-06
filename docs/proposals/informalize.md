@@ -512,8 +512,10 @@ Written by `tools/extract_markers.py`, committed by `fetch-pdf`:
 
 An item or part across a page break has one box per page. `decls` are the `\leanref`s the
 build recorded there. A notion entry is one `\fcnotion` of the conventions: `notion` the
-Lean constant the marker carries, `words` the words the page prints, and one box per line
-those words lie on.
+Lean constant the marker carries, `words` the source of the words the page prints, and one
+box per line those words lie on.  `words` is TeX (`$\ball{x}{\rho}$` for a notion the page
+prints as B(x, ρ)), which is why the export titles a notion from the boxes and not from
+here (section 10).
 
 ### 5.7 Receipts and approvals
 
@@ -720,9 +722,9 @@ Apache License 2.0, travels with it as `LICENSE-runtime`, whatever license the t
 | `tools/build_pdf.sh` | `build_pdf.sh` | main file and job from `informalize.json`; builds a snapshot; `-norc` and `openin_any=p`; refuses an unsafe `<outdir>` and a second build into one; a receipt |
 | `tools/canonical_pdf.sh` | the pilot's final-build steps | section 9 |
 | `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json`; a region's first and last line from the above and below markers; the notion boxes |
-| `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check; the notions (rule 11) |
+| `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check; the notions (rule 11); `crop`, rule 9's reader of one box, which the export titles a notion with (section 10) |
 | `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py`; an edge through ink is judged at `res_dpi`, a stroke touching ink only reported; ink outside an item's boxes is fatal |
-| `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts` |
+| `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts`; `printed_lean_names`, rule 2's question of a text file |
 | `tools/fcitems.py` | the pilot's item verifier | the rules of `items.json` and `declarations.json` and the keyword check (section 5.4), which `cf informalize check-items` and the gate (section 8.3 rule 4) share |
 | `LICENSE-runtime` | (new) | this repository's `LICENSE`, the Apache License 2.0 the other runtime files are under |
 
@@ -1157,9 +1159,15 @@ standard library and its sibling files. Rules, each refusal naming its number:
    redefine a marker command, and `\DeclareMathOperator` stay.
    A second lint runs on the same files with their comments *removed*, since a comment is
    not typeset: what is left may print no Lean name and no link -- no `\texttt`, `\mathtt`,
-   `\ttfamily`, `\tt`, `\verb`, `\href`, `\url`, `\nolinkurl`, `\path` or `http(s)://`
+   `\ttfamily`, `\tt`, `\verb`, `\href`, `\url`, `\nolinkurl`, `\path` or `http(s)://`,
+   and no name of `declarations.json` printed as plain prose either, which is how
+   `main.tex`'s introduction once printed the theorem's
+   (`fccommon.printed_lean_names`: the commands whose argument prints nothing are
+   blanked first, a `\_` reads as `_`, and only a name with a namespace is read as one)
    -- and every `\fcnotion` must name a constant `declarations.json` holds, as an entry or
-   as a row of its `references`.
+   as a row of its `references`.  `cf informalize check-items` asks that same question of
+   `informal/main.tex`, which is the maintainer's from `init` on and which no task
+   changes, so that the one file the gate never sees keeps the rule too.
    The text states the mathematics; the annotations carry the name and the link
    (`STYLE.md`, "The conventions section"). The lint is a list of what is
    refused, not of what is allowed: what it cannot see, such as text a section typesets
@@ -1374,8 +1382,22 @@ vendored checker accepts in canonical form:
   which is why section 5.4 does not admit that one);
 - one **passage** item per notion box, `id_source: declared` with the markers' own id
   (`notion:<constant>`, so that rewording the notion does not re-key it), `kind: passage`,
-  the words as its `title` and one location per box, linked to the constant the
-  `\fcnotion` names with role `key` and relation `exact`. A constant of the library is a
+  **the text the canonical PDF prints inside its boxes** as its `title` and one location
+  per box, linked to the constant the `\fcnotion` names with role `key` and relation
+  `exact`. The words the markers carry are the LaTeX the drafter wrote
+  (`$\ball{x}{\rho}$`), and a card must show what the page shows, so the export crops
+  each box at `boxes.res_dpi` with poppler and joins the crops in reading order
+  (`annotations.export.boxtext`, around the one cropper, `check_items.crop` of rule 9 —
+  the box check has already read every box, so an approved PDF and its proof sheets stay
+  valid and nothing is rebuilt). What poppler gives is kept character for character
+  (Greek, operators, subscripts); only white space is collapsed, a line break closed up,
+  and a sentence's comma or full stop that the box's padding caught dropped. An item
+  whose `items.json` title holds TeX markup is titled the same way, from the parenthesis
+  its head prints (`Lemma 1.2 (…)`), and a part carries its item's. Where poppler is
+  absent or a crop holds no text the title is the words with their markup stripped, and
+  the report names every title that took it (`counts.titles_from_pdf`,
+  `counts.titles_not_printed`, and the lossy `title.printed_text`). The id is the
+  markers' either way. A constant of the library is a
   declaration like any other. A constant of a **dependency** is a row of `references`
   (section 5.3): its declaration record carries the module, the file Lake's layout gives
   it, and `x_package`, `x_repo` and `x_commit`; its destination is the line on that

@@ -336,18 +336,29 @@ def norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def crop_text(pdf: Path, box: list[float], size: tuple[float, float], dpi: int) -> str:
+def crop(pdf: Path, box: list[float], size: tuple[float, float], dpi: int) -> str:
+    """The text inside one box, as pdftotext gives it.
+
+    The one cropper: rule 9 reads it through :func:`crop_text`, and the export of the
+    boxes titles a notion with it (`cf export informal-markers`, section 10 of
+    docs/proposals/informalize.md), where what poppler gave matters character by
+    character.
+    """
     w, h = size
     s = dpi / 72
     x, y = int(box[1] * w * s), int(box[2] * h * s)
     ww = int(round((box[1] + box[3]) * w * s)) - x
     hh = int(round((box[2] + box[4]) * h * s)) - y
     page = str(int(box[0]))
-    out = subprocess.run(
+    return subprocess.run(
         ["pdftotext", "-q", "-f", page, "-l", page, "-r", str(dpi), "-x", str(x), "-y", str(y),
          "-W", str(ww), "-H", str(hh), "-enc", "UTF-8", "-nopgbrk", str(pdf), "-"],
         capture_output=True, text=True, check=True).stdout
-    return norm(out)
+
+
+def crop_text(pdf: Path, box: list[float], size: tuple[float, float], dpi: int) -> str:
+    """One box's text as rule 9 compares it: :func:`crop` through :func:`norm`."""
+    return norm(crop(pdf, box, size, dpi))
 
 
 def title_words(title: str) -> list[str]:

@@ -5,7 +5,9 @@ New code, for docs/proposals/informalize.md sections 5.4, 5.7 and 13.
 
 * `check-items` holds `informal/items.json` to section 5.4's rules and every declaration
   to `informal/declarations.json` and its keyword line in `library/src/`
-  (`informalize.itemtable.check_table`).  It writes nothing.
+  (`informalize.itemtable.check_table`), and `informal/main.tex` to the gate's rule 2:
+  the text prints no Lean name, the maintainer's own file no more than a task's.  It
+  writes nothing.
 * `approve <id> items --in-v1 <ids|all>` passes the same check first.  While every section
   file is empty it moves the items not chosen to `deferred`, drops empty sections,
   renumbers what is left, records the old-to-new map in `decisions`, writes `sections.tex`
@@ -41,9 +43,12 @@ from cflib.vocab import APPROVAL_GATES
 
 from informalize import config, itemtable, stages
 from informalize.outrepo import OutputRepo
+from informalize.runtime import MAIN as MAIN_NAME
+from informalize.runtime import fccommon as _fccommon
 
 ITEMS = "informal/items.json"
 DECLARATIONS = "informal/declarations.json"
+MAIN = f"informal/{MAIN_NAME}"
 SECTIONS_TEX = "informal/sections.tex"
 SECTIONS_DIR = "informal/sections"
 CONVENTIONS_FILE = "00-conventions.tex"
@@ -104,6 +109,27 @@ class Table:
                           hint=f"`cf informalize fetch-library {self.id}` unpacks the "
                                "library's source there")
         return itemtable.SourceTree(root)
+
+    def printed_names(self) -> list[str]:
+        """Does `informal/main.tex` print a Lean name?  One problem per name it prints.
+
+        The gate asks this of every text file a fleet task changes (rule 2); `main.tex`
+        is the maintainer's from `cf informalize init` on, and nothing else asks it of
+        that file -- whose introduction once printed the theorem's own name.  The one
+        definition is the runtime's `fccommon.printed_lean_names`.
+        """
+        path = self.repo.root / MAIN
+        if path.is_symlink() or not path.is_file():
+            return []
+        document, _ = self.declarations()
+        names = {row["name"] for key in ("declarations", "references")
+                 for row in document.get(key) or []
+                 if isinstance(row, dict) and isinstance(row.get("name"), str)}
+        names.add(self.cfg["library"]["theorem"])
+        return [f"{MAIN}:{line}: prints the Lean name {name}; the informal text names no "
+                f"declaration of the library, and the annotations supply the names"
+                for line, name in _fccommon().printed_lean_names(
+                    path.read_text(encoding="utf-8", errors="replace"), names)]
 
     def numbered(self) -> bool:
         """Has an items approval renumbered this table once?  From then on it stays so."""
@@ -168,10 +194,14 @@ def _refuse(problems: list[str], what: str) -> None:
 # ---------------------------------------------------------------------------
 
 def check_items(workspace, informalize_id: str) -> tuple[list[str], dict]:
-    """`cf informalize check-items`: (problems, the table) -- read-only."""
+    """`cf informalize check-items`: (problems, the table) -- read-only.
+
+    The table against `declarations.json` and the library's source, and `main.tex`
+    against the rule that the text prints no Lean name (:meth:`Table.printed_names`).
+    """
     table = Table(workspace, informalize_id)
     doc = table.items()
-    return table.check(doc, numbered=table.numbered()), doc
+    return table.check(doc, numbered=table.numbered()) + table.printed_names(), doc
 
 
 # ---------------------------------------------------------------------------

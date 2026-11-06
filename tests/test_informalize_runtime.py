@@ -386,6 +386,22 @@ class TestParsing(unittest.TestCase):
         aux = fc.parse_aux("\\fc@auxitem{1.1}{lemma}{1}{^^c3^^a9t\\'e $\\pi _1$}\n")
         self.assertEqual(aux.items[0]["title"], "ét\\'e $\\pi_1$")
 
+    def test_the_names_a_text_file_prints_are_the_ones_it_typesets(self):
+        """`printed_lean_names`, the one definition the gate's rule 2 and
+        `cf informalize check-items` both ask of a text file."""
+        names = {"ExampleLib.glue_theorem", "Path.trans"}
+        self.assertEqual(fc.printed_lean_names(
+            "One line.\nThe theorem ExampleLib.glue\\_theorem closes it.", names),
+            [(2, "ExampleLib.glue_theorem")])
+        for silent in (r"\leanref{ExampleLib.glue_theorem}",
+                       r"\fcnotion{Path.trans}{$\gamma \ptrans \delta$}",
+                       r"% ExampleLib.glue\_theorem, a note to myself",
+                       r"\cite{library} \label{eq:1.2-trans} \input{sections}"):
+            with self.subTest(silent=silent):
+                self.assertEqual(fc.printed_lean_names(silent, names), [])
+        # a dotted word that is no name of the library's, and a name with no namespace
+        self.assertEqual(fc.printed_lean_names("A path, i.e. a map, is trans.", names), [])
+
     def test_hypotheses_are_found_as_binders_and_as_arrows(self):
         def heads(signature: str) -> set[str]:
             return {h for h in map(fc.type_head, fc.hypothesis_types(signature)) if h}
