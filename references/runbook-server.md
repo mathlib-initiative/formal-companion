@@ -521,8 +521,9 @@ host entry serves one informalize id and a second id needs that entry changed fi
      needs the annotation bundle step 5 wrote; it prints the lines that build the library's
      literate HTML with Verso on the host and cut `verso.json` from it. Bring that file back
      with the printed `rsync` line into `pdf-overlay/verso.json`, then run `cf informalize
-     overlay` and `check-site` again: the overlay commits it, and the site build publishes the
-     hovers in place of the empty file.
+     overlay` and `check-site` again: the overlay commits it, untracked though it is, and the
+     site build publishes the hovers in place of the empty file. Sign the publish approval
+     again afterwards, since it pins the commit before them.
 
   7. **Publishing, the maintainer's alone.** Create the repository, push, upload the canonical
      PDF's **exact bytes** as the release asset at the URL the annotations pin, and turn on

@@ -141,8 +141,10 @@ declaration as the literate page does; and the two stages that make what a reade
 `pdf-command` and `fetch-pdf` for the canonical PDF the host builds twice from clean
 (`informal/tools/canonical_pdf.sh`), `overlay` and `check-site` for the annotations, the
 generated landing page, the two workflows and the built site. A run from `init` to
-`approve <id> publish` needs a person only for the six approvals of section 13 and for
-publishing itself; `references/runbook-server.md` section 10 is the whole sequence.
+`approve <id> publish` needs a person only for the six approvals of section 13, for the
+two host jobs, which are started from printed lines, and for publishing itself; nothing
+it writes is written or committed by hand, the hovers' `pdf-overlay/verso.json` included.
+`references/runbook-server.md` section 10 is the whole sequence.
 
 **Tested on synthetic inputs only.** `tests/e2e/informalize_synthetic/driver.py` takes
 an informalize id over a fake library through every phase: the planner, contributions
@@ -153,7 +155,8 @@ attempt cap, and `cf harvest` and `cf informalize apply` between phases; then st
 the tree `pdf-command` writes, `canonical_pdf.sh` run in a copy of it as the host runs it,
 a run without poppler stopping at exit 4, and `fetch-pdf` over a local ssh and rsync — and
 stage I7, `cf informalize overlay` and `check-site` with the two approvals, each run
-twice so that the repository is clean after both.
+twice so that the repository is clean after both and the second run commits nothing, and
+once more over a `pdf-overlay/verso.json` left where the Verso step leaves one.
 `tests/test_informalize_runtime.py` builds a two-section document of five items and six
 parts with pdflatex and checks the boxes
 against the lines the pilot's got wrong. Those builds, and the fleet phases that build,

@@ -11,7 +11,7 @@ attempt cap, a gate whose pinned file moved, and each run harvested by `cf harve
 that entrypoint; then stage I6 -- the tree `cf informalize pdf-command` writes,
 `canonical_pdf.sh` run in it as the host runs it, `fetch-pdf` over a local ssh and rsync --
 and stage I7, `cf informalize overlay` and `check-site` with the maintainer's two
-approvals.  The phases that build need pdflatex, latexmk, kpsewhich and every package
+approvals, run until they commit nothing and over the hovers' `pdf-overlay/verso.json`.  The phases that build need pdflatex, latexmk, kpsewhich and every package
 of `tex_packages`, and are skipped without them; I6 and I7 need poppler besides;
 CF_REQUIRE_TEX=1 (CI's TeX job) makes those skips failures.
 """

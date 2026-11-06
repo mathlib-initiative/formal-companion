@@ -67,7 +67,11 @@ release has something to say.
   did — and the Pages and check workflows, then exports with `cf export informal-markers`,
   syncs and checks the overlay, commits each step, and seeds the PDF cache so the site
   builds before the release URL is live; a `pdf-overlay/verso.json` the Verso step left is
-  committed with it. `check-site <id>` runs the companion's own `check_generated.py` and
+  committed with the first step, untracked though it is, since the export reads the
+  repository at a commit. A re-run of the whole command commits nothing: the export's own
+  record of the HEAD it read moves each time it is committed, so the value already there
+  is kept when it is all that changed, and the publish approval stays current.
+  `check-site <id>` runs the companion's own `check_generated.py` and
   `pdf-overlay/tools/serve.py --build-only`, refuses if either left a tracked file changed,
   and reads the built site against its receipt — every file at its sha256, the published
   PDF at the one the annotations state, every region on a page of it, the index link, and a

@@ -15,8 +15,10 @@ I1.  Four groups:
   of what came back, the files it lands, the commit it makes, the I6 receipt, and that a
   second fetch over its own markers commit changes nothing;
 * stage I7's pieces: the generated config and landing page (whose overlay link block the
-  site build must write back unchanged), the workflows, the `.gitignore` lines, and the
-  refusals of `overlay` and `check-site`.
+  site build must write back unchanged), the workflows, the `.gitignore` lines, the one
+  value of the export's record that a re-run keeps rather than committing again, and the
+  refusals of `overlay` and `check-site` -- among them the `pdf-overlay/verso.json` that
+  is not one, since `overlay` commits it.
 """
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ for entry in (str(HERE), str(SKILL / "scripts")):
 
 import _informalize_doc as doc                                # noqa: E402
 import cf as cf_main                                          # noqa: E402
+from _fakehost import FakeHost                                # noqa: E402
 from cflib.errors import CfError                              # noqa: E402
 from cflib.hashing import sha256_file                         # noqa: E402
 from cflib.paths import WorkspacePaths                        # noqa: E402
@@ -84,24 +87,6 @@ def cf(*argv: str) -> tuple[int, str, str]:
         except SystemExit as exc:                            # argparse
             code = int(exc.code or 0)
     return code, out.getvalue(), err.getvalue()
-
-
-class FakeHost:
-    """ssh and rsync against a local folder: `test -f` asked of it, rsync run locally."""
-
-    def __init__(self, ssh: str = SSH):
-        self.ssh = ssh
-        self.calls: list[list[str]] = []
-
-    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess:
-        self.calls.append(list(argv))
-        if argv[0] == "ssh":
-            path = argv[-1].split(" ", 2)[2]
-            return subprocess.CompletedProcess(argv, 0 if Path(path).is_file() else 1, "", "")
-        if argv[0] == "rsync":
-            local = [a[len(self.ssh) + 1:] if a.startswith(self.ssh + ":") else a for a in argv]
-            return subprocess.run(local, capture_output=True, text=True)
-        raise AssertionError(f"unexpected command {argv}")    # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +219,7 @@ class _Workspace(unittest.TestCase):
 
     def fetch(self, **kwargs):
         return ipdf.fetch_pdf(self.workspace(), ID, HOST, execute=True, consent=True,
-                              runner=FakeHost(), **kwargs)
+                              runner=FakeHost(SSH), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +461,39 @@ class TestTheGeneratedOverlayFiles(unittest.TestCase):
         self.assertEqual(sorted(kept[1:]), sorted(ioverlay.IGNORE_LINES))
 
 
+class TestTheExportCommitSettles(unittest.TestCase):
+    """`GENERATED.json`'s own commit moves when it is committed, so a re-run keeps it."""
+
+    @staticmethod
+    def record(commit: str, *, count: int = 2, sha: str = "a" * 64) -> bytes:
+        document = {"schema": "formal-companion/overlay-generated", "schema_version": 3,
+                    "annotations": {"count": count, "manifest_sha256": sha,
+                                    "export": {"commit": commit, "convention": "informal-markers",
+                                               "source_id": ID},
+                                    "inputs": [{"path": "informal/items.json", "sha256": sha}]}}
+        return (json.dumps(document, indent=2) + "\n").encode("utf-8")
+
+    def test_only_the_commit_differs_so_the_old_record_is_kept(self):
+        before = self.record("b" * 40)
+        kept = ioverlay.keep_export_commit(before, self.record("c" * 40))
+        self.assertEqual(kept, before)
+
+    def test_anything_else_differs_and_the_new_record_stands(self):
+        before = self.record("b" * 40)
+        for other in (self.record("c" * 40, count=3),
+                      self.record("c" * 40, sha="d" * 64),
+                      b'{"schema": "formal-companion/overlay-generated"}\n',
+                      b"not json\n"):
+            with self.subTest(other=other[:40]):
+                self.assertIsNone(ioverlay.keep_export_commit(before, other))
+
+    def test_the_first_export_has_nothing_to_keep(self):
+        self.assertIsNone(ioverlay.keep_export_commit(None, self.record("c" * 40)))
+        # the same commit again: nothing to put back either
+        same = self.record("b" * 40)
+        self.assertIsNone(ioverlay.keep_export_commit(same, same))
+
+
 class TestTheCardAndRegionChecks(unittest.TestCase):
     """What `check-site` says of a card with no declaration or no destination."""
 
@@ -540,6 +558,26 @@ class TestTheI7Refusals(_Workspace):
         self.fetch()
         out = self.cf("informalize", "check-site", ID, code=2)
         self.assertIn("overlay.config.json", out)
+
+    def test_the_verso_file_the_maintainer_brings_back_is_not_a_dirty_tree(self):
+        """It is untracked until this command commits it, and it is this command's own."""
+        head = self.plan()
+        self.write_host(head)
+        self.fetch()
+        verso = self.repo / ioverlay.VERSO
+        verso.parent.mkdir(parents=True, exist_ok=True)
+        verso.write_text('{"schema": "formal-companion/overlay-verso"}\n', encoding="utf-8")
+        # it gets past the clean check, to the approval that really is missing
+        out = self.cf("informalize", "overlay", ID, "--pdf-url",
+                      "https://example.org/x.pdf", code=2)
+        self.assertIn("proof-sheets approval is absent", out)
+        self.assertNotIn("uncommitted change", out)
+        # anything else of the maintainer's is still work in the tree
+        (self.repo / "informal" / "notes.md").write_text("mine\n", encoding="utf-8")
+        out = self.cf("informalize", "overlay", ID, "--pdf-url",
+                      "https://example.org/x.pdf", code=2)
+        self.assertIn("uncommitted change", out)
+        self.assertIn("informal/notes.md", out)
 
 
 if __name__ == "__main__":                                    # pragma: no cover

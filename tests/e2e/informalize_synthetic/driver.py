@@ -28,8 +28,9 @@ brings it home over a local ssh and rsync and commits `informal/markers.json`.  
 `cf informalize overlay` writes the overlay's configuration, the landing page and the
 workflows, exports the annotations from the markers, syncs and checks them and seeds the
 PDF cache; `cf informalize check-site` runs the companion's own `check_generated.py` and
-`serve.py --build-only` and reads the built site; both run twice, and the repository is
-clean after each.
+`serve.py --build-only` and reads the built site; both run twice, the repository is clean
+after each and the second run of `overlay` commits nothing; and a `pdf-overlay/verso.json`
+left where the Verso step leaves one is committed by the run after it.
 
 The phases that build need pdflatex, latexmk and kpsewhich (`TEX`); without them the driver
 stops after the items phase and says so, and without poppler (`POPPLER`) it leaves out I6
@@ -60,6 +61,9 @@ for _entry in (str(TESTS), str(SKILL / "scripts")):
 
 import _informalize_doc as doc  # noqa: E402
 import cf as cf_main  # noqa: E402
+# `cf informalize fetch-pdf` is the one part of stage I6 that reaches a host; this machine
+# is the host, so its ssh alias is a prefix to strip and its rsync is a copy.
+from _fakehost import FakeHost  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
 from cflib.workspace import Workspace  # noqa: E402
 from informalize import apply as iapply  # noqa: E402
@@ -118,28 +122,6 @@ STAGES = ("workspace", "items", "conventions", "draft", "attack", "judge", "edit
 
 class Failed(AssertionError):
     pass
-
-
-class FakeHost:
-    """ssh and rsync against a local folder: `test -f` asked of it, rsync run locally.
-
-    `cf informalize fetch-pdf` is the one part of stage I6 that reaches a host; this
-    machine is the host, so its ssh alias is a prefix to strip and its rsync is a copy.
-    """
-
-    def __init__(self, ssh: str = SSH):
-        self.ssh = ssh
-        self.calls: list[list[str]] = []
-
-    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess:
-        self.calls.append(list(argv))
-        if argv[0] == "ssh":
-            path = argv[-1].split(" ", 2)[2]
-            return subprocess.CompletedProcess(argv, 0 if Path(path).is_file() else 1, "", "")
-        if argv[0] == "rsync":
-            local = [a[len(self.ssh) + 1:] if a.startswith(self.ssh + ":") else a for a in argv]
-            return subprocess.run(local, capture_output=True, text=True)
-        raise Failed(f"unexpected command {argv}")
 
 
 def check(condition: bool, message: str) -> None:
@@ -790,7 +772,7 @@ class Pipeline:
         # before the job: fetch-pdf finds no DONE and says so
         workspace = Workspace.load(self.ws)
         try:
-            ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True, runner=FakeHost())
+            ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True, runner=FakeHost(SSH))
         except Exception as exc:                             # CfError, by name below
             check("DONE" in str(exc), f"fetch-pdf failed for another reason: {exc}")
         else:
@@ -816,7 +798,7 @@ class Pipeline:
         check(receipt["proof_sheets"], "the receipt lists no proof sheet")
 
         result = ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True,
-                                runner=FakeHost())
+                                runner=FakeHost(SSH))
         here = self.paths.informalize_pdf(ID, head[:12])
         for relative in (f"{doc.JOB}.pdf", "markers.json", "pdf-receipt.json",
                          f"proof-sheets/{receipt['proof_sheets'][0]}"):
@@ -833,7 +815,7 @@ class Pipeline:
               f"the I6 receipt does not pin markers.json: {sorted(written['outputs'])[:4]}")
         # it may be re-run: the second fetch changes nothing
         before = self.git(self.repo, "rev-parse", "HEAD").strip()
-        ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True, runner=FakeHost())
+        ipdf.fetch_pdf(workspace, ID, HOST, execute=True, consent=True, runner=FakeHost(SSH))
         check(self.git(self.repo, "rev-parse", "HEAD").strip() == before,
               "a second fetch-pdf committed again")
         self.cf("informalize", "approve", ID, "proof-sheets", "--by", "A. Maintainer")
@@ -877,11 +859,16 @@ class Pipeline:
               f"the I7 receipt does not record both checks: {written['checks']}")
         check("repo/site/index.html" in written["outputs"],
               f"the I7 receipt pins no landing page: {sorted(written['outputs'])}")
-        # it may be re-run, and the second run writes the same bytes
+        # it may be re-run, and the second run writes the same bytes: no commit at all,
+        # or the publish approval would go stale on every run
+        before = self.git(repo, "rev-parse", "HEAD").strip()
         self.cf("informalize", "overlay", ID, "--pdf-url", PDF_URL)
         self.cf("informalize", "check-site", ID)
         check(self.git(repo, "status", "--porcelain").strip() == "",
               "a second overlay and check-site left the repository dirty")
+        check(self.git(repo, "rev-parse", "HEAD").strip() == before,
+              "a second overlay committed again; the publish approval would go stale")
+        self.hovers(before)
         self.cf("informalize", "approve", ID, "publish", "--by", "A. Maintainer")
         approval = json.loads(
             self.paths.informalize_approval(ID, "publish").read_text(encoding="utf-8"))
@@ -889,6 +876,34 @@ class Pipeline:
               "the publish approval pins another commit")
         _code, text = self.cf("informalize", "status", ID)
         check("publish:" in text, f"status does not say what is left:\n{text}")
+
+    def hovers(self, before: str) -> None:
+        """The hovers, step 6 of the runbook: the one file of the overlay the maintainer
+        brings back by hand.  `verso_host.sh` cuts it from a Verso build of the library,
+        which there is not one of here, so this is the empty one that form admits -- the
+        point is that `cf informalize overlay` takes an untracked `pdf-overlay/verso.json`
+        and commits it, rather than refusing the tree it is in.
+        """
+        repo = self.repo
+        self.write_json(repo / "pdf-overlay" / "verso.json",
+                        {"schema": "formal-companion/overlay-verso", "schema_version": 1,
+                         "hovers": {}, "statements": {},
+                         "build": {"commit": doc.COMMIT, "verso": {}}})
+        self.cf("informalize", "overlay", ID, "--pdf-url", PDF_URL)
+        head = self.git(repo, "rev-parse", "HEAD").strip()
+        check(head != before, "cf informalize overlay committed no verso.json")
+        check("pdf-overlay/verso.json" in self.git(repo, "ls-files").split(),
+              "pdf-overlay/verso.json is still the maintainer's untracked file")
+        check(self.git(repo, "status", "--porcelain").strip() == "",
+              "the hovers left the output repository dirty")
+        self.cf("informalize", "check-site", ID)
+        written = stages.read_receipt(self.paths, ID, "I7")
+        check("repo/pdf-overlay/verso.json" in (written or {}).get("outputs", {}),
+              "the I7 receipt pins no verso.json")
+        # and with them committed the command settles again
+        self.cf("informalize", "overlay", ID, "--pdf-url", PDF_URL)
+        check(self.git(repo, "rev-parse", "HEAD").strip() == head,
+              "a run after the hovers committed again")
 
     def cap(self) -> None:
         """A task at the attempt cap: the bridge's helper ends it, and the gate admits it."""

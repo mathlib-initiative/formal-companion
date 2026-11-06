@@ -48,6 +48,7 @@ for entry in (str(HERE), str(SKILL / "scripts")):
 
 import _informalize_doc as doc                                # noqa: E402
 import cf as cf_main                                          # noqa: E402
+from _fakehost import FakeHost                                # noqa: E402
 from annotations.export import common                         # noqa: E402
 from cflib import gitsafe                                     # noqa: E402
 from cflib.errors import CfError                              # noqa: E402
@@ -255,24 +256,6 @@ def write_host(root: Path, *, commit: str = doc.COMMIT, done: str = "0", form: s
     (lib / "deps.json").write_text(json.dumps(deps_doc() if deps is None else deps),
                                    encoding="utf-8")
     return root
-
-
-class FakeHost:
-    """ssh and rsync against a local folder: `test -f` asked of it, rsync run locally."""
-
-    def __init__(self, ssh: str = SSH):
-        self.ssh = ssh
-        self.calls: list[list[str]] = []
-
-    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess:
-        self.calls.append(list(argv))
-        if argv[0] == "ssh":
-            path = argv[-1].split(" ", 2)[2]
-            return subprocess.CompletedProcess(argv, 0 if Path(path).is_file() else 1, "", "")
-        if argv[0] == "rsync":
-            local = [a[len(self.ssh) + 1:] if a.startswith(self.ssh + ":") else a for a in argv]
-            return subprocess.run(local, capture_output=True, text=True)
-        raise AssertionError(f"unexpected command {argv}")
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +742,7 @@ class _Workspace(unittest.TestCase):
         return write_host(self.host, to_host=to_host, **kwargs)
 
     def fetch(self, *extra: str, code: int = 0, fake: FakeHost | None = None) -> str:
-        fake = fake or FakeHost()
+        fake = fake or FakeHost(SSH)
         with mock.patch.object(library, "_run", fake):
             return self.cf("informalize", "fetch-library", ID, "--host", HOST, *extra,
                            code=code)
@@ -865,7 +848,7 @@ class TestFetchLibrary(_Workspace):
         self.write_host()
 
     def test_a_dry_run_runs_nothing(self):
-        fake = FakeHost()
+        fake = FakeHost(SSH)
         out = self.fetch(fake=fake)
         self.assertEqual(fake.calls, [])
         self.assertIn("dry run", out)
@@ -874,7 +857,7 @@ class TestFetchLibrary(_Workspace):
         self.assertFalse(self.paths.informalize_library_src(ID).exists())
 
     def test_executing_needs_consent(self):
-        fake = FakeHost()
+        fake = FakeHost(SSH)
         out = self.fetch("--execute", code=2, fake=fake)
         self.assertIn("--i-have-consent", out)
         self.assertEqual(fake.calls, [])
@@ -936,7 +919,7 @@ class TestFetchLibrary(_Workspace):
         self.write_host(done="1")
         (self.host / "library" / "deps.json").unlink()
         shutil.rmtree(self.host / "library" / "index")
-        fake = FakeHost()
+        fake = FakeHost(SSH)
         out = self.fetch("--execute", "--i-have-consent", code=2, fake=fake)
         self.assertIn("status '1'", out)
         self.assertIn("library_host.log", out)

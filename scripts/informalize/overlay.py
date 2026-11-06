@@ -11,10 +11,13 @@ machine, in the output repository, and nowhere else:
   library's prefix as `display.strip_prefix`, `display.minimal`), renders the landing page
   `site/index.html` -- with the overlay link block already in it, so the build's injection
   replaces it in place and leaves the tracked file as it is -- and the two workflows, and
-  commits; exports with `cf export informal-markers` through `overlay.export.export`,
+  commits them, with the `pdf-overlay/verso.json` the maintainer rsynced back from the
+  Verso host when there is one: that is the one file of the overlay the companion owns,
+  and step 2 reads the repository at a commit.  Then it exports with
+  `cf export informal-markers` through `overlay.export.export`,
   syncs and checks the overlay, and commits; and seeds the PDF cache with the canonical
   PDF, so the site builds before the release URL is live.  Nothing here is edited by hand,
-  so a second run writes the same bytes.
+  so a second run writes the same bytes and makes no commit.
 * **check-site** runs the companion's own `check_generated.py` and
   `pdf-overlay/tools/serve.py --build-only`, then reads the built site against its
   receipt: every file at its sha256, the published PDF at the sha256 the annotations
@@ -182,6 +185,41 @@ def ignore_bytes(current: bytes | None) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# step 2: the export, and the one value in it that would never settle
+# ---------------------------------------------------------------------------
+
+def keep_export_commit(before: bytes | None, after: bytes) -> bytes | None:
+    """`before` again, when the export's own commit is the only thing that changed in it.
+
+    `GENERATED.json`'s `annotations.export.commit` is the output repository's HEAD when
+    the export read it -- and committing the record moves HEAD, so the next run reads a
+    different one.  Left alone, every run would write that one new value and commit it:
+    the command would never converge, and the publish approval, which pins this file,
+    would go stale each time (CLAUDE.md section 4, idempotence).
+
+    What the annotations are of is the `informal/` the export read, and
+    `annotations.inputs` carries the sha256 of each of those four files, so any change to
+    them shows up here as well.  A record that differs ONLY in the commit therefore
+    describes the same bytes, and the commit already in it names them as truly as the new
+    one: it is kept, and nothing is committed.  Anything more differs and `None` says so.
+    """
+    if before is None:
+        return None
+    try:
+        old, new = json.loads(before), json.loads(after)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return None
+    export = (new.get("annotations") or {}).get("export")
+    kept = ((old.get("annotations") or {}).get("export") or {}).get("commit")
+    if not isinstance(export, dict) or not isinstance(kept, str) or export.get("commit") == kept:
+        return None
+    export["commit"] = kept                    # `new` is this call's own, read just above
+    return before if new == old else None
+
+
+# ---------------------------------------------------------------------------
 # the PDF the annotations pin
 # ---------------------------------------------------------------------------
 
@@ -224,7 +262,8 @@ def _tracked_under(repo: OutputRepo, prefixes: tuple[str, ...]) -> list[str]:
 
     A file an export deleted is in the index and not on disk, and must be committed as a
     deletion; `pdf-overlay/verso.json`, the one file of the overlay the companion owns
-    (`docs/overlay.md` section 5), is on disk and committed here like any other.
+    (`docs/overlay.md` section 5), is under the prefix like any other, and step 1 has
+    already committed it.
     """
     out = {path for path in repo.tracked()
            if any(path.startswith(prefix + "/") for prefix in prefixes)}
@@ -251,7 +290,7 @@ def overlay(workspace, informalize_id: str, *, pdf_url: str,
     repo = OutputRepo(paths, informalize_id)
     repo.require_stamp()
     pdf_mod.require_clean(repo, "this command commits what it writes, and the export reads "
-                                "the repository at a commit")
+                                "the repository at a commit", allow=(VERSO,))
     state, stale = gates.gate_state(workspace, informalize_id, "proof-sheets")
     if state != "current":
         raise CfError(f"the proof-sheets approval is {state}"
@@ -280,8 +319,16 @@ def overlay(workspace, informalize_id: str, *, pdf_url: str,
     for relative, raw in files.items():
         if repo.write(relative, raw):
             result.written.append(relative)
-    made = repo.commit(sorted(files), "Configure the overlay, the landing page and the "
-                                      "workflows (I7)")
+    # `pdf-overlay/verso.json` is the one file of the overlay the companion owns
+    # (`docs/overlay.md` section 5): the maintainer rsyncs it back from the Verso host, and
+    # it is committed here, with the files this step writes, because step 2 reads the
+    # repository at a commit and refuses a tree with anything uncommitted in it.  What is
+    # wrong with one is `cf overlay check`'s answer, below, not this step's.
+    hovers = bool(repo.changes([VERSO]))
+    made = repo.commit(sorted(files) + ([VERSO] if hovers else []),
+                       "Configure the overlay, the landing page, the workflows and the "
+                       "hovers (I7)" if hovers else
+                       "Configure the overlay, the landing page and the workflows (I7)")
     if made:
         result.commits.append(made)
     head = repo.head()
@@ -295,9 +342,13 @@ def overlay(workspace, informalize_id: str, *, pdf_url: str,
         extra += ["--packages-src", str(packages_src)]
     if approved:
         extra.append("--items-approved")
+    recorded = repo.read_bytes(GENERATED)
     exported = overlay_export.export(repo.root, convention=CONVENTION, commit=head,
                                      source_id=informalize_id, extra=extra)
     overlay_sync.sync(repo.root)
+    kept = keep_export_commit(recorded, repo.read_bytes(GENERATED) or b"")
+    if kept is not None:
+        repo.write(GENERATED, kept)            # the same export: let the run converge
     problems = overlay_sync.check(repo.root)
     if problems:
         raise CfError(f"the overlay does not check out: {problems[0]}",

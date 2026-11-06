@@ -361,14 +361,23 @@ FORBIDDEN_SUFFIXES = (".lean", ".olean", ".ilean", ".pdf", ".djvu", ".epub",
                       ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp",
                       ".tif", ".tiff", ".ppm", ".pgm", ".pbm")
 
-#: The one directory whose `.html` is a TEMPLATE, not a rendered page: the
-#: overlay viewer's own page, which `cf overlay sync` copies verbatim into a
-#: companion (`docs/overlay.md` section 4). It is static and generic -- its
-#: title and heading are placeholders `viewer.js` replaces from the config --
-#: so it carries no book, no companion and nothing anybody rendered. The
-#: exception is this prefix and nothing else: a `.html` anywhere else in the
-#: tree is still a rendered page nobody needs committed.
-HTML_TEMPLATE_PREFIX = "templates/overlay/runtime/viewer/"
+#: The directories whose `.html` is a TEMPLATE, not a rendered page:
+#:
+#: * the overlay viewer's own page, which `cf overlay sync` copies verbatim
+#:   into a companion (`docs/overlay.md` section 4). It is static and generic
+#:   -- its title and heading are placeholders `viewer.js` replaces from the
+#:   config -- so it carries no book, no companion and nothing anybody
+#:   rendered;
+#: * the informalization landing page `cf informalize overlay` renders once
+#:   into an output repository (`docs/proposals/informalize.md` section 10).
+#:   Every word of a companion in it is a `{{ ... }}` slot that command fills
+#:   from `informalize.yaml`, so what is committed here names no text, no
+#:   library and nobody.
+#:
+#: The exception is these prefixes and nothing else: a `.html` anywhere else
+#: in the tree is still a rendered page nobody needs committed.
+HTML_TEMPLATE_PREFIXES = ("templates/overlay/runtime/viewer/",
+                          "templates/informalize/site/")
 
 #: Names an exporter or a workspace (`cflib.paths`) writes.
 FORBIDDEN_NAME = re.compile(r"""(?x)
@@ -420,7 +429,7 @@ def shape_problems(rel: str, size: int, payload) -> list[str]:
     name = rel.rsplit("/", 1)[-1].lower()
     problems = []
     if name.endswith(FORBIDDEN_SUFFIXES) and not (
-            name.endswith((".html", ".htm")) and rel.startswith(HTML_TEMPLATE_PREFIX)):
+            name.endswith((".html", ".htm")) and rel.startswith(HTML_TEMPLATE_PREFIXES)):
         problems.append(f"{rel}: a {name.rsplit('.', 1)[-1]} file (Lean, a book, a "
                         f"rendered page or an image; generate it in a temporary "
                         f"directory instead)")
@@ -478,10 +487,12 @@ class TestNoCompanionDataByItsShape(unittest.TestCase):
                                        lambda: packed))
         self.assertTrue(shape_problems("m9/Basic.lean", 120, never))
         self.assertTrue(shape_problems("m9/page-012.png", 120, never))
-        # the html exception is that one directory and nothing around it
-        self.assertEqual(shape_problems(HTML_TEMPLATE_PREFIX + "index.html",
-                                        4_000, never), [])
+        # the html exception is those two directories and nothing around them
+        for prefix in HTML_TEMPLATE_PREFIXES:
+            self.assertEqual(shape_problems(prefix + "index.html", 4_000, never), [])
         self.assertTrue(shape_problems("templates/overlay/runtime/index.html",
+                                       4_000, never))
+        self.assertTrue(shape_problems("templates/informalize/index.html",
                                        4_000, never))
         self.assertTrue(shape_problems("tests/data/m3/site/Notes/index.html",
                                        4_000, never))

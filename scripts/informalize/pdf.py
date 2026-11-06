@@ -68,10 +68,15 @@ def head_commit(repo: OutputRepo) -> str:
 
 
 def require_clean(repo: OutputRepo, why: str = "the canonical PDF is built from a commit, "
-                                               "and every annotation pins the PDF it makes"
-                  ) -> None:
-    """Refuse a repository with work in it: stages I6 and I7 both act on a commit."""
-    changes = repo.changes()
+                                               "and every annotation pins the PDF it makes",
+                  *, allow: tuple[str, ...] = ()) -> None:
+    """Refuse a repository with work in it: stages I6 and I7 both act on a commit.
+
+    `allow` names paths the caller commits itself, and so may find changed: stage I7's
+    `pdf-overlay/verso.json`, which the maintainer brings back from the Verso host and
+    `cf informalize overlay` commits in its first step (section 10).
+    """
+    changes = [path for path in repo.changes() if path not in allow]
     if changes:
         raise CfError(f"{repo.root} has {len(changes)} uncommitted change(s), the first "
                       f"{changes[0]}", hint=f"{why}; commit or discard them first")

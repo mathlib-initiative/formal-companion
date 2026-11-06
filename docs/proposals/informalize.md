@@ -17,7 +17,7 @@ the exporter `cf export informal-markers` with the two `scripts/overlay/` change
 `templates/informalize/site/`, and `cf informalize verso-command` with
 `scripts/informalize/verso_host.sh` and `verso_host.py` for the hovers; component 8's
 `SKILL.md` command index and Informalization section, `README.md`, `docs/status.md`, the
-trigger eval and `references/runbook-server.md` section 9; and
+trigger eval and `references/runbook-server.md` section 10; and
 `tests/e2e/informalize_synthetic/driver.py`, which runs stages I0 to I7 on synthetic
 inputs. Nothing has run against a real library. Section 11 lists the components
 in the order they landed; a component whose code shows this file wrong changes it in the same
@@ -1406,8 +1406,9 @@ item whose `section` is one number into that folder.
 
 **`cf informalize overlay <id> --pdf-url <url> [--packages-src <dir>]`** refuses without
 the proof-sheets
-approval at the current PDF's sha256, and an output repository with an uncommitted change,
-then, in the output repository:
+approval at the current PDF's sha256, and an output repository with an uncommitted change
+other than `pdf-overlay/verso.json`, which is the maintainer's own file and this command's
+to commit (step 1), then, in the output repository:
 
 1. writes `pdf-overlay/overlay.config.json` through `overlay.sync.init` (`source_id` the
    informalize id, the title from `text.title`, `<job>.pdf`) and sets `pdf.publish.license`
@@ -1417,15 +1418,23 @@ then, in the output repository:
    lines and the workflow directory's `pages.yml` (a Pages workflow artifact, never a branch
    deploy) and `check.yml` (`check_generated.py`) from `templates/informalize/site/`
    (the landing page is rendered from `informalize.yaml`, the two workflows are copied
-   whole); commits. Nothing here is edited by hand, so a second run writes the same bytes.
+   whole); commits them, and with them the `pdf-overlay/verso.json` of the hovers below
+   when the maintainer has brought one back, since step 2 reads the repository at a commit
+   and refuses a tree with anything uncommitted in it (what is wrong with one is
+   `overlay.sync.check`'s answer in step 2, not this step's). Nothing here is edited by
+   hand, so a second run writes the same bytes.
    The landing page carries the overlay link block `build_site.py` would inject -- its
    bytes from that tool's own `link_block`, at the href its `link_href` gives -- so the
    build replaces it in place and the tracked `site/index.html` does not change;
 2. exports through `overlay.export.export` with the convention `informal-markers`, the
    commit just made and the exporter arguments above (`--items-approved` when the items
    approval pins the exported table), then `overlay.sync.sync` and
-   `overlay.sync.check`; commits what `annotations/` and `pdf-overlay/` hold or held,
-   `verso.json` among them once `verso-command`'s file is there;
+   `overlay.sync.check`; commits what `annotations/` and `pdf-overlay/` hold or held.
+   `GENERATED.json`'s `annotations.export.commit` is the HEAD the export read, and
+   committing the record moves HEAD: when that value is the only thing in the record that
+   changed, the one already there is kept and nothing is committed — the export was of the
+   same `informal/`, which `annotations.inputs` pins by sha256 — so the command settles
+   instead of making a commit, and voiding the publish approval, on every run;
 3. copies the canonical PDF into the config's cache directory (`.lake/overlay-pdf/`), after
    checking it against the annotations' sha256 and bytes, so the site builds before the
    release URL is live.
@@ -1480,10 +1489,12 @@ get`, which is what Mathlib's cache unpacker needs it for; and it takes I1's own
 `library_host.sh` is still writing — opened for reading, so even that writes nothing in
 `$ATLAS_ROOT`. The last printed line takes the copy away again.
 
-The maintainer brings that file back with the printed `rsync` line, commits it in the
-output repository as `pdf-overlay/verso.json` — the one file of `pdf-overlay/` that is the
-companion's own input, which `cf overlay sync` never writes or removes — and builds the
-site again. `build_site.py` then publishes it in place of the empty file, after checking
+The maintainer brings that file back with the printed `rsync` line into the output
+repository as `pdf-overlay/verso.json` — the one file of `pdf-overlay/` that is the
+companion's own input, which `cf overlay sync` never writes or removes — and runs
+`cf informalize overlay` and `check-site` again: step 1 commits it, so nothing of it is
+committed by hand, and the site is built again. `build_site.py` then publishes it in
+place of the empty file, after checking
 that it is of a commit the cards pin and cutting it to the cards whose snippets its
 statements still join (`verso.source: committed` in the site receipt); `check_generated.py`
 holds it to the same rules in the output repository's CI.
@@ -1545,8 +1556,8 @@ network, and no Claude attribution anywhere.
    `references/runbook-server.md`, and trigger evals (built).
 
 9. The overlay's hovers (section 10), after 7: `cf informalize verso-command`,
-   `scripts/informalize/verso_host.sh` and `verso_host.py`, and the documented step that
-   commits `pdf-overlay/verso.json` in the output repository. Tests on invented lakefiles,
+   `scripts/informalize/verso_host.sh` and `verso_host.py`, and the `pdf-overlay/verso.json`
+   the maintainer brings back, which `cf informalize overlay` commits in its first step. Tests on invented lakefiles,
    manifests and bundles, and step 1 -- the copy of I1's checkout, its floor and I1's lock --
    run as the host runs it against a stub `lake`; the Verso build itself runs on the host
    (built).
