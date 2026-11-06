@@ -448,6 +448,11 @@ class _Export:
             record["x_package"] = package
         if row.get("repo") and row.get("commit"):
             record["x_repo"], record["x_commit"] = row["repo"], row["commit"]
+        if package or "x_repo" in record:
+            self.report.bend("declaration.x_dependency", 1,
+                             "a declaration of a library underneath this one, whose package, "
+                             "repository and pinned commit the format has no field for",
+                             [f"{where}: {name}"])
         self.declarations[name] = record
         line = self.dependency_snippet(record, package)
         destination = self.dependency_destination(name, row, path, line)

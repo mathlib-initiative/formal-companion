@@ -172,7 +172,7 @@ LINT = (
 #: notion the conventions fix is written as plain mathematics inside `\fcnotion`, whose
 #: first argument carries the constant and prints nothing.
 PRINTED_LINT = (
-    (re.compile(r"\\texttt(?![A-Za-z])"), "\\texttt"),
+    (re.compile(r"\\(?:texttt|mathtt|ttfamily|tt)(?![A-Za-z])"), "a monospace font"),
     (re.compile(r"\\(?:href|url|nolinkurl|path)(?![A-Za-z])"), "a link"),
     (re.compile(r"\\verb(?![A-Za-z*])"), "\\verb"),
     (re.compile(r"https?://"), "a URL"),
@@ -648,7 +648,8 @@ def lint_printed(cfg: GateConfig, path: str, text: str, problems: Problems) -> N
     """Rule 2's second lint: what a text file may not print, and the notions it marks.
 
     The comments go first: they are not typeset, and a drafter's note about a declaration
-    is no part of the text.  What is left may hold no Lean name set in `\\texttt`, no link
+    is no part of the text.  What is left may hold no Lean name set in a monospace font
+    (`\\texttt`, `\\mathtt`, `\\ttfamily`, `\\tt`), no `\\verb`, no link
     and no URL; a notion the conventions fix is marked with `\\fcnotion`, which prints the
     words alone, and its constant must be one `declarations.json` holds.
     """

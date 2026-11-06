@@ -1142,9 +1142,10 @@ standard library and its sibling files. Rules, each refusal naming its number:
    section's own build catches a label it defines twice). `\newcommand`, which cannot
    redefine a marker command, and `\DeclareMathOperator` stay.
    A second lint runs on the same files with their comments *removed*, since a comment is
-   not typeset: what is left may print no Lean name and no link -- no `\texttt`, `\verb`,
-   `\href`, `\url`, `\nolinkurl`, `\path` or `http(s)://` -- and every `\fcnotion` must
-   name a constant `declarations.json` holds, as an entry or as a row of its `references`.
+   not typeset: what is left may print no Lean name and no link -- no `\texttt`, `\mathtt`,
+   `\ttfamily`, `\tt`, `\verb`, `\href`, `\url`, `\nolinkurl`, `\path` or `http(s)://`
+   -- and every `\fcnotion` must name a constant `declarations.json` holds, as an entry or
+   as a row of its `references`.
    The text states the mathematics; the annotations carry the name and the link
    (`STYLE.md`, "The conventions section"). The lint is a list of what is
    refused, not of what is allowed: what it cannot see, such as text a section typesets

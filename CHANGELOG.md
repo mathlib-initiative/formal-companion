@@ -54,8 +54,9 @@ release has something to say.
   per line the words lie on and writes it to `markers.json`; `check_items.py` holds every
   constant to `declarations.json` (rule 11) and every box to its ink (rule 9);
   `proof_sheets.py` draws the notion boxes in green. The gate's rule 2 lints a second time
-  with the comments removed and refuses a `\texttt`, `\verb`, `\href`, `\url` or bare URL
-  in any `.tex` or `.sty` file of `informal/` a task writes, and a `\fcnotion` naming a
+  with the comments removed and refuses a monospace font (`\texttt`, `\mathtt`,
+  `\ttfamily`, `\tt`), a `\verb`, a `\href`, a `\url` or a bare URL in any `.tex` or
+  `.sty` file of `informal/` a task writes, and a `\fcnotion` naming a
   constant `declarations.json` does not hold. `cf export informal-markers` writes one Literature Links passage per notion box,
   linked to the constant: a declaration of the library at the pinned commit, or a constant
   of a dependency with the module and commit `references` now carries (below) and its

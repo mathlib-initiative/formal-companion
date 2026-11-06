@@ -366,6 +366,10 @@ class TestTheDocument(unittest.TestCase):
         self.assertEqual([s for s in self.doc["snippets"] if s["declaration"] == "IsOpen"], [])
         self.assertEqual(sorted(self.report.counts["references_without_source"]),
                          ["IsOpen", "Set"])
+        # the format has no field for the package, the repository or the commit: the report
+        # says so, as every other `x_` key of the exporters does
+        self.assertEqual(self.report.bent["declaration.x_dependency"]["count"],
+                         len([d for d in declarations.values() if "x_package" in d]))
 
     def test_with_the_dependency_s_source_the_card_shows_the_statement_and_the_line(self):
         document, report = self.fixture.export(packages_src=self.fixture.packages)
@@ -383,6 +387,17 @@ class TestTheDocument(unittest.TestCase):
         self.assertEqual(report.counts["references_unlocated"], ["Set"])
         self.assertEqual([d for d in document["destinations"]
                           if d["declaration"] == "Set"][0]["site"], "doc_gen4")
+
+    def test_a_reference_row_with_neither_a_page_nor_a_commit_loses_its_destination(self):
+        declarations = copy.deepcopy(doc.DECLARATIONS)
+        for row in declarations["references"]:
+            if row["name"] == "IsOpen":
+                row.update({"doc_url": "", "repo": "", "commit": ""})
+        fixture = Fixture(scratch(self), declarations=declarations)
+        document, report = fixture.export()
+        self.assertEqual([d for d in document["destinations"]
+                          if d["declaration"] == "IsOpen"], [])
+        self.assertEqual(report.lossy["destination.reference"]["count"], 1)
 
     def test_the_provenance_is_the_fleet_s_and_names_the_four_files_it_read(self):
         (provenance,) = self.doc["provenance"]

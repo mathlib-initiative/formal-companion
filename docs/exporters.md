@@ -424,10 +424,11 @@ format; the text states each in a sentence of its own), `link.relation` (a
 relation no legacy token converts back to), `markers.leanrefs_outside_a_part`
 (a `\leanref` in the text of an item with parts, outside every part, which no
 box annotates), `item.title` (a title holding a URL, which the
-`external-urls` lint refuses) and `source.page_size` (markers with no page
-size in points).
-Bent: `destination.reference` (a reference row with neither a documentation
-URL nor a pinned dependency, whose card has no page to open),
+`external-urls` lint refuses), `source.page_size` (markers with no page
+size in points) and `destination.reference` (a reference row with neither a
+documentation URL nor a pinned dependency, whose card has no page to open).
+Bent: `declaration.x_dependency` (the package, repository and pinned commit
+of a constant of a library underneath this one, under `x_` keys),
 `link.role_not_in_the_table` (a `\leanref` the item's table does not
 list is linked as a helper, with no relation), `snippet.line_differs` and
 `source.title` (no file of the output repository carries the text's title, so

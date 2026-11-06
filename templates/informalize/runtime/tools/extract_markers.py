@@ -333,7 +333,15 @@ def notion_spans(geo: Geometry, ink: list[PageInk], params: Params, start: dict,
         first_page, last_page = p == start["abspage"], p == end["abspage"]
         top = pg.cut(ys - geo.bskip, ys) + 1 if first_page else pg.row(geo.top - SLACK_BP)
         bottom = pg.cut(ye, ye + geo.bskip) if last_page else pg.row(geo.floor)
-        runs = line_runs(pg, top, bottom)
+        # Only the lines the markers are on.  Where the line above reaches into the
+        # interline gap (a nested fraction, an underbrace label), the cut lands inside its
+        # ink and leaves a run of that line in the band; that run is not the notion's, and
+        # taking it would move the words' own run off k == 0 and widen its box to the
+        # margin.  A run that reaches into the struts of the marked lines is kept, so a
+        # descender or a limit of the notion's own line stays.
+        runs = [(r0, r1) for r0, r1 in line_runs(pg, top, bottom)
+                if (not first_page or r1 >= pg.row(ys - geo.ht))
+                and (not last_page or r0 <= pg.row(ye + geo.dp))]
         if not runs:
             print(f"extract_markers: no ink for {name} on page {p}; using the strut",
                   file=sys.stderr)
@@ -349,13 +357,8 @@ def notion_spans(geo: Geometry, ink: list[PageInk], params: Params, start: dict,
             span = Span(p, r0 / pg.sy, (r1 + 1) / pg.sy, left, right,
                         None if above is None else (above + 1) / pg.sy,
                         None if below is None else below / pg.sy)
-            span.top = span.ink_top - pad
-            if span.above is not None:
-                span.top = max(span.top, (span.above + span.ink_top) / 2)
-            span.bottom = span.ink_bottom + pad
-            if span.below is not None:
-                span.bottom = min(span.bottom, (span.ink_bottom + span.below) / 2)
-            span.left, span.right = left, right
+            span.pad(geo, params)            # the top and the bottom of an item's span
+            span.left, span.right = left, right   # the sides are the marked positions
             out.append(span)
     return out
 

@@ -128,9 +128,19 @@ class TestTheVersoHostScript(unittest.TestCase):
         text = self.text
         self.assertLess(text.index("ls-files --error-unmatch literate.toml"),
                         text.index('lake build "$VERSO_TARGET"'))
-        self.assertIn('targets --bundle "$bundle" --out "$work/literate.toml" --root "$module"',
+        self.assertIn('targets --bundle "$bundle" --out "$work/literate.toml" --root "$prefix"',
                       text)
         self.assertIn("the library has a literate.toml of its own", text)
+
+    def test_the_root_it_renders_under_is_the_librarys_and_not_the_module_it_builds(self):
+        # The line's roots are the THEOREM's module and its MODULE_PREFIXES the library's
+        # root; a card is in any module of the library, so rendering under the build target
+        # would drop every card outside that module's own subtree, with no error.
+        text = self.text
+        self.assertIn("prefix=$OPT_MODULE_PREFIXES", text)
+        self.assertIn('case ${OPT_MODULE_PREFIXES:-} in \'\'|*,*)', text)
+        self.assertNotIn("--root \"$module\"", text)
+        self.assertIn('lake build "$module"', text)      # the build is still the line's root
 
     def test_the_pins_are_checked_before_anything_is_built(self):
         text = self.text

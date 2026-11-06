@@ -510,6 +510,8 @@ class TestThePrintedLint(unittest.TestCase):
 
     def test_a_printed_lean_name_or_link_is_refused(self):
         for text in ("The \\texttt{IsOpen} sets are open.",
+                     "The $\\mathtt{IsOpen}$ sets are open.",
+                     "{\\ttfamily IsOpen} is open.", "{\\tt IsOpen} is open.",
                      "\\href{https://example.org/x.html}{open}",
                      "\\url{https://example.org/x.html}",
                      "See \\verb|IsOpen|.",

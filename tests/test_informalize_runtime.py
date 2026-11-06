@@ -476,13 +476,20 @@ PAGE_GEOMETRY = {key: int(bp * fc.SP_PER_BP) for key, bp in
 BASELINES = [110 + 14 * n for n in range(20)]
 
 
-def synthetic_page():
-    """A `PageInk` of a page of plain lines, read from a PGM as the renderer writes one."""
+def synthetic_page(extra: tuple[tuple[int, int, int, int], ...] = ()):
+    """A `PageInk` of a page of plain lines, read from a PGM as the renderer writes one.
+
+    `extra` adds blots (y0, y1, x0, x1) beside the lines: the ink a tall or deep line
+    leaves in the interline gap.
+    """
     w, h = 612, 792
     rows = bytearray(b"\xff" * (w * h))
     for baseline in BASELINES:
         for y in range(baseline - 7, baseline):
             rows[y * w + 100:y * w + 500] = b"\x00" * 400
+    for y0, y1, x0, x1 in extra:
+        for y in range(y0, y1 + 1):
+            rows[y * w + x0:y * w + x1] = b"\x00" * (x1 - x0)
     pgm = b"P5\n%d %d\n255\n" % (w, h) + bytes(rows)
     return extract_markers.PageInk(pgm, (float(w), float(h)), 224)
 
@@ -528,6 +535,29 @@ class TestNotionBoxes(unittest.TestCase):
     def test_the_lines_of_a_band_are_its_runs_of_ink(self):
         runs = extract_markers.line_runs(self.ink[0], 125, 152)
         self.assertEqual(runs, [(131, 137), (145, 151)])
+
+    def test_ink_of_the_line_above_in_the_gap_is_not_the_notions_line(self):
+        # A nested fraction or an underbrace label on the line above leaves ink in the
+        # interline gap: `cut` lands under it, so its leftover run is in the band.  The
+        # notion's box is still the one line its markers are on.
+        self.ink = [synthetic_page(((125, 128, 300, 340),))]
+        box, = self.spans(notion_marker(200, 138), notion_marker(300, 138))
+        self.assertEqual((round(box[1], 3), round(box[1] + box[3], 3)), (198.5, 300.0))
+        # the leftover ink ends at 129, the words' line starts at 131: the edge goes between
+        self.assertEqual((round(box[2], 3), round(box[2] + box[4], 3)), (130.0, 141.0))
+
+    def test_ink_of_the_line_below_in_the_gap_is_not_the_notions_line_either(self):
+        self.ink = [synthetic_page(((140, 143, 300, 340),))]
+        box, = self.spans(notion_marker(200, 138), notion_marker(300, 138))
+        self.assertEqual((round(box[1], 3), round(box[1] + box[3], 3)), (198.5, 300.0))
+
+    def test_a_descender_of_the_notions_own_line_stays_in_its_box(self):
+        # (140, 142) is inside the strut of the baseline at 138 (depth 4bp), so it is the
+        # notion's own ink and the box grows to hold it.
+        self.ink = [synthetic_page(((138, 141, 220, 260),))]
+        box, = self.spans(notion_marker(200, 138), notion_marker(300, 138))
+        self.assertEqual((round(box[1], 3), round(box[1] + box[3], 3)), (198.5, 300.0))
+        self.assertEqual(round(box[2] + box[4], 3), 143.5)
 
 
 def run_notion_rules(aux_text: str, decls: dict = doc.DECLARATIONS) -> check_items.Report:

@@ -236,8 +236,9 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
 - Write LaTeX, not Unicode symbols, in the source: `\le`, `\ell`, `\mathbb{Z}`, and `--`
   for an en dash.
 - No Lean name and no URL is ever printed: no `\texttt`, no `\verb`, no `\href`, no `\url`,
-  no `http://` or `https://` anywhere in a section file or in `notation.sty`. A declaration
-  goes in `\leanref` and a notion's constant in `\fcnotion`, both invisible; the annotations
-  print them. The gate refuses a section that breaks this.
+  no `http://` or `https://`, and no other monospace font (`\mathtt`, `\ttfamily`, `\tt`),
+  anywhere in a section file or in `notation.sty`. A declaration goes in `\leanref` and a
+  notion's constant in `\fcnotion`, both invisible; the annotations print them. The gate
+  refuses a section that breaks this.
 - `\input`, `\include` and file names are the template's, not a section's: a section reads
   no file.

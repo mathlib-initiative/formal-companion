@@ -36,10 +36,12 @@
 #      <the module the line names>`, which is what stage I1 built (never the whole
 #      library: the literate build pulls in what else the cards' modules need);
 #   4. Verso's literate.toml, naming the LIBRARY's modules the bundle's cards are in and
-#      no others (verso_host.py targets --root; a library that ships one of its own keeps
-#      it): a card in a dependency's module -- a notion of the conventions is often a
-#      constant of Mathlib -- is left out, since rendering Mathlib here is not cheap, and
-#      that card keeps the plain statement the export cut for it; then
+#      no others (verso_host.py targets --root <the library's root module, the line's
+#      MODULE_PREFIXES, never the one module it builds>; a library that ships a
+#      literate.toml of its own keeps it): a card in a dependency's module -- a notion of
+#      the conventions is often a constant of Mathlib -- is left out, since rendering
+#      Mathlib here is not cheap, and that card keeps the plain statement the export cut
+#      for it; then
 #      `lake build $VERSO_TARGET` (`:literateHtml`), whose pages hold Verso's hover table;
 #   5. templates/overlay/runtime/tools/verso_extract.py --pages over them, against the
 #      bundle, writing $VERSO_ROOT/host/verso.json;
@@ -151,10 +153,15 @@ entry=$(py "$helper" entry --universe "$universe" --id "$lib") || die "$universe
 eval "$entry"
 [ "$LIB_REF_IS_SHA" = 1 ] || die "$lib's ref $LIB_REF is not a 40-hex commit"
 case $LIB_ROOTS in *,*|*.+|*.\*) die "$lib's roots '$LIB_ROOTS' are not one module" ;; esac
-commit=$LIB_REF url=$LIB_URL module=$LIB_ROOTS
+case ${OPT_MODULE_PREFIXES:-} in ''|*,*) die "$lib needs MODULE_PREFIXES=<one prefix>" ;; esac
+# $module is the theorem's module, which is what I1 built and what this build builds;
+# $prefix is the LIBRARY's root module, which is what the cards are chosen under -- most of
+# them are in another module of the library than the theorem's (library_host.sh reads the
+# same two).
+commit=$LIB_REF url=$LIB_URL module=$LIB_ROOTS prefix=$OPT_MODULE_PREFIXES
 work=$VERSO_ROOT/libs/$lib
 built=$ATLAS_ROOT/libs/$lib
-log "library $lib at $commit: Verso $VERSO_REV, target $VERSO_TARGET, work $work, floor ${MIN_FREE_GB}G, $(avail_gb)G free"
+log "library $lib at $commit: build $module, render the cards under $prefix; Verso $VERSO_REV, target $VERSO_TARGET, work $work, floor ${MIN_FREE_GB}G, $(avail_gb)G free"
 
 # 1. the work checkout: I1's build copied, or a clone
 if [ ! -d "$work/.git" ]; then
@@ -220,7 +227,7 @@ log "3. lake build $module"
 if g -C "$work" ls-files --error-unmatch literate.toml >/dev/null 2>&1; then
   log "4. the library has a literate.toml of its own; it chooses the modules"
 else
-  targets=$(py "$tool" targets --bundle "$bundle" --out "$work/literate.toml" --root "$module") \
+  targets=$(py "$tool" targets --bundle "$bundle" --out "$work/literate.toml" --root "$prefix") \
     || fail 6 "could not write $work/literate.toml"
   log "4. $targets"
 fi
