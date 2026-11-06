@@ -649,6 +649,23 @@ class TestTheTitlesAreTheOnesThePagePrints(unittest.TestCase):
             self.assertEqual([record["id"] for record in printed[array]],
                              [record["id"] for record in stripped[array]])
 
+    def test_a_title_read_without_the_glyphs_is_a_warning_the_command_prints(self):
+        """`cf overlay export` and `cf informalize overlay` delete the report, so the
+        warning is the whole of what a host with no `pdftohtml` tells the maintainer."""
+        from informalize import runtime as informalize_runtime
+        module = informalize_runtime.check_items()
+        which = shutil.which
+        with unittest.mock.patch.object(
+                module.shutil, "which",
+                lambda name: None if name == "pdftohtml" else which(name)):
+            _, report = Fixture(scratch(self)).export()
+        self.assertEqual(sorted(report.counts["titles_glyphs_unread"]),
+                         sorted(f"notion:{name}" for name, _, _ in NOTIONS))
+        (warning,) = [line for line in common.report_warnings(report.counts)
+                      if "glyphs" in line]
+        self.assertIn(f"{len(NOTIONS)} title(s) were read without the page's own glyphs",
+                      warning)
+
 
 class TestTheTitlesWithoutPoppler(unittest.TestCase):
     """Without poppler nothing can be cropped: the words lose their markup, and say so."""

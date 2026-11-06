@@ -139,17 +139,20 @@ release has something to say.
   calligraphic alphabet -- its Unicode script capital (`ℋ`), and a character of that font
   that is not the operator the page prints the operator (`∘` for `\circ`). A run the page
   sets small and low, or small and high, is written in the Unicode subscript or
-  superscript characters for it, but only where every character of the run has one, so
-  `Π₁(f)` and `ℋᵢ` are written and an `ι` with an `S` under its shoulder stays `ιS` and is
-  reported (`counts.titles_scripts_kept`, the lossy `title.script_run`); the overlay's
-  viewer sets such a run as a real subscript, so the card shows what the page shows. Three
+  superscript characters for it, so `Π₁(f)` and `ℋᵢ` are written -- the overlay's viewer
+  sets those as real subscript runs, so the card shows what the page shows -- and an `ι`
+  with an `S` under its shoulder stays `ιS`, at full size, and is reported
+  (`counts.titles_scripts_kept`, the lossy `title.script_run`). Three
   spaces are poppler's and not the page's and are settled by the gap the page leaves: the
   one at a script run's edge, the one before a closing parenthesis, and the one a binary
   operator does or does not stand in. Where the glyphs cannot be read -- `pdftohtml` is
   not on PATH, or what it reads is not what pdftotext cropped, which happens where the two
   readers order a subscript differently in a box of several lines -- the text is
   pdftotext's own and is reported (`counts.titles_glyphs_unread`, the lossy
-  `title.flattened_glyphs`). **Rule 9 of `check_items.py` compares this text too**, and
+  `title.flattened_glyphs`, and a warning `cf export`, `cf overlay export` and
+  `cf informalize overlay` each print, since the report itself does not outlive the
+  export those last two run, and a host without `pdftohtml` would otherwise flatten
+  every title in silence). **Rule 9 of `check_items.py` compares this text too**, and
   what it compares does change: the NFKC of its own `norm` folds a double-struck letter
   and a script back (`ℕ` to `N`, `₁` to `1`), and the spacing and the operator are left,
   so 28 of the acceptance run's 86 boxes read differently. Its verdicts do not move,

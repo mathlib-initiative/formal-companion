@@ -1423,10 +1423,10 @@ vendored checker accepts in canonical form:
   character of that font that is not the operator the page prints is the operator (`∘`
   for `\circ`). A run the page sets small and low, or small and high, is written in the
   Unicode subscript or superscript characters for it, but only where every character of
-  the run has one: `Π₁(f)` and `ℋᵢ` are written, and `ι` with an `S` under its shoulder
-  stays `ιS` and is reported (`counts.titles_scripts_kept`, the lossy
-  `title.script_run`). The overlay's viewer sets such a run as a real subscript
-  (`viewer-core.js`'s `scriptRuns`), so a card shows what the page shows. Three spaces
+  the run has one: `Π₁(f)` and `ℋᵢ` are written, which the overlay's viewer sets as real
+  subscript runs (`viewer-core.js`'s `scriptRuns`), so a card shows what the page shows,
+  and `ι` with an `S` under its shoulder stays `ιS`, at full size, and is reported
+  (`counts.titles_scripts_kept`, the lossy `title.script_run`). Three spaces
   are poppler's and not the page's and are settled by the gap the page leaves — the one
   at a script run's edge, the one before a closing parenthesis, and the one a binary
   operator does or does not stand in — so `Π1 (f )` is `Π₁(f)` and `f ◦γ` is `f ∘ γ`.
@@ -1435,8 +1435,9 @@ vendored checker accepts in canonical form:
   padding caught dropped. Where the glyphs cannot be had — `pdftohtml` is not on PATH, or
   what it reads is not what pdftotext cropped, which happens where the two readers order
   a subscript differently in a box of several lines — the text is pdftotext's own,
-  flattened, and reported (`counts.titles_glyphs_unread`, the lossy
-  `title.flattened_glyphs`). An item
+  flattened, and reported (`counts.titles_glyphs_unread`, which `cf export`,
+  `cf overlay export` and `cf informalize overlay` each print as a warning, and the
+  lossy `title.flattened_glyphs`). An item
   whose `items.json` title holds TeX markup is titled the same way, from the parenthesis
   its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a ligature counts as
   markup, since `Seifert--van Kampen` is as much a source spelling as `$\ball{x}{\rho}$`

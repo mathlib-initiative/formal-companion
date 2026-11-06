@@ -454,7 +454,9 @@ box's padding caught dropped. Where the glyphs cannot be had — `pdftohtml` is
 not on PATH, or what it reads is not what pdftotext cropped, which happens
 where poppler's two readers order a subscript differently in a box of several
 lines — the text is pdftotext's own, flattened, counted in
-`counts.titles_glyphs_unread` and the lossy `title.flattened_glyphs`. An
+`counts.titles_glyphs_unread` (which `cf export`, `cf overlay export` and `cf
+informalize overlay` print as a warning, the last two having no report to show)
+and the lossy `title.flattened_glyphs`. An
 **item** whose
 `items.json` title holds TeX markup is titled the same way, from the
 parenthesis its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a

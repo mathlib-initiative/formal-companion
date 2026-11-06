@@ -288,6 +288,13 @@ def report_warnings(counts: dict) -> list[str]:
         out.append(f"{len(stripped)} title(s) could not be read from the PDF, so they are the "
                    f"words with their TeX markup stripped and not what the page prints: "
                    + ", ".join(stripped[:5]) + (", …" if len(stripped) > 5 else ""))
+    unread = counts.get("titles_glyphs_unread") or []
+    if unread:
+        out.append(f"{len(unread)} title(s) were read without the page's own glyphs "
+                   f"(poppler's pdftohtml is not on PATH, or what it read is not what "
+                   f"pdftotext cropped), so they are the flattened text, which prints a "
+                   f"double-struck letter and a script plainly: "
+                   + ", ".join(unread[:5]) + (", …" if len(unread) > 5 else ""))
     differs = counts.get("snippets_line_differs") or []
     if differs:
         out.append(f"{len(differs)} snippet(s) were cut at a line the document does not give for "

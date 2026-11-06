@@ -45,7 +45,9 @@ and, without --aux-only (these need poppler):
   8. OUTDIR/markers.json is current: its pdf_sha256 is the PDF's and its entries are the
      .aux's;
   9. every box, cropped with pdftotext -x -y -W -H at res_dpi and read against the page's
-     own glyphs (pdftohtml -xml), holds text: an item's first box its head ("Theorem 1.2"),
+     own glyphs where pdftohtml is on PATH (pdftohtml -xml; without it the crop is
+     pdftotext's own, which this check asks nothing of that turns on the glyphs), holds
+     text: an item's first box its head ("Theorem 1.2"),
      a part's first box its label ("(a)"), an item's boxes together the words of its title,
      and a notion's boxes some ink of their own;
  10. boxes of different items, and of two parts of one item, do not overlap, and a part's
