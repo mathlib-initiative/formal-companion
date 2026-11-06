@@ -10,6 +10,7 @@ from __future__ import annotations
 from cflib.errors import CfError
 from cflib.vocab import APPROVAL_GATES
 
+from informalize import apply as apply_mod
 from informalize import approve, config, itemtable, project, runtime, stages
 from informalize.outrepo import OutputRepo
 
@@ -49,6 +50,12 @@ def report(workspace, informalize_id: str) -> list[tuple[str, str]]:
     for stage in STAGES:
         receipt = stages.read_receipt(paths, informalize_id, stage)
         done.append(f"{stage} {receipt['written_at']}" if receipt else f"{stage} -")
+        if stage == "I4":
+            # I5 is one receipt per applied writing run (`I5-<phase>-<run>`), so it is a
+            # count, not a date: section 3's table
+            applied = sorted(apply_mod.applied_runs(paths, informalize_id).values())
+            phases = [s for s in applied if s.startswith("I5-")]
+            done.append(f"I5 {len(phases)} phase run(s) applied" if phases else "I5 -")
     rows.append(("stages", ", ".join(done)))
     rows.append(("items", _items(workspace, informalize_id)))
     for gate in APPROVAL_GATES:
@@ -81,10 +88,13 @@ def _items(workspace, informalize_id: str) -> str:
 
 
 def next_step(workspace, informalize_id: str) -> str:
-    """The next command, from what is there.  It stops at the writing phases: `cf
-    informalize apply` (component 5b) writes no receipt yet, so a harvested phase leaves
-    nothing here to read but the section files it wrote."""
+    """The next command, from what is there.  A harvested run whose files are not in the
+    repository comes before everything below it: nothing a later phase reads is right
+    until it is applied (`cf informalize apply`, section 8.5)."""
     paths = workspace.paths
+    waiting = apply_mod.unapplied(paths, informalize_id)
+    if waiting:
+        return f"cf informalize apply {informalize_id} --run {waiting[0]}"
     if stages.read_receipt(paths, informalize_id, "I0") is None:
         return f"cf informalize sync {informalize_id}"
     if not paths.informalize_library_src(informalize_id).is_dir():

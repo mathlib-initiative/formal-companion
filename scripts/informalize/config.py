@@ -48,8 +48,7 @@ TEXT_KEYS = ("title", "author", "license", "job")
 REFERENCE_KEYS = ("work",)
 CAP_KEYS = ("workers", "reviewers", "max_cost_per_phase", "agent_timeout")
 #: what `init` writes when its flags say nothing: the caps of the first run (section 12),
-#: and no spend cap, so the planner refuses a phase until one is given (section 8.1;
-#: `cf plan-informalize` is component 5a's and not implemented yet)
+#: and no spend cap, so the planner refuses a phase until one is given (section 8.1)
 DEFAULT_CAPS = {"workers": 6, "reviewers": 4, "max_cost_per_phase": None,
                 "agent_timeout": "2h"}
 #: `defaults.max_concurrent_sessions` of a workspace that sets none, and the account's

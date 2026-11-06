@@ -85,9 +85,11 @@ scripts/informalize/
                   the informalize mode behind `cf informalize`: informalize.yaml,
                   the output repository, the runtime sync, the item table, receipts
                   and approvals, the library's build on the host (library_host.sh and
-                  library_host.py run there, with no cflib), the scope and the
+                  library_host.py run there, with no cflib), the scope, the
                   fleet's planner, plan.py (`cf plan-informalize`), whose gate is
-                  scripts/gate/verify_informal.py (proposals/informalize.md)
+                  scripts/gate/verify_informal.py, and apply.py, which puts a
+                  harvested phase's files into the output repository
+                  (proposals/informalize.md)
 scripts/corpus/   locate's universes of libraries and corpus.sqlite (`cf corpus`)
 scripts/locate/   locate's candidates, planner, outcomes and export
                   (`cf locate`, `cf plan-locate`, `cf tally --locate`,

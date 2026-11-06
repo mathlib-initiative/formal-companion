@@ -1,8 +1,8 @@
 """cf informalize -- an informal companion written from a Lean library.
 
 New code (CLAUDE.md section 5 is the contract for adding a command), implementing
-components 3 and 4 of docs/proposals/informalize.md section 11; the stages are its
-section 3:
+components 3, 4 and 5b's `apply` of docs/proposals/informalize.md section 11; the stages
+are its section 3:
 
     cf informalize init <id> --library URL --commit SHA --module M --theorem T --prefix P \\
         --text-license Apache-2.0 --title T --author A [--reference "<citation line>"]
@@ -13,6 +13,7 @@ section 3:
     cf informalize verso-command <id> --host H [--verso-rev v4.36.0-rc2] [--min-free-gb 60]
         [--lean-threads 16]
     cf informalize scope <id>
+    cf informalize apply <id> --run <run>
     cf informalize check-items <id>
     cf informalize approve <id> items --by <name> --in-v1 <ids|all>
     cf informalize reference-checklist <id>
@@ -20,7 +21,8 @@ section 3:
 
 `init` and `sync` write `informalize/<id>/informalize.yaml`, the output repository
 `informalize/<id>/repo/` and the I0 receipt; `fetch-library` writes `informal/
-informalize.json`'s `source_date_epoch`, `scope` writes `informal/declarations.json`, and
+informalize.json`'s `source_date_epoch`, `scope` writes `informal/declarations.json`,
+`apply` writes the files a harvested phase wrote and its stage receipt, and
 `approve <id> items` writes the renumbered table, `sections.tex` and the empty section
 files, each committed.  Those are the only writes into a repository, under the exception
 docs/proposals/informalize.md section 1.3 words (SKILL.md rule 10).  `build-command` runs
@@ -29,8 +31,8 @@ copy it there and start the library's build; `verso-command` is the same for the
 build the overlay's hovers are cut from (section 10), into `verso/to-host/`, and the file
 it ends with is committed by hand, as docs/overlay.md section 5 has a companion commit
 one; `fetch-library --execute` is the mode's one use of ssh and rsync (CLAUDE.md
-section 3).  The other subcommands of section 3 (apply,
-pdf-command, fetch-pdf, overlay, check-site) are later components' and not implemented yet.
+section 3).  The other subcommands of section 3 (pdf-command, fetch-pdf, overlay,
+check-site) are later components' and not implemented yet.
 """
 from __future__ import annotations
 
@@ -42,6 +44,7 @@ from cflib.vocab import APPROVAL_GATES
 from cflib.workspace import from_args
 from overlay.config import OPEN_LICENSES
 
+from informalize import apply as apply_mod
 from informalize import approve as gates
 from informalize import bootstrap, config, library, status
 from informalize import scope as scope_mod
@@ -145,6 +148,16 @@ def register(subparsers) -> None:
                                       "library; writes scope.json and informal/declarations.json")
     sc.add_argument("id")
 
+    ap = sub.add_parser("apply", help="put a harvested phase's files into the output "
+                                      "repository, commit them and write its stage receipt")
+    ap.add_argument("id")
+    ap.add_argument("--run", required=True, metavar="RUN",
+                    help="the harvested informalize run of this id to apply")
+    ap.add_argument("--unpriced", action="store_true",
+                    help="write the receipt although the harvest priced no fleet (its "
+                         "cost_usd is then 0 and the receipt says so); by default a "
+                         "harvest with no cost block is refused")
+
     chk = sub.add_parser("check-items", help="check informal/items.json against "
                                              "declarations.json and the library's source")
     chk.add_argument("id")
@@ -169,8 +182,8 @@ def run(args) -> int:
     if not command:
         raise CfError("say which informalize subcommand to run",
                       hint="cf informalize init | sync | status | build-command | "
-                           "fetch-library | verso-command | scope | check-items | approve | "
-                           "reference-checklist (`cf informalize --help`)")
+                           "fetch-library | verso-command | scope | apply | check-items | "
+                           "approve | reference-checklist (`cf informalize --help`)")
     return _DISPATCH[command](args)
 
 
@@ -290,8 +303,34 @@ def _scope(args) -> int:
     if counts["unsigned"]:
         log.warn(f"{len(counts['unsigned'])} declaration(s) have no printed signature: "
                  + ", ".join(counts["unsigned"][:5]))
-    log.info(f"next: the items phase (stage I3), `cf plan-informalize {args.id} --phase items`, "
-             "which component 5a builds and is not implemented yet")
+    log.info(f"next: the items phase (stage I3), `cf plan-informalize {args.id} --phase items "
+             "--host <host> --i-have-consent`")
+    return 0
+
+
+def _apply(args) -> int:
+    workspace = from_args(args)
+    done = apply_mod.apply_run(workspace, args.id, args.run, unpriced=args.unpriced)
+    if done.already:
+        log.ok(f"{done.run_id} is applied already: the output repository holds its "
+               f"{len(done.files)} file(s) at {(done.commit or '')[:12]}")
+        return 0
+    if done.files:
+        log.ok(f"applied {done.run_id} ({done.phase}): {len(done.files)} file(s) committed "
+               f"{(done.commit or '')[:12]}")
+        for relative in done.files:
+            log.detail(f"  {relative}")
+    else:
+        log.ok(f"applied {done.run_id} ({done.phase}): it changed no file of informal/, so "
+               "only its receipt is written")
+    log.info(f"  wrote {done.receipt} (${done.cost_usd:.2f} over its fleet run(s))")
+    for problem in done.check_items:
+        log.error(problem)
+    if done.check_items:
+        log.error(f"{len(done.check_items)} problem(s) in informal/items.json: the items are "
+                  f"in, and `cf informalize approve {args.id} items` will refuse them")
+        return 1
+    log.info(f"next: cf informalize status {args.id}")
     return 0
 
 
@@ -344,6 +383,7 @@ _DISPATCH = {
     "fetch-library": _fetch_library,
     "verso-command": _verso_command,
     "scope": _scope,
+    "apply": _apply,
     "check-items": _check_items,
     "approve": _approve,
     "reference-checklist": _reference_checklist,

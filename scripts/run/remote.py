@@ -30,6 +30,11 @@ step that exits non-zero raises, and the one outcome worth a durable record
 must not be the one that writes nothing, so :func:`execute` appends into a
 caller-owned ``results`` list rather than only returning it.
 
+An informalize phase's smoke stage starts one more thing beside ``tend run``: the
+spend watchdog (:func:`watchdog_steps`), because tend's own budget counts no
+agentbox spend and the cap in run.yaml is otherwise enforced by nobody
+(docs/proposals/informalize.md section 8.1).
+
 Nothing in this module runs anything unless ``execute=True`` is passed, and
 cf run only passes it when the operator gave --execute for a host on the
 workspace's allowlist.
@@ -376,6 +381,45 @@ def _tree_check(host: dict, entry: dict) -> dict:
     return _ssh(host, cmd)
 
 
+#: seconds between the watchdog's checks on a run host (its own default; the campaign
+#: sequencer's ``CF_WATCH_INTERVAL`` is the same number)
+WATCHDOG_INTERVAL = 300
+
+
+def watchdog_log(remote_root: str, run_id: str) -> str:
+    """Where the watchdog's own output goes: beside the run root, one file per run."""
+    return f"{remote_root.rstrip('/')}/watchdog-{run_id}.log"
+
+
+def watchdog_steps(host: dict, *, run_id: str, tend_root: str, entrypoint: str,
+                   max_cost: float) -> list[dict]:
+    """Stop any watchdog left on this root, then start one for this run (detached).
+
+    ``scripts/run/watchdog.py``, which `cf plan-informalize` stages in the root's
+    ``bin/``: it sums the agents' usage envelopes and runs ``tend-control drain`` when
+    the spend passes ``max_cost``, with no pilot thresholds, so its gate-failure rate and
+    its merged-task count decide nothing (docs/proposals/informalize.md section 8.1).
+    ``</dev/null`` with both streams redirected, as the ``tend run`` step has it:
+    otherwise ssh waits on the detached process's file descriptors and never returns.
+    """
+    script = f"{tend_root}/bin/watchdog.py"
+    log_path = watchdog_log(host["remote_root"], run_id)
+    command = (f"python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
+               f"--entrypoint {shlex.quote(entrypoint)} --max-cost {max_cost} "
+               f"--interval {WATCHDOG_INTERVAL} --tend {shlex.quote(host['tend_cmd'])}")
+    return [
+        {"stage": "smoke", "safe": False,
+         "title": "stop any spend watchdog left on this root by an earlier launch",
+         **_ssh(host, f"python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
+                      "--stop-others")},
+        {"stage": "smoke", "safe": False, "record_output": True,
+         "title": f"start the spend watchdog (drains the root at {max_cost} USD; its log is "
+                  f"{log_path})",
+         **_ssh(host, f"nohup sh -c {shlex.quote(command)} </dev/null "
+                      f">> {shlex.quote(log_path)} 2>&1 & echo started")},
+    ]
+
+
 def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                   names: dict, budget: dict, concurrency: dict,
                   force: bool = False, locate: dict | None = None,
@@ -553,6 +597,17 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                       f"owner-reversible)",
             _tree_check(host, entry), safe=True, record_output=True,
             expected=entry["tree_sha256"])
+
+    if informalize is not None and budget.get("max_cost") is not None:
+        # The spend cap is enforced here, not by tend: with agentbox tend's own budget
+        # counts no agent's spend (manifest.check_budget_cap), so an informalize phase's
+        # ceiling is the watchdog the planner staged in the root's bin/.  It starts
+        # BEFORE `tend run`, so the first task is already watched, and with no pilot
+        # threshold: the cap is the whole rule here (section 8.1).  Two of them on one
+        # root would each drain it with its own figures, so a watchdog an earlier
+        # `--stage smoke` left is stopped first, as the campaign sequencer does.
+        steps.extend(watchdog_steps(host, run_id=run_id, tend_root=tend_root,
+                                    entrypoint=entrypoint, max_cost=budget["max_cost"]))
 
     # The limits go on `tend run` ITSELF, not through tend-control first.
     # tend-control writes into orchestrator.sqlite, which does not exist until a

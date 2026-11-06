@@ -344,15 +344,22 @@ def check_ready(workspace, informalize_id: str, phase: str, repo: OutputRepo) ->
                       hint="plan, run, harvest and apply `--phase conventions` first")
 
 
-def harvested_run(paths: WorkspacePaths, run_id: str, informalize_id: str, phase: str) -> dict:
-    """The `informalize:` block of a harvested run of ``phase`` of this id, or a refusal."""
+def harvested_run(paths: WorkspacePaths, run_id: str, informalize_id: str,
+                  phase: str | None = None, *, flag: str = "--from-run") -> dict:
+    """The `informalize:` block of a harvested run of this id, or a refusal.
+
+    With ``phase`` it must be that phase's run; `cf informalize apply` takes any phase's
+    (``phase=None``) and reads the phase from the block.
+    """
     path = paths.run_yaml(run_id)
     doc = read_yaml(path) if path.is_file() else None
     block = (doc or {}).get("informalize") if isinstance(doc, dict) else None
     if not isinstance(block, dict) or block.get("id") != informalize_id:
         raise CfError(f"run {run_id} is no informalize run of {informalize_id}",
-                      hint=f"--from-run names the harvested {phase} run this phase reads")
-    if block.get("phase") != phase:
+                      hint=f"{flag} names a harvested "
+                           + (f"{phase} run" if phase else "run")
+                           + f" of {informalize_id}")
+    if phase is not None and block.get("phase") != phase:
         raise CfError(f"run {run_id} is a {block.get('phase')} run, not a {phase} run")
     if not paths.receipt_json(run_id).is_file():
         raise CfError(f"run {run_id} is not harvested (no {paths.receipt_json(run_id)})",
@@ -727,8 +734,7 @@ def check_edit_ready(informalize_id: str, repo: OutputRepo, table: dict,
                       f"{unapplied[0]} is the text its judge fixed" if unapplied else
                       f"HEAD does not descend from its base commit {base[:12]}"),
                       hint=f"apply it first (`cf informalize apply {informalize_id} --run "
-                           f"{from_run}`, component 5b, not implemented yet): the editor works on "
-                           "the judges' fixes")
+                           f"{from_run}`): the editor works on the judges' fixes")
 
 
 def plan(workspace, informalize_id: str, phase: str, *, sections: str | None = None,

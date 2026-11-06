@@ -41,6 +41,45 @@ Nothing is released yet: there is no tag, and the version has been `0.2.0`
 since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
+### Added
+
+- **`cf informalize apply <id> --run <run>`: a harvested phase goes into the output
+  repository by command.** Component 5b of `docs/proposals/informalize.md` section 8.5.
+  `cf harvest` already brings a phase's own files home under `corpus/<run>/tree/` and says
+  which of them the run wrote; putting them back was a copy by hand, and so was the phase's
+  stage receipt — the first acceptance run's draft phase was refused by the planner for want
+  of a `stages/I4.json` that only the by-hand copy's author knew to write. `apply` copies in
+  the changed paths under `informal/` and only those, commits them as
+  `Informalize <phase> (<run>): <n> files`, and writes `stages/I3.json`, `I4.json` or
+  `I5-<phase>-<run>.json`, whose `runs` carry the run's `run.yaml` and `RECEIPT.json` by
+  sha256 and what it cost. It refuses a repository whose HEAD is not the run's `base_commit`
+  (the contributions were written against text that has moved: plan again), a harvest that is
+  not complete or that found a path no task owns, a `corpus/<run>/tree/` that is not what the
+  receipt records, a written path outside `informal/` and an uncommitted change of the
+  maintainer's to a path it writes; an attack run writes only its receipt; after the items
+  phase it runs `check-items`; and a run already in HEAD is applied again as a no-op.
+  `cf informalize status`'s next step names it after a harvest, and
+  `tests/e2e/informalize_synthetic/driver.py` runs it between its phases instead of copying.
+- **`cf run` starts an informalize phase's spend watchdog.** With agentbox, tend's own budget
+  counts no agent's spend, so the cap `run.yaml` records was enforced by a helper the operator
+  started by hand on the host. The smoke stage now stops any watchdog an earlier launch left on
+  the root and starts `<tend-root>/bin/watchdog.py --max-cost <the recorded cap>` detached
+  beside `tend run`, with no pilot thresholds, logging to `<remote_root>/watchdog-<run>.log`;
+  `cf run <run> --status` reads its last record, `<tend-root>/watchdog.json`.
+
+### Fixed
+
+- **A `remote_root` that is not absolute is refused.** Every remote path of a run is built
+  from `hosts.<host>.remote_root` and quoted for the host's shell, so a `~` never expands
+  there: a `remote_root` of `~/informalize-<id>` made a literal directory named `~` in the
+  operator's home on the host and put the whole run inside it. `run.manifest.resolve_host`
+  now refuses anything but an absolute path, once, rather than in each command that embeds
+  it, and `informalize.library.RemoteRoot` (which spelled `~/x` as `"$HOME"/x`
+  for the lines `build-command` prints) refuses it too, so one spelling is right everywhere.
+  `docs/proposals/informalize.md` sections 2, 6.1 and 12 no longer recommend `~`.
+- **`cf informalize scope` named component 5a as missing.** Its next step is
+  `cf plan-informalize <id> --phase items`, which has been built since.
+
 ### Changed
 
 - **The informal text prints no Lean name and no link; a notion is marked instead.**

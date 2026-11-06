@@ -79,6 +79,28 @@ def default_remote_root() -> str:
 DEFAULT_TEND_DIR = "$HOME/tend"
 
 
+def check_remote_root(root: str, host_name: str) -> str:
+    """*root* as the commands may use it, or a refusal: it must be an absolute path.
+
+    Every remote path of a run is built from this one and quoted for the host's shell
+    (``shlex.quote``), so a ``~`` never expands there: a ``remote_root`` of
+    ``~/informalize-svk-tauceti`` made a literal directory named ``~`` in the operator's
+    home on the host, and the run's whole tree landed inside it.  Quoting is not
+    negotiable (a path with a space or a ``$`` must not be re-read by the shell), so the
+    spelling is: an absolute path, refused here, once, rather than in each command that
+    embeds it.  ``tend_dir`` keeps its own ``~``/``$HOME`` handling
+    (:func:`_remote_dir`), which is a ``cd`` the host's shell does expand.
+    """
+    text = str(root).strip()
+    if text.startswith("/"):
+        return text.rstrip("/") or "/"
+    where = f"hosts.{host_name}.remote_root" if host_name else "remote_root"
+    raise CfError(f"{where} {root!r} is not an absolute path",
+                  hint="every remote path is quoted for the host's shell, so a leading ~ "
+                       "would be a directory of that name; write the path out, e.g. "
+                       "/home/<user>/informalize-<id>")
+
+
 def _remote_dir(path: str) -> str:
     """*path* for a ``cd`` in the host's shell: ``~/x`` and ``$HOME/x`` expand there, the rest is quoted."""
     for prefix in ("~/", "$HOME/"):
@@ -105,6 +127,10 @@ def resolve_host(workspace, host: str) -> dict:
     other than the home directory (``~/locate-smoke``) sent every tend command
     into a directory that does not exist (field defect P4).
 
+    ``remote_root`` must be an absolute path (:func:`check_remote_root`): every remote
+    path is built from it and quoted for the host's shell, where a ``~`` would be a
+    directory of that name.
+
     ``tend_version_required`` is a comma-separated version spec (``">=0.4,<0.6"``)
     from ``hosts.<host>.tend_version``, ``hosts.tend_version`` or
     ``defaults.tend_version``.  The whole of ``scripts/plan`` + ``scripts/run``
@@ -116,8 +142,9 @@ def resolve_host(workspace, host: str) -> dict:
     hosts = _as_dict(workspace.hosts)
     entry = _as_dict(hosts.get(host)) or _as_dict(_as_dict(hosts.get("entries")).get(host))
     ssh = entry.get("ssh") or entry.get("target") or host
-    remote_root = str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
-                      or default_remote_root()).rstrip("/")
+    remote_root = check_remote_root(
+        str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
+            or default_remote_root()), host)
     budget_gb = workspace.default("worktree_budget_gb", None)
     tend_dir = str(entry.get("tend_dir") or hosts.get("tend_dir") or DEFAULT_TEND_DIR).rstrip("/") \
         or DEFAULT_TEND_DIR

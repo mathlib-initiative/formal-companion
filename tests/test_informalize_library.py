@@ -317,18 +317,20 @@ class TestTheLibraryLine(unittest.TestCase):
 
 class TestTheHostFolder(unittest.TestCase):
 
-    def test_a_folder_under_the_home_and_an_absolute_one(self):
-        home = library.RemoteRoot("~/informalize-x")
-        self.assertEqual(home.shell("library/host/DONE"), '"$HOME"/informalize-x/library/host/DONE')
-        self.assertEqual(home.rsync("drivers"), "informalize-x/drivers")
-        same = library.RemoteRoot("$HOME/informalize-x/")
-        self.assertEqual(same.rsync(), "informalize-x")
+    def test_an_absolute_folder_is_spelled_for_the_shell_and_for_rsync(self):
         absolute = library.RemoteRoot("/srv/runs/informalize-x")
         self.assertEqual(absolute.shell(), "/srv/runs/informalize-x")
+        self.assertEqual(absolute.shell("library/host/DONE"),
+                         "/srv/runs/informalize-x/library/host/DONE")
         self.assertEqual(absolute.rsync("library.tsv"), "/srv/runs/informalize-x/library.tsv")
+        self.assertEqual(library.RemoteRoot("/srv/runs/informalize-x/").rsync(),
+                         "/srv/runs/informalize-x")
 
     def test_what_cannot_be_named_safely_is_refused(self):
-        for root in ("~", "$HOME", "informalize-x", "~/a b", "/srv/../etc", "~/x;rm",
+        # `~` and `$HOME` among them: every remote path of a run is quoted for the host's
+        # shell, where a leading ~ is a directory of that name (run.manifest's own refusal)
+        for root in ("~", "$HOME", "~/informalize-x", "$HOME/informalize-x/",
+                     "informalize-x", "~/a b", "/srv/../etc", "~/x;rm",
                      "/srv/$(id)", "", "/"):
             with self.subTest(root=root), self.assertRaises(CfError):
                 library.RemoteRoot(root)
@@ -825,23 +827,28 @@ class TestBuildCommand(_Workspace):
                 ws.data["hosts"]["remote_root"] = shared
             ws.save()
         # the workspace-wide root, or none at all (the home), is never used
-        for shared in ("~/locate-smoke", None):
+        for shared in ("/home/tester/locate-smoke", None):
             with self.subTest(shared=shared):
                 with_root(None, shared)
                 out = self.cf("informalize", "build-command", ID, "--host", HOST, code=2)
                 self.assertIn(f"sets no remote_root for {HOST} itself", out)
                 self.assertNotIn("rsync", out)
-        # another run's root, the home spelled absolute, another id's folder
-        for root in ("~/locate-smoke", "/home/tester", "~/informalize-other-thm"):
+        # another run's root, the home, another id's folder
+        for root in ("/home/tester/locate-smoke", "/home/tester",
+                     "/home/tester/informalize-other-thm"):
             with self.subTest(root=root):
                 with_root(root)
                 out = self.cf("informalize", "build-command", ID, "--host", HOST, code=2)
                 self.assertIn(f"its last part must be informalize-{ID}", out)
                 self.assertIn(f"must be informalize-{ID}",
                               self.fetch(code=2))
-        with_root(f"~/runs/informalize-{ID}")
+        # this id's folder under ~: a leading ~ is quoted into a directory of that name
+        with_root(f"~/informalize-{ID}")
+        self.assertIn("absolute", self.cf("informalize", "build-command", ID, "--host", HOST,
+                                          code=2))
+        with_root(f"/home/tester/runs/informalize-{ID}")
         out = self.cf("informalize", "build-command", ID, "--host", HOST)
-        self.assertIn(f'cd "$HOME"/runs/informalize-{ID} && ', out)
+        self.assertIn(f"cd /home/tester/runs/informalize-{ID} && ", out)
 
     def test_status_names_the_next_step(self):
         self.assertIn(f"cf informalize build-command {ID} --host <host>",

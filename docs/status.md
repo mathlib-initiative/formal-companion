@@ -125,12 +125,14 @@ figure for Wikipedia appears in this repository.
 
 ## Informalization
 
-**Built.** Components 1 to 5a of `docs/proposals/informalize.md` section 11, the
-`cf run` and `cf harvest` half of 5b, the exporter of 7, and component 9: the
+**Built.** Components 1 to 5b of `docs/proposals/informalize.md` section 11, the exporter
+of 7, and component 9: the
 specification with `tests/test_informalize_spec.py`, which holds it to the code it names; the LaTeX
 runtime and the project templates
 (`templates/informalize/`); `cf informalize init | sync | status | build-command |
-fetch-library | verso-command | scope | check-items | approve | reference-checklist`;
+fetch-library | verso-command | scope | apply | check-items | approve |
+reference-checklist`, with `cf run` (which starts the phase's spend watchdog at the
+smoke stage) and `cf harvest`;
 `cf plan-informalize` with the out-of-tree gate `scripts/gate/verify_informal.py`, the
 phase prompts and the tend config; and `cf export informal-markers`, which turns a
 canonical PDF's boxes into one annotation document, with `cf informalize verso-command`,
@@ -143,8 +145,9 @@ an informalize id over a fake library through every phase: the planner, contribu
 written in worktrees of an entrypoint made as `cf run` makes one, the staged gate run as
 a run host runs it (a copy of `gate/`, `python3 -I`, a bare environment) admitting good
 contributions and refusing bad ones under the rule they break, a task ended at the
-attempt cap, and `cf harvest` between phases. `tests/test_informalize_runtime.py` builds
-a two-section document of five items and six parts with pdflatex and checks the boxes
+attempt cap, and `cf harvest` and `cf informalize apply` between phases.
+`tests/test_informalize_runtime.py` builds a two-section document of five items and six
+parts with pdflatex and checks the boxes
 against the lines the pilot's got wrong. Those builds, and the fleet phases that build,
 skip without TeX; CI's `informalize-tex` job runs them with `CF_REQUIRE_TEX=1`.
 
@@ -155,11 +158,9 @@ here: the pilot that did this once by hand and with ad-hoc workflows used 69 age
 about 11.3M tokens for 96 items and logged no dollars, which the specification's
 section 12 says nothing reliable follows from.
 
-**Not implemented.** `cf informalize apply` and the spend watchdog of component 5b; the
-canonical PDF of I6 (`pdf-command`, `fetch-pdf`, `canonical_pdf.sh`); and the overlay
-stage of I7 (`cf informalize overlay`, `check-site`, the site and workflow templates).
-Until `apply` exists, the files a phase wrote are copied out of `corpus/<run>/tree/` by
-hand, which is what the synthetic driver does.
+**Not implemented.** The canonical PDF of I6 (`pdf-command`, `fetch-pdf`,
+`canonical_pdf.sh`), and the overlay stage of I7 (`cf informalize overlay`,
+`check-site`, the site and workflow templates).
 
 ## PDF-to-companion pipeline
 

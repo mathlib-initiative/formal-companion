@@ -138,39 +138,38 @@ def license_of(text: str) -> str | None:
 # the host folder
 # ---------------------------------------------------------------------------
 
-_HOME_ROOT = re.compile(r"\A(?:~|\$HOME)((?:/[A-Za-z0-9._-]+)+)/?\Z")
 _ABSOLUTE_ROOT = re.compile(r"\A((?:/[A-Za-z0-9._-]+)+)/?\Z")
 
 
 class RemoteRoot:
     """The workspace's `remote_root` for a host: one folder, spelled for the host's shell
-    and for rsync.  `~/x` and `$HOME/x` are the operator's home on the host; anything but
-    plain path characters is refused, so nothing printed needs quoting there."""
+    and for rsync.  An absolute path of plain characters only -- `cf run` quotes every
+    remote path it builds, where a `~` is a directory of that name and not the home
+    (`run.manifest.check_remote_root`), so this mode spells the host folder out, and
+    anything but letters, digits, `.`, `_`, `-` and `/` is refused, so nothing printed
+    here needs quoting either."""
 
     def __init__(self, root: str):
         text = str(root).strip()
-        home = _HOME_ROOT.match(text)
-        absolute = None if home else _ABSOLUTE_ROOT.match(text)
-        rest = (home or absolute).group(1) if (home or absolute) else None
+        absolute = _ABSOLUTE_ROOT.match(text)
+        rest = absolute.group(1) if absolute else None
         if rest is None or any(part in (".", "..") for part in rest.split("/")):
             raise CfError(f"remote_root {root!r} is not a folder this command can name on the "
                           "host",
-                          hint="set hosts.<host>.remote_root in workspace.yaml to one folder for "
-                               "this informalize id, e.g. ~/informalize-<id>: letters, digits, "
-                               ". _ - and /, under ~ or absolute")
+                          hint="set hosts.<host>.remote_root in workspace.yaml to one absolute "
+                               "folder for this informalize id, e.g. "
+                               "/home/<user>/informalize-<id>: letters, digits, . _ - and /, "
+                               "never ~ (every remote path is quoted for the host's shell)")
         self.text = text
-        self.home = home is not None
         self.rest = rest.strip("/")
 
     def shell(self, relative: str = "") -> str:
-        """The path in a command the host's shell reads (`"$HOME"/x/...` or `/x/...`)."""
-        tail = "/".join(p for p in (self.rest, relative) if p)
-        return f'"$HOME"/{tail}' if self.home else f"/{tail}"
+        """The path in a command the host's shell reads."""
+        return "/" + "/".join(p for p in (self.rest, relative) if p)
 
     def rsync(self, relative: str = "") -> str:
-        """The path after `<host>:` for rsync, which reads one under the home as relative."""
-        tail = "/".join(p for p in (self.rest, relative) if p)
-        return tail if self.home else f"/{tail}"
+        """The path after `<host>:` for rsync -- the same one, now that it is absolute."""
+        return self.shell(relative)
 
 
 def host_folder(workspace, host_name: str, informalize_id: str) -> tuple[dict, RemoteRoot]:
@@ -179,8 +178,12 @@ def host_folder(workspace, host_name: str, informalize_id: str) -> tuple[dict, R
     The folder is `hosts.<host>.remote_root` as that host's own entry sets it, and its last
     part is `informalize-<id>`.  The workspace-wide `hosts.remote_root` and the default (the
     operator's home) are never used, so the folder is never the home, another run's root or
-    another informalize id's (section 2)."""
-    host = manifest.resolve_host(workspace, host_name)
+    another informalize id's (section 2).
+
+    The allowlist is checked first (it is the hard rule), then this id's own folder, and
+    only then the connection facts: `resolve_host` refuses a root that is not absolute
+    too, and the reason a root is wrong should be the particular one."""
+    workspace.check_host(host_name)
     hosts = workspace.hosts if isinstance(workspace.hosts, dict) else {}
     entry = hosts.get(host_name)
     if not isinstance(entry, dict):
@@ -189,7 +192,7 @@ def host_folder(workspace, host_name: str, informalize_id: str) -> tuple[dict, R
     own = (entry.get("remote_root") or entry.get("root")) if isinstance(entry, dict) else None
     want = f"informalize-{informalize_id}"
     hint = (f"set hosts.{host_name}.remote_root in workspace.yaml to this id's own folder, "
-            f"e.g. ~/{want}")
+            f"e.g. /home/<user>/{want}")
     if not own:
         raise CfError(f"workspace.yaml sets no remote_root for {host_name} itself",
                       hint=hint + "; the workspace-wide hosts.remote_root and the default (your "
@@ -199,7 +202,7 @@ def host_folder(workspace, host_name: str, informalize_id: str) -> tuple[dict, R
         raise CfError(f"hosts.{host_name}.remote_root {own!r} is not the folder of "
                       f"{informalize_id}: its last part must be {want}",
                       hint=hint + ", never the home, another run's root or another id's")
-    return host, remote
+    return manifest.resolve_host(workspace, host_name), remote
 
 
 def library_id(cfg: dict) -> str:

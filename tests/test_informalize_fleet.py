@@ -651,12 +651,12 @@ class TestThePlannersPieces(unittest.TestCase):
 
         layout = iplan.host_layout(WorkspacePaths(Path("/ws")), "x", "x-draft-1", host="h",
                                    library_commit="0123456789ab" + "c" * 28,
-                                   remote_root="~/cf/", ssh="h")["host"]
-        self.assertEqual(layout["entrypoint"], "~/cf/x-draft-1")
-        self.assertEqual(layout["gate_dir"], "~/cf/x-draft-1-gate")
+                                   remote_root="/srv/cf/", ssh="h")["host"]
+        self.assertEqual(layout["entrypoint"], "/srv/cf/x-draft-1")
+        self.assertEqual(layout["gate_dir"], "/srv/cf/x-draft-1-gate")
         # one source tree per id and library commit: another id's run never replaces it
-        self.assertEqual(layout["library_src"], "~/cf/library-src/x-0123456789ab")
-        self.assertEqual(layout["attempts_dir"], "~/cf/x-draft-1-tend/attempts")
+        self.assertEqual(layout["library_src"], "/srv/cf/library-src/x-0123456789ab")
+        self.assertEqual(layout["attempts_dir"], "/srv/cf/x-draft-1-tend/attempts")
 
     def test_an_edit_waits_for_every_section_to_be_drafted(self):
         from cflib.errors import CfError

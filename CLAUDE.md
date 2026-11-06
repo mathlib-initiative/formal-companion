@@ -72,9 +72,11 @@ scripts/informalize/ the informalize mode behind `cf informalize`: informalize.y
                      sync, the item table and `check-items`, receipts and approvals, the
                      library's builds (`library.py`; `library_host.sh` and `library_host.py`,
                      and for the overlay's hovers `verso_host.sh` and `verso_host.py`, run on
-                     the host beside locate's drivers, with no cflib), the scope, and
+                     the host beside locate's drivers, with no cflib), the scope,
                      the fleet's planner (`plan.py`, behind `cf plan-informalize`), whose
-                     gate is scripts/gate/verify_informal.py (docs/proposals/informalize.md)
+                     gate is scripts/gate/verify_informal.py, and `apply.py`, which puts a
+                     harvested phase's files into the output repository and writes the
+                     phase's stage receipt (docs/proposals/informalize.md)
 scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
                      its three presets, outcomes with the derived status, and the
                      Literature Links export (references/locate-documents.md);
@@ -384,9 +386,9 @@ contributions written in worktrees of an entrypoint made as `cf run` makes one, 
 the staged gate as the run host runs it (a copy of the planned `gate/`, `python3 -I`, PATH and
 HOME alone); good contributions pass, bad ones are refused under the rule they break, and a
 task at the attempt cap is ended by `attempt_cap.py` and admitted. Between phases each run is
-harvested with `cf harvest` from that entrypoint, and the driver then does by hand what
-applying one will do (not implemented yet: `cf informalize apply`, component 5b of
-`docs/proposals/informalize.md`). The phases that build need TeX, every package of
+harvested with `cf harvest` from that entrypoint and applied with `cf informalize apply`,
+which commits what it wrote in the output repository and writes the phase's stage
+receipt. The phases that build need TeX, every package of
 `tex_packages` included, and are skipped without them.
 Run it with `python3 tests/e2e/informalize_synthetic/driver.py [--keep <dir>]`; the suite
 runs it as `tests/test_e2e_informalize_synthetic.py`.

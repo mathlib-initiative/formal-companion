@@ -1,6 +1,6 @@
 # Informalize: an informal companion written from a Lean library
 
-**Status: specification, 2026-11-03. Components 2, 3, 4 and 5a of section 11 are built: the
+**Status: specification, 2026-11-06. Components 2, 3, 4, 5a and 5b of section 11 are built: the
 LaTeX runtime and the project templates under `templates/informalize/`; `cf informalize
 init`, `sync`, `status`, `check-items`, `approve` and `reference-checklist` with the formats
 of section 5 they read and write, the vocabulary and the rule exception of section 1.3
@@ -8,16 +8,16 @@ of section 5 they read and write, the vocabulary and the rule exception of secti
 and `scope` with `scripts/informalize/library_host.sh` and the driver's `LIBRARY_CACHE`
 option (section 6); and the fleet's first half (section 8): `cf plan-informalize`, the gate
 `scripts/gate/verify_informal.py`, the prompts, the tend config, the bridge's second switch,
-the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`; of
-component 5b, `cf run` sends a phase and `cf harvest` brings one home (section 8.5); and of
+the attempt cap's informalize form and `tests/e2e/informalize_synthetic/driver.py`;
+component 5b, `cf run` (with the spend watchdog it starts at the smoke stage),
+`cf harvest` and `cf informalize apply` (sections 8.1 and 8.5); and of
 component 7, the exporter `cf export informal-markers` with the two `scripts/overlay/`
 changes of section 10; component 9, `cf informalize verso-command` with
 `scripts/informalize/verso_host.sh` and `verso_host.py`, the overlay's hovers (section 10);
 and of component 8, `SKILL.md`'s command index and its
 Informalization section, `README.md`, `docs/status.md` and the trigger eval. These
-are not implemented yet: the watchdog `cf run` starts at the smoke stage (section 8.1),
-the runbook section of component 8,
-`cf informalize apply`, `cf informalize pdf-command`, `cf informalize fetch-pdf`,
+are not implemented yet: the runbook section of component 8,
+`cf informalize pdf-command`, `cf informalize fetch-pdf`,
 `cf informalize overlay` and `cf informalize check-site`, and
 paths into this repository written in *italics* do not exist yet. Section 11 lists the components
 in the order they land; a component whose code shows this file wrong changes it in the same
@@ -114,7 +114,7 @@ The operator's machine runs no `lake`, `lean` or elan. The host needs no formal-
 checkout: `cf run` ships the gate and the bridges (`scripts/run/manifest.py`), and
 `build-command` and `pdf-command` print the rsync of the drivers they run. The host folder is
 the workspace's `hosts.<host>.remote_root` as that host's own entry sets it, and its last part
-is `informalize-<id>` (section 12 uses `~/informalize-<id>`): `build-command` and
+is `informalize-<id>` (section 12 uses `/home/<user>/informalize-<id>`): `build-command` and
 `fetch-library` refuse a host entry without one (the workspace-wide `hosts.remote_root` and the
 default, the operator's home, are not used) and a folder of any other name, so it is never the
 home, another run's root or another id's. `workspace.yaml` holds one `remote_root` per host, so
@@ -553,10 +553,11 @@ and the line that removes the build once it is fetched. The `mkdir` comes first 
 creates only the last directory of its target, and the shell opens the log before the job
 starts; it appends (`>>`), so a second start while a job runs, which the lock then turns away,
 leaves the running job's log whole. `ssh -n` and `setsid -f` keep the ssh call from hanging on
-the detached job. The host folder is spelled for the host's shell (`~/x` and `$HOME/x` as
-`"$HOME"/x`) and for rsync (relative to the home); a `remote_root` with anything but letters,
-digits, `.`, `_`, `-` and `/`, under `~` or absolute, is refused, so nothing printed needs
-quoting there. Copying the drivers rather than naming them in this checkout pins what ran: the
+the detached job. A `remote_root` with anything but letters, digits, `.`, `_`, `-` and `/`,
+or one that is not absolute, is refused, so the folder needs no quoting in a line printed
+here and none in the forty `cf run` builds from it: a `~` there would be quoted into a
+directory of that name on the host (`run.manifest.check_remote_root`). Copying the drivers
+rather than naming them in this checkout pins what ran: the
 job records the sha256 of every driver and of `library.tsv` as it read them, fetch-library
 refuses a `to-host/` that differs (`build-command` run again since, from another checkout or
 with other settings), and the I1 receipt records those sha256.
@@ -949,13 +950,17 @@ minutes, too short for the items task). `--model` overrides `workspace.yaml`'s `
 (SKILL.md rule 8: another id only after a 1/1 smoke test on the host confirms it).
 
 The cap is enforced on the host, not by tend: with agentbox, tend's own budget counts no
-agent's spend (`manifest.check_budget_cap`). `cf run` is to start `bin/watchdog.py`
+agent's spend (`manifest.check_budget_cap`). `cf run` starts `bin/watchdog.py`
 beside `tend run` at the smoke stage, with `--max-cost` at `budget.max_cost` and no pilot
 thresholds, so its merged-task count, which reads `findings/`, decides nothing; it sums the
-agents' usage envelopes and drains the root at the cap, from the first task on. That half of
-component 5b is not built: until it is, the helper is on the host (the planner stages it in
-`bin/`) and the operator starts it by hand, and a phase's only ceiling is `tend-control
-budget`, which counts no agentbox spend.
+agents' usage envelopes and drains the root at the cap, from the first task on. Two steps
+(`run.remote.watchdog_steps`), before the `tend run` step: `watchdog.py --stop-others`,
+which stops a watchdog an earlier `--stage smoke` left on the root, so the launch is
+watched at this invocation's cap alone and nothing is started while one would not stop;
+then the watchdog itself, detached, its output appended to
+`<remote_root>/watchdog-<run-id>.log`, beside the run root. `cf run <run> --status` reads
+its last record, `<tend-root>/watchdog.json`, which for a phase is the only report of what
+the fleet has spent against its cap.
 
 The tend config is locate's shape: `validation_commands` run the gate with
 `--changed-files --base main`, `pre_merge_validation_commands` add `--pre-merge`,
@@ -993,8 +998,8 @@ base commit's bytes and no document of its own.
 monitor, stop), with four changes: the gate it verifies is
 `verify_informal.py --self-check` (imports, the pinned sha256s, kpsewhich of `tex_packages`,
 the pdfTeX version); the entrypoint's first commit is `repo/` plus `tasks/`, which is why
-the run's `data/` is not sent into it (`manifest.informalize_entries`); the smoke stage is to
-start the watchdog above (not built); and `--include-sources` ships `library/src/` read-only
+the run's `data/` is not sent into it (`manifest.informalize_entries`); the smoke stage
+starts the watchdog above; and `--include-sources` ships `library/src/` read-only
 (`manifest.READONLY_CHMOD`) to
 `<remote_root>/library-src/<id>-<commit>/`, checked by tree digest, which the workers read.
 One phase is one run: whether a dependent task's worktree sees a dependency's merged files
@@ -1263,17 +1268,26 @@ never from pasted reports.
 It writes nothing in the output repository, and no faithfulness tally, companion pin or
 state is written for it.
 
-**Not built yet.** `cf informalize apply <id> --run <run>` checks that the output
-repository's HEAD is the
-run's `base_commit` (else: plan again); that the harvest found no `unowned` path; and that
-`tree/` is what the receipt records. Then it copies in the changed paths under
+`cf informalize apply <id> --run <run>` (`scripts/informalize/apply.py`) checks that the
+output repository's HEAD is the
+run's `base_commit` (else: plan again); that the harvest is complete and found no `unowned`
+path; and that
+`tree/` is what the receipt records — every path it lists there with its sha256, and no
+file beside them. Then it copies in the changed paths under
 `informal/`, and only those: `findings/` and the task files stay in `corpus/<run>/`, and any
-other path is refused. It commits them with the message
-`Informalize <phase> (<run>): <n> files` and writes the phase's receipt. An attack run
+other path is refused, as is an uncommitted change of the maintainer's to a path it writes.
+It commits them with the message
+`Informalize <phase> (<run>): <n> files` and writes the phase's receipt: `stages/I3.json`
+for `items`, `I4.json` for `conventions`, `I5-<phase>-<run>.json` for a writing phase
+(section 3), whose `runs` carry the run, its `run.yaml` and its `RECEIPT.json` by sha256
+and what it cost, and whose `inputs` name that receipt from `informalize/<id>/`
+(`../../corpus/<run>/RECEIPT.json`). The cost is summed as section 5.7 has it and refuses a
+harvest that priced no fleet; `--unpriced` writes the receipt anyway, with `cost_usd` 0 and
+`checks.cost_priced` false, for a run nothing priced. An attack run
 changes nothing under `informal/`: its apply writes only the receipt and makes no commit.
-After the items phase it runs `check-items`. Until it is built, the maintainer copies the
-files of `corpus/<run>/tree/` the receipt marks as written into `informalize/<id>/repo/` and
-commits them there, which is what the synthetic driver does.
+After the items phase it runs `check-items` and records the result; a table that fails it
+is in the repository, and the command exits 1 saying so. A run whose files are already in
+HEAD is applied again as a no-op, so the command may be re-run.
 
 ## 9. The canonical PDF (I6)
 
@@ -1474,7 +1488,8 @@ network, and no Claude attribution anywhere.
    the bridge's second switch and the informalize form of `attempt_cap.py` (section 8.1),
    and a synthetic end-to-end driver that runs the gate as the host does (a copy of `gate/`,
    `python3 -I`, a bare environment), `tests/e2e/informalize_synthetic/driver.py` (built);
-   (b) `cf run` (with the watchdog it starts), `cf harvest` and `cf informalize apply`.
+   (b) `cf run` (with the watchdog it starts at the smoke stage), `cf harvest` and
+   `cf informalize apply`, which the synthetic driver runs between its phases (built).
 6. I6: `pdf-command | fetch-pdf` and `canonical_pdf.sh`.
 7. I7: the exporter, the two `scripts/overlay/` changes,
    `cf informalize overlay | check-site`, the site and workflow templates.
@@ -1507,7 +1522,9 @@ cf init <workspace>
 ```
 
 Edit `workspace.yaml`: `hosts.allowlist: [$HOST]`; under `hosts.$HOST` the ssh alias,
-`remote_root: ~/informalize-svk-tauceti`, `tend_version: "==0.1.0"` and the agentbox profile;
+`remote_root: /home/<user>/informalize-svk-tauceti` (an absolute path: every
+remote path is quoted for the host's shell, where a leading `~` is a directory of that
+name), `tend_version: "==0.1.0"` and the agentbox profile;
 `models.worker` and `models.reviewer` `claude-opus-5`; `defaults.max_concurrent_workers: 6`,
 `max_concurrent_reviewers: 4`.
 

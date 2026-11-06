@@ -13,10 +13,10 @@ the worktree as the working directory.  Good contributions pass; bad ones are re
 the rule they break; the batched pre-merge check takes two drafts at once; a task at the
 attempt cap is ended by `bin/attempt_cap.py` and admitted.  Between phases each run is
 harvested by `cf harvest` from that entrypoint -- the documents to `corpus/<run>/<task>/`,
-the files the run wrote to `corpus/<run>/tree/`, the gate re-run over both -- and the driver
-then does by hand what `cf informalize apply` will do (component 5b): those files into the
-output repository, committed, and for the conventions phase the I4 receipt.  The
-maintainer's approvals run through `cf informalize approve`.
+the files the run wrote to `corpus/<run>/tree/`, the gate re-run over both -- and applied
+with `cf informalize apply` (component 5b): those files into the output repository,
+committed, and the phase's stage receipt.  The maintainer's approvals run through
+`cf informalize approve`.
 
 The phases that build need pdflatex, latexmk and kpsewhich (`TEX`); without them the driver
 stops after the items phase and says so.  Run it on its own with
@@ -47,6 +47,7 @@ for _entry in (str(TESTS), str(SKILL / "scripts")):
 import _informalize_doc as doc  # noqa: E402
 import cf as cf_main  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
+from informalize import apply as iapply  # noqa: E402
 from informalize import stages  # noqa: E402
 
 ID = "example-thm"
@@ -271,21 +272,33 @@ class Pipeline:
               f"the {phase} harvest's gate refused what landed: {(receipt.get('gate') or {})}")
 
     def apply(self, phase: str) -> None:
-        """What `cf informalize apply` does (component 5b, not implemented yet): the files
-        the harvest landed under `corpus/<run>/tree/`, committed in the output repository."""
-        corpus = self.paths.corpus_run_dir(self.runs[phase])
+        """`cf informalize apply`: the files the harvest landed under `corpus/<run>/tree/`,
+        committed in the output repository, and the phase's stage receipt.  `--unpriced`
+        because this fleet is written by hand and no harvest here prices one."""
+        run_id = self.runs[phase]
+        corpus = self.paths.corpus_run_dir(run_id)
         receipt = json.loads((corpus / "RECEIPT.json").read_text(encoding="utf-8"))
-        block = receipt.get("informalize") or {}
-        changed = [rel for rel in block.get("changed") or [] if rel.startswith("informal/")]
-        for rel in changed:
-            shutil.copy2(corpus / "tree" / rel, self.repo / rel)
+        changed = list((receipt.get("informalize") or {}).get("changed") or [])
+        before = self.git(self.repo, "rev-parse", "HEAD").strip()
+        self.cf("informalize", "apply", ID, "--run", run_id, "--unpriced")
+        stage = iapply.stage_of(phase, run_id)
+        written = stages.read_receipt(self.paths, ID, stage)
+        check(written is not None, f"the {phase} apply wrote no {stage} receipt")
+        check([e["run_id"] for e in written["runs"]] == [run_id],
+              f"the {stage} receipt does not record {run_id}: {written['runs']}")
+        check(sorted(written["outputs"]) == sorted(f"repo/{rel}" for rel in changed),
+              f"the {stage} receipt's outputs are not the files the run wrote: {written}")
+        after = self.git(self.repo, "rev-parse", "HEAD").strip()
+        check((after != before) == bool(changed),
+              f"the {phase} apply {'made no' if changed else 'made a'} commit")
         if changed:
-            self.git(self.repo, "add", "--", *changed)
-            self.git(self.repo, "commit", "-qm", f"Informalize {phase} ({self.runs[phase]}): "
-                                                 f"{len(changed)} files")
-        if phase == "conventions":
-            stages.write_receipt(self.paths, ID, "I4", inputs={}, outputs={},
-                                 checks={"synthetic": True}, runs=[self.runs[phase]])
+            subject = self.git(self.repo, "log", "-1", "--format=%s").strip()
+            check(subject == f"Informalize {phase} ({run_id}): {len(changed)} files",
+                  f"the apply's commit message is {subject!r}")
+        # it may be re-run: the second one finds its own commit and writes nothing
+        self.cf("informalize", "apply", ID, "--run", run_id, "--unpriced")
+        check(self.git(self.repo, "rev-parse", "HEAD").strip() == after,
+              f"a second apply of {run_id} committed again")
 
     # -- the phases -------------------------------------------------------------
     def provisional_table(self) -> dict:
@@ -537,6 +550,8 @@ class Pipeline:
         self.passes("attack", self.run_dir("attack") / "repo", "",
                     *[a for task in docs for a in ("--findings",
                                                     str(corpus / task / "attack.json"))])
+        # an attack run changes nothing under informal/: its apply writes only the receipt
+        self.apply("attack")
 
     def judge(self) -> None:
         # a section that moved since the attack run: its findings quote another text
@@ -631,6 +646,7 @@ class Pipeline:
         self.refused("edit", bad, 8, "an unanswered request", task="edit")
         self.merge("edit", "edit")
         self.harvest("edit")
+        self.apply("edit")
 
     def cap(self) -> None:
         """A task at the attempt cap: the bridge's helper ends it, and the gate admits it."""
