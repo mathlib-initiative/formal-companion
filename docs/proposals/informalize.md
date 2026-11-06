@@ -956,11 +956,16 @@ thresholds, so its merged-task count, which reads `findings/`, decides nothing; 
 agents' usage envelopes and drains the root at the cap, from the first task on. Two steps
 (`run.remote.watchdog_steps`), before the `tend run` step: `watchdog.py --stop-others`,
 which stops a watchdog an earlier `--stage smoke` left on the root, so the launch is
-watched at this invocation's cap alone and nothing is started while one would not stop;
-then the watchdog itself, detached, its output appended to
-`<remote_root>/watchdog-<run-id>.log`, beside the run root. `cf run <run> --status` reads
-its last record, `<tend-root>/watchdog.json`, which for a phase is the only report of what
-the fleet has spent against its cap.
+watched at this invocation's cap alone and nothing is started while one would not stop,
+and removes the `watchdog.stop` and `watchdog.json` it left (the loop leaves on the stop
+file, so a stale one would stop the new watchdog at its first check, and a stale record is
+what `--status` would report as the spend now); then the watchdog itself, detached, its
+output appended to `<remote_root>/watchdog-<run-id>.log`, beside the run root. `cf run
+<run> --status` reads its last record, `<tend-root>/watchdog.json`, which for a phase is
+the only report of what the fleet has spent against its cap. It is started without
+`--parent`, so it polls until the root drains: the `stop` stage's second step
+(`run.remote.watchdog_stop_step`) stops it, after the pause, so a phase that is finished
+or paused by hand leaves none behind.
 
 The tend config is locate's shape: `validation_commands` run the gate with
 `--changed-files --base main`, `pre_merge_validation_commands` add `--pre-merge`,
@@ -1284,7 +1289,11 @@ and what it cost, and whose `inputs` name that receipt from `informalize/<id>/`
 (`../../corpus/<run>/RECEIPT.json`). The cost is summed as section 5.7 has it and refuses a
 harvest that priced no fleet; `--unpriced` writes the receipt anyway, with `cost_usd` 0 and
 `checks.cost_priced` false, for a run nothing priced. An attack run
-changes nothing under `informal/`: its apply writes only the receipt and makes no commit.
+changes nothing under `informal/`: its apply writes only the receipt and makes no commit,
+and the HEAD check is not made of it — it puts no text in, so nothing a later commit of
+another phase could invalidate, and refusing it would leave a receipt nobody can write and
+a `status` naming an apply that can only fail. The receipt's `checks` keep both the run's
+`base_commit` and the commit the repository was at.
 After the items phase it runs `check-items` and records the result; a table that fails it
 is in the repository, and the command exits 1 saying so. A run whose files are already in
 HEAD is applied again as a no-op, so the command may be re-run.

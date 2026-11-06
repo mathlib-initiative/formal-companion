@@ -19,7 +19,9 @@ Every refusal comes before anything is written:
   `corpus/<run>/`;
 * the repository's HEAD is the run's `base_commit`, else the phase must be planned again
   (its contributions were written against text that has moved), and none of the paths
-  being written has an uncommitted change of the maintainer's.
+  being written has an uncommitted change of the maintainer's -- both only for a run that
+  writes a file: a phase that writes none has nothing a moved HEAD could invalidate, and
+  refusing it would leave a receipt nobody can ever write.
 
 A run whose files are already in HEAD is re-applied as a no-op, so the command may be
 re-run (CLAUDE.md section 4, idempotence).  An attack run writes nothing under
@@ -280,7 +282,12 @@ def apply_run(workspace, informalize_id: str, run_id: str, *, unpriced: bool = F
         result.already = True
         result.commit = repo.head()
         return result
-    check_head(repo, run_id, phase, base_commit, written)
+    if written:
+        # A phase that wrote nothing (an attack run) puts no text into the repository, so
+        # a HEAD past the base commit invalidates nothing of it; refusing it would wedge
+        # the receipt -- and `cf informalize status`, which names the apply of every
+        # unapplied run -- behind a re-plan that would throw the findings away.
+        check_head(repo, run_id, phase, base_commit, written)
     entry = _cost(paths, run_id, unpriced=unpriced)
 
     # ---- every refusal is above this line: now write ----------------------------------

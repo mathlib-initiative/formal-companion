@@ -1566,6 +1566,20 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         self.assertEqual(task.read_text(), first)
         self.assertEqual(self.read_run()["prompts"], shas)
 
+    def test_a_remote_root_that_is_not_absolute_is_refused_at_the_plan(self):
+        """Every host path below it is quoted, so `~/x` would be a directory named `~`.
+
+        `cf run` refuses it too (`manifest.resolve_host`), but by then run.yaml, the
+        staged tend config and the prompts all hold the wrong paths and the plan has to
+        be made again.
+        """
+        self.ws.data["hosts"]["ffbox"]["remote_root"] = "~/runs"
+        self.ws.save()
+        with self.assertRaises(CfError) as caught:
+            self.plan(host="ffbox", i_have_consent=True)
+        self.assertIn("remote_root", caught.exception.message)
+        self.assertIn("absolute", caught.exception.message)
+
     def test_remote_host_paths_and_consent_recorded(self):
         self.assertEqual(self.plan(host="ffbox", i_have_consent=True), 0)
         doc = self.read_run()

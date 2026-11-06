@@ -188,6 +188,9 @@ class TestWhatTheTransferSends(PhaseCase):
         root = f"/srv/cf/{self.run_id}-tend"
         self.assertIn(f"{root}/bin/watchdog.py", smoke[0]["shell"])
         self.assertIn("--stop-others", smoke[0]["shell"])
+        # and what that watchdog left: the loop leaves on the stop file, so a stale one
+        # would stop this launch's watchdog at its first check and leave no ceiling
+        self.assertIn(f"rm -f {root}/watchdog.stop {root}/watchdog.json", smoke[0]["shell"])
         start = smoke[1]["shell"]
         self.assertIn(f"--root {root} --entrypoint /srv/cf/{self.run_id} --max-cost 300.0",
                       start)
@@ -200,6 +203,16 @@ class TestWhatTheTransferSends(PhaseCase):
         # it is staged where the step names it
         self.assertTrue((self.pipe.paths.tend_root(self.run_id) / "bin" / "watchdog.py")
                         .is_file())
+
+    def test_the_stop_stage_stops_the_watchdog_the_smoke_stage_started(self):
+        """It is started without `--parent`: nothing else would ever stop it."""
+        stop = [s for s in self.steps() if s["stage"] == "stop"]
+        titles = [s["title"] for s in stop]
+        self.assertEqual(len(titles), 2, titles)
+        self.assertIn("pause", titles[0])
+        self.assertIn("spend watchdog", titles[1])
+        self.assertIn(f"/srv/cf/{self.run_id}-tend/bin/watchdog.py --root "
+                      f"/srv/cf/{self.run_id}-tend --stop-others", stop[1]["shell"])
 
     def test_a_run_status_reads_the_watchdog_s_last_check(self):
         from run import status as run_status
@@ -408,8 +421,8 @@ class TestTheDraftHarvest(PhaseCase):
         self.assertIn("holds NONE of", text)
 
 
-class TestTheAttackHarvest(PhaseCase):
-    """A phase whose documents land as findings: the gate reads them against the base text."""
+class AttackPhaseCase(PhaseCase):
+    """The attack phase over a repository that already holds its conventions and drafts."""
 
     phase = "attack"
 
@@ -449,6 +462,10 @@ class TestTheAttackHarvest(PhaseCase):
                                                            findings))
         return entrypoint
 
+
+class TestTheAttackHarvest(AttackPhaseCase):
+    """A phase whose documents land as findings: the gate reads them against the base text."""
+
     def test_the_documents_land_and_the_run_s_own_gate_reads_them_at_home(self):
         code, text = self.pipe.cf("harvest", self.run_id, "--from",
                                   str(self.merged("the map induced by gluing is surjective")
@@ -476,6 +493,57 @@ class TestTheAttackHarvest(PhaseCase):
         self.assertFalse(receipt["complete"])
         self.assertTrue(any("[6]" in p for p in receipt["gate"]["problems"]),
                         receipt["gate"]["problems"])
+
+
+class TestTheAttackApply(AttackPhaseCase):
+    """An attack run's apply: its receipt alone, whatever the repository has done since."""
+
+    def setUp(self):
+        super().setUp()
+        code, text = self.pipe.cf("harvest", self.run_id, "--from",
+                                  str(self.merged("the map induced by gluing is surjective")
+                                      / "findings"))
+        self.assertEqual(code, 0, text)
+        self.stage = f"I5-attack-{self.run_id}"
+
+    def apply(self, ok: bool = True) -> str:
+        return self.pipe.cf("informalize", "apply", self.driver.ID, "--run", self.run_id,
+                            "--unpriced", ok=ok)[1]
+
+    def head(self) -> str:
+        return self.pipe.git(self.pipe.repo, "rev-parse", "HEAD").strip()
+
+    def receipt(self) -> dict | None:
+        return stages.read_receipt(self.pipe.paths, self.driver.ID, self.stage)
+
+    def test_it_writes_the_receipt_and_commits_nothing(self):
+        head = self.head()
+        self.assertIn("no file of informal/", self.apply())
+        receipt = self.receipt()
+        self.assertEqual(receipt["checks"]["files"], 0)
+        self.assertEqual(receipt["outputs"], {})
+        self.assertEqual([r["run_id"] for r in receipt["runs"]], [self.run_id])
+        self.assertEqual(self.head(), head)
+
+    def test_a_repository_that_moved_since_the_plan_does_not_refuse_it(self):
+        """It puts no text in, so a later commit invalidates nothing of it -- and a
+        refusal would wedge `cf informalize status`, which names the apply of every
+        unapplied run, behind a re-plan that would throw this run's findings away."""
+        section = self.pipe.repo / "informal" / "sections" / "01-gluing-spaces.tex"
+        section.write_text(section.read_text(encoding="utf-8") + "\n% a later edit\n",
+                           encoding="utf-8")
+        self.pipe.git(self.pipe.repo, "commit", "-qam", "a later commit")
+        head = self.head()
+        self.assertIn("no file of informal/", self.apply())
+        receipt = self.receipt()
+        # the commit it was planned from is kept, beside the one the repository is at
+        self.assertEqual(receipt["checks"]["base_commit"],
+                         self.data["informalize"]["base_commit"])
+        self.assertNotEqual(receipt["checks"]["base_commit"], head)
+        self.assertEqual(receipt["checks"]["commit"], head)
+        self.assertEqual(self.head(), head)
+        self.assertNotIn("cf informalize apply",
+                         self.pipe.cf("informalize", "status", self.driver.ID)[1])
 
 
 class TestTheApply(ItemsPhaseCase):

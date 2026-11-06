@@ -56,16 +56,23 @@ release has something to say.
   (the contributions were written against text that has moved: plan again), a harvest that is
   not complete or that found a path no task owns, a `corpus/<run>/tree/` that is not what the
   receipt records, a written path outside `informal/` and an uncommitted change of the
-  maintainer's to a path it writes; an attack run writes only its receipt; after the items
-  phase it runs `check-items`; and a run already in HEAD is applied again as a no-op.
+  maintainer's to a path it writes — the last two only for a run that writes a file, since
+  an attack run, which writes only its receipt, puts nothing in that a moved HEAD could
+  invalidate; after the items phase it runs `check-items`; and a run already in HEAD is
+  applied again as a no-op.
   `cf informalize status`'s next step names it after a harvest, and
   `tests/e2e/informalize_synthetic/driver.py` runs it between its phases instead of copying.
 - **`cf run` starts an informalize phase's spend watchdog.** With agentbox, tend's own budget
   counts no agent's spend, so the cap `run.yaml` records was enforced by a helper the operator
   started by hand on the host. The smoke stage now stops any watchdog an earlier launch left on
-  the root and starts `<tend-root>/bin/watchdog.py --max-cost <the recorded cap>` detached
+  the root, removes the `watchdog.stop` and `watchdog.json` it left (the loop leaves on the
+  stop file, so a stale one would stop the new watchdog at its first check and leave the fleet
+  with no ceiling, and a stale record is what `--status` would report as the spend now), and
+  starts `<tend-root>/bin/watchdog.py --max-cost <the recorded cap>` detached
   beside `tend run`, with no pilot thresholds, logging to `<remote_root>/watchdog-<run>.log`;
-  `cf run <run> --status` reads its last record, `<tend-root>/watchdog.json`.
+  `cf run <run> --status` reads its last record, `<tend-root>/watchdog.json`, and the `stop`
+  stage stops it, since it is started without `--parent` and would otherwise poll on after the
+  phase.
 
 ### Fixed
 
@@ -74,7 +81,9 @@ release has something to say.
   there: a `remote_root` of `~/informalize-<id>` made a literal directory named `~` in the
   operator's home on the host and put the whole run inside it. `run.manifest.resolve_host`
   now refuses anything but an absolute path, once, rather than in each command that embeds
-  it, and `informalize.library.RemoteRoot` (which spelled `~/x` as `"$HOME"/x`
+  it; `cf plan-run`, which read the host entry itself, goes through the same check, so the
+  refusal comes at the plan rather than after run.yaml, the tend config and the prompts have
+  been written with a `~` in them; and `informalize.library.RemoteRoot` (which spelled `~/x` as `"$HOME"/x`
   for the lines `build-command` prints) refuses it too, so one spelling is right everywhere.
   `docs/proposals/informalize.md` sections 2, 6.1 and 12 no longer recommend `~`.
 - **`cf informalize scope` named component 5a as missing.** Its next step is
@@ -251,9 +260,7 @@ release has something to say.
   entrypoint's own change set -- its first commit against `HEAD` -- so a path changed on
   the host that no task owns is `informalize.unowned` and the harvest is not complete. A
   phase that writes no findings document is harvested from the entrypoint alone. `corpus/<run>/tree/` holds no finding: the receipt's listing leaves it
-  out (`harvest.files.NON_FINDING_DIRS`). `cf informalize apply` and the watchdog `cf run`
-  is to start are the rest of component 5b and are not implemented yet; the synthetic
-  driver now harvests each of its runs with `cf harvest` and applies by hand.
+  out (`harvest.files.NON_FINDING_DIRS`).
 - **`cf plan-informalize`** (component 5a of `docs/proposals/informalize.md`, its section 8):
   one tend run per fleet phase (`items`, `conventions`, `draft`, `attack`, `judge`, `edit`),
   planned from the output repository's HEAD and, for `judge` and `edit`, a harvested

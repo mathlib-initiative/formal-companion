@@ -393,7 +393,7 @@ def watchdog_log(remote_root: str, run_id: str) -> str:
 
 def watchdog_steps(host: dict, *, run_id: str, tend_root: str, entrypoint: str,
                    max_cost: float) -> list[dict]:
-    """Stop any watchdog left on this root, then start one for this run (detached).
+    """Stop any watchdog left on this root, clear what it left, then start one (detached).
 
     ``scripts/run/watchdog.py``, which `cf plan-informalize` stages in the root's
     ``bin/``: it sums the agents' usage envelopes and runs ``tend-control drain`` when
@@ -401,23 +401,48 @@ def watchdog_steps(host: dict, *, run_id: str, tend_root: str, entrypoint: str,
     its merged-task count decide nothing (docs/proposals/informalize.md section 8.1).
     ``</dev/null`` with both streams redirected, as the ``tend run`` step has it:
     otherwise ssh waits on the detached process's file descriptors and never returns.
+
+    ``watchdog.stop`` and ``watchdog.json`` go with the old process, as the campaign
+    sequencer removes them before each shard: the watchdog's loop leaves on the stop
+    file, so one left by a launch that was stopped by hand would make the new watchdog
+    write a single record and exit -- an unwatched fleet with no ceiling at all -- and a
+    record left from before would be what ``cf run --status`` reports as the spend now.
+    Nothing else removes them: the tend-root rsync has no ``--delete``.
     """
     script = f"{tend_root}/bin/watchdog.py"
     log_path = watchdog_log(host["remote_root"], run_id)
     command = (f"python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
                f"--entrypoint {shlex.quote(entrypoint)} --max-cost {max_cost} "
                f"--interval {WATCHDOG_INTERVAL} --tend {shlex.quote(host['tend_cmd'])}")
+    left = " ".join(shlex.quote(f"{tend_root}/{name}")
+                    for name in ("watchdog.stop", "watchdog.json"))
     return [
         {"stage": "smoke", "safe": False,
-         "title": "stop any spend watchdog left on this root by an earlier launch",
-         **_ssh(host, f"python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
-                      "--stop-others")},
+         "title": "stop any spend watchdog left on this root by an earlier launch, and "
+                  "remove its stop file and last record (a stop file left there stops the "
+                  "new watchdog at its first check)",
+         **_ssh(host, f"set -e; python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
+                      f"--stop-others; rm -f {left}")},
         {"stage": "smoke", "safe": False, "record_output": True,
          "title": f"start the spend watchdog (drains the root at {max_cost} USD; its log is "
                   f"{log_path})",
          **_ssh(host, f"nohup sh -c {shlex.quote(command)} </dev/null "
                       f">> {shlex.quote(log_path)} 2>&1 & echo started")},
     ]
+
+
+def watchdog_stop_step(host: dict, *, tend_root: str) -> dict:
+    """The 'stop' stage's step: stop the spend watchdog this run's smoke stage started.
+
+    It is started without ``--parent``, so it polls until the root drains or its stop
+    file appears; a phase that is paused or finished by hand would otherwise leave it
+    on the host, one per phase (docs/proposals/informalize.md section 8.1).
+    """
+    script = f"{tend_root}/bin/watchdog.py"
+    return {"stage": "stop", "safe": False,
+            "title": "stop this phase's spend watchdog (it polls on until the root drains)",
+            **_ssh(host, f"python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
+                         "--stop-others")}
 
 
 def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
@@ -649,6 +674,8 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
             expected=entry["tree_sha256"])
     add("stop", "pause (keeps state) / drain / stop",
         _ssh(host, f"{tend} tend-control pause --root {shlex.quote(tend_root)}"))
+    if informalize is not None and budget.get("max_cost") is not None:
+        steps.append(watchdog_stop_step(host, tend_root=tend_root))
     return steps
 
 
