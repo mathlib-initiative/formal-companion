@@ -47,7 +47,7 @@ group holding the slot `name`.
 | `library_url` | `main.tex`, `README.md` | `library.url`, as it is (`\url` reads it verbatim) |
 | `library_commit` | `main.tex`, `README.md`, `STYLE-project.md` | the 40-hex `library.commit` |
 | `reference_bibitem_tex` | `main.tex` | `\bibitem{reference}` and `reference.work` escaped for LaTeX, or nothing when there is no reference work |
-| `title` | `README.md`, `STYLE-project.md` | `text.title`, as Markdown text |
+| `title` | `README.md`, `STYLE-project.md` | the text's title as the title page prints it (`informalize.config.printed_title`), as Markdown text |
 | `theorem` | `README.md`, `STYLE-project.md` | the theorem's full Lean name |
 | `library_name` | `README.md`, `STYLE-project.md` | the library's name |
 | `license_name` | `README.md` | the license's name, such as `the Apache License, Version 2.0` |
@@ -77,7 +77,7 @@ already escaped for HTML:
 
 | slot | holds |
 |---|---|
-| `title` | `text.title` |
+| `title` | the text's title as the title page prints it (`informalize.config.printed_title`) |
 | `theorem` | the theorem's full Lean name |
 | `library_name` | the library's name (the last component of `library.url`) |
 | `library_url` | `library.url` |

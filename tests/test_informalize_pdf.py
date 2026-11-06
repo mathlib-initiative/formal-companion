@@ -435,6 +435,15 @@ class TestTheGeneratedOverlayFiles(unittest.TestCase):
         self.assertIn("A &amp; B, after ExampleLib", raw)
         self.assertNotIn("A & B", raw)
 
+    def test_the_landing_page_titles_the_text_as_the_page_prints_it(self):
+        """`text.title` is LaTeX; a reader of the site is given the title the PDF shows."""
+        settings = self.settings()
+        settings["text"]["title"] = "The Seifert--van Kampen theorem, after ExampleLib"
+        raw = ioverlay.index_html(settings).decode("utf-8")
+        self.assertIn("<title>The Seifert–van Kampen theorem, after ExampleLib</title>", raw)
+        self.assertIn("<h1>The Seifert–van Kampen theorem, after ExampleLib</h1>", raw)
+        self.assertNotIn("Seifert--van", raw)
+
     def test_the_two_hrefs_point_at_each_other(self):
         self.assertEqual(ioverlay.viewer_href(), "pdf-overlay/viewer/index.html")
         self.assertEqual(ioverlay.back_href(), "../../index.html")

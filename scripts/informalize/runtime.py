@@ -146,9 +146,9 @@ def fcitems():
 
 
 def check_items():
-    """The runtime's own `tools/check_items.py`, for its `crop`: the text poppler finds
-    inside one box of `markers.json`, which rule 9 of the box check and the export of the
-    boxes (`annotations.export.boxtext`) read through one cropper."""
+    """The runtime's own `tools/check_items.py`, for its `read_box`: the text the page
+    prints inside one box of `markers.json`, which rule 9 of the box check and the export
+    of the boxes (`annotations.export.boxtext`) read through one box reader."""
     return _tool_module(CHECK_ITEMS_MODULE, "check_items.py", {"fccommon": fccommon()})
 
 

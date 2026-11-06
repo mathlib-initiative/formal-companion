@@ -628,6 +628,114 @@ class TestNotionRule(unittest.TestCase):
         self.assertIn("prints nothing", report.fails[0])
 
 
+def glyphs(spans: list[tuple], gaps: dict[int, float] | None = None) -> list:
+    """The glyph list of `printed_box`, from ``(text, font, size, baseline shift)`` spans.
+
+    Each span starts a twentieth of its size after the one before, which is the kerning
+    of two characters the page sets side by side; `gaps[n]` is span n's own gap instead.
+    White space is not a glyph: `box_glyphs` drops it, as the separators carry it.
+    """
+    out = []
+    for n, (text, family, size, shift) in enumerate(spans):
+        gap = (gaps or {}).get(n, 0.0 if n == 0 else 0.05 * size)
+        for i, char in enumerate(text):
+            if not char.isspace():
+                out.append(check_items.Glyph(char=char, span=n, head=(i == 0), gap=gap,
+                                             top=shift, bottom=size + shift, size=size,
+                                             family=family))
+    return out
+
+
+class TestTheGlyphsOfABox(unittest.TestCase):
+    """`printed_box`: pdftotext's crop with the characters and the spacing the page shows.
+
+    The glyph lists are written out here rather than read from a PDF, so that every rule
+    of the reader -- the fonts whose letters poppler flattens, the script runs, the three
+    spaces that are poppler's and not the page's -- is checked without TeX or poppler.
+    The reader on a real PDF is `TestTheChecksCatchARealBuild`'s.
+    """
+
+    def printed(self, spans, flat, gaps=None):
+        return check_items.printed_box(glyphs(spans, gaps), flat)
+
+    def test_a_double_struck_letter_and_a_script_capital(self):
+        text, kept = self.printed([("N", "SVPXIN+MSBM10", 16.0, 0.0)], "N\n\n")
+        self.assertEqual((text, kept), ("ℕ\n\n", []))
+        text, _ = self.printed([("H", "TQXYZC+LMMathSymbols10", 16.0, 0.0)], "H")
+        self.assertEqual(text, "ℋ")
+        # a letter neither block names is taken from the block that has a hole for it
+        text, _ = self.printed([("A", "ABCDEF+MSBM10", 16.0, 0.0)], "A")
+        self.assertEqual(text, "𝔸")
+        # and the same letters in a text font are themselves
+        text, _ = self.printed([("NH", "WBJWHC+LMRoman10", 16.0, 0.0)], "NH")
+        self.assertEqual(text, "NH")
+
+    def test_the_operator_the_page_prints_for_the_font_s_character(self):
+        text, _ = self.printed([("◦", "TQXYZC+LMMathSymbols10", 16.0, 0.0)], "◦")
+        self.assertEqual(text, "∘")
+
+    def test_a_subscript_run_every_character_of_which_has_one(self):
+        """`Π1 (X)` is `Π₁(X)`: the digit is small and low, and the space is poppler's."""
+        text, kept = self.printed(
+            [("Π", "WBJWHC+LMRoman10", 16.0, 0.0), ("1", "ZVZNIX+LMRoman8", 12.0, 5.0),
+             ("(X)", "WBJWHC+LMRoman10", 16.0, 0.0)], "Π1 (X)")
+        self.assertEqual((text, kept), ("Π₁(X)", []))
+
+    def test_a_script_run_Unicode_has_no_characters_for_is_poppler_s(self):
+        """`ιS` is `ιS`, reported: Unicode has no small capital S."""
+        text, kept = self.printed(
+            [("ι", "DLETRZ+LMMathItalic10", 16.0, 0.0),
+             ("S", "SCFNQQ+LMMathItalic8", 12.0, 5.0)], "ιS")
+        self.assertEqual((text, kept), ("ιS", ["S"]))
+
+    def test_a_superscript_run_is_read_the_other_way(self):
+        text, kept = self.printed(
+            [("τ", "DLETRZ+LMMathItalic10", 16.0, 0.0),
+             ("−1", "HBAWBJ+LMMathSymbols8", 12.0, -6.0)], "τ−1")
+        self.assertEqual((text, kept), ("τ⁻¹", []))
+
+    def test_a_smaller_font_on_the_line_s_own_baseline_is_no_script(self):
+        text, kept = self.printed(
+            [("A", "WBJWHC+LMRoman10", 16.0, 0.0), ("1", "ZVZNIX+LMRoman8", 12.0, 4.0)], "A1")
+        self.assertEqual((text, kept), ("A1", []))   # the two baselines are 16 and 16
+
+    def test_a_binary_operator_stands_in_the_space_the_page_gives_it(self):
+        """A space on each side where the page leaves one, and none where it does not."""
+        spans = [("f", "DLETRZ+LMMathItalic10", 16.0, 0.0),
+                 ("◦", "TQXYZC+LMMathSymbols10", 16.0, 0.0),
+                 ("γ", "DLETRZ+LMMathItalic10", 16.0, 0.0)]
+        # the page leaves a medium space, which poppler closed up on the right
+        self.assertEqual(self.printed(spans, "f ◦γ", {1: 3.6, 2: 3.6})[0], "f ∘ γ")
+        # and a kerned one, as a unary sign is, keeps the page's own nothing
+        self.assertEqual(self.printed(spans, "f ◦ γ")[0], "f∘γ")
+
+    def test_the_space_before_a_closing_parenthesis_is_poppler_s(self):
+        text, _ = self.printed([("(f", "DLETRZ+LMMathItalic10", 16.0, 0.0),
+                                (")", "WBJWHC+LMRoman10", 16.0, 0.0)], "(f )",
+                               {1: 1.8})            # the italic f's side bearing
+        self.assertEqual(text, "(f)")
+
+    def test_a_word_space_at_a_script_run_s_edge_is_the_page_s(self):
+        """The edge rule drops what the page does not show, never a word space."""
+        spans = [("x", "DLETRZ+LMMathItalic10", 16.0, 0.0),
+                 ("1", "ZVZNIX+LMRoman8", 12.0, 5.0),
+                 ("and y", "WBJWHC+LMRoman10", 16.0, 0.0)]
+        self.assertEqual(self.printed(spans, "x1 and y", {2: 5.3})[0], "x₁ and y")
+
+    def test_a_line_break_is_left_as_pdftotext_broke_it(self):
+        """Each line has its own size and baseline, and no rule reaches across a break."""
+        spans = [("one", "WBJWHC+LMRoman10", 16.0, 0.0),
+                 (")", "WBJWHC+LMRoman10", 16.0, 40.0)]
+        self.assertEqual(self.printed(spans, "one\n)")[0], "one\n)")
+
+    def test_the_tables_name_the_characters_the_page_can_be_written_with(self):
+        self.assertEqual(check_items.SUBSCRIPTS["1"], "₁")
+        self.assertEqual(check_items.SUPERSCRIPTS["1"], "¹")
+        self.assertEqual(check_items.SUBSCRIPTS["i"], "ᵢ")
+        self.assertNotIn("S", check_items.SUBSCRIPTS)   # Unicode has no small capital S
+        self.assertNotIn("[", check_items.SUBSCRIPTS)
+
+
 class TestRulesWithoutTeX(unittest.TestCase):
     """Rules 1 to 7 on a fake build of the synthetic items: clean, then one break each."""
 

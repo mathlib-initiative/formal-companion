@@ -242,6 +242,18 @@ caps:
   which may download and run code; off by default.
 - `text.license` is one of `overlay.config.OPEN_LICENSES`; `text.job` names the PDF
   (`<job>.pdf`).
+- `text.title` is the title `informal/main.tex` typesets, so it is written as TeX reads it
+  (`The Seifert--van Kampen theorem`), and `main.tex` is the one file given it as written
+  (`project.slots`' `title_tex`, escaped). **Every other place is given the title as the
+  title page prints it**, `config.printed_title`: the output repository's `README.md` and
+  `informal/STYLE-project.md`, the message of the commit `init` makes, `site/index.html`'s
+  `<title>` and `<h1>`, `pdf-overlay/overlay.config.json`'s `title` (the viewer's tab and
+  header) and the `citation.title` on every annotation's source end
+  (`cf informalize overlay`'s `--source-title`, section 10). A title is plain text that
+  `main.tex` escapes, so the whole of what the page does to it is the ligatures, and the
+  one table of those is the export's (`annotations.export.boxtext.ligatures`), which reads
+  them in a notion's words too. `cf informalize status` is the exception: it prints the row
+  `informalize.yaml` holds, for the maintainer who edits that file.
 - `reference` is optional; `work` is a citation line (author, title, edition, publisher,
   year), never a sentence of the work.
 - No host and no model is named here: `workspace.yaml` is the only place either is
@@ -722,7 +734,7 @@ Apache License 2.0, travels with it as `LICENSE-runtime`, whatever license the t
 | `tools/build_pdf.sh` | `build_pdf.sh` | main file and job from `informalize.json`; builds a snapshot; `-norc` and `openin_any=p`; refuses an unsafe `<outdir>` and a second build into one; a receipt |
 | `tools/canonical_pdf.sh` | the pilot's final-build steps | section 9 |
 | `tools/extract_markers.py` | `extract_markers.py` | constants from `informalize.json`; a region's first and last line from the above and below markers; the notion boxes |
-| `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check; the notions (rule 11); `crop`, rule 9's reader of one box, which the export titles a notion with (section 10) |
+| `tools/check_items.py` | `check_items.py` | `--aux-only` and `--conventions`; hypotheses from `hypotheses.json`; the reference check; the notions (rule 11); `read_box`, rule 9's reader of one box — pdftotext's crop against the page's own glyphs (`pdftohtml -xml`) — which the export titles a notion with (section 10) |
 | `tools/proof_sheets.py` | `proof_sheets.py` | ink level 224, as `extract_markers.py`; an edge through ink is judged at `res_dpi`, a stroke touching ink only reported; ink outside an item's boxes is fatal |
 | `tools/fccommon.py` | `rrcommon.py` | reads `informalize.json`, `declarations.json`, `items.json`, `hypotheses.json`; no `gist_parts`; `printed_lean_names`, rule 2's question of a text file |
 | `tools/fcitems.py` | the pilot's item verifier | the rules of `items.json` and `declarations.json` and the keyword check (section 5.4), which `cf informalize check-items` and the gate (section 8.3 rule 4) share |
@@ -850,9 +862,14 @@ job's own `.aux`, `.log`, `.out`, `.toc` and `.pdf`, is refused (exit 1).
 and, without `--aux-only` (these need poppler):
 
 8. `markers.json` is current: its `pdf_sha256` is the PDF's and its entries are the aux's;
-9. every box, cropped with `pdftotext -x -y -W -H` at 288 dpi, holds text: an item's first
-   box its head ("Theorem 1.2"), a part's first box its label ("(a)"), an item's boxes
-   together the words of its title, and a notion's boxes some ink of their own;
+9. every box, cropped with `pdftotext -x -y -W -H` at 288 dpi and read against the page's
+   own glyphs (`pdftohtml -xml`, section 10), holds text: an item's first box its head
+   ("Theorem 1.2"), a part's first box its label ("(a)"), an item's boxes together the
+   words of its title, and a notion's boxes some ink of their own. What it compares is
+   that text through `norm`, whose NFKC folds a double-struck letter and a script back
+   (`ℕ` to `N`, `₁` to `1`); the head, the label and a title's words are not mathematics,
+   so nothing this check asks of a box turns on the glyphs, and `pdftohtml` is the one
+   poppler program it does not require;
 10. boxes of different items, and of two parts of one item, do not overlap, and a part's
     boxes lie inside its item's.
 
@@ -1375,8 +1392,9 @@ vendored checker accepts in canonical form:
 
 - `companion` is the **library** (`repo` from `library.url`, `commit` the library's), because
   `overlay.shards` makes every Lean end from `companion.repo` at `companion.commit`;
-- one `pdf` source: `title` the text's title (`--source-title`, which `cf informalize
-  overlay` takes from `text.title`; no file of the output repository carries it), the
+- one `pdf` source: `title` the text's title as the title page prints it
+  (`--source-title`, which `cf informalize overlay` takes from `text.title` through
+  `config.printed_title`; no file of the output repository carries it), the
   release URL, sha256, bytes, page count, `id` the informalize id;
 - one item per item without parts and one per part (`sub` the letter), `id_source: label`,
   so its id is `<kind>-<id>[-<letter>]` (`ids.item_label_id`); locations are
@@ -1394,11 +1412,31 @@ vendored checker accepts in canonical form:
   `exact`. The words the markers carry are the LaTeX the drafter wrote
   (`$\ball{x}{\rho}$`), and a card must show what the page shows, so the export crops
   each box at `boxes.res_dpi` with poppler and joins the crops in reading order
-  (`annotations.export.boxtext`, around the one cropper, `check_items.crop` of rule 9 —
-  the box check has already read every box, so an approved PDF and its proof sheets stay
-  valid and nothing is rebuilt). What poppler gives is kept character for character
-  (Greek, operators, subscripts); only white space is collapsed, a line break closed up,
-  and a sentence's comma or full stop that the box's padding caught dropped. An item
+  (`annotations.export.boxtext`, around the one box reader, `check_items.read_box` of
+  rule 9 — the box check has already read every box, so an approved PDF and its proof
+  sheets stay valid and nothing is rebuilt). That reader gives the page's own characters
+  and not the ones a font's encoding spells them with: pdftotext clips the box, and
+  `pdftohtml -xml` says what font, size and place the page gives each character it
+  cropped. A capital of the AMS double-struck alphabet is its Unicode letter (`ℕ`, `ℝ`,
+  the U+1D538 block for the rest), a capital of the math symbol font, where Computer
+  Modern keeps the calligraphic alphabet, is its Unicode script capital (`ℋ`), and a
+  character of that font that is not the operator the page prints is the operator (`∘`
+  for `\circ`). A run the page sets small and low, or small and high, is written in the
+  Unicode subscript or superscript characters for it, but only where every character of
+  the run has one: `Π₁(f)` and `ℋᵢ` are written, and `ι` with an `S` under its shoulder
+  stays `ιS` and is reported (`counts.titles_scripts_kept`, the lossy
+  `title.script_run`). The overlay's viewer sets such a run as a real subscript
+  (`viewer-core.js`'s `scriptRuns`), so a card shows what the page shows. Three spaces
+  are poppler's and not the page's and are settled by the gap the page leaves — the one
+  at a script run's edge, the one before a closing parenthesis, and the one a binary
+  operator does or does not stand in — so `Π1 (f )` is `Π₁(f)` and `f ◦γ` is `f ∘ γ`.
+  Everything else poppler gave is kept character for character; only white space is
+  collapsed, a line break closed up, and a sentence's comma or full stop that the box's
+  padding caught dropped. Where the glyphs cannot be had — `pdftohtml` is not on PATH, or
+  what it reads is not what pdftotext cropped, which happens where the two readers order
+  a subscript differently in a box of several lines — the text is pdftotext's own,
+  flattened, and reported (`counts.titles_glyphs_unread`, the lossy
+  `title.flattened_glyphs`). An item
   whose `items.json` title holds TeX markup is titled the same way, from the parenthesis
   its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a ligature counts as
   markup, since `Seifert--van Kampen` is as much a source spelling as `$\ball{x}{\rho}$`
@@ -1443,7 +1481,8 @@ other than `pdf-overlay/verso.json`, which is the maintainer's own file and this
 to commit (step 1), then, in the output repository:
 
 1. writes `pdf-overlay/overlay.config.json` through `overlay.sync.init` (`source_id` the
-   informalize id, the title from `text.title`, `<job>.pdf`) and sets `pdf.publish.license`
+   informalize id, the title as the title page prints it, `config.printed_title` of
+   `text.title` — section 5.1 — and `<job>.pdf`) and sets `pdf.publish.license`
    to the text's
    license, `site.output_root` to `site`, `build.commands` to none, `display.strip_prefix`
    to `<prefix>.` and `display.minimal` to true; writes `site/index.html`, the `.gitignore`

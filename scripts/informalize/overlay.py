@@ -8,7 +8,9 @@ machine, in the output repository, and nowhere else:
   pilot did by hand: it writes `pdf-overlay/overlay.config.json` through
   `overlay.sync.init` and sets the keys an informalization companion always has (the
   text's license under `pdf.publish`, `site.output_root` `site`, no build command, the
-  library's prefix as `display.strip_prefix`, `display.minimal`), renders the landing page
+  library's prefix as `display.strip_prefix`, `display.minimal`, and the text's title as
+  the title page prints it rather than as `main.tex` sets it,
+  `config.printed_title`), renders the landing page
   `site/index.html` -- with the overlay link block already in it, so the build's injection
   replaces it in place and leaves the tracked file as it is -- and the two workflows, and
   commits them, with the `pdf-overlay/verso.json` the maintainer rsynced back from the
@@ -133,7 +135,7 @@ def back_href(mount: str = overlay_sync.OVERLAY_DIRNAME, index: str = INDEX_NAME
 def config_value(cfg: dict, repo: OutputRepo) -> dict:
     """`overlay.config.json` for this informalization companion, every key settled here."""
     job = cfg["text"]["job"]
-    overlay_sync.init(repo.root, source_id=cfg["id"], title=cfg["text"]["title"],
+    overlay_sync.init(repo.root, source_id=cfg["id"], title=config.printed_title(cfg),
                       file_name=f"{job}.pdf", force=True)
     value = json.loads((repo.root / CONFIG).read_text(encoding="utf-8"))
     name = config.library_name(cfg["library"]["url"])
@@ -153,7 +155,7 @@ def index_html(cfg: dict) -> bytes:
     tool = build_site_tool()
     library = cfg["library"]
     values = {
-        "title": html.escape(cfg["text"]["title"]),
+        "title": html.escape(config.printed_title(cfg)),
         "theorem": html.escape(library["theorem"]),
         "library_name": html.escape(config.library_name(library["url"])),
         "library_url": html.escape(library["url"], quote=True),
@@ -337,7 +339,7 @@ def overlay(workspace, informalize_id: str, *, pdf_url: str,
     # 2. the annotations, the overlay runtime and the bundle
     approved = gates.gate_state(workspace, informalize_id, "items")[0] == "current"
     extra = ["--pdf", str(canonical), "--pdf-url", pdf_url, "--library-src", str(library_src),
-             "--source-title", cfg["text"]["title"]]
+             "--source-title", config.printed_title(cfg)]
     if packages_src is not None:
         extra += ["--packages-src", str(packages_src)]
     if approved:

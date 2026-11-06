@@ -424,14 +424,38 @@ words a `\fcnotion` records are a drafter's source (`$\ball{x}{\rho}$`), and a
 card titled with those is a card no reader of the page recognises, so the
 export crops each of the notion's boxes out of the canonical PDF with poppler,
 at the `boxes.res_dpi` of `informalize.json`, and joins the crops in the order
-the markers list them, which is reading order. The cropper is the box check's
-own (`check_items.crop`, which rule 9 already runs over every box), so nothing
-is measured a second way and an approved PDF and its proof sheets stay valid:
-the titles are read at export time and nothing is rebuilt. What poppler gives
-is kept character for character (Greek, operators, subscripts), and only its
-white space is collapsed, a line break closed up (a hyphen at a line end kept,
-since nothing here can tell it from one TeX broke a word at) and a sentence's
-comma or full stop that the box's padding caught dropped. An **item** whose
+the markers list them, which is reading order. The reader is the box check's
+own (`check_items.read_box`, which rule 9 already runs over every box), so
+nothing is measured a second way and an approved PDF and its proof sheets stay
+valid: the titles are read at export time and nothing is rebuilt.
+
+What that reader gives is the page's own characters, not the ones a font's
+encoding spells them with. pdftotext clips the box and settles which characters
+are in it; `pdftohtml -xml` says what font, size and place the page gives each
+of them, and the two are held against each other. A capital of the AMS
+double-struck alphabet is its Unicode letter (`ℕ`, `ℝ`, and the U+1D538 block
+for a letter Unicode names no character of its own for), a capital of the math
+symbol font, where Computer Modern keeps the calligraphic alphabet, is its
+Unicode script capital (`ℋ`), and a character of that font that is not the
+operator the page prints is the operator (`∘` for `\circ`, which poppler reads
+as the white bullet of the encoding). A run the page sets small and low, or
+small and high, is written in the Unicode subscript or superscript characters
+for it — but only when every character of the run has one, so `Π₁(f)` and `ℋᵢ`
+are written and `ι` with an `S` under its shoulder stays `ιS`, counted in
+`counts.titles_scripts_kept` and the lossy `title.script_run`. Three spaces are
+the reader's and not the page's: the one at a script run's edge, the one before
+a closing parenthesis, and the one a binary operator does or does not stand in,
+each settled by the gap the page leaves (`MATH_SPACE_EM`, `TIGHT_SPACE_EM`), so
+`Π1 (f )` is `Π₁(f)` and `f ◦γ` is `f ∘ γ`. Everything else poppler gave is
+kept character for character, and only its white space is collapsed, a line
+break closed up (a hyphen at a line end kept, since nothing here can tell it
+from one TeX broke a word at) and a sentence's comma or full stop that the
+box's padding caught dropped. Where the glyphs cannot be had — `pdftohtml` is
+not on PATH, or what it reads is not what pdftotext cropped, which happens
+where poppler's two readers order a subscript differently in a box of several
+lines — the text is pdftotext's own, flattened, counted in
+`counts.titles_glyphs_unread` and the lossy `title.flattened_glyphs`. An
+**item** whose
 `items.json` title holds TeX markup is titled the same way, from the
 parenthesis its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a
 title that is plain prose is the table's, with nothing cropped. A ligature is
@@ -454,6 +478,9 @@ relation no legacy token converts back to), `markers.leanrefs_outside_a_part`
 box annotates), `item.title` (a title holding a URL, which the
 `external-urls` lint refuses), `title.printed_text` (a title the canonical PDF
 could not be read for, written as the words with their TeX markup stripped),
+`title.script_run` (a subscript or a superscript Unicode has no characters for,
+written beside its base as poppler read it), `title.flattened_glyphs` (a box
+whose glyphs could not be read, whose text is pdftotext's flattened one),
 `source.page_size` (markers with no page
 size in points) and `destination.reference` (a reference row with neither a
 documentation URL nor a pinned dependency, whose card has no page to open).

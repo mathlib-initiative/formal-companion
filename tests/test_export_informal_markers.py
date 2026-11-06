@@ -682,8 +682,52 @@ class TestTheTitlesWithoutPoppler(unittest.TestCase):
                          [TITLED, "notion:ExampleLib.GlueData"])
 
 
+@unittest.skipIf(shutil.which("pdftotext") is None or shutil.which("pdftohtml") is None,
+                 "poppler's pdftotext and pdftohtml are not both on PATH")
+class TestTheGlyphsOfARealPage(unittest.TestCase):
+    """The one box reader on a PDF: the characters the page shows, not the flat ones.
+
+    The rules themselves are `tests/test_informalize_runtime.py`'s, on glyph lists
+    written out there; this is the reader end to end, with poppler on both sides of it.
+    """
+
+    #: `P` at 10pt, `1` at 7pt two points lower, `(X)` at 10pt: a subscript; then `S`
+    #: with a `T` under its shoulder, which Unicode has no small capital for
+    RUNS = [(100.0, 700.0, 10.0, "P"), (106.0, 698.0, 7.0, "1"), (110.0, 700.0, 10.0, "(X)"),
+            (160.0, 700.0, 10.0, "S"), (166.5, 698.0, 7.0, "T")]
+
+    def setUp(self):
+        self.pdf = scratch(self) / "page.pdf"
+        self.pdf.write_bytes(minimal_pdf([self.RUNS]))
+
+    def read(self, left: float, width: float):
+        box = [1, left / PAGE[0], (PAGE[1] - 712.0) / PAGE[1], width / PAGE[0], 20.0 / PAGE[1]]
+        return boxtext.reader()(self.pdf, box, PAGE, 288)
+
+    def test_a_subscript_run_is_written_in_the_characters_for_it(self):
+        read = self.read(98.0, 30.0)
+        self.assertTrue(read.glyphs)
+        self.assertEqual((boxtext.printed(read.text), read.kept), ("P₁(X)", []))
+
+    def test_a_run_Unicode_has_no_characters_for_is_poppler_s_and_is_reported(self):
+        read = self.read(158.0, 20.0)
+        self.assertEqual((boxtext.printed(read.text), read.kept), ("ST", ["T"]))
+
+    def test_without_pdftohtml_the_text_is_the_one_pdftotext_flattens(self):
+        """The glyphs cannot be read, so the crop is today's and the reader says so."""
+        from informalize import runtime as informalize_runtime
+        module = informalize_runtime.check_items()
+        which = shutil.which
+        with unittest.mock.patch.object(
+                module.shutil, "which",
+                lambda name: None if name == "pdftohtml" else which(name)):
+            read = self.read(98.0, 30.0)
+        self.assertFalse(read.glyphs)
+        self.assertEqual((boxtext.printed(read.text), read.kept), ("P1(X)", []))
+
+
 class TestTheTextInsideABox(unittest.TestCase):
-    """`annotations.export.boxtext`, the piece around the runtime's one cropper."""
+    """`annotations.export.boxtext`, the piece around the runtime's one box reader."""
 
     def test_it_reads_tex_markup_and_strips_it(self):
         self.assertTrue(boxtext.has_tex(r"$\ball{x}{\rho}$"))
@@ -720,14 +764,14 @@ class TestTheTextInsideABox(unittest.TestCase):
         with no_poppler():
             text = boxtext.BoxText(Path("/nowhere.pdf"), 288)
             self.assertFalse(text.available)
-            self.assertEqual(text.of([[1, 0.1, 0.1, 0.1, 0.1]]), "")
+            self.assertEqual(text.of([[1, 0.1, 0.1, 0.1, 0.1]]).text, "")
             self.assertIn("pdftotext", text.why)
 
-    def test_the_cropper_is_the_runtime_s_own(self):
-        """One cropper: rule 9 of the box check reads a box through the same function."""
+    def test_the_box_reader_is_the_runtime_s_own(self):
+        """One box reader: rule 9 of the box check reads a box through the same function."""
         from informalize import runtime as informalize_runtime
         check_items = informalize_runtime.check_items()
-        self.assertIs(boxtext.cropper(), check_items.crop)
+        self.assertIs(boxtext.reader(), check_items.read_box)
 
 
 # ---------------------------------------------------------------------------

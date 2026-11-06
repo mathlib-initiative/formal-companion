@@ -74,6 +74,23 @@ def library_name(url: str) -> str:
     return name[:-4] if name.endswith(".git") else name
 
 
+def printed_title(cfg: dict) -> str:
+    """The text's title as the title page prints it, for every place outside the PDF.
+
+    `text.title` is written as TeX reads it, because `informal/main.tex` typesets it: the
+    maintainer writes `The Seifert--van Kampen theorem` and the page prints an en dash.  A
+    reader of the landing page, of the viewer's header, of `README.md` or of a card's
+    citation sees none of the source, so each of those is given this, and `main.tex` alone
+    is given the title as written (`informalize.project`'s `title_tex` slot).  The title
+    is otherwise plain text, which `main.tex` escapes (`project.tex_escape`), so the whole
+    of what the page does to it is the ligatures, and the one table of those is the
+    export's (`annotations.export.boxtext.ligatures`), which reads them in a notion's
+    words too.
+    """
+    from annotations.export import boxtext
+    return boxtext.ligatures(str((cfg.get("text") or {}).get("title") or ""))
+
+
 def problems(doc: Any, *, sessions: int = SESSION_LIMIT) -> list[str]:
     """Every rule of section 5.1 the document breaks; empty when it keeps them all."""
     if not isinstance(doc, dict):

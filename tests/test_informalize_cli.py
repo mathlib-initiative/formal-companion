@@ -649,6 +649,20 @@ class TestInit(_Workspace):
                          {k: v for k, v in spec_examples()["formal-companion/informalize-runtime"]
                           .items() if k != "source_date_epoch"})
 
+    def test_the_prose_files_title_the_text_as_the_page_prints_it(self):
+        """`main.tex` is given the LaTeX, every other file the title the page shows."""
+        self.cf("informalize", "init", ID,
+                *[a if a != "The glue theorem, after ExampleLib"
+                  else "The Seifert--van Kampen theorem, after ExampleLib" for a in INIT])
+        main = (self.repo / "informal/main.tex").read_text(encoding="utf-8")
+        self.assertIn(r"\title{The Seifert--van Kampen theorem, after ExampleLib}", main)
+        for name in ("README.md", "informal/STYLE-project.md"):
+            text = (self.repo / name).read_text(encoding="utf-8")
+            self.assertIn("The Seifert–van Kampen theorem, after ExampleLib", text)
+            self.assertNotIn("Seifert--van", text)
+        self.assertIn("The Seifert–van Kampen theorem, after ExampleLib",
+                      self.git("log", "-1", "--format=%s"))
+
     def test_without_a_reference_work_the_text_cites_none(self):
         args = INIT[:INIT.index("--reference")]
         self.cf("informalize", "init", ID, *args)

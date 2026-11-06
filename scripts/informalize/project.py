@@ -26,7 +26,7 @@ from cflib.paths import templates_dir
 from cflib.templates import render
 from overlay.config import OPEN_LICENSES
 
-from informalize.config import library_name
+from informalize.config import library_name, printed_title
 
 #: the license's name in a sentence, in Markdown and in LaTeX
 LICENSE_NAMES = {
@@ -86,7 +86,7 @@ def slots(cfg: dict) -> dict[str, str]:
         "library_url": library["url"],
         "library_commit": library["commit"],
         "reference_bibitem_tex": bibitem,
-        "title": title,
+        "title": printed_title(cfg),
         "theorem": library["theorem"],
         "library_name": name,
         "license_name": markdown_name,

@@ -112,6 +112,53 @@ release has something to say.
 
 ### Fixed
 
+- **The text's title was shown as TeX everywhere outside the PDF.** `text.title` is what
+  `informal/main.tex` typesets, so it is written as TeX reads it
+  (`The Seifert--van Kampen theorem, after <the library>`) and the page prints an en dash; but
+  the output repository's `README.md` heading and `informal/STYLE-project.md`, the message
+  of the commit `init` makes, `site/index.html`'s `<title>` and `<h1>`,
+  `pdf-overlay/overlay.config.json`'s `title` -- the viewer's tab and header -- and the
+  `citation.title` on every annotation's source end were given the source, and a reader
+  saw the two hyphens. Each is now given the title as the title page prints it,
+  `informalize.config.printed_title`, and `main.tex` alone is given the source
+  (`project.slots`' `title_tex`). A title is plain text that `main.tex` escapes, so the
+  whole of what the page does to it is the ligatures, and the one table of those is the
+  export's (`annotations.export.boxtext.ligatures`, which reads them in a notion's words
+  too). `cf informalize status` still prints the row `informalize.yaml` holds, for the
+  maintainer who edits that file. Of an existing repository, `cf informalize overlay`
+  rewrites the landing page, the overlay config and the annotations; nothing rewrites
+  `README.md` or `STYLE-project.md`, which are the project's from `init` on.
+- **Poppler flattened the glyphs a notion's title is read from.** The titles a card shows
+  were `pdftotext`'s, which reads a character out of the font's encoding and loses what
+  the page draws: `N` for `ℕ`, `R` for `ℝ`, `Π1 (f )` for `Π₁(f)`, `f ◦γ` for `f ∘ γ`,
+  `the smallest one containing every Hi` for `ℋᵢ`. The one box reader
+  (`check_items.read_box`, rule 9's) now holds pdftotext's crop against the page's own
+  glyphs, which `pdftohtml -xml` gives with their font, size and place. A capital of the
+  AMS double-struck alphabet becomes its Unicode letter (`ℕ`, `ℝ`, the U+1D538 block for
+  the rest), a capital of the math symbol font -- where Computer Modern keeps the
+  calligraphic alphabet -- its Unicode script capital (`ℋ`), and a character of that font
+  that is not the operator the page prints the operator (`∘` for `\circ`). A run the page
+  sets small and low, or small and high, is written in the Unicode subscript or
+  superscript characters for it, but only where every character of the run has one, so
+  `Π₁(f)` and `ℋᵢ` are written and an `ι` with an `S` under its shoulder stays `ιS` and is
+  reported (`counts.titles_scripts_kept`, the lossy `title.script_run`); the overlay's
+  viewer sets such a run as a real subscript, so the card shows what the page shows. Three
+  spaces are poppler's and not the page's and are settled by the gap the page leaves: the
+  one at a script run's edge, the one before a closing parenthesis, and the one a binary
+  operator does or does not stand in. Where the glyphs cannot be read -- `pdftohtml` is
+  not on PATH, or what it reads is not what pdftotext cropped, which happens where the two
+  readers order a subscript differently in a box of several lines -- the text is
+  pdftotext's own and is reported (`counts.titles_glyphs_unread`, the lossy
+  `title.flattened_glyphs`). **Rule 9 of `check_items.py` compares this text too**, and
+  what it compares does change: the NFKC of its own `norm` folds a double-struck letter
+  and a script back (`ℕ` to `N`, `₁` to `1`), and the spacing and the operator are left,
+  so 28 of the acceptance run's 86 boxes read differently. Its verdicts do not move,
+  because what rule 9 looks for in a box is an item's head (`Theorem 1.2`), a part's label
+  (`(a)`) and the words of a title that are four letters or more, and none of those is
+  mathematics: the approved PDF passes `check_items --strict` unchanged, with the new
+  reader and without `pdftohtml` both. Nothing is rebuilt: the titles are read at export
+  time from the approved PDF and `markers.json`, as before. On the acceptance run's 54
+  notions, 11 titles change, 3 script runs are kept and no box falls back.
 - **`main.tex`'s introduction printed the theorem's Lean name.** The template `cf
   informalize init` renders wrote "the theorem `\texttt{<Lean name>}` of the Lean library
   ...", against the rule the rest of the text keeps: the annotations carry the names, and

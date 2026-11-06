@@ -213,7 +213,7 @@ def init(workspace, settings: dict, *, force: bool = False) -> Result:
     tracked = repo.tracked()
     mine = [p for p in [*project.project_files(settings), "LICENSE"]
             if p not in tracked or p in result.written]
-    title = settings["text"]["title"]
+    title = config.printed_title(settings)
     result.commit = repo.commit(sorted(set(mine + synced.owned)),
                                 f"Start the informal companion {iid}: {title}")
     result.head = repo.head()

@@ -32,10 +32,16 @@ annotation per box:
   canonical PDF prints inside its boxes (`boxtext`, the box check's own
   cropper): the page shows ``B(x, rho)`` where the source says
   ``$\\ball{x}{\\rho}$``, and a card titled with the LaTeX would be a card no
-  reader of the page recognises.  An item whose title is written with TeX
+  reader of the page recognises.  The reader holds the crop against the page's
+  own glyphs, so the title carries the characters the page prints and not the
+  ones a font's encoding spells them with: ``ℕ``, ``ℋᵢ``, ``Π₁(f)``,
+  ``f ∘ γ``.  An item whose title is written with TeX
   markup is titled the same way, from the parenthesis its head prints; the
   fallback, for a PDF no box of can be read, is the words with their markup
-  stripped, and the report names every title that took it.  The record is
+  stripped, and the report names every title that took it.  Two narrower
+  reports stand beside it: a script run Unicode has no characters for, left
+  beside its base (``ιS``), and a box whose glyphs could not be read, whose
+  title is pdftotext's flattened text.  The record is
   linked to the notion's constant with role ``key`` and relation ``exact``.  The
   informal text prints neither the name nor a documentation link (`STYLE.md`,
   "The conventions section"); this record is what supplies them.  A constant of
@@ -408,13 +414,41 @@ class _Export:
         if not title or not boxtext.has_tex(title):
             return title
         head = f"{self.fc.KIND_NAMES.get(item['kind'], item['kind'])} {item['id']}"
-        found = boxtext.parenthesis_after(self.box_text.of((entry.get("boxes") or [])[:1]), head)
-        return self.printed(entry["id"], found, title, "the item's head")
+        group = self.read_boxes(entry["id"], (entry.get("boxes") or [])[:1])
+        return self.printed(entry["id"], boxtext.parenthesis_after(group.text, head), title,
+                            "the item's head")
 
     def notion_title(self, entry: dict, words: str) -> str:
         """The notion's title: the text the page prints inside its boxes, in reading order."""
-        return self.printed(entry["id"], self.box_text.of(entry.get("boxes") or []), words,
-                            "the notion's boxes")
+        group = self.read_boxes(entry["id"], entry.get("boxes") or [])
+        return self.printed(entry["id"], group.text, words, "the notion's boxes")
+
+    def read_boxes(self, where: str, boxes: list) -> boxtext.BoxGroup:
+        """One entry's boxes read, with what the page gave up on the way reported.
+
+        Two things it can give up.  A subscript or a superscript run holding a character
+        Unicode has no small one for (a capital, a bracket) is left as poppler read it,
+        side by side with its base: the page prints an `ι` with an `S` under its right
+        shoulder and the title says `ιS`.  And where the page's own glyphs cannot be read
+        -- poppler's `pdftohtml` is not on PATH, or what it reads is not what pdftotext
+        cropped -- the title is pdftotext's flattened text, which prints a double-struck
+        `N` as `N` and a subscript as a digit of its own.
+        """
+        group = self.box_text.of(boxes)
+        if group.kept:
+            self.report.lose("title.script_run", len(group.kept),
+                             "a subscript or a superscript Unicode has no characters for is "
+                             "written beside its base, as poppler read it",
+                             [f"{where}: {run}" for run in group.kept[:5]])
+            self.report.counts.setdefault("titles_scripts_kept", []).append(
+                f"{where}: {', '.join(group.kept)}")
+        if not group.glyphs:
+            self.report.lose("title.flattened_glyphs", 1,
+                             "a title read without the page's own glyphs is pdftotext's text, "
+                             "which flattens a double-struck letter and a script",
+                             [where])
+            self.report.counts.setdefault("titles_glyphs_unread", []).append(where)
+        return group
 
     def printed(self, where: str, found: str | None, title: str, what: str) -> str:
         """``found``, or the words of the source with their TeX markup stripped, reported.
@@ -732,6 +766,8 @@ class _Export:
         counts["library"] = {"repo": self.repo_id, "commit": self.library_commit}
         counts.setdefault("titles_from_pdf", 0)
         counts.setdefault("titles_not_printed", [])
+        counts.setdefault("titles_scripts_kept", [])
+        counts.setdefault("titles_glyphs_unread", [])
         counts.setdefault("snippets_unlocated", [])
         counts.setdefault("snippets_line_differs", [])
         counts.setdefault("references_without_source", [])
