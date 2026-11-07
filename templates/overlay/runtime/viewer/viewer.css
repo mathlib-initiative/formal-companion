@@ -282,6 +282,30 @@ kbd {
   white-space: nowrap;
 }
 
+/* Reading mode stays named and reachable even on a narrow screen. */
+.reading-toggle {
+  flex: none;
+  min-width: 88px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.reading-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.reading-toggle[aria-expanded="false"] {
+  border-color: var(--bridge);
+  background: var(--bridge-soft);
+  color: var(--bridge-ink);
+}
+
 /* Faithfulness: a switch drawn before its label. */
 .switch {
   display: inline-flex;
@@ -423,6 +447,12 @@ kbd {
   grid-row: 2;
   grid-template-columns: minmax(0, 1fr) clamp(380px, 40vw, 600px);
   min-height: 0;
+}
+
+/* Override both the desktop split and the narrow-screen bottom sheet. */
+.workspace.is-reading {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .viewer-column {

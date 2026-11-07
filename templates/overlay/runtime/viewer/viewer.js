@@ -335,7 +335,7 @@ export async function bootstrapViewer({
       "back-link", "page-heading", "page-lede", "keys",
       "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
-      "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness",
+      "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness", "toggle-reading",
       "page-scroller", "page-stage", "pdf-canvas", "text-layer", "overlay", "region-bar", "region-peek",
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
@@ -360,6 +360,7 @@ export async function bootstrapViewer({
     pageOrigin: "",
     pdfDocument: null,
     region: null,
+    readingMode: false,
     renderEpoch: 0,
     renderTask: null,
     rotation: 0,
@@ -1460,7 +1461,7 @@ export async function bootstrapViewer({
 
   function updateBar() {
     const box = state.region ? state.boxes.get(state.region.id) : null;
-    ui["region-bar"].hidden = !box;
+    ui["region-bar"].hidden = state.readingMode || !box;
     if (box) {
       ui["region-bar"].style.top = `${box.y}px`;
       ui["region-bar"].style.height = `${box.height}px`;
@@ -1473,7 +1474,7 @@ export async function bootstrapViewer({
 
   function showPeek(region) {
     const box = state.boxes.get(region.id);
-    if (!box || state.region?.id === region.id) {
+    if (state.readingMode || !box || state.region?.id === region.id) {
       hidePeek();
       return;
     }
@@ -1661,7 +1662,7 @@ export async function bootstrapViewer({
     ui["page-stage"].hidden = false;
     hidePeek();
     renderOverlay(displayed, viewport);
-    if (state.region) {
+    if (state.region && !state.readingMode) {
       // A zoom or a rotation keeps the selected passage in view.
       scrollRegionIntoView(state.region);
     }
@@ -1719,6 +1720,28 @@ export async function bootstrapViewer({
     await renderPage();
   }
 
+  /** Read the PDF alone, retaining the page, zoom and selected passage. */
+  function showReadingMode(shown) {
+    state.readingMode = shown;
+    setClass(ui.workspace, "is-reading", shown);
+    ui.details.hidden = shown;
+    // SVG has no HTMLElement.hidden setter: write the attribute for [hidden].
+    if (shown) ui.overlay.setAttribute("hidden", "");
+    else ui.overlay.removeAttribute("hidden");
+    ui["toggle-reading"].textContent = shown ? "Show links" : "Read PDF";
+    ui["toggle-reading"].setAttribute("aria-expanded", String(!shown));
+    ui["toggle-reading"].title = shown
+      ? "Show annotation boxes and the Lean panel (Esc)"
+      : "Hide annotation boxes and the Lean panel";
+    ui["page-scroller"].setAttribute("aria-label", shown
+      ? "Rendered PDF page" : "Rendered PDF page with selectable source regions");
+    hidePeek();
+    hideHover();
+    setHot(null);
+    updateBar();
+  }
+
+  ui["toggle-reading"].disabled = true;
   // A refusal is an error message on the page, never a blank page: the two data
   // files are loaded inside this guard so the shell always says what went wrong.
   try {
@@ -1775,6 +1798,7 @@ export async function bootstrapViewer({
     ui.workspace.hidden = false;
     selectRegion(null);
     await renderPage();
+    ui["toggle-reading"].disabled = false;
   } catch (error) {
     ui.workspace.hidden = true;
     setStatus("bad", "PDF not verified");
@@ -1787,6 +1811,7 @@ export async function bootstrapViewer({
   ui["zoom-out"].addEventListener("click", () => changeZoom(state.zoom - 10));
   ui["zoom-in"].addEventListener("click", () => changeZoom(state.zoom + 10));
   ui["rotate-right"].addEventListener("click", () => rotate(90));
+  ui["toggle-reading"].addEventListener("click", () => showReadingMode(!state.readingMode));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
   ui["back-to-page"].addEventListener("click", backToPage);
   ui["note-toggle"].addEventListener("click", () => {
@@ -1874,7 +1899,10 @@ export async function bootstrapViewer({
     else if (event.key.toLowerCase() === "r") rotate(90);
     else if (event.key === "Escape") {
       // A card its token's scroll has hidden is not one to close: Escape leaves the item.
-      if (hover.token && !ui["hover-card"].hidden) hideHover();
+      if (state.readingMode) {
+        showReadingMode(false);
+        focusQuietly(ui["toggle-reading"]);
+      } else if (hover.token && !ui["hover-card"].hidden) hideHover();
       else if (state.selected && ui.details.contains?.(documentRef.activeElement)) backToPage();
       else selectRegion(null);
     }
