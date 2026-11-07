@@ -146,6 +146,14 @@ It fetches the PDF from `pdf.route`, or, when `pdf.publish` names an open
 license, from `../<file_name>`, and checks it against that sha256 (and
 `bytes`) before PDF.js sees it; the status note then names the license.
 
+The top bar's **Read PDF** button hides the annotation regions, their margin
+mark and previews, any open Lean hover, and the counterparts panel. The PDF
+uses the whole workspace on wide and narrow screens; its page, zoom and
+rotation controls stay available. **Show
+links**, or Escape, restores the annotations and panel without reloading the
+PDF or clearing the selected passage. Reading mode lasts for the current
+visit, including page turns, and starts off on a fresh load.
+
 From the records alone it builds:
 
 - regions: each such end's `location.page` and `location.rect` (fractions of

@@ -890,6 +890,80 @@ test("navigation: a storage that throws on every access never breaks the viewer"
   assert.equal(el(documentRef, "error").hidden, true);
 });
 
+// --- reading without the annotations ----------------------------------------
+
+test("reading: hide every annotation surface and restore the selected passage without reloading", async () => {
+  const { documentRef, fetched, result } = await start();
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  await fire(el(documentRef, "zoom-in"), "click");
+  await fire(el(documentRef, "rotate-right"), "click");
+  const { currentPage, zoom, rotation, selected, region, renderEpoch } = result.state;
+  const cards = [...el(documentRef, "key-list").children];
+  const requests = fetched.length;
+  const toggle = el(documentRef, "toggle-reading");
+  assert.equal(toggle.disabled, false);
+  await fire(toggle, "click");
+  assert.equal(result.state.readingMode, true);
+  assert.equal(el(documentRef, "workspace").classList.contains("is-reading"), true);
+  assert.equal(el(documentRef, "details").hidden, true);
+  assert.equal(el(documentRef, "overlay").attributes.hidden, "");
+  for (const id of ["region-bar", "region-peek", "hover-card"]) assert.equal(el(documentRef, id).hidden, true, id);
+  assert.equal(toggle.textContent, "Show links");
+  assert.equal(toggle.attributes["aria-expanded"], "false");
+  assert.equal(el(documentRef, "page-scroller").attributes["aria-label"], "Rendered PDF page");
+  await fire(toggle, "click");
+  assert.equal(result.state.readingMode, false);
+  assert.equal(el(documentRef, "workspace").classList.contains("is-reading"), false);
+  assert.equal(el(documentRef, "details").hidden, false);
+  assert.equal(el(documentRef, "overlay").attributes.hidden, undefined);
+  assert.equal(el(documentRef, "region-bar").hidden, false);
+  assert.equal(toggle.textContent, "Read PDF");
+  assert.equal(toggle.attributes["aria-expanded"], "true");
+  assert.deepEqual([result.state.currentPage, result.state.zoom, result.state.rotation], [currentPage, zoom, rotation]);
+  assert.equal(result.state.selected, selected);
+  assert.equal(result.state.region, region);
+  assert.deepEqual(el(documentRef, "key-list").children, cards);
+  assert.equal(result.state.renderEpoch, renderEpoch, "a mode switch does not redraw the PDF");
+  assert.equal(fetched.length, requests, "a mode switch makes no requests");
+});
+
+test("reading: page, zoom and rotation controls work while annotations stay hidden", async () => {
+  const { documentRef, result } = await start();
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  await fire(el(documentRef, "toggle-reading"), "click");
+  for (const id of ["zoom-in", "rotate-right", "next-page"]) {
+    await fire(el(documentRef, id), "click");
+    assert.equal(el(documentRef, "details").hidden, true);
+    assert.equal(el(documentRef, "overlay").attributes.hidden, "");
+    assert.equal(el(documentRef, "region-bar").hidden, true);
+  }
+  assert.deepEqual([result.state.currentPage, result.state.zoom, result.state.rotation], [3, 110, 90]);
+  await fire(el(documentRef, "toggle-reading"), "click");
+  assert.equal(result.state.currentPage, 3);
+  assert.equal(el(documentRef, "overlay").attributes.hidden, undefined);
+});
+
+test("reading: an open code hover closes, and Escape restores the links and selected passage", async () => {
+  const { card, documentRef, named, result } = await versoCard();
+  await fire(named("b"), "pointerenter", { pointerType: "mouse" });
+  await fire(named("b"), "pointerleave", { pointerType: "mouse" });
+  assert.equal(card.hidden, false);
+  const selected = result.state.selected;
+  await fire(el(documentRef, "toggle-reading"), "click");
+  await linger();
+  assert.equal(card.hidden, true);
+  await fire(documentRef, "keydown", { key: "Escape" });
+  assert.equal(result.state.readingMode, false);
+  assert.equal(el(documentRef, "details").hidden, false);
+  assert.equal(result.state.selected, selected);
+});
+
+test("reading: the control stays disabled when the PDF cannot be verified", async () => {
+  const { documentRef } = await start({ pdf: () => pdfResponse(new Uint8Array([1])) });
+  assert.equal(el(documentRef, "error").hidden, false);
+  assert.equal(el(documentRef, "toggle-reading").disabled, true);
+});
+
 // --- the keyboard -----------------------------------------------------------
 
 test("keyboard: the shortcuts work bare and are ignored with a modifier or in an input", async () => {
