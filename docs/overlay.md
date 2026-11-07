@@ -436,9 +436,11 @@ Literature Links 1.0 records:
 | `kind`, `status`, `note` | the item kind lower-cased; the item's coverage as a recommended status (`formalized`, `partial_only` as `partial`, `not_formalized`, and `support_only` as `not_formalized`; `example_only`, `private_only` and `out_of_scope` give none), else `formalized` for an item with a key link; the coverage note |
 
 The repository is `https://<companion.repo>`, or for a local checkout the
-companion root relative to the file. A declaration's line is not written
-beside its name: it is the declaration's first line, and `snippet.line` keeps
-it.
+companion root relative to the file. A dependency declaration carrying both
+`x_repo` and `x_commit` instead uses `https://<x_repo>` and its own pinned
+commit as `version`; its snippet and destination describe that dependency.
+A declaration's line is not written beside its name: it is the declaration's
+first line, and `snippet.line` keeps it.
 
 Everything else the viewer needs is under the extension key
 `org.mathlib-initiative.formal-companion.overlay`, on the end it describes or

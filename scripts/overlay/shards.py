@@ -14,9 +14,10 @@ section.  :func:`convert` is the whole mapping:
   region's box as ``{page, rect}`` (``[x, y, width, height]`` fractions of the
   displayed page from the top left; a quad region becomes its bounding box,
   the quads kept in the extension) and the item's label as ``title``;
-* ``object``: one ``lean`` end, the companion's repository at the export
-  commit with the declaration (or, for an anonymous example, its module and
-  the line it starts on) as ``location`` and the link's role as ``role``; an
+* ``object``: one ``lean`` end, the declaration's dependency repository and
+  pinned commit, or the companion's repository at the export commit, with
+  the declaration (or, for an anonymous example, its module and the line it
+  starts on) as ``location`` and the link's role as ``role``; an
   item that links nothing has ``"object": []``, or, when its coverage is
   ``not_formalized``, the repository at the commit with ``relation: noMatch``;
 * ``relation`` from the link's relation token, ``kind``, ``status`` and
@@ -476,6 +477,9 @@ class _Converter:
     def lean_end(self, decl: dict, link: dict, verdicts: list[dict]) -> dict:
         """The object end of one link: the repository at the commit, the declaration in it, and its card."""
         end = dict(self.project, location=lean_location(decl), role=link["role"])
+        dependency_repo = repo_url(decl.get("x_repo"))
+        if dependency_repo and decl.get("x_commit"):
+            end.update(uri=dependency_repo, version=decl["x_commit"])
         if "profile" in end["location"]:
             self.out.counts["unlocated_anonymous_declarations"] += 1
         ext: dict = {"declaration": {"id": decl["id"]}}
