@@ -299,7 +299,10 @@ bytecode writing off.
   snippet matched from the anchor's line or up to six lines above: whitespace
   runs match whitespace runs, comments are skipped on both sides, a trailing
   `…` is kept, and an internal `…`, a mismatch or a match that does not cover
-  the anchor gives no statement. A statement is `[kind, text, hover,
+  the anchor gives no statement. A projection excerpt of the exporter's
+  `structure Name where / … / field` form is the exception: its actual field
+  must match its own anchor in that structure or class; the context label and
+  omission marker remain plain text. A statement is `[kind, text, hover,
   binding, href]` runs whose texts joined are the snippet; a link is kept
   only when its page is a file of the site that holds its anchor and that
   anchor is a declaration's own (the name after a declaration keyword, or a
@@ -322,8 +325,15 @@ bytecode writing off.
   section 10): a card is found by
   its module's page and its declaration's anchor (the build's `xref.json`,
   else Verso's slug of the name), no token keeps a link, and `build`
-  records the commit and the build's Verso revision; it stops before
-  writing on a statement whose card pins no full commit. The receipt records
+  records the commit and the build's Verso revision. It also records
+  `build.dependencies`, the repository HTTPS URIs and full commits of the
+  git dependencies in the primary build's `lake-manifest.json`. Repeat
+  `--dependency-pages REPOSITORY=DIR` to include pages built separately for
+  those packages. A repository absent from the manifest is refused; each
+  dependency card must pin its own recorded revision. Hover IDs are remapped
+  when combining page builds so one package's signature cannot replace
+  another's. It stops before writing on a statement whose card pins no full
+  commit. The receipt records
   `verso.json` with the other files, and its `verso.source` is `site`,
   `committed` (with the build commit) or `none`. With `pdf.publish` it also
   publishes the cached PDF at `<mount>/<file_name>`, after checking it against

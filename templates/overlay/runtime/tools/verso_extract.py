@@ -44,7 +44,10 @@ is found by its Lean location instead of its link: its module's page
 build's `xref.json`, else `verso_slug` of its name), or for a tagged example
 its tag. It is filed under the same key, the same rules match the snippet,
 no token keeps a link (those pages are not the viewer's site), and `build`
-records the project commit and the build's Verso revision (`build_record`).
+records the project commit, the build's Verso revision and its dependency
+repository pins (`build_record`). Optional `--dependency-pages REPOSITORY=DIR`
+adds that dependency's pages, with hover IDs remapped across independent
+builds; a dependency card is kept only at its repository's own pinned commit.
 `build_site.py` publishes it only for a site with no Verso pages, and only
 when its cards pin that commit (`unpinned`), each statement checked again
 against the bundle (`committed_problems`, `joined`). A card with a statement
@@ -637,6 +640,16 @@ def statement_runs(box: Box, snippet: str, site: Site, page: str,
                    hovers: dict[str, Any], *, links: bool = True) -> list[list[Any]] | None:
     """The snippet as runs carrying the box's tokens (with no link unless `links`), or None when it
     does not match."""
+    # leansnippets.field_text labels a projection with a synthetic structure
+    # header. Match only the real field against its own anchor; the label and
+    # omission marker carry no borrowed token information.
+    field = re.fullmatch(r"(structure ([^\s]+) where\n  )…(\n)([ \t]+.+)", snippet, re.DOTALL)
+    if field and box.anchor_at is not None:
+        owner = re.search(r"(?:class|structure)\s+" + re.escape(field[2]) + r"(?=\s|\(|\{|:)",
+                          box.text[:box.anchor_at])
+        runs = statement_runs(box, field[4], site, page, hovers, links=links) if owner else None
+        if runs:
+            return [["tx", field[1]], ["el", ELLIPSIS], ["tx", field[3]], *runs]
     stripped = snippet.rstrip()
     elided = stripped.endswith(ELLIPSIS)
     want = stripped[:-1] if elided else snippet
@@ -804,16 +817,54 @@ def extract(site_root: Path, entries: list[tuple[str, dict[str, Any]]]) -> tuple
 
 
 def extract_pages(pages_root: Path, entries: list[tuple[str, dict[str, Any]]], *,
-                  commit: str | None = None) -> tuple[dict[str, Any], dict[str, int]]:
-    """`extract` over a Verso build that is not the viewer's site: each card found by its Lean location
-    (`object_locator`), no link kept, and the build recorded (`build_record`)."""
+                  commit: str | None = None,
+                  dependency_pages: dict[str, Path] | None = None) -> tuple[dict[str, Any], dict[str, int]]:
+    """Extract another build's pages, with optional pages of dependencies its manifest pins.
+
+    Each dependency is named by its repository URI. Hover IDs belong to one
+    page build, so merging remaps them before combining the statements.
+    """
     site = Site(pages_root)
     ids = declaration_ids(site)
     value, counts = _extract(site, card_statements(entries, lambda end: object_locator(end, ids)), links=False)
     build = build_record(site.root, commit)
     if build:
         value["build"] = build
+    for repo, root in sorted((dependency_pages or {}).items()):
+        if repo not in build.get("dependencies", {}):
+            raise overlay_annotations.AnnotationError(f"dependency pages for {repo} have no pinned repository "
+                                                      "in the primary build's package manifest")
+        selected = [(path, dict(annotation, object=[end for end in annotation.get("object", [])
+                                                    if isinstance(end, dict) and end.get("uri") == repo]))
+                    for path, annotation in entries]
+        site = Site(root)
+        ids = declaration_ids(site)
+        extra, _ = _extract(site, card_statements(selected, lambda end: object_locator(end, ids)), links=False)
+        merge_statements(value, extra)
+    counts["statements"] = sum(len(v) for v in value["statements"].values())
     return value, counts
+
+
+def merge_statements(value: dict[str, Any], extra: dict[str, Any]) -> None:
+    """Add statements from another page build, remapping its independent hover IDs."""
+    numbers = {json.dumps(entry, sort_keys=True): key for key, entry in value["hovers"].items()}
+    next_id = max((int(key) for key in value["hovers"]), default=-1) + 1
+    remap = {}
+    for key, entry in extra["hovers"].items():
+        identity = json.dumps(entry, sort_keys=True)
+        if identity not in numbers:
+            numbers[identity] = str(next_id)
+            value["hovers"][str(next_id)] = entry
+            next_id += 1
+        remap[key] = int(numbers[identity])
+    for target, alternatives in extra["statements"].items():
+        for runs in alternatives:
+            copied = [list(run) for run in runs]
+            for run in copied:
+                if len(run) > 2 and run[2] is not None:
+                    run[2] = remap[str(run[2])]
+            if copied not in value["statements"].get(target, []):
+                value["statements"].setdefault(target, []).append(copied)
 
 
 def _extract(site: Site, targets: dict[str, list[tuple[Locator, str]]], *,
@@ -887,9 +938,26 @@ def declaration_ids(site: Site) -> dict[tuple[str, str], str]:
     return {key: anchors.pop() for key, anchors in found.items() if len(anchors) == 1}
 
 
+def dependency_uri(value: Any) -> str | None:
+    """A Lake HTTPS git URL in the repository form Literature Links uses."""
+    if not isinstance(value, str) or not re.fullmatch(r"https://[^\s?#]+", value):
+        return None
+    if not urllib.parse.urlsplit(value).hostname:
+        return None
+    return value.rstrip("/").removesuffix(".git")
+
+
+def matches_build(build: dict[str, Any], end: dict[str, Any]) -> bool:
+    """The end pins its dependency's revision, or the primary project's commit."""
+    expected = build.get("dependencies", {}).get(end.get("uri"), build["commit"])
+    return end.get("version") == expected
+
+
 def build_record(root: Path, commit: str | None) -> dict[str, Any]:
-    """What `--pages` records about the build: the project commit given, and the Verso package the
-    project's `lake-manifest.json` names when the pages are its `.lake/build/<directory>`."""
+    """The project commit, Verso revision and dependency repository pins in lake-manifest.json.
+
+    The manifest is read only for pages in the project's .lake/build/<directory>.
+    """
     out: dict[str, Any] = {"commit": commit} if commit else {}
     if root.parent.name != "build" or root.parent.parent.name != ".lake":
         return out
@@ -903,6 +971,11 @@ def build_record(root: Path, commit: str | None) -> dict[str, Any]:
             verso = {key: package[key] for key in ("inputRev", "rev") if isinstance(package.get(key), str)}
             if verso:
                 out["verso"] = verso
+        elif isinstance(package, dict) and package.get("type") == "git":
+            repo = dependency_uri(package.get("url"))
+            rev = package.get("rev")
+            if repo and _is_commit(rev):
+                out.setdefault("dependencies", {})[repo] = rev
     return out
 
 
@@ -934,7 +1007,7 @@ def inexact_pins(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]
     build, and what settles it; None when they can.
 
     A statement is of one tree, and `joined` keeps it for a card that pins the
-    build's commit. Another commit is another tree. A release tag, which
+    project's commit or its dependency's recorded revision. Another commit is another tree. A release tag, which
     Literature Links allows, or no `version` says nothing either way, and only
     the project's git could tell, so a statement that would go for that reason
     is refused rather than dropped, and so is a file when no card pins a commit
@@ -945,7 +1018,7 @@ def inexact_pins(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]
     cards = list(bundle_cards(entries))
     lost = {(target, "".join(run[1] for run in runs))
             for target, alternatives in value["statements"].items() for runs in alternatives}
-    lost -= {(target, text) for _path, end, target, text in cards if end.get("version") == commit}
+    lost -= {(target, text) for _path, end, target, text in cards if matches_build(value["build"], end)}
     inexact = [card for card in cards if not _is_commit(card[1].get("version"))]
     found = [card for card in inexact if card[2:] in lost] or (inexact if len(inexact) == len(cards) else [])
     if not found:
@@ -966,7 +1039,8 @@ def unpinned(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -
     if inexact:
         return inexact
     commit, commits = value["build"]["commit"], sorted(filter(_is_commit, pinned(entries)))
-    if not commits or commit in commits:
+    if not commits or any(matches_build(value["build"], end)
+                          for _path, end, _target, _text in bundle_cards(entries)):
         return None
     return (f"cut from a build of {commit}, but the cards pin {_named(commits)}; write it again with "
             "`verso_extract.py --pages` from a build of that commit")
@@ -1019,26 +1093,30 @@ def committed_problems(value: Any, limit: int = 10) -> list[str]:
         if problem:
             out.append(f"statements[{target!r}]: {problem}")
     build = value.get("build")
-    if not isinstance(build, dict) or set(build) - {"commit", "verso"} \
+    if not isinstance(build, dict) or set(build) - {"commit", "verso", "dependencies"} \
             or not (isinstance(build.get("commit"), str) and COMMIT.match(build["commit"])) \
             or not isinstance(build.get("verso", {}), dict) \
             or not all(isinstance(text, str) for text in build.get("verso", {}).values()):
         out.append("build: expected {commit, verso}: the commit the pages were built from (--commit) and "
                    "the Verso package's revisions")
+    if isinstance(build, dict) and "dependencies" in build:
+        dependencies = build["dependencies"]
+        if not isinstance(dependencies, dict) or not all(
+                dependency_uri(repo) == repo and _is_commit(rev) for repo, rev in dependencies.items()):
+            out.append("build.dependencies: expected repository HTTPS URIs mapped to full commits")
     return out[:limit] + ([f"and {len(out) - limit} more"] if len(out) > limit else [])
 
 
 def joined(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, int]]:
     """A committed `verso.json` (one `committed_problems` passes) cut to the bundle: a statement stays
     only where its runs' texts joined are the snippet of a card the viewer files under its target and
-    that card pins the build's commit, and a hover entry only where a statement left uses it.
+    that card pins its project's recorded commit, and a hover entry only where a statement left uses it.
     `(verso.json, {"targets", "statements", "dropped"})`."""
-    commit = value["build"]["commit"]
     cards: set[tuple[str, str]] = set()
     wanted: dict[str, set[str]] = {}
     for _path, end, target, text in bundle_cards(entries):
         cards.add((target, text))
-        if end.get("version") == commit:
+        if matches_build(value["build"], end):
             wanted.setdefault(target, set()).add(text)
     statements: dict[str, list[list[list[Any]]]] = {}
     dropped = 0
@@ -1117,6 +1195,8 @@ def main(argv: list[str] | None = None) -> int:
                     "overlay's site, for a committed pdf-overlay/verso.json.")
     parser.add_argument("--pages", required=True, type=Path, metavar="DIR",
                         help="the build's literate HTML root (its -verso-docs.json and module pages)")
+    parser.add_argument("--dependency-pages", action="append", default=[], metavar="REPOSITORY=DIR",
+                        help="pages of a dependency pinned in the primary build's package manifest; repeatable")
     parser.add_argument("--bundle", required=True, type=Path, metavar="FILE",
                         help="the companion's pdf-overlay/annotations.bundle.json")
     parser.add_argument("--out", required=True, type=Path, metavar="FILE", help="the verso.json to write")
@@ -1127,9 +1207,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--commit: expected a full lowercase commit sha")
     if not args.pages.is_dir():
         parser.error(f"--pages: {args.pages} is not a directory")
+    dependencies = {}
+    for item in args.dependency_pages:
+        repo, separator, directory = item.partition("=")
+        if not separator or dependency_uri(repo) != repo or not Path(directory).is_dir():
+            parser.error(f"--dependency-pages: expected a repository HTTPS URI and a directory, got {item!r}")
+        if repo in dependencies:
+            parser.error(f"--dependency-pages: repeated repository {repo}")
+        dependencies[repo] = Path(directory)
     try:
         entries = bundle_entries(args.bundle)
-        value, counts = extract_pages(args.pages, entries, commit=args.commit)
+        value, counts = extract_pages(args.pages, entries, commit=args.commit, dependency_pages=dependencies)
         inexact = inexact_pins(value, entries)
         if inexact:
             raise overlay_annotations.AnnotationError(inexact)

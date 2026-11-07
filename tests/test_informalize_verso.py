@@ -245,6 +245,24 @@ class TestTheVersoRequire(unittest.TestCase):
         self.assertEqual(verso_host.moved(before, {"mathlib": "a" * 40}),
                          ["Cli: bbbbbbbbbbbb -> gone"])
 
+    def test_hover_only_inputs_keep_code_and_token_tables_without_changing_compiled_files(self):
+        compiled = self.root / "module.json"
+        value = {"module": "ExampleLib.A", "items": {
+            "items": [{"code": [{"markdown": ["doc"]}, {"highlighted": 4}], "defines": ["ExampleLib.a"]}],
+            "tokens": {"1": {"signature": "a : Nat", "doc": "A number."}}, "code": {"4": {"token": 1}}}}
+        raw = json.dumps(value)
+        compiled.write_text(raw)
+        mapping = self.root / "map.tsv"
+        mapping.write_text(f"ExampleLib.A\t{compiled}\t{self.root}\n")
+        result = verso_host.code_only_map(mapping, self.root / "hover-inputs")
+        module, target, source = result.read_text().strip().split("\t")
+        copied = json.loads(Path(target).read_text())
+        self.assertEqual(compiled.read_text(), raw)
+        self.assertEqual((module, source), ("ExampleLib.A", str(self.root)))
+        self.assertEqual(copied["items"]["items"][0]["code"], [{"highlighted": 4}])
+        self.assertEqual(copied["items"]["tokens"], value["items"]["tokens"])
+        self.assertEqual(copied["items"]["code"], value["items"]["code"])
+
     def test_the_modules_rendered_are_the_ones_the_cards_are_in(self):
         path = self.root / "bundle.json"
         path.write_bytes(bundle(4))

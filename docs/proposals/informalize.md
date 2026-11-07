@@ -1550,6 +1550,21 @@ the counts beside it. A Verso that does not match the toolchain shows up at the 
 build as `missing data file for module ...` from the pages' tool — it reads the library's
 build at another level than the toolchain writes it — and the script says so there.
 
+Dependency hovers can be built separately and included with
+`verso_extract.py --dependency-pages <repository HTTPS URI>=<pages>`. Verso's
+package facet renders only that package's own modules; putting Mathlib
+modules in the primary project's `literate.toml` does not render them.
+Build the selected dependency modules' `+Module:literate` facets in the
+same workspace. `verso_host.py code-only --mapping <module-map.tsv> --out
+<directory>` copies their compiled rendering inputs, retaining highlighted
+code and all token tables while omitting rendered prose. Render that map with
+Verso's `verso-literate-html` executable to make hover-only pages. This avoids
+unrelated repeated docstrings producing duplicate search-document IDs; it
+does not edit Lean sources or remove documentation from token hovers.
+The combined file records the primary manifest's dependency repository pins
+and keeps each dependency statement only at its own revision
+(`docs/overlay.md` section 5).
+
 **What it costs the host.** The copy is a second whole built library — tens of GiB — and
 where I1's `.lake` is already gone the clone that replaces it must fetch Mathlib's cache
 and build instead, which costs more. So the script reads `MIN_FREE_GB` as the universe

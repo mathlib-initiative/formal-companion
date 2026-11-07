@@ -13,6 +13,7 @@ out of tree").  Subcommands (each prints what it did; a failure goes to stderr, 
     pins    --manifest F            {"<package>": "<rev>", ...} of lake-manifest.json
     moved   --before F --manifest F name every package whose rev changed, exit 1 if any
     targets --bundle F --out F      literate.toml: the modules the overlay's cards name
+    code-only --mapping F --out D   hover-only pages: retain code and its token tables
 
 **Where the require goes.**  Before the library's own first `[[require]]`, never after:
 Lake lets the last require of a shared dependency win, so a Verso appended at the end
@@ -166,6 +167,43 @@ def write_targets(bundle: Path, out: Path, root: str = "") -> list[str]:
     return modules
 
 
+def code_only_map(mapping: Path, out: Path) -> Path:
+    """Copy a Verso literate module map with code and its token data, omitting rendered prose.
+
+    Hover-only pages do not need a searchable copy of declaration docstrings.
+    Keeping the highlighted code and all its tables preserves token signatures,
+    documentation and bindings while avoiding duplicate prose IDs in search.
+    The compiled inputs are never edited.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for index, line in enumerate(_read(mapping, "the literate module map").splitlines()):
+        parts = line.split("\t")
+        if len(parts) != 3:
+            raise HostError(f"{mapping}: expected module, JSON path and source directory")
+        module, source, directory = parts
+        if not MODULE.fullmatch(module):
+            raise HostError(f"{mapping}: invalid module {module!r}")
+        try:
+            value = json.loads(_read(Path(source), "the compiled literate module"))
+            items = value["items"]["items"]
+            if not isinstance(items, list):
+                raise ValueError("items is not a list")
+            for item in items:
+                item["code"] = [part for part in item["code"]
+                                if isinstance(part, dict) and set(part) == {"highlighted"}]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HostError(f"{source}: unsupported Verso literate JSON: {exc}") from None
+        target = out / f"{index:04d}.json"
+        target.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        rows.append(f"{module}\t{target.resolve()}\t{directory}\n")
+    if not rows:
+        raise HostError(f"{mapping}: no compiled modules")
+    target = out / "modules.tsv"
+    target.write_text("".join(rows), encoding="utf-8")
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="verso_host.py", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -182,12 +220,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--root", default="", help="the library's root module; a card in another "
                                               "library's module is left out")
+    p = sub.add_parser("code-only")
+    p.add_argument("--mapping", required=True, type=Path)
+    p.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "require":
             print(add_require(args.lakefile, args.rev))
         elif args.command == "pins":
             print(json.dumps(pins(args.manifest), sort_keys=True))
+        elif args.command == "code-only":
+            print(code_only_map(args.mapping, args.out))
         elif args.command == "targets":
             modules = write_targets(args.bundle, args.out, args.root)
             print(f"{args.out.name}: {len(modules)} module(s) the cards name")

@@ -275,6 +275,16 @@ class VersoCase(unittest.TestCase):
 
 
 class TestTheStatement(VersoCase):
+    def test_a_field_excerpt_keeps_its_context_label_and_hovers_only_the_actual_field(self):
+        snippet = "structure Box where\n  …\n  side : ℝ"
+        runs = self.statement("Notes.Box.side", snippet)
+        self.assertIsNotNone(runs)
+        self.assertEqual(joined(runs), snippet)
+        self.assertIn(["el", "…"], runs)
+        self.assertTrue(any(r[0] == "const" and r[1] == "side" and r[2] == 14 for r in runs))
+        self.assertIsNone(self.statement("Notes.Box.side", snippet.replace("Box", "OtherBox")))
+        self.assertIsNone(self.statement("Notes.Box", snippet), "the field must cover its own anchor")
+
     def test_a_one_element_box_gives_the_snippet_with_its_tokens_body_included(self):
         snippet = ("noncomputable def volume (b : Box) : ℝ :=\n  b.side * b.side + zero")
         runs = self.statement("Notes.Box.volume", snippet)
@@ -615,6 +625,47 @@ class TestPagesOfABuildElsewhere(PagesCase):
         self.assertEqual([line[:6] for line in VERSO.committed_problems(uncommitted)], ["build:"],
                          "a committed file must say which commit its build is of")
 
+    def test_dependency_pages_keep_their_own_hovers_and_pinned_revision(self):
+        repo = "https://git.example.invalid/dependency"
+        project = self.site.parent.parent.parent
+        manifest = project / "lake-manifest.json"
+        data = json.loads(manifest.read_text())
+        data["packages"].append({"name": "dependency", "type": "git", "url": repo + ".git",
+                                 "rev": "d" * 40})
+        manifest.write_text(json.dumps(data))
+        dependency = project / ".lake/packages/dependency/.lake/build/literate-html"
+        module_page = dependency / "Dependency/Box/index.html"
+        module_page.parent.mkdir(parents=True)
+        module_page.write_text(page(box(block(
+            tok("keyword", "def"), gap(), tok("const", "three", 10, ident="Dependency___Box___three"),
+            gap(" := 3")))))
+        (dependency / VERSO.DOCS_NAME).write_text(json.dumps({"10": "<code>Dependency.Box.three : Nat</code>"}))
+        own = remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3)
+        dep = remote_end("Dependency.Box.three", "def three := 3", module="Dependency.Box",
+                         version="d" * 40)
+        dep["uri"] = repo
+        value, counts = VERSO.extract_pages(self.site, entries(own, dep), commit=self.COMMIT,
+                                            dependency_pages={repo: dependency})
+        self.assertEqual(value["build"]["dependencies"], {repo: "d" * 40})
+        self.assertEqual(counts, {"statements": 2, "targets": 2})
+        self.assertEqual(VERSO.committed_problems(value), [])
+        self.assertIsNone(VERSO.unpinned(value, entries(own, dep)))
+        kept, counts = VERSO.joined(value, entries(own, dep))
+        self.assertEqual(counts["dropped"], 0)
+        self.assertEqual(kept["hovers"]["10"]["signature"], "Notes.Box.side_pos (b : Box) : 0 < b.side")
+        [runs] = kept["statements"][VERSO.card_target(dep)]
+        hover_id = next(str(r[2]) for r in runs if r[0] == "const" and r[1] == "three")
+        self.assertNotEqual(hover_id, "10", "different page builds can reuse hover IDs")
+        self.assertEqual(kept["hovers"][hover_id]["signature"], "Dependency.Box.three : Nat")
+        dep["version"] = "e" * 40
+        cut, counts = VERSO.joined(value, entries(own, dep))
+        self.assertEqual(counts["dropped"], 1)
+        self.assertNotIn(VERSO.card_target(dep), cut["statements"])
+        self.assertNotIn(hover_id, cut["hovers"])
+        with self.assertRaises(VERSO.overlay_annotations.AnnotationError):
+            VERSO.extract_pages(self.site, entries(own, dep), commit=self.COMMIT,
+                                dependency_pages={"https://git.example.invalid/unknown": dependency})
+
     def test_the_command_writes_the_committed_form_one_entry_a_line(self):
         ends = (remote_end("Notes.Box.three", "def three := 3"), remote_end("Notes.Box.uno", "def uno := 1", line=2))
         bundle = self.site.parent / "annotations.bundle.json"
@@ -714,6 +765,9 @@ class TestTheCommittedFile(PagesCase):
             ("hovers['10']", lambda v: v["hovers"]["10"].update(doc="")),
             ("build", lambda v: v["build"].update(commit="HEAD")),
             ("build", lambda v: v["build"].pop("commit")),
+            ("build.dependencies", lambda v: v["build"].update(dependencies=[])),
+            ("build.dependencies", lambda v: v["build"].update(dependencies={"https://git.example.invalid/lib": "tag"})),
+            ("build.dependencies", lambda v: v["build"].update(dependencies={"http://git.example.invalid/lib": "a" * 40})),
             ("build", lambda v: v.pop("build")),
             ("a list of statements", lambda v: v["statements"].update({key: []})),
         )
