@@ -650,6 +650,9 @@ export function locatorText(locator) {
   }
   const printed = pageList(locator.printed);
   const physical = pageList(locator.physical);
+  if (printed && printed === physical) {
+    return printed;
+  }
   return [printed && `printed ${printed}`, physical && `PDF ${physical}`].filter(Boolean).join(", ");
 }
 
