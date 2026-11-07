@@ -942,7 +942,10 @@ def dependency_uri(value: Any) -> str | None:
     """A Lake HTTPS git URL in the repository form Literature Links uses."""
     if not isinstance(value, str) or not re.fullmatch(r"https://[^\s?#]+", value):
         return None
-    if not urllib.parse.urlsplit(value).hostname:
+    try:
+        if not urllib.parse.urlsplit(value).hostname:
+            return None
+    except ValueError:
         return None
     return value.rstrip("/").removesuffix(".git")
 

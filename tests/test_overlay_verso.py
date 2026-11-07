@@ -768,6 +768,7 @@ class TestTheCommittedFile(PagesCase):
             ("build.dependencies", lambda v: v["build"].update(dependencies=[])),
             ("build.dependencies", lambda v: v["build"].update(dependencies={"https://git.example.invalid/lib": "tag"})),
             ("build.dependencies", lambda v: v["build"].update(dependencies={"http://git.example.invalid/lib": "a" * 40})),
+            ("build.dependencies", lambda v: v["build"].update(dependencies={"https://[": "a" * 40})),
             ("build", lambda v: v.pop("build")),
             ("a list of statements", lambda v: v["statements"].update({key: []})),
         )
