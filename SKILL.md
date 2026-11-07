@@ -218,7 +218,7 @@ repository, its runtime and that closure (**cf never builds a library**);
 tend run per phase (`items`, `conventions`, `draft`, `attack`, `judge`, `edit`),
 after the maintainer's approvals; then `pdf-command` → `fetch-pdf` for the
 canonical PDF and `overlay` → `check-site` for the annotations and the site.
-Every component of section 11 is built; nothing has run (`docs/status.md`).
+Every component of section 11 is built; `docs/status.md` records the published example.
 
 ## Command index
 

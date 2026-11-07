@@ -175,17 +175,17 @@ class TestTheStatusPageAgesWithTheCode(unittest.TestCase):
         extra = sorted(self._named(self.paragraph("**Not implemented.**")) & self.built)
         self.assertEqual(extra, [], f"docs/status.md still calls {extra} not implemented")
 
-    def test_it_says_nothing_has_run(self):
-        """The one claim a reader acts on: no real library, no host, no PDF."""
-        run = " ".join(self.paragraph("**Not run.**").split()).lower()
-        for needle in ("no lean library has been built", "no phase has run",
-                       "canonical pdf"):
+    def test_it_records_the_published_example(self):
+        """A published real run has a public source and release a reader can inspect."""
+        run = " ".join(self.paragraph("**Published example.**").split())
+        for needle in ("https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/tree/v1",
+                       "/releases/tag/v1", "canonical PDF"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, run)
 
-    def test_the_end_to_end_list_names_it(self):
+    def test_the_end_to_end_list_omits_the_published_mode(self):
         never = self.page.split("## Never exercised end to end", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("informalize", never.lower())
+        self.assertNotIn("informalize", never.lower())
 
 
 class TestTheRouterAndTheEvalSetAgree(unittest.TestCase):
@@ -219,19 +219,19 @@ class TestTheRouterAndTheEvalSetAgree(unittest.TestCase):
         row = [line for line in readme.splitlines() if line.startswith("| [Informalize]")]
         self.assertEqual(len(row), 1, "README.md's tool table has no Informalize row")
         self.assertIn("docs/proposals/informalize.md", row[0])
-        self.assertIn("synthetic", row[0].lower(),
-                      "the row claims more than docs/status.md records")
+        self.assertIn("seifert-van-kampen-tauceti", row[0],
+                      "the row must link the published example in docs/status.md")
 
 
 class TestTheDocumentsStayGeneric(unittest.TestCase):
-    """The first target is an example in the specification and the runbook, nowhere else.
+    """The mode instructions and router stay generic; status records published runs.
 
     The names are read from the acceptance section's `cf informalize init` line, so this
     file spells none of them.
     """
 
     #: the documents component 8 writes, which are about the mode and not about one run
-    DOCUMENTS = ("SKILL.md", "README.md", "docs/status.md", "evals/trigger.json",
+    DOCUMENTS = ("SKILL.md", "README.md", "evals/trigger.json",
                  "evals/README.md", "CHANGELOG.md")
 
     @staticmethod

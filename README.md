@@ -42,7 +42,7 @@ the model tier is for.
 | [Audit](#quick-start) | Does this Lean say what the source says? | Run on two real companions of one book |
 | [PDF overlay](#pdf-overlay) | Where on each page is an item, and which declarations formalize it? | Generates the overlays of three private companions |
 | [Locate](#locate) | Which passages of a source are formalized, in which library, and how closely? | Experimental |
-| [Informalize](docs/proposals/informalize.md) | What does this Lean library's theorem say, in a text a reader can read? | Built from `init` to the published site; synthetic inputs only ([Status](docs/status.md)) |
+| [Informalize](docs/proposals/informalize.md) | What does this Lean library's theorem say, in a text a reader can read? | Published [Seifert–van Kampen example](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/pdf-overlay/viewer/index.html); [Status](docs/status.md) |
 
 Audit and locate write only to a workspace outside this repository. `cf overlay` writes
 only `pdf-overlay/` and `annotations/` in the companion, and `cf informalize` only the
@@ -148,8 +148,7 @@ local Workflow fleet, the path the Quick start shows. [Status](docs/status.md) h
 run, on what, and where the record is.
 
 Never exercised end to end: locate's campaign sequencer and spend watchdog on a host, the
-benchmark against real gold, informalization (no library has been built for it and no
-phase has run on a host), and the `tend-agent` bridge, which is a stub. The commands
+benchmark against real gold, and the `tend-agent` bridge, which is a stub. The commands
 `fix`, `review-pr`, `camera-ready`, `publish-verdicts`, `curate` and `lint` are documented
 and not implemented.
 

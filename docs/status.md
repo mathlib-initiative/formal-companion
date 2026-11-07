@@ -146,7 +146,7 @@ two host jobs, which are started from printed lines, and for publishing itself; 
 it writes is written or committed by hand, the hovers' `pdf-overlay/verso.json` included.
 `references/runbook-server.md` section 10 is the whole sequence.
 
-**Tested on synthetic inputs only.** `tests/e2e/informalize_synthetic/driver.py` takes
+**Synthetic end-to-end checks.** `tests/e2e/informalize_synthetic/driver.py` takes
 an informalize id over a fake library through every phase: the planner, contributions
 written in worktrees of an entrypoint made as `cf run` makes one, the staged gate run as
 a run host runs it (a copy of `gate/`, `python3 -I`, a bare environment) admitting good
@@ -163,12 +163,16 @@ against the lines the pilot's got wrong. Those builds, and the fleet phases that
 skip without TeX, and I6 and I7 skip without poppler; CI's `informalize-tex` job runs
 them with `CF_REQUIRE_TEX=1`.
 
-**Not run.** No Lean library has been built or probed for this mode, no phase has run
-under `tend` on a host, no item table or canonical PDF of a real theorem exists, and no
-informalization companion has been published. No cost figure for a phase is recorded
-here: the pilot that did this once by hand and with ad-hoc workflows used 69 agents and
-about 11.3M tokens for 96 items and logged no dollars, which the specification's
-section 12 says nothing reliable follows from.
+**Published example.** [The Seifert–van Kampen theorem, after TauCeti](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/tree/v1)
+is based on TauCeti at `37f5e9dce5ac83d2825198ac72d7f5d64eb26c85`. The library
+was built and probed, and the items, conventions, draft, attack, judge and edit phases
+ran on the host. The [published viewer](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/pdf-overlay/viewer/index.html)
+has 25 numbered items and 54 notions across five PDF pages, linked by 86 Literature
+Links annotations, with 32 highlighted statements and 234 hovers. The
+[v1 release](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/releases/tag/v1) holds the canonical PDF;
+its source, annotations, generated-file manifest and build workflows are public.
+This records one real theorem through publication. The phase receipts remain in the
+operator's workspace.
 
 **Not implemented.** Nothing of section 11; the optional later work it names (blueprint
 `\lean{}` and `\label{}` from the marker package, so that the audit's blueprint adapter
@@ -183,8 +187,7 @@ and stages S2 to S9 are not. Measured passage recall on Tao's chapter 1 is 19 of
 ## Never exercised end to end
 
 Locate's campaign sequencer and spend watchdog on a host, the benchmark against real
-gold, the informalize mode (nothing of it has run outside the synthetic driver), and
-the `tend-agent` bridge (`scripts/run/bridge-tend-agent.sh`), which is a stub
+gold, and the `tend-agent` bridge (`scripts/run/bridge-tend-agent.sh`), which is a stub
 whose own TODO says its CLI contract has not been exercised. S2 to S9 are not built.
 
 ## Older statements
