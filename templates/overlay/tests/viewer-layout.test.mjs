@@ -55,7 +55,7 @@ test('limits keep the divider accessible and resizing the window preserves the p
   assert.equal(s.divider.attributes['aria-valuenow'], '280');
 });
 
-test('dragging to the left edge collapses the PDF and the divider can pull it back', async () => {
+test('dragging to the left edge covers the PDF and the divider can pull it back', async () => {
   const s = setup();
   await fire(s.divider, 'pointerdown', pointer(720));
   await fire(s.documentRef, 'pointermove', pointer(-100));

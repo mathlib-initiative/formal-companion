@@ -443,20 +443,56 @@ kbd {
 }
 
 .workspace {
+  --panel-width: clamp(288px, calc(var(--details-width, clamp(380px, 40vw, 600px)) + 8px), 100%);
+  position: relative;
   display: grid;
   grid-row: 2;
-  grid-template-columns: minmax(0, 1fr) 8px
-    clamp(280px, var(--details-width, clamp(380px, 40vw, 600px)), calc(100% - 8px));
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
-/* Override both the desktop split and the narrow-screen bottom sheet. */
+/* A corner card reveals the PDF below short entries; long entries scroll inside it. */
+.details-panel {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  width: var(--panel-width);
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-bottom-left-radius: 12px;
+  background: var(--surface);
+  box-shadow: -4px 6px 20px rgba(0, 0, 0, 0.12);
+}
+
+.workspace.is-reading .details-panel { display: none; }
+
+@media (min-width: 1000px) {
+  .workspace:not(.is-reading) .page-stage { margin-left: 0; }
+
+  /* Keep PDF controls in the uncovered strip even when the card is tall. */
+  .workspace:not(.is-reading) .toolbar {
+    left: calc((100% - var(--panel-width)) / 2);
+    max-width: calc(100% - var(--panel-width) - 16px);
+  }
+  .workspace:not(.is-reading) .find-bar {
+    right: calc(var(--panel-width) + 12px);
+    width: min(460px, calc(100% - var(--panel-width) - 24px));
+  }
+}
+
+/* Override the narrow-screen bottom sheet in reading mode. */
 .workspace.is-reading {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
 
-/* A visible grip and a generous hit area without covering the PDF or its links. */
+/* The grip follows the card height and stays reachable at the left edge. */
 .panel-divider {
   position: relative;
   z-index: 3;
@@ -1873,6 +1909,16 @@ a.related-link:hover .related-name .leaf {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 46%;
+  }
+
+  .details-panel {
+    position: static;
+    grid-row: 2;
+    grid-template-columns: minmax(0, 1fr);
+    width: auto;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .details-column {

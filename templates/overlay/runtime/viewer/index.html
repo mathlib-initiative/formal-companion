@@ -111,96 +111,98 @@
           </div>
         </div>
 
-        <div id="panel-divider" class="panel-divider" role="separator" tabindex="0"
-             aria-label="Resize Lean panel" aria-controls="details" aria-orientation="vertical"
-             aria-keyshortcuts="ArrowLeft ArrowRight Home End Enter"
-             title="Drag to resize the panel. Double-click to reset. Arrow keys resize; Enter resets."></div>
+        <div class="details-panel">
+          <div id="panel-divider" class="panel-divider" role="separator" tabindex="0"
+               aria-label="Resize Lean panel" aria-controls="details" aria-orientation="vertical"
+               aria-keyshortcuts="ArrowLeft ArrowRight Home End Enter"
+               title="Drag to resize the panel. Double-click to reset. Arrow keys resize; Enter resets."></div>
 
-        <aside id="details" class="details-column" aria-label="Lean counterparts">
-          <div id="selection-empty" class="page-view">
-            <h2 id="index-heading" class="index-heading" tabindex="-1">Page 1</h2>
-            <p id="index-meta" class="index-meta"></p>
-            <p id="page-jump" class="page-jump" hidden></p>
-            <p id="page-lede" class="lede">
-              Inspect the verified source PDF and the declarations attributed to its items.
-            </p>
-            <p id="notice" class="notice" role="status" hidden></p>
-            <ol id="page-index" class="page-index" aria-label="Passages on this page"></ol>
-            <div id="legend" class="legend"></div>
-            <div id="verdict-legend" class="legend" hidden></div>
-            <p id="keys" class="keys">
-              <kbd>← →</kbd> page · <kbd>+ −</kbd> zoom · <kbd>R</kbd> rotate · <kbd>Esc</kbd> back
-            </p>
-            <p id="index-footer" class="foot" hidden></p>
-          </div>
-
-          <div id="selection" class="item-view" hidden>
-            <div class="nav-strip">
-              <button id="back-to-page" class="text-button" type="button">← Page 1</button>
-              <div class="stepper">
-                <button id="previous-item" class="icon" type="button" aria-label="Previous passage">‹</button>
-                <span id="item-position" aria-live="polite"></span>
-                <button id="next-item" class="icon" type="button" aria-label="Next passage">›</button>
-              </div>
+          <aside id="details" class="details-column" aria-label="Lean counterparts">
+            <div id="selection-empty" class="page-view">
+              <h2 id="index-heading" class="index-heading" tabindex="-1">Page 1</h2>
+              <p id="index-meta" class="index-meta"></p>
+              <p id="page-jump" class="page-jump" hidden></p>
+              <p id="page-lede" class="lede">
+                Inspect the verified source PDF and the declarations attributed to its items.
+              </p>
+              <p id="notice" class="notice" role="status" hidden></p>
+              <ol id="page-index" class="page-index" aria-label="Passages on this page"></ol>
+              <div id="legend" class="legend"></div>
+              <div id="verdict-legend" class="legend" hidden></div>
+              <p id="keys" class="keys">
+                <kbd>← →</kbd> page · <kbd>+ −</kbd> zoom · <kbd>R</kbd> rotate · <kbd>Esc</kbd> back
+              </p>
+              <p id="index-footer" class="foot" hidden></p>
             </div>
-            <div id="item-choices" class="item-choices" hidden></div>
 
-            <header id="item-head" class="item-head">
-              <button id="step-parent" class="text-button step-parent" type="button" hidden></button>
-              <h2 id="item-label" class="item-label" tabindex="-1"></h2>
-              <div class="item-meta">
-                <p id="target-summary" class="target-summary"></p>
-                <p id="item-locator" class="item-locator"></p>
+            <div id="selection" class="item-view" hidden>
+              <div class="nav-strip">
+                <button id="back-to-page" class="text-button" type="button">← Page 1</button>
+                <div class="stepper">
+                  <button id="previous-item" class="icon" type="button" aria-label="Previous passage">‹</button>
+                  <span id="item-position" aria-live="polite"></span>
+                  <button id="next-item" class="icon" type="button" aria-label="Next passage">›</button>
+                </div>
               </div>
-              <button id="note-toggle" class="text-button note-toggle" type="button" aria-expanded="false"
-                      aria-controls="coverage-note" hidden></button>
-              <p id="coverage-note" class="coverage-note" hidden></p>
-            </header>
-            <div id="verdict-notes" class="verdict-notes"></div>
+              <div id="item-choices" class="item-choices" hidden></div>
 
-            <section id="key-section" class="key-section" aria-label="Key declarations">
-              <div id="key-head" class="key-head" hidden>
-                <p id="key-count" class="key-count" hidden></p>
-                <input
-                  id="target-filter"
-                  class="filter"
-                  type="search"
-                  autocomplete="off"
-                  placeholder="Filter by name"
-                  aria-label="Filter declarations by name"
-                  hidden
-                >
-              </div>
-              <p id="filter-empty" class="empty-line filter-empty" hidden>No declaration matches.</p>
-              <div id="key-note" class="key-note" hidden></div>
-              <ol id="key-list" class="key-list"></ol>
-              <button id="key-more" class="text-button more" type="button" hidden></button>
-            </section>
+              <header id="item-head" class="item-head">
+                <button id="step-parent" class="text-button step-parent" type="button" hidden></button>
+                <h2 id="item-label" class="item-label" tabindex="-1"></h2>
+                <div class="item-meta">
+                  <p id="target-summary" class="target-summary"></p>
+                  <p id="item-locator" class="item-locator"></p>
+                </div>
+                <button id="note-toggle" class="text-button note-toggle" type="button" aria-expanded="false"
+                        aria-controls="coverage-note" hidden></button>
+                <p id="coverage-note" class="coverage-note" hidden></p>
+              </header>
+              <div id="verdict-notes" class="verdict-notes"></div>
 
-            <section id="step-section" class="related" aria-labelledby="step-heading" hidden>
-              <div class="related-head">
-                <h3 id="step-heading">Proof</h3>
-                <span id="step-count" class="count"></span>
-              </div>
-              <ol id="step-list" class="step-list"></ol>
-            </section>
+              <section id="key-section" class="key-section" aria-label="Key declarations">
+                <div id="key-head" class="key-head" hidden>
+                  <p id="key-count" class="key-count" hidden></p>
+                  <input
+                    id="target-filter"
+                    class="filter"
+                    type="search"
+                    autocomplete="off"
+                    placeholder="Filter by name"
+                    aria-label="Filter declarations by name"
+                    hidden
+                  >
+                </div>
+                <p id="filter-empty" class="empty-line filter-empty" hidden>No declaration matches.</p>
+                <div id="key-note" class="key-note" hidden></div>
+                <ol id="key-list" class="key-list"></ol>
+                <button id="key-more" class="text-button more" type="button" hidden></button>
+              </section>
 
-            <section id="related-section" class="related" aria-labelledby="related-heading" hidden>
-              <div class="related-head">
-                <h3 id="related-heading">Related</h3>
-                <span id="related-count" class="count" aria-live="polite"></span>
-              </div>
-              <ul id="related-list" class="related-list"></ul>
-              <nav id="related-pager" class="pagination" aria-label="Related declaration pages" hidden>
-                <button id="previous-targets" class="icon" type="button" aria-label="Previous declarations">‹</button>
-                <output id="target-page" aria-live="polite"></output>
-                <button id="next-targets" class="icon" type="button" aria-label="Next declarations">›</button>
-              </nav>
-            </section>
+              <section id="step-section" class="related" aria-labelledby="step-heading" hidden>
+                <div class="related-head">
+                  <h3 id="step-heading">Proof</h3>
+                  <span id="step-count" class="count"></span>
+                </div>
+                <ol id="step-list" class="step-list"></ol>
+              </section>
 
-            <p id="provenance-note" class="foot" hidden></p>
-          </div>
-        </aside>
+              <section id="related-section" class="related" aria-labelledby="related-heading" hidden>
+                <div class="related-head">
+                  <h3 id="related-heading">Related</h3>
+                  <span id="related-count" class="count" aria-live="polite"></span>
+                </div>
+                <ul id="related-list" class="related-list"></ul>
+                <nav id="related-pager" class="pagination" aria-label="Related declaration pages" hidden>
+                  <button id="previous-targets" class="icon" type="button" aria-label="Previous declarations">‹</button>
+                  <output id="target-page" aria-live="polite"></output>
+                  <button id="next-targets" class="icon" type="button" aria-label="Next declarations">›</button>
+                </nav>
+              </section>
+
+              <p id="provenance-note" class="foot" hidden></p>
+            </div>
+          </aside>
+        </div>
       </section>
     </main>
     <div id="hover-card" class="hover-card" role="tooltip" hidden></div>
