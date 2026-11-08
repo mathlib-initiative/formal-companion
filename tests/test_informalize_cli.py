@@ -634,9 +634,9 @@ class TestInit(_Workspace):
         style = (self.repo / "informal/STYLE-project.md").read_text(encoding="utf-8")
         for text in (main, readme, style):
             self.assertNotIn("{{", text)
-        # the introduction names the theorem as the one that closes the text: the text
-        # prints no Lean name, and `check-items` holds main.tex to that
-        self.assertIn("the theorem closing this\ntext depends on", main)
+        # The introduction is brief and names the library, without a Lean declaration.
+        self.assertIn("This is an informal account of selected definitions and results from\n"
+                      r"ExampleLib~\cite{library}.", main)
         self.assertNotIn("glue_theorem", main.replace(r"\_", "_"))
         self.assertIn(r"\bibitem{reference} A. Author, Gluing, Example Press, 2001.", main)
         self.assertIn("the Apache License, Version~2.0", main)
@@ -1022,8 +1022,8 @@ class TestCheckItems(_Table):
         self.assertIn("main.tex prints no Lean name", self.cf("informalize", "check-items", ID))
         path = self.repo / "informal/main.tex"
         text = path.read_text(encoding="utf-8")
-        written = text.replace("the theorem closing this",
-                               r"the theorem \texttt{ExampleLib.glue\_theorem} closing this")
+        written = text.replace(r"\maketitle", r"\maketitle" + "\n" +
+                               r"The theorem \texttt{ExampleLib.glue\_theorem}.", 1)
         self.assertNotEqual(written, text)
         path.write_text(written, encoding="utf-8")
         line = 1 + written.count("\n", 0, written.index(r"\texttt{ExampleLib"))
