@@ -1156,7 +1156,7 @@ export function stepCards(item) {
       groups.set(key, { ...entry, ranges: [] });
     }
     if (entry.lines || entry.snippet) {
-      groups.get(key).ranges.push({ lines: entry.lines, snippet: entry.snippet });
+      groups.get(key).ranges.push({ lines: entry.lines, snippet: entry.snippet, target: entry.target });
     }
   }
   return [...groups.values()];

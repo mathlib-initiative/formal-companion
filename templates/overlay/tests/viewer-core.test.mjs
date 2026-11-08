@@ -968,6 +968,8 @@ test("steps: a step's ranges are grouped by declaration in the record's order, w
   assert.equal(stepCards(items.get("b")).length, 1, "three ranges of one declaration are one card");
   assert.deepEqual(only.ranges.map((range) => range.lines), [[22, 23], [25, 25], [27, 40]]);
   assert.deepEqual(only.ranges.map((range) => range.snippet.line), [22, 25, 27]);
+  assert.deepEqual(only.ranges.map((range) => range.target),
+                   items.get("b").cards.map((card) => card.target), "each range retains its hover lookup target");
   assert.equal(only.ranges[2].snippet.truncated, true);
   assert.equal(only.ranges[0].snippet.truncated, undefined);
   assert.deepEqual(stepCards(items.get("c")).map((entry) => entry.fullName), ["Notes.Box.double", "Notes.Box.bound"]);

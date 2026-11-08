@@ -48,6 +48,9 @@ records the project commit, the build's Verso revision and its dependency
 repository pins (`build_record`). Optional `--dependency-pages REPOSITORY=DIR`
 adds that dependency's pages, with hover IDs remapped across independent
 builds; a dependency card is kept only at its repository's own pinned commit.
+Line-only ends match their exact excerpts in the module's code boxes; sibling
+literate metadata, when present, confines the search to the enclosing declaration.
+Repeated or stale excerpts remain plain rather than borrowing another proof's bindings.
 `build_site.py` publishes it only for a site with no Verso pages, and only
 when its cards pin that commit (`unpinned`), each statement checked again
 against the bundle (`committed_problems`, `joined`). A card with a statement
@@ -219,24 +222,58 @@ def verso_slug(name: str) -> str:
                    for char in name)
 
 
-def object_locator(end: dict[str, Any], ids: dict[tuple[str, str], str]) -> Locator | None:
+def object_locator(end: dict[str, Any], ids: dict[tuple[str, str], str],
+                   site: Site | None = None) -> Locator | None:
     """`(page, how, what)` of an object end on a Verso build's own pages, from its Lean location alone:
-    its module's page and its declaration's anchor (`ids`, else `verso_slug` of its name), or for a
-    tagged example its tag."""
+    its module's page and its declaration's anchor (`ids`, else `verso_slug` of its name), a
+    tagged example's tag, or a range with its enclosing declaration when known."""
     location = end.get("location") if isinstance(end.get("location"), dict) else {}
     module = _trimmed(location.get("module"))
     page = module_page(module)
     if page is None:
         return None
     name = _trimmed(location.get("declaration"))
-    if name:
-        return page, "id", ids.get((name, module)) or verso_slug(name)
     ext = overlay_annotations.extension(end)
     declaration = ext.get("declaration") if isinstance(ext.get("declaration"), dict) else {}
     tag = declaration.get("id")
     if declaration.get("kind") == "example" and isinstance(tag, str) and EXAMPLE_ID.match(tag):
         return page, "tag", tag
+    lines = location.get("lines")
+    if isinstance(lines, list) and 1 <= len(lines) <= 2 and all(type(n) is int and n > 0 for n in lines):
+        first, last = lines[0], lines[-1]
+        if first <= last:
+            owner = (range_owner(site, module, first, last) if site else None) or name
+            return page, "range", ids.get((owner, module), verso_slug(owner)) if owner else ""
+    if name:
+        return page, "id", ids.get((name, module)) or verso_slug(name)
     return None
+
+
+def range_owner(site: Site, module: str, first: int, last: int) -> str | None:
+    """The declaration enclosing these lines in Verso's sibling literate data, when available.
+
+    HTML alone can highlight a unique excerpt. Build metadata disambiguates
+    repeated excerpts without borrowing another declaration's local bindings.
+    """
+    relative = module_page(module)
+    if relative is None:
+        return None
+    if module not in site.range_owners:
+        site.range_owners[module] = []
+        path = Site(site.root.parent / "literate").resolve(relative.removesuffix("/index.html") + ".json")
+        try:
+            data = json.loads(path.read_bytes()) if path else {}
+            commands = data.get("items", {}).get("items", []) if data.get("module") == module else []
+            for command in commands:
+                span, names = command.get("range"), command.get("defines")
+                if isinstance(span, list) and len(span) == 2 and isinstance(names, list) and len(names) == 1 \
+                        and isinstance(names[0], str) and names[0] \
+                        and all(isinstance(p, dict) and type(p.get("line")) is int for p in span):
+                    site.range_owners[module].append((span[0]["line"], span[1]["line"], names[0]))
+        except (OSError, ValueError, AttributeError, TypeError):
+            pass
+    owners = {name for start, stop, name in site.range_owners[module] if start <= first <= last <= stop}
+    return owners.pop() if len(owners) == 1 else None
 
 
 def site_file(page: str) -> str | None:
@@ -264,6 +301,7 @@ class Site:
         self.root = Path(os.path.realpath(root))
         self.pages: dict[str, mmap.mmap | bytes | None] = {}
         self.declared: dict[tuple[str, str], bool] = {}
+        self.range_owners: dict[str, list[tuple[int, int, str]]] = {}
 
     @staticmethod
     def parts(relative: str) -> tuple[str, ...] | None:
@@ -407,6 +445,8 @@ class Box(HTMLParser):
         #: (tag, skip, in a code block, token index, href) per open element.
         self.stack: list[tuple[str, bool, bool, int, str | None]] = []
         self.anchor_at: int | None = None
+        self.anchors: dict[str, int] = {}
+        self.declarations: dict[str, int] = {}
         self.blocks = 0
         self.done = False
         self.failed = False
@@ -460,6 +500,8 @@ class Box(HTMLParser):
             self.tokens.append((kind, values.get("data-verso-hover") or None,
                                 values.get("data-binding") or None, href))
             token = len(self.tokens) - 1
+        if not skip and block and values.get("id"):
+            self.anchors[values["id"]] = self.length
         if not self.tag and not skip and block and self.anchor_at is None and values.get("id") == self.anchor:
             self.anchor_at = self.length
         if tag not in VOID_TAGS:
@@ -503,6 +545,24 @@ def read_box(data: mmap.mmap | bytes, fragment: str, room: int) -> Box | None:
     """The box that holds the element with this id, parsed from its start, or None."""
     at = id_position(data, fragment)
     return _parse_box(data, at, Box(fragment, past_anchor=room)) if at >= 0 else None
+
+
+def read_range_boxes(data: mmap.mmap | bytes) -> list[Box]:
+    """All code boxes, excluding goal views and messages, parsed once for a module's ranges."""
+    boxes: list[Box] = []
+    start = 0
+    while True:
+        at = data.find(BOX_CLASS, start)
+        if at < 0:
+            return boxes
+        start = at + len(BOX_CLASS)
+        box = Box("", past_anchor=len(data))
+        box.anchor_at = 0
+        box = _parse_box(data, start, box)
+        if box:
+            box.declarations = {name: pos for name, pos in box.anchors.items()
+                                if declared_at(data, id_position(data, name))}
+            boxes.append(box)
 
 
 def read_tagged_box(data: mmap.mmap | bytes, tag: str, room: int) -> Box | None:
@@ -669,6 +729,42 @@ def statement_runs(box: Box, snippet: str, site: Site, page: str,
     return None
 
 
+def range_runs(boxes: list[Box], snippet: str, site: Site, page: str,
+               hovers: dict[str, Any], *, fragment: str = "", links: bool = True) -> list[list[Any]] | None:
+    """Match a proof excerpt uniquely, within its recorded declaration when one is known.
+
+    Deduplicate matches reached through the same leading blank lines/comments.
+    Missing, ambiguous and stale snippets remain plain; goal text is never a candidate.
+    """
+    stripped = snippet.rstrip()
+    want = stripped[:-1] if stripped.endswith(ELLIPSIS) else snippet
+    if ELLIPSIS in want or not want.strip():
+        return None
+    found: dict[tuple[int, int, int], tuple[Box, list[tuple[int, int]], list[tuple[int, int]]]] = {}
+    for number, box in enumerate(boxes):
+        text = box.text
+        lower, upper = 0, len(text)
+        if fragment:
+            if fragment not in box.declarations:
+                continue
+            anchor = box.declarations[fragment]
+            lower = text.rfind("\n", 0, anchor) + 1
+            upper = min((text.rfind("\n", 0, at) + 1 for at in box.declarations.values() if at > anchor),
+                        default=len(text))
+        for at in [lower, *(lower + m.end() for m in re.finditer("\n", text[lower:upper]))]:
+            comments: list[tuple[int, int]] = []
+            match = align(text, at, want, comments)
+            if match and match[1] <= upper:
+                key = (number, match[0][0][1], match[1])
+                found[key] = box, match[0], comments
+                if len(found) > 1:
+                    return None
+    if not found:
+        return None
+    box, pairs, comments = next(iter(found.values()))
+    return _runs(box, snippet, want, pairs, comments, site if links else None, page, hovers)
+
+
 def _runs(box: Box, snippet: str, want: str, pairs: list[tuple[int, int]],
           comments: list[tuple[int, int]], site: Site | None, page: str,
           hovers: dict[str, Any]) -> list[list[Any]]:
@@ -813,7 +909,16 @@ def hover_table(site: Site) -> dict[str, Any]:
 
 def extract(site_root: Path, entries: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, int]]:
     """`(verso.json, {"targets": n, "statements": m})` for the bundle's cards over the built site."""
-    return _extract(Site(site_root), card_statements(entries), links=True)
+    site = Site(site_root)
+    ids = declaration_ids(site)
+
+    def locate(end: dict[str, Any]) -> Locator | None:
+        destination = card_locator(end)
+        source = object_locator(end, ids, site)
+        # Keep the rendered page's own path; only the source context is shared.
+        return (destination[0], "range", source[2]) if destination and source and source[1] == "range" else destination
+
+    return _extract(site, card_statements(entries, locate), links=True)
 
 
 def extract_pages(pages_root: Path, entries: list[tuple[str, dict[str, Any]]], *,
@@ -826,7 +931,7 @@ def extract_pages(pages_root: Path, entries: list[tuple[str, dict[str, Any]]], *
     """
     site = Site(pages_root)
     ids = declaration_ids(site)
-    value, counts = _extract(site, card_statements(entries, lambda end: object_locator(end, ids)), links=False)
+    value, counts = _extract(site, card_statements(entries, lambda end: object_locator(end, ids, site)), links=False)
     build = build_record(site.root, commit)
     if build:
         value["build"] = build
@@ -839,7 +944,7 @@ def extract_pages(pages_root: Path, entries: list[tuple[str, dict[str, Any]]], *
                     for path, annotation in entries]
         site = Site(root)
         ids = declaration_ids(site)
-        extra, _ = _extract(site, card_statements(selected, lambda end: object_locator(end, ids)), links=False)
+        extra, _ = _extract(site, card_statements(selected, lambda end: object_locator(end, ids, site)), links=False)
         merge_statements(value, extra)
     counts["statements"] = sum(len(v) for v in value["statements"].values())
     return value, counts
@@ -872,6 +977,7 @@ def _extract(site: Site, targets: dict[str, list[tuple[Locator, str]]], *,
     table = hover_table(site)
     statements: dict[str, list[list[list[Any]]]] = {}
     used: set[int] = set()
+    range_boxes: dict[str, list[Box]] = {}
     try:
         for target, pairs in targets.items():
             for (page_ref, how, what), text in pairs:
@@ -879,9 +985,14 @@ def _extract(site: Site, targets: dict[str, list[tuple[Locator, str]]], *,
                 data = site.page(page) if page else None
                 if data is None:
                     continue
-                room = len(text) + 256
-                box = read_box(data, what, room) if how == "id" else read_tagged_box(data, what, room)
-                runs = statement_runs(box, text, site, page, table, links=links) if box else None
+                if how == "range":
+                    if page not in range_boxes:
+                        range_boxes[page] = read_range_boxes(data)
+                    runs = range_runs(range_boxes[page], text, site, page, table, fragment=what, links=links)
+                else:
+                    room = len(text) + 256
+                    box = read_box(data, what, room) if how == "id" else read_tagged_box(data, what, room)
+                    runs = statement_runs(box, text, site, page, table, links=links) if box else None
                 if runs is None or runs in statements.get(target, []):
                     continue
                 statements.setdefault(target, []).append(runs)

@@ -459,6 +459,12 @@ approval only while every section file is empty and frozen from the first draft 
 receipt pins what its stage read and wrote and an approval what the maintainer signed, both
 by sha256, so a changed file voids it; `cf informalize status` prints only what it read.
 
+Proof-step ranges use the overlay's Verso token and hover renderer, just as
+statement cards do. The external-page extractor matches each range's exact
+snippet in its module, using the build's declaration line metadata when
+available to confine it to the enclosing proof. Ambiguous or stale snippets
+remain plain (`docs/overlay.md`, sections 4 and 5).
+
 ## 5. The substrate
 
 Server fleets are driven by `tend` (the orchestrator) and `agentbox` (the

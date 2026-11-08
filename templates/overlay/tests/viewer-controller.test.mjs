@@ -1693,6 +1693,29 @@ test("steps: a step's card shows its Lean lines, one range each, not the declara
   assert.ok(!pres.map(textOf).includes("theorem double (b : Box) : 2 * b = b + b"), "the whole statement is not repeated");
 });
 
+test("steps: every numbered range uses its own Verso snippet and opens semantic hovers", async () => {
+  const verso = makeVerso();
+  verso.statements["Notes/Box/index.html#Notes___Box___double"] = [
+    [["kw", "rw"], ["tx", " ["], ["const", "two_mul", 101], ["tx", "]\n"], ["kw", "ring"]],
+    [["kw", "exact"], ["tx", " "], ["var", "h", 102]],
+  ];
+  verso.hovers[101] = { signature: "two_mul (n : Nat) : 2 * n = n + n" };
+  verso.hovers[102] = { signature: "b = b" };
+  const { documentRef } = await start({ ...PROOF_FULL, verso });
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "b");
+  const pres = keyCards(documentRef)[0].filter((node) => node.tagName === "PRE");
+  assert.deepEqual(pres.map(textOf), ["rw [two_mul]\nring", "exact h", "calc _ = _ := by\n  simp"]);
+  const theorem = tokensOf(pres[0]).find((node) => node.textContent === "two_mul");
+  assert.ok(theorem.classList.contains("has-hover"));
+  await fire(theorem, "pointerenter", { pointerType: "mouse" });
+  assert.equal(textOf(el(documentRef, "hover-card")), "two_mul (n : Nat) : 2 * n = n + n");
+  const local = tokensOf(pres[1]).find((node) => node.textContent === "h");
+  await keyboardFocus(local);
+  assert.equal(textOf(el(documentRef, "hover-card")), "h : b = b");
+  assert.deepEqual(pres.map((pre) => pre.children[0].dataset.line), ["22", "25", "27"]);
+});
+
 test("steps: a step with lines of two declarations shows a card for each", async () => {
   const { documentRef } = await start(PROOF_FULL);
   await turnTo(documentRef, 10);

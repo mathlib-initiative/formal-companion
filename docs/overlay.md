@@ -234,7 +234,10 @@ From the records alone it builds:
   title), its `note` with backticked code set as code, and one card per
   declaration in the record's order, with every range of it the record names:
   the end's snippet with its `location.lines` in a gutter, or the line numbers
-  alone with no snippet, and how far a snippet with `truncated` runs. A step
+  alone with no snippet, and how far a snippet with `truncated` runs. Each
+  range uses its own target and exact snippet to find Verso runs, with the
+  same token highlighting, identifier hovers and keyboard support as statements.
+  A step
   whose record is `noMatch` has no card: it says it was checked and lists the
   record's object ends, the Lean the absence is scoped to, by declaration else
   by module, with their lines; a declaration links only where a card of the same
@@ -325,7 +328,13 @@ bytecode writing off.
   section 10): a card is found by
   its module's page and its declaration's anchor (the build's `xref.json`,
   else Verso's slug of the name), no token keeps a link, and `build`
-  records the commit and the build's Verso revision. It also records
+  records the commit and the build's Verso revision. An end with a
+  line range is matched against that module's code boxes, with
+  goals and messages excluded. Its excerpt must match uniquely, preserving
+  its exact text. When the build's sibling `literate/<module>.json` records
+  the enclosing declaration's source range, matching is confined to that
+  declaration; this disambiguates identical code in different proofs.
+  Missing, stale or ambiguous excerpts remain plain. It also records
   `build.dependencies`, the repository HTTPS URIs and full commits of the
   git dependencies in the primary build's `lake-manifest.json`. Repeat
   `--dependency-pages REPOSITORY=DIR` to include pages built separately for

@@ -1226,12 +1226,12 @@ export async function bootstrapViewer({
   }
 
   /** One range of a step's Lean lines: its snippet, numbered, or only its line numbers when it has none. */
-  function rangeNodes({ lines, snippet }) {
+  function rangeNodes({ lines, snippet, target }) {
     const firstLine = snippet?.line ?? lines?.[0] ?? null;
     if (!snippet?.text) {
       return lines ? [make("p", "range-lines", linesText(lines))] : [];
     }
-    const nodes = statementNodes(snippet.text, null, firstLine);
+    const nodes = statementNodes(snippet.text, versoRuns(state.verso, { target, snippet }), firstLine);
     if (lines) {
       nodes[0].setAttribute("aria-label", linesText(lines));
     }

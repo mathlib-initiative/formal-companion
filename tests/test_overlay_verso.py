@@ -544,6 +544,72 @@ class PagesCase(VersoCase):
         return VERSO.extract_pages(self.site, entries(*ends), commit=commit)
 
 
+class TestProofRangePages(PagesCase):
+    def test_a_proof_range_keeps_its_exact_text_local_bindings_and_hovers(self):
+        snippet = '  exact "a b"'
+        value, counts = self.pages(remote_end("", snippet, line=77, kind="proof_step"))
+        [runs] = value["statements"][remote_key("Notes.Box", 77)]
+        self.assertEqual(joined(runs), snippet)
+        self.assertIn(["kw", "exact"], runs)
+        self.assertIn(["lit", '"a b"', 52], runs)
+        self.assertEqual(value["hovers"]["52"]["signature"], '"a b" : String')
+        self.assertEqual(counts, {"statements": 1, "targets": 1})
+        self.assertEqual(VERSO.committed_problems(value), [])
+
+    def test_a_named_proof_range_on_the_viewers_own_site_uses_the_proof_not_just_its_header(self):
+        end = lean_end("Notes.Box.two", 'exact "a b"')
+        end["location"]["lines"] = [9]
+        value, _ = self.extract(end)
+        [runs] = value["statements"][f"{BOX_PAGE}#Notes___Box___two"]
+        self.assertEqual(joined(runs), 'exact "a b"')
+        self.assertIn(["lit", '\"a b\"', 52], runs)
+
+    def repeated(self):
+        def declaration(name, hover):
+            return box(block(tok("keyword", "theorem"), gap(),
+                tok("const", name, ident=f"Notes___Box___{name}"), gap(" : True := by\n\n  "),
+                tok("keyword", "exact"), gap(), tok("var", "h", hover, "var-h")))
+        self.write(BOX_PAGE, page(declaration("a", 11), declaration("b", 41)))
+
+    def test_repeated_excerpts_without_context_are_refused(self):
+        self.repeated()
+        value, _ = self.pages(remote_end("", "exact h", line=12, kind="proof_step"))
+        self.assertEqual(value["statements"], {})
+        self.assertEqual(value["hovers"], {})
+
+    def test_build_line_metadata_selects_the_correct_proof_for_repeated_text(self):
+        self.repeated()
+        meta = self.site.parent / "literate" / "Notes" / "Box.json"
+        meta.parent.mkdir(parents=True)
+        meta.write_text(json.dumps({"module": "Notes.Box", "items": {"items": [
+            {"range": [{"line": 1}, {"line": 5}], "defines": ["Notes.Box.a"]},
+            {"range": [{"line": 10}, {"line": 15}], "defines": ["Notes.Box.b"]},
+        ]}}))
+        value, _ = self.pages(remote_end("", "exact h", line=12, kind="proof_step"))
+        [runs] = value["statements"][remote_key("Notes.Box", 12)]
+        self.assertEqual(joined(runs), "exact h")
+        self.assertIn(["var", "h", 41], runs)
+        self.assertEqual(value["hovers"]["41"]["signature"], "False")
+        self.assertNotIn("11", value["hovers"], "another proof's binding must not be borrowed")
+        # The selected declaration cannot borrow a unique snippet from its neighbour.
+        bad = remote_end("", "theorem a : True := by", line=12, kind="proof_step")
+        self.assertEqual(self.pages(bad)[0]["statements"], {})
+
+    def test_blank_lines_do_not_make_one_occurrence_ambiguous_and_stale_text_stays_plain(self):
+        self.write(BOX_PAGE, page(box(block(gap("\n\n  "), tok("keyword", "exact"), gap(),
+                                             tok("var", "h", 11)))))
+        value, _ = self.pages(remote_end("", "  exact h", line=4, kind="proof_step"))
+        self.assertIn(remote_key("Notes.Box", 4), value["statements"])
+        self.assertEqual(self.pages(remote_end("", "exact changed", line=4, kind="proof_step"))[0]["statements"], {})
+
+    def test_goal_views_are_not_proof_code_and_a_trailing_cut_mark_stays(self):
+        self.assertEqual(self.pages(remote_end("", "False", line=7, kind="proof_step"))[0]["statements"], {})
+        value, _ = self.pages(remote_end("", 'exact "a b"…', line=7, kind="proof_step"))
+        [runs] = value["statements"][remote_key("Notes.Box", 7)]
+        self.assertEqual(joined(runs), 'exact "a b"…')
+        self.assertEqual(runs[-1], ["el", "…"])
+
+
 class TestPagesOfABuildElsewhere(PagesCase):
     def test_a_card_is_found_by_its_module_and_declaration_and_filed_under_its_own_key(self):
         snippet = "noncomputable def volume (b : Box) : ℝ :=\n  b.side * b.side + zero"
