@@ -1927,6 +1927,26 @@ test("minimal: a step's note opens on asking, and its claim never waits for that
   assert.deepEqual(noteState(documentRef), { expanded: "false", note: false, toggle: "More detail" });
 });
 
+for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MINIMAL)]]) {
+  test(`notes: a repeated step heading has no detail text or toggle (${mode})`, async () => {
+    const sections = makeProofSections(PDF_SHA256);
+    const step = sections["9/theorem-9.1"].find(record => record.id === "b");
+    step.note = "  Collect the two\n terms  ";
+    const { documentRef } = await start({ config, sections });
+    await turnTo(documentRef, 9);
+    await openStep(documentRef, "b");
+    assert.match(textOf(el(documentRef, "item-label")), /Collect the two terms/);
+    assert.equal(el(documentRef, "coverage-note").hidden, true);
+    assert.equal(el(documentRef, "note-toggle").hidden, true);
+    assert.equal(el(documentRef, "target-summary").textContent, "Close match");
+    await fire(el(documentRef, "next-item"), "click");
+    await fire(el(documentRef, "next-item"), "click");
+    assert.equal(textOf(el(documentRef, "coverage-note")), "Lean takes finiteness from an instance.");
+    assert.equal(el(documentRef, "note-toggle").hidden, mode !== "minimal");
+    assert.equal(el(documentRef, "coverage-note").hidden, mode === "minimal");
+  });
+}
+
 test("minimal: a checked absence is the claim, and stays in sight with its note closed", async () => {
   const { documentRef } = await start(PROOF_MINIMAL);
   await turnTo(documentRef, 10);

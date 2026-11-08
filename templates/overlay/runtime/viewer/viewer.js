@@ -1151,7 +1151,11 @@ export async function bootstrapViewer({
    * asked for and then open from record to record; a full one shows it.
    */
   function renderNote(item) {
-    const note = Boolean(item?.coverageNote);
+    // Older exporters sometimes copied the heading into the optional note.
+    const normalize = value => (value ?? "").trim().replace(/\s+/gu, " ");
+    const noteText = normalize(item?.coverageNote);
+    const heading = isStep(item) ? stepParts(item, state.index.items).text : item?.label;
+    const note = Boolean(noteText) && ![item?.label, heading].some(label => normalize(label) === noteText);
     const behind = note && state.config.minimal;
     ui["note-toggle"].hidden = !behind;
     ui["note-toggle"].textContent = state.noteOpen ? "Less detail" : "More detail";
