@@ -1130,6 +1130,74 @@ and recall that \hypOpen* holds here too.
         self.assertIn("FAIL [5] notation: no \\fcdefhyp for the hypothesis open", out.stdout)
 
 
+class TestStandingAssumptions(_Built):
+    def test_section_assumption_satisfies_the_item_and_its_parts(self):
+        section = doc.SECTION_1.replace(
+            r"\begin{theorem}[id=1.2]",
+            "\\begin{fcassumptions}\nSuppose that \\hypOpen.\n"
+            r"\begin{theorem}[id=1.2]").replace(
+                r", and suppose that \hypOpen.", ".")
+        section += "\n\\end{fcassumptions}\n"
+        repo = self.repo("standing-parts", sections={"01-gluing-spaces": section})
+        outdir = self.root / "standing-parts-out"
+        self.build(repo, outdir)
+        out = self.check(repo, outdir, "--aux-only", "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        aux = fc.read_aux(outdir / f"{doc.JOB}.aux")
+        self.assertEqual([h for h in aux.hyps if h["id"] == "1.2"],
+                         [{"id": "1.2", "part": "", "key": "open"}])
+        self.assertFalse(any(h["id"] in {"1.1", "2.1", "2.2"} for h in aux.hyps))
+
+    def test_nested_scopes_cover_later_items_then_restore_the_outer_scope(self):
+        section = r"""
+\begin{fcassumptions}
+Suppose that \hypOpen.
+\begin{fcassumptions}
+Suppose also that \hypNonempty, and recall that \hypOpen.
+\begin{lemma}[id=1.1]{Inner result} Inner. \end{lemma}
+\end{fcassumptions}
+\begin{lemma}[id=1.2]{Outer result} Outer. \end{lemma}
+\begin{lemma}[id=1.3]{Another outer result} Outer again. \end{lemma}
+\end{fcassumptions}
+\begin{lemma}[id=1.4]{Independent result} Outside. \end{lemma}
+"""
+        repo = self.repo("standing-nested", sections={"01-gluing-spaces": section,
+                         "02-covers": ""}, notation_extra=doc.NOTATION_HYPOTHESES +
+                         r"\fcdefhyp{\hypNonempty}{nonempty}{$U$ is nonempty}" + "\n")
+        outdir = self.root / "standing-nested-out"
+        self.build(repo, outdir, "--only", "1")
+        aux = fc.read_aux(outdir / f"{doc.JOB}.aux")
+        self.assertEqual([(h["id"], h["key"]) for h in aux.hyps],
+                         [("1.1", "open"), ("1.1", "nonempty"),
+                          ("1.2", "open"), ("1.3", "open")])
+
+    def test_starred_mention_does_not_supply_a_standing_assumption(self):
+        section = doc.SECTION_1.replace(
+            r"\begin{theorem}[id=1.2]",
+            "\\begin{fcassumptions}\nRecall that \\hypOpen*.\n"
+            r"\begin{theorem}[id=1.2]").replace(
+                r", and suppose that \hypOpen.", ".")
+        section += "\n\\end{fcassumptions}\n"
+        repo = self.repo("standing-star", sections={"01-gluing-spaces": section})
+        outdir = self.root / "standing-star-out"
+        self.build(repo, outdir)
+        out = self.check(repo, outdir, "--aux-only", "--strict")
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        self.assertIn("\\hypOpen is missing", out.stdout)
+
+    def test_standing_scope_cannot_begin_inside_a_statement(self):
+        section = r"""
+\begin{lemma}[id=1.1]{Invalid scope}
+\begin{fcassumptions} Suppose that \hypOpen. \end{fcassumptions}
+\end{lemma}
+"""
+        repo = self.repo("standing-invalid", sections={"01-gluing-spaces": section})
+        outdir = self.root / "standing-invalid-out"
+        out = self.build(repo, outdir, "--only", "1", ok=False)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("Standing assumptions cannot begin inside an item", out.stdout + out.stderr)
+
+
 class TestTheConventionsNotions(_Built):
     """The notions of the conventions: the words alone on the page, a box around each."""
 

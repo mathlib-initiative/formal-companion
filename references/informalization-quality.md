@@ -28,6 +28,11 @@ a short setup sentence immediately before a statement merely to announce a
 special case. For example, introduce the finite set in the corollary that
 uses it, rather than adding a separate paragraph announcing the finite case.
 
+State a repeated hypothesis once for a clearly delimited sequence of results.
+Preserve its quantifiers, make the scope clear, and end it before results that
+do not use it. A later section may restate the common hypothesis once so that
+it remains readable on its own.
+
 Make sections readable on their own, but do not repeat a catalogue of symbols.
 Check neighboring section openings for repeated introductions of the same notation.
 State what new notation denotes, and briefly give the action of an induced map

@@ -774,6 +774,13 @@ approved PDF (section 10) — but a **further fleet phase** after a runtime chan
   `\fc@auxhypdef{<key>}{<\macro>}`. The words end with `\xspace`, so a macro followed by a
   word keeps the space TeX drops after a control word (`\hypOpen and` prints "... open and")
   and one followed by punctuation gains none.
+- `\begin{fcassumptions} ... \end{fcassumptions}` scopes shared hypotheses.
+  An unstarred hypothesis macro used in the block's prose outside an item prints its
+  words and becomes a standing assumption for following items in that block. Each item
+  records the inherited key through the usual `\fc@auxhyp{<id>}{}{<key>}` record, so rule 5
+  checks its declaration signatures as before. Blocks can nest; closing a block restores
+  the outer hypotheses. A starred mention creates no standing assumption. A block cannot
+  begin inside an item. End it before results that do not share the hypothesis.
 - `\fcref{<number>}` prints the citation `[<label>, <number>]` of the bibliography entry
   `reference` and records `\fc@auxref{<id>}{<letter>}{<number>}{}`; `\fcref*{<number>}`,
   for a number whose `source` is `inferred`, adds a dagger and records `*` as the fourth

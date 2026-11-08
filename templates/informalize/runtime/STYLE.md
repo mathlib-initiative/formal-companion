@@ -124,12 +124,18 @@ standard term already says is unread, and an unread text states nothing.
   "unique" where it has existence, no finiteness, connectedness or nonemptiness that no
   binder states. The usual form of a result is not what this text states; the library's
   form is.
-- Drop nothing the Lean has. Every hypothesis is either written in the statement or carried
-  by a standard term that means it and nothing weaker.
+- Drop nothing the Lean has. Every hypothesis is written in the statement, inherited
+  from an explicit standing-assumption block, or carried by a standard term that means
+  it and nothing weaker.
 - A standing hypothesis of `hypotheses.json` is always written with its macro (for example
   `\hypOpen`), never in words typed by hand: "Suppose that \hypOpen." Put the macro in the
   part whose declaration binds the hypothesis, or in the item's own text when every part
-  needs it. Never add one where the signature lacks it. Where the hypothesis is one side of
+  needs it. For consecutive results sharing a hypothesis, enclose their opening prose and
+  statements in `\begin{fcassumptions} ... \end{fcassumptions}` and use the macro once
+  in that opening prose. Each following item in the block inherits the hypothesis; end
+  the block before unrelated results. Blocks may nest, but cannot begin inside an item.
+  A later section may state the common assumption once again. Never add an assumption
+  where the signature lacks it. Where the hypothesis is one side of
   an equivalence rather than an assumption, write the starred form, `\hypOpen*`, which
   prints the same words and records nothing.
 - State every other hypothesis in words in the same place.

@@ -229,6 +229,7 @@
   \fi
   \fc@auxwrite{\string\fc@auxitem{\fc@curid}{#1}{\thesection}{\detokenize{#4}}}%
   \fc@auxwrite{\string\fc@auxkind{\fc@curid}{#2}}%
+  \fc@standinghyps
   \leavevmode\fc@above{fc:\fc@curid}%
   \ignorespaces}
 
@@ -353,9 +354,33 @@
   \fc@savepos{fc:notion:\the\fc@notioncount:end}%
   \global\fc@innotionfalse}
 
+% A scoped block lets its opening prose state a shared hypothesis once.
+% LaTeX's environment group restores the outer list, including for nested blocks.
+% Each enclosed item records the active hypotheses in the existing aux format,
+% so rule 5 still detects a missing or an unneeded hypothesis for that item.
+\newif\iffc@standing
+\fc@standingfalse
+\def\fc@standinghyps{}
+\newenvironment{fcassumptions}{%
+  \iffc@initem
+    \PackageError{fcmarkers}{Standing assumptions cannot begin inside an item}%
+      {Place the block around the opening prose and the statements that share it.}%
+  \fi
+  \fc@standingtrue
+}{% the environment's group ends the scope
+}
+
 \newcommand*\fc@hyp[1]{%
   \iffc@initem
     \fc@auxwrite{\string\fc@auxhyp{\fc@curid}{\fc@curpart}{#1}}%
+  \else
+    \iffc@standing
+      \@ifundefined{fc@standinghyp@#1}{%
+        \expandafter\let\csname fc@standinghyp@#1\endcsname\@empty
+        \expandafter\def\expandafter\fc@standinghyps\expandafter{%
+          \fc@standinghyps\fc@hyp{#1}}%
+      }{}%
+    \fi
   \fi}
 
 % \fcdefhyp{\macro}{key}{words}: a standing hypothesis, in fixed words that
