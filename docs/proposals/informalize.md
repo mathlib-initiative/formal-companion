@@ -1424,11 +1424,13 @@ vendored checker accepts in canonical form:
   Modern keeps the calligraphic alphabet, is its Unicode script capital (`ℋ`), and a
   character of that font that is not the operator the page prints is the operator (`∘`
   for `\circ`). A run the page sets small and low, or small and high, is written in the
-  Unicode subscript or superscript characters for it, but only where every character of
-  the run has one: `Π₁(f)` and `ℋᵢ` are written, which the overlay's viewer sets as real
-  subscript runs (`viewer-core.js`'s `scriptRuns`), so a card shows what the page shows,
-  and `ι` with an `S` under its shoulder stays `ιS`, at full size, and is reported
-  (`counts.titles_scripts_kept`, the lossy `title.script_run`). Three spaces
+  Unicode subscript or superscript characters for it where every character of
+  the run has one: `Π₁(f)` and `ℋᵢ` are written. Otherwise the title preserves
+  the script with braced notation, such as `ι_{S}` or `γ_{[r,s]}`; nested
+  scripts are read against each run's own baseline, giving `ι_{Uᵢ}`.
+  The overlay viewer sets both forms as HTML subscript or superscript elements
+  in its headings, overview and hover previews. The box check still compares
+  plain text, without this display markup. Three spaces
   are poppler's and not the page's and are settled by the gap the page leaves — the one
   at a script run's edge, the one before a closing parenthesis, and the one a binary
   operator does or does not stand in — so `Π1 (f )` is `Π₁(f)` and `f ◦γ` is `f ∘ γ`.

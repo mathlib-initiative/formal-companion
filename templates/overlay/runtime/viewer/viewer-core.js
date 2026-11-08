@@ -1077,28 +1077,43 @@ const NUMBERING = /^(?:\p{L}?[\d.]*\d\p{L}?|[ivxlc]+|\p{L})$/iu;
 
 const SUBSCRIPTS = "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₔₕₖₗₘₙₚₛₜᵢᵣᵤᵥᵦᵧᵨᵩᵪⱼ";
 const SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿʰʲʳʷʸˡˢˣᴬᴮᴰᴱᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿᵀᵁⱽᵂᵃᵇᶜᵈᵉᶠᵍᵏᵐᵒᵖᵗᵘᵛᶻᵝᵞᵟᵠᵡ";
-const SCRIPT_RUN = new RegExp(`((?:[${SUBSCRIPTS}]\\p{M}*)+)|((?:[${SUPERSCRIPTS}]\\p{M}*)+)`, "gu");
+const SCRIPT_RUN = new RegExp(`([_^])\\{|((?:[${SUBSCRIPTS}]\\p{M}*)+)|((?:[${SUPERSCRIPTS}]\\p{M}*)+)`, "gu");
 
 /**
- * A title cut into `[kind, text]` runs: "text", or "sub" or "sup" with the
- * plain characters its script characters stand for. Firefox on macOS draws a
- * box for U+2096, U+2098 and U+2099 after a serif letter, and a plain letter
- * set small needs no font to hold them.
+ * A title cut into text/sub/sup runs. Unicode script characters are normalized
+ * to plain letters; braced scripts retain characters Unicode cannot express,
+ * such as a capital S or [r,s]. Braces may nest, but no TeX commands or HTML
+ * are interpreted. The renderer handles each script's contents the same way.
  */
 export function scriptRuns(value) {
   const whole = text(value);
   const runs = [];
   let at = 0;
-  for (const match of whole.matchAll(SCRIPT_RUN)) {
-    if (match.index > at) {
-      runs.push(["text", whole.slice(at, match.index)]);
+  SCRIPT_RUN.lastIndex = 0;
+  for (let match; (match = SCRIPT_RUN.exec(whole));) {
+    let end = SCRIPT_RUN.lastIndex;
+    let kind, content;
+    if (match[1]) {
+      let depth = 1;
+      while (end < whole.length && depth) {
+        if (whole[end] === "{") depth += 1;
+        if (whole[end] === "}") depth -= 1;
+        end += 1;
+      }
+      // A malformed or empty script remains literal text.
+      if (depth || end === SCRIPT_RUN.lastIndex + 1) continue;
+      kind = match[1] === "_" ? "sub" : "sup";
+      content = whole.slice(SCRIPT_RUN.lastIndex, end - 1);
+      SCRIPT_RUN.lastIndex = end;
+    } else {
+      kind = match[2] ? "sub" : "sup";
+      content = match[0].normalize("NFKC");
     }
-    runs.push([match[1] ? "sub" : "sup", match[0].normalize("NFKC")]);
-    at = match.index + match[0].length;
+    if (match.index > at) runs.push(["text", whole.slice(at, match.index)]);
+    runs.push([kind, content]);
+    at = end;
   }
-  if (at < whole.length) {
-    runs.push(["text", whole.slice(at)]);
-  }
+  if (at < whole.length) runs.push(["text", whole.slice(at)]);
   return runs;
 }
 

@@ -167,6 +167,13 @@ links**, or Escape, restores the annotations and panel without reloading the
 PDF or clearing the selected passage. Reading mode lasts for the current
 visit, including page turns, and starts off on a fresh load.
 
+Mathematical labels render Unicode script characters and braced scripts
+(`_{...}` and `^{...}`) as HTML subscripts and superscripts in the page overview,
+selected-passage heading and hover preview. Braced scripts preserve capitals,
+brackets and nested scripts for which Unicode has no standalone characters.
+Only this script notation is interpreted; label contents are inserted as text,
+never HTML or executable TeX. Plain text and unbraced underscores stay literal.
+
 From the records alone it builds:
 
 - regions: each such end's `location.page` and `location.rect` (fractions of

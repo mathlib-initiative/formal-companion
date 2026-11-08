@@ -688,6 +688,22 @@ class TestTheGlyphsOfABox(unittest.TestCase):
              ("S", "SCFNQQ+LMMathItalic8", 12.0, 5.0)], "ιS")
         self.assertEqual((text, kept), ("ιS", ["S"]))
 
+    def test_display_labels_preserve_scripts_without_unicode_characters(self):
+        for suffix, shift, expected in [("S", 5.0, "ι_{S}"),
+                                        ("[r,s]", 5.0, "ι_{[r,s]}"),
+                                        ("Q", -6.0, "ι^{Q}")]:
+            spans = [("ι", "LMMathItalic10", 16.0, 0.0),
+                     (suffix, "LMMathItalic8", 12.0, shift)]
+            self.assertEqual(check_items.printed_box(
+                glyphs(spans), "ι" + suffix, script_markup=True), (expected, []))
+
+    def test_display_labels_preserve_nested_subscripts(self):
+        spans = [("ι", "LMMathItalic10", 16.0, 0.0),
+                 ("U", "LMMathItalic8", 12.0, 5.0),
+                 ("i", "LMMathItalic6", 9.0, 9.0)]
+        self.assertEqual(check_items.printed_box(
+            glyphs(spans), "ιUi", script_markup=True), ("ι_{Uᵢ}", []))
+
     def test_a_superscript_run_is_read_the_other_way(self):
         text, kept = self.printed(
             [("τ", "DLETRZ+LMMathItalic10", 16.0, 0.0),

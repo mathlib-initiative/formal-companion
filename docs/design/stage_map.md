@@ -492,3 +492,12 @@ normalization keeps original text offsets for highlights without changing the
 PDF or its selectable text. Queries and text indexes are never written to a
 workspace, annotation record or generated artifact. Search works in reading
 mode; Escape closes search first (`docs/overlay.md`, section 4).
+
+
+## PDF viewer mathematical labels
+
+Informalization title extraction preserves PDF scripts without Unicode characters
+as braced `_{...}` or `^{...}` notation, including nested scripts. The overlay
+renders these and Unicode scripts consistently in the page overview, detail heading
+and hover preview using text nodes and HTML sub/sup elements. PDF content and the
+box check's plain-text comparison are unchanged (`docs/overlay.md`, section 4).

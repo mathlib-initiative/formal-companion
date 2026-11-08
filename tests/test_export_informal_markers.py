@@ -730,6 +730,13 @@ class TestTheGlyphsOfARealPage(unittest.TestCase):
         read = self.read(158.0, 20.0)
         self.assertEqual((boxtext.printed(read.text), read.kept), ("ST", ["T"]))
 
+    def test_export_titles_preserve_a_capital_subscript(self):
+        box = [1, 158.0 / PAGE[0], (PAGE[1] - 712.0) / PAGE[1],
+               20.0 / PAGE[0], 20.0 / PAGE[1]]
+        group = boxtext.BoxText(self.pdf, 288).of([box])
+        self.assertTrue(group.glyphs)
+        self.assertEqual((group.text, group.kept), ("S_{T}", []))
+
     def test_without_pdftohtml_the_text_is_the_one_pdftotext_flattens(self):
         """The glyphs cannot be read, so the crop is today's and the reader says so."""
         from informalize import runtime as informalize_runtime

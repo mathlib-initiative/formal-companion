@@ -426,13 +426,10 @@ class _Export:
     def read_boxes(self, where: str, boxes: list) -> boxtext.BoxGroup:
         """One entry's boxes read, with what the page gave up on the way reported.
 
-        Two things it can give up.  A subscript or a superscript run holding a character
-        Unicode has no small one for (a capital, a bracket) is left as poppler read it,
-        side by side with its base: the page prints an `ι` with an `S` under its right
-        shoulder and the title says `ιS`.  And where the page's own glyphs cannot be read
-        -- poppler's `pdftohtml` is not on PATH, or what it reads is not what pdftotext
-        cropped -- the title is pdftotext's flattened text, which prints a double-struck
-        `N` as `N` and a subscript as a digit of its own.
+        Scripts without Unicode characters are retained as braced notation, for
+        example ``ι_{S}``, so the viewer can typeset them. Where the page's own
+        glyphs cannot be read, the title is pdftotext's flattened text and the
+        report names the loss.
         """
         group = self.box_text.of(boxes)
         if group.kept:

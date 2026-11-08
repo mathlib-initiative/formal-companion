@@ -8,7 +8,9 @@ box (`templates/informalize/runtime/tools/`), so there is one box reader and the
 reads the boxes exactly as the check that passed them did.  That reader holds pdftotext's
 crop against the page's own glyphs (`pdftohtml -xml`), so what it gives is what a reader
 of the page sees: ``ℕ`` and not ``N``, ``Π₁(f)`` and not ``Π1 (f )``, ``f ∘ γ`` and not
-``f ◦γ``.  Where the glyphs cannot be had it gives pdftotext's text, and says so.
+``f ◦γ``. Scripts without Unicode characters use braced notation such as
+``ι_{S}``, which the viewer renders with HTML sub/sup elements. Where the glyphs
+cannot be had it gives pdftotext's text, and says so.
 
 This module joins a box group's crops in the order the markers list them, which is reading
 order, and keeps every character that reader gave: only the white space and the
@@ -156,7 +158,8 @@ class BoxText:
             from informalize import runtime as informalize_runtime
             self._read = reader()
             self._sizes = informalize_runtime.fccommon().pdf_pages(self.pdf)
-        reads = [self._read(self.pdf, list(box), self._sizes[int(box[0]) - 1], self.dpi)
+        reads = [self._read(self.pdf, list(box), self._sizes[int(box[0]) - 1], self.dpi,
+                            script_markup=True)
                  for box in boxes
                  if isinstance(box, list) and len(box) == 5 and isinstance(box[0], int)
                  and 1 <= box[0] <= len(self._sizes)]

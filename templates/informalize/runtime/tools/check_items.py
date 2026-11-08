@@ -581,7 +581,8 @@ def script_runs(glyphs: list[Glyph], seps: list[str]) -> list[tuple[int, int, di
     return runs
 
 
-def printed_box(glyphs: list[Glyph], flat: str) -> tuple[str, list[str]]:
+def printed_box(glyphs: list[Glyph], flat: str, *,
+                script_markup: bool = False) -> tuple[str, list[str]]:
     """pdftotext's crop with the characters and the spacing the page shows.
 
     Every character poppler read is kept, in its order: what changes is the few it read
@@ -589,17 +590,23 @@ def printed_box(glyphs: list[Glyph], flat: str) -> tuple[str, list[str]]:
     characters for it where each of them has one, and three spaces that are the reader's
     and not the page's -- the ones at a script run's edge, the one before a closing
     parenthesis, and the one a binary operator does or does not stand in.
+    With ``script_markup``, scripts Unicode cannot express use ``_{...}`` or
+    ``^{...}`` instead of being flattened. This is for display labels; the PDF
+    checks keep their existing character-by-character comparison.
     """
     out = [glyph_char(glyph) for glyph in glyphs]
     seps = separators(flat)
     runs = script_runs(glyphs, seps)
     kept, scripts, edges = [], set(), set()
+    braced = []
     for first, last, table in runs:
         scripts.update(range(first, last + 1))
         edges.update((first, last + 1))
         marks = [table.get(out[i]) for i in range(first, last + 1)]
         if all(marks):
             out[first:last + 1] = marks
+        elif script_markup:
+            braced.append((first, last, "_" if table is SUBSCRIPTS else "^"))
         else:
             kept.append("".join(out[first:last + 1]))
     for i in range(1, len(out)):
@@ -611,10 +618,20 @@ def printed_box(glyphs: list[Glyph], flat: str) -> tuple[str, list[str]]:
             seps[i] = " " if glyphs[i].gap >= MATH_SPACE_EM * em else ""
         elif (out[i] == ")" or i in edges) and glyphs[i].gap < TIGHT_SPACE_EM * em:
             seps[i] = ""
+    for first, last, mark in braced:
+        # Read nested scripts against this run's own baseline, so U_i in an
+        # inclusion's subscript keeps its i below U, not alongside it.
+        inner_flat = "".join(("" if i == first else seps[i]) + glyphs[i].char
+                             for i in range(first, last + 1))
+        inner, _ = printed_box(glyphs[first:last + 1], inner_flat, script_markup=True)
+        out[first] = mark + "{" + inner + "}"
+        for i in range(first + 1, last + 1):
+            out[i] = seps[i] = ""
     return "".join(sep + char for sep, char in zip(seps, out + [""])), kept
 
 
-def read_box(pdf: Path, box: list[float], size: tuple[float, float], dpi: int) -> BoxRead:
+def read_box(pdf: Path, box: list[float], size: tuple[float, float], dpi: int, *,
+             script_markup: bool = False) -> BoxRead:
     """One box, read as the page prints it.
 
     The one box reader: rule 9 compares it through :func:`crop_text`, and the export of
@@ -639,7 +656,7 @@ def read_box(pdf: Path, box: list[float], size: tuple[float, float], dpi: int) -
     glyphs = box_glyphs(pdf, box, flat)
     if glyphs is None:
         return BoxRead(text=flat, flat=flat, glyphs=False)
-    text, kept = printed_box(glyphs, flat)
+    text, kept = printed_box(glyphs, flat, script_markup=script_markup)
     return BoxRead(text=text, flat=flat, kept=kept)
 
 

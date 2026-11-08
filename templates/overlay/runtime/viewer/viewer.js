@@ -400,10 +400,11 @@ export async function bootstrapViewer({
   }
 
   /** Sets a node to a title's text, its script characters as `<sub>` and `<sup>`. */
-  function setTitleText(node, value) {
-    const runs = scriptRuns(value);
+  function setTitleText(node, value, depth = 0) {
+    const runs = depth < 32 ? scriptRuns(value) : [["text", value]];
     if (runs.some(([kind]) => kind !== "text")) {
-      node.replaceChildren(...runs.map(([kind, run]) => (kind === "text" ? run : make(kind, "", run))));
+      node.replaceChildren(...runs.map(([kind, run]) => (kind === "text" ? run
+        : setTitleText(make(kind, ""), run, depth + 1))));
     } else {
       node.textContent = value;
     }

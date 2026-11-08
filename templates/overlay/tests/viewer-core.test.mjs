@@ -1084,3 +1084,16 @@ test("titles: other mathematics is left as written", () => {
     assert.deepEqual(scriptRuns(value), [["text", value]]);
   }
 });
+
+
+test("titles: braced scripts preserve capitals, brackets and nested script content", () => {
+  assert.deepEqual(scriptRuns("ι_{S} : S → X"), [["text", "ι"], ["sub", "S"], ["text", " : S → X"]]);
+  assert.deepEqual(scriptRuns("γ_{[r,s]} and x^{Q}"),
+    [["text", "γ"], ["sub", "[r,s]"], ["text", " and x"], ["sup", "Q"]]);
+  assert.deepEqual(scriptRuns("Π₁(ι_{Uᵢ})"),
+    [["text", "Π"], ["sub", "1"], ["text", "(ι"], ["sub", "Uᵢ"], ["text", ")"]]);
+  assert.deepEqual(scriptRuns("ι_{U_{i}}"), [["text", "ι"], ["sub", "U_{i}"]]);
+  for (const literal of ["x_S", "x^Q", "x_{}", "x_{S", "a < b", "<img src=x>"]) {
+    assert.deepEqual(scriptRuns(literal), [["text", literal]]);
+  }
+});

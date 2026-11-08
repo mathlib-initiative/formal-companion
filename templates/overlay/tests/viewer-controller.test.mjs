@@ -2020,6 +2020,23 @@ for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MIN
   });
 }
 
+for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MINIMAL)]]) {
+  test(`titles: capital and nested subscripts render in overview and details (${mode})`, async () => {
+    const label = "ι_{S} : S → X, Π₁(ι_{Uᵢ}), γ_{[r,s]} and x^{Q}";
+    const sections = makeProofSections(PDF_SHA256);
+    sections["9/theorem-9.1"][0] = JSON.parse(JSON.stringify(sections["9/theorem-9.1"][0])
+      .replace("Theorem 9.1 (Doubling)", label));
+    const { documentRef } = await start({ config, sections });
+    await turnTo(documentRef, 9);
+    const row = el(documentRef, "page-index").children.find((li) => li.children[1]);
+    const expected = "ι_{S} : S → X, Π_{1}(ι_{U_{i}}), γ_{[r,s]} and x^{Q}";
+    assert.equal(scripted(row.children[0].children[1].children[0]), expected);
+    await openStep(documentRef, "a");
+    await fire(el(documentRef, "step-parent"), "click");
+    assert.equal(scripted(el(documentRef, "item-label").children[0]), expected);
+  });
+}
+
 test("titles: a step's parent button sets its item's scripts", async () => {
   const sections = scriptedSections();
   sections["9/theorem-9.1"][0] = JSON.parse(JSON.stringify(sections["9/theorem-9.1"][0])
