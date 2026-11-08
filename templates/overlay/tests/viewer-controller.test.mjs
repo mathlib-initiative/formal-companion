@@ -1932,10 +1932,16 @@ for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MIN
     const sections = makeProofSections(PDF_SHA256);
     const step = sections["9/theorem-9.1"].find(record => record.id === "b");
     step.note = "  Collect the two\n terms  ";
+    for (const end of step.object) {
+      delete end.location.declaration;
+      end.title = "Collect the two terms";
+    }
     const { documentRef } = await start({ config, sections });
     await turnTo(documentRef, 9);
     await openStep(documentRef, "b");
     assert.match(textOf(el(documentRef, "item-label")), /Collect the two terms/);
+    assert.doesNotMatch(textOf(el(documentRef, "key-list")), /Collect the two terms/);
+    assert.match(textOf(el(documentRef, "key-list")), /rw \[two_mul\]/);
     assert.equal(el(documentRef, "coverage-note").hidden, true);
     assert.equal(el(documentRef, "note-toggle").hidden, true);
     assert.equal(el(documentRef, "target-summary").textContent, "Close match");

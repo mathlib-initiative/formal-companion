@@ -1146,16 +1146,20 @@ export async function bootstrapViewer({
       ? make("code", "", value) : value)));
   }
 
+  /** A fallback title or detail note adds nothing when the heading already says it. */
+  function repeatsHeading(item, value) {
+    const normalize = text => (text ?? "").trim().replace(/\s+/gu, " ");
+    const heading = isStep(item) ? stepParts(item, state.index.items).text : item?.label;
+    return [item?.label, heading].some(label => normalize(label) === normalize(value));
+  }
+
   /**
    * A minimal overlay keeps a record's note behind one control, closed until
    * asked for and then open from record to record; a full one shows it.
    */
   function renderNote(item) {
     // Older exporters sometimes copied the heading into the optional note.
-    const normalize = value => (value ?? "").trim().replace(/\s+/gu, " ");
-    const noteText = normalize(item?.coverageNote);
-    const heading = isStep(item) ? stepParts(item, state.index.items).text : item?.label;
-    const note = Boolean(noteText) && ![item?.label, heading].some(label => normalize(label) === noteText);
+    const note = Boolean(item?.coverageNote?.trim()) && !repeatsHeading(item, item.coverageNote);
     const behind = note && state.config.minimal;
     ui["note-toggle"].hidden = !behind;
     ui["note-toggle"].textContent = state.noteOpen ? "Less detail" : "More detail";
@@ -1264,12 +1268,14 @@ export async function bootstrapViewer({
   }
 
   /** A declaration a step links: its eyebrow, its name, and only the lines of it the step names. */
-  function stepCard(card) {
+  function stepCard(card, item) {
     const li = make("li", "key-card");
     li.tabIndex = -1;
     const name = nameNode(card.name, "decl-name");
     name.title = card.fullName;
-    li.append(eyebrow(card), name, ...card.ranges.flatMap(rangeNodes));
+    li.append(eyebrow(card));
+    if (!repeatsHeading(item, card.fullName)) li.append(name);
+    li.append(...card.ranges.flatMap(rangeNodes));
     return li;
   }
 
@@ -1375,7 +1381,7 @@ export async function bootstrapViewer({
 
     renderKeyNote(item, keys);
     const capped = state.keysAll ? shownKeys : shownKeys.slice(0, KEY_CARDS);
-    ui["key-list"].replaceChildren(...capped.map(step ? stepCard : keyCard));
+    ui["key-list"].replaceChildren(...capped.map(card => step ? stepCard(card, item) : keyCard(card)));
     ui["key-list"].hidden = !capped.length;
     // A neutral count, only when there is more than one: no heading says what the cards state.
     ui["key-count"].hidden = keys.length < 2 || state.config.minimal;
