@@ -42,12 +42,12 @@ test('dragging in either direction resizes live and persists only at release', a
 test('limits keep both panes visible and resizing the window preserves the preference', async () => {
   const s = setup({ stored: '800' });
   await s.resize(1000);
-  assert.equal(s.width(), 672);
+  assert.equal(s.width(), 572);
   assert.equal(s.saved(), '800');
   await s.resize(1400);
   assert.equal(s.width(), 800);
   await fire(s.divider, 'keydown', key('End'));
-  assert.equal(s.width(), 1072);
+  assert.equal(s.width(), 972);
   await fire(s.divider, 'keydown', key('Home'));
   assert.equal(s.width(), 280);
   await fire(s.divider, 'keydown', key('ArrowRight'));

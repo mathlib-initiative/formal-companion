@@ -446,7 +446,7 @@ kbd {
   display: grid;
   grid-row: 2;
   grid-template-columns: minmax(0, 1fr) 8px
-    clamp(280px, var(--details-width, clamp(380px, 40vw, 600px)), calc(100% - 328px));
+    clamp(280px, var(--details-width, clamp(380px, 40vw, 600px)), calc(100% - 428px));
   min-height: 0;
 }
 

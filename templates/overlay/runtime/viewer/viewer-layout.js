@@ -3,7 +3,7 @@ export function installPanelResize({ workspace, details, divider, documentRef, w
                                      storage, storageKey, onResize = () => {} }) {
   const key = `${storageKey}-panel-width`;
   const minimum = 280;
-  const pdfMinimum = 320;
+  const pdfMinimum = 420; // Keep the floating PDF controls inside their pane.
   const dividerWidth = 8;
   let preferred = null;
   let drag = null;
