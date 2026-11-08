@@ -77,6 +77,11 @@ statement. Do not add an explanatory sentence solely to provide a place for
 an annotation. When the marker format supports it, a hypothesis inside a
 numbered statement is a natural place for its definition link. Do not mark
 every familiar word merely because it has a library declaration.
+The linked declaration must explain the mathematical meaning of the marked
+words, not merely an operator used to encode the claim. For example, the
+generic indexed-supremum operator does not explain "generate" in a claim
+about subgroups or subgroupoids. Prefer a direct mathematical definition;
+otherwise leave the word unlinked and retain the precise statement citation.
 
 Link a selected proof sentence or displayed equation to the specific Lean
 range that establishes it. A box around an entire proof does not provide
