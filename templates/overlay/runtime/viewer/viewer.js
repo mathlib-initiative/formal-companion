@@ -2172,10 +2172,22 @@ export async function bootstrapViewer({
         closeSearch();
         return;
       }
-      if (event.key === "Enter" && event.target === ui["find-input"]) {
-        event.preventDefault();
-        if (state.search.timer) return runSearch();
-        return showMatch(state.search.active + (event.shiftKey ? -1 : 1));
+      if (event.key === "Enter") {
+        const target = event.target;
+        const searchControl = [ui["find-input"], ui["find-previous"], ui["find-next"]].includes(target);
+        const focusedControl = target?.closest?.(
+          "a, button, input, select, textarea, summary, [tabindex], [role='button'], [role='checkbox']",
+        );
+        // Search navigation survives a click back into the PDF. Other controls keep
+        // their own Enter action (page-number input, passage buttons, links, divider).
+        const readingText = !target?.isContentEditable
+          && !["INPUT", "SELECT", "TEXTAREA"].includes(target?.tagName)
+          && (!focusedControl || focusedControl === ui["page-scroller"]);
+        if (searchControl || readingText) {
+          event.preventDefault(); // Also suppress the match button's native click.
+          if (state.search.timer) return runSearch();
+          return showMatch(state.search.active + (event.shiftKey ? -1 : 1));
+        }
       }
     }
     if (!isViewerShortcut(event)) {

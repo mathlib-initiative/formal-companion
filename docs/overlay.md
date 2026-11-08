@@ -172,6 +172,9 @@ shortcut reference. It also lists search navigation and the keys available
 when a Lean token or the panel divider has focus. Escape closes help first;
 clicking outside also dismisses it. Single-key shortcuts do not run in input
 fields or editable content, and holding L or ? does not repeatedly toggle it.
+While PDF search is open, Enter / Shift+Enter move to the next / previous
+match from the search field, either match arrow, or the PDF text. Other
+focused controls keep their own Enter action.
 
 On desktop, drag the divider between the PDF and the Lean panel to resize the
 panel. Its grip highlights on hover or keyboard focus. Arrow Left/Right resize

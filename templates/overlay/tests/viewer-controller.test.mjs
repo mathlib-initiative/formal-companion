@@ -2281,6 +2281,52 @@ test("find: all-page results navigate and wrap with Enter and Shift+Enter, retai
   assert.deepEqual(el(documentRef, "find-highlights").children, []);
 });
 
+test("find: Enter shortcuts survive focus on PDF text or either match arrow and wrap across pages", async () => {
+  const { documentRef, result } = await start({
+    pdfjs: fakePdfjs({ numPages: 3, pageTexts: ["path", "nothing", "path path"] }),
+  });
+  await findPdf(documentRef, "path");
+  const scroller = el(documentRef, "page-scroller");
+  const arrows = [el(documentRef, "find-previous"), el(documentRef, "find-next")];
+  for (const node of [scroller, ...arrows]) node.closest = () => node;
+  for (const target of [scroller, { tagName: "SPAN", closest: () => scroller },
+    { tagName: "BODY", closest: () => null }, ...arrows]) {
+    for (const [shiftKey, active, page] of [[false, 1, 3], [true, 0, 1], [true, 2, 3], [false, 0, 1]]) {
+      let prevented = false;
+      await fire(documentRef, "keydown", { key: "Enter", shiftKey, target,
+        preventDefault: () => { prevented = true; } });
+      assert.equal(result.state.search.active, active);
+      assert.equal(result.state.currentPage, page);
+      assert.equal(prevented, true, "the match button must not also fire its native click");
+    }
+  }
+  await fire(el(documentRef, "find-close"), "click");
+  await fire(documentRef, "keydown", { key: "Enter", target: scroller });
+  assert.equal(result.state.search.active, 0, "closed search does not capture Enter");
+});
+
+test("find: Enter navigation leaves unrelated controls, editing and modified keys alone", async () => {
+  const { documentRef, result } = await start({
+    pdfjs: fakePdfjs({ numPages: 1, pageTexts: ["path path path"] }),
+  });
+  await findPdf(documentRef, "path");
+  const otherControls = ["page-number", "find-close", "toggle-reading", "toggle-shortcuts", "panel-divider"]
+    .map((id) => el(documentRef, id));
+  const passage = { tagName: "BUTTON" };
+  for (const node of [...otherControls, passage]) node.closest = () => node;
+  for (const target of [...otherControls, passage, { tagName: "SPAN", closest: () => passage },
+    { tagName: "SPAN", isContentEditable: true }, { tagName: "INPUT" }, { tagName: "TEXTAREA" }]) {
+    await fire(documentRef, "keydown", { key: "Enter", target,
+      preventDefault: () => assert.fail("search must not take this control's Enter action") });
+    assert.equal(result.state.search.active, 0);
+  }
+  for (const modifier of ["ctrlKey", "metaKey", "altKey", "isComposing", "defaultPrevented"]) {
+    await fire(documentRef, "keydown", { key: "Enter", [modifier]: true, target: el(documentRef, "find-input"),
+      preventDefault: () => assert.fail("search must not capture this modified key") });
+    assert.equal(result.state.search.active, 0);
+  }
+});
+
 test("find: missing text, no results and extraction failures are explicit and do not disable reading", async () => {
   for (const [texts, query, expected] of [
     [["path", "nothing"], "other", /No matches/],
