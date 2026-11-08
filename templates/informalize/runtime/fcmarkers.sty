@@ -48,6 +48,7 @@
 %   \fc@auxpart{id}{letter}
 %   \fc@auxleanref{id}{letter or empty}{name}
 %   \fc@auxnotion{n}{constant}{the words as printed}
+%   \fc@auxnotiontitle{n}{optional viewer title}
 %   \fc@auxhyp{id}{letter or empty}{key}
 %   \fc@auxhypdef{key}{\macro}
 %   \fc@auxref{id}{letter or empty}{number}{* or empty}
@@ -151,6 +152,7 @@
 \def\fc@auxpart#1#2{}
 \def\fc@auxleanref#1#2#3{}
 \def\fc@auxnotion#1#2#3{}
+\def\fc@auxnotiontitle#1#2{}
 \def\fc@auxhyp#1#2#3{}
 \def\fc@auxhypdef#1#2{}
 \def\fc@auxref#1#2#3#4{}
@@ -324,33 +326,37 @@
 % ---------------------------------------------------------------------------
 % Notions
 %
-% \fcnotion{<constant>}{<words>}: a notion at its useful occurrence in prose or an item,
+% \fcnotion[<viewer title>]{<constant>}{<words>}: a notion at its useful occurrence in prose or an item,
 % printed alone, with a box recorded around them.  The constant is the marker's
 % argument and nothing else: the text names no Lean declaration and links to no
 % documentation page, and the annotation export joins the box to the constant.
 % The two markers sit at the ends of the words, in the glue beside them, so the
 % box's side edges cross no ink; a notion broken over two lines gets one box per
-% line (extract_markers.py).
+% line (extract_markers.py). The optional title is metadata only; it does not
+% alter the printed words or their boxes. It may contain delimited LaTeX math.
 \newcount\fc@notioncount
 \newif\iffc@innotion
 
-\newcommand\fcnotion[2]{%
+\newcommand\fcnotion[3][]{%
   \iffc@innotion
-    \PackageError{fcmarkers}{\string\fcnotion{\detokenize{#1}} inside another notion}%
+    \PackageError{fcmarkers}{\string\fcnotion{\detokenize{#2}} inside another notion}%
       {Notions cannot be nested.}%
   \fi
-  \@ifundefined{fc@notion@\detokenize{#1}}{}{%
-    \PackageError{fcmarkers}{The notion \detokenize{#1} is marked twice}%
+  \@ifundefined{fc@notion@\detokenize{#2}}{}{%
+    \PackageError{fcmarkers}{The notion \detokenize{#2} is marked twice}%
       {Mark a notion once, at its first useful occurrence.}}%
   \expandafter\global\expandafter\let
-    \csname fc@notion@\detokenize{#1}\endcsname\@empty
+    \csname fc@notion@\detokenize{#2}\endcsname\@empty
   \global\advance\fc@notioncount\@ne
   \global\fc@innotiontrue
-  \fc@auxwrite{\string\fc@auxnotion{\the\fc@notioncount}{\detokenize{#1}}%
-    {\detokenize{#2}}}%
+  \fc@auxwrite{\string\fc@auxnotion{\the\fc@notioncount}{\detokenize{#2}}%
+    {\detokenize{#3}}}%
+  \if\relax\detokenize{#1}\relax\else
+    \fc@auxwrite{\string\fc@auxnotiontitle{\the\fc@notioncount}{\detokenize{#1}}}%
+  \fi
   \leavevmode
   \fc@savepos{fc:notion:\the\fc@notioncount:start}%
-  #2\/% include italic overhang before recording a statement word's end
+  #3\/% include italic overhang before recording a statement word's end
   \fc@savepos{fc:notion:\the\fc@notioncount:end}%
   \global\fc@innotionfalse}
 

@@ -1824,3 +1824,14 @@ introductions replace mandatory variable catalogues. A conventions file may be e
 notion markers are allowed in numbered items and lettered parts, with duplicate and nested
 notions still refused. The edit task owns every declared section so it can perform a
 whole-document exposition and layout pass, while item-table changes remain proposals.
+
+
+#### Authored notion labels
+
+`\fcnotion[viewer title]{constant}{printed words}` records the optional label in
+`\fc@auxnotiontitle{index}{title}`. `parse_aux` joins it to the corresponding
+notion; `markers.json` includes its `title` only when nonempty. The exporter
+prefers this title to PDF-glyph reconstruction, preserves standard delimited
+LaTeX, and counts it as `titles_authored`. Printed words, boxes and notion IDs
+are independent. The shared author guide recommends descriptive labels for
+formula annotations. Existing two-argument markers retain their behavior.

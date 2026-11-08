@@ -184,6 +184,35 @@ def strip_comments(text: str) -> str:
     return "\n".join(re.sub(r"(?<!\\)%.*", "", line) for line in text.splitlines())
 
 
+def notion_calls(text: str) -> Iterable[tuple[int, int, str]]:
+    """Source spans through a notion's constant, allowing a braced optional title."""
+    for match in re.finditer(r"\\fcnotion(?![A-Za-z])", text):
+        pos = match.end()
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        if pos < len(text) and text[pos] == "[":
+            pos += 1
+            depth = 0
+            while pos < len(text):
+                if text[pos] == "\\":
+                    pos += 2
+                    continue
+                if text[pos] == "{":
+                    depth += 1
+                elif text[pos] == "}":
+                    depth -= 1
+                elif text[pos] == "]" and depth == 0:
+                    pos += 1
+                    break
+                pos += 1
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        got = _groups(text, pos, 1)
+        if got:
+            groups, end = got
+            yield match.start(), end, groups[0].strip()
+
+
 def printed_lean_names(text: str, names: Iterable[str]) -> list[tuple[int, str]]:
     """Every name of `names` this TeX file PRINTS, as ``(line number, name)``.
 
@@ -200,7 +229,10 @@ def printed_lean_names(text: str, names: Iterable[str]) -> list[tuple[int, str]]
     gate's own lint.
     """
     wanted = set(names)
-    body = _SILENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), strip_comments(text))
+    body = strip_comments(text)
+    for start, end, _name in reversed(list(notion_calls(body))):
+        body = body[:start] + re.sub(r"[^\n]", " ", body[start:end]) + body[end:]
+    body = _SILENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
     out = []
     for found in _DOTTED.finditer(body):
         name = found.group(0).replace("\\_", "_")
@@ -354,7 +386,7 @@ class Aux:
 
 RECORDS = {
     "fc@auxgeometry": 1, "fc@auxsection": 4, "fc@auxitem": 4, "fc@auxpart": 2,
-    "fc@auxleanref": 3, "fc@auxnotion": 3, "fc@auxhyp": 3, "fc@auxhypdef": 2,
+    "fc@auxleanref": 3, "fc@auxnotion": 3, "fc@auxnotiontitle": 2, "fc@auxhyp": 3, "fc@auxhypdef": 2,
     "fc@auxref": 4, "zref@newlabel": 2,
 }
 _CMD = re.compile(r"\\(" + "|".join(re.escape(k) for k in RECORDS) + r")(?![A-Za-z@])")
@@ -363,6 +395,7 @@ _CMD = re.compile(r"\\(" + "|".join(re.escape(k) for k in RECORDS) + r")(?![A-Za
 def parse_aux(text: str) -> Aux:
     text = _decode_carets(text)
     aux = Aux()
+    notion_titles = {}
     for m in _CMD.finditer(text):
         name = m.group(1)
         got = _groups(text, m.end(), RECORDS[name])
@@ -387,6 +420,11 @@ def parse_aux(text: str) -> Aux:
         elif name == "fc@auxnotion":
             aux.notions.append({"index": g[0].strip(), "name": g[1].strip(),
                                 "words": tex_text(g[2])})
+        elif name == "fc@auxnotiontitle":
+            index = g[0].strip()
+            if index in notion_titles:
+                raise ValueError(f"duplicate notion title: {index}")
+            notion_titles[index] = tex_text(g[1]).strip()
         elif name == "fc@auxhyp":
             aux.hyps.append({"id": g[0], "part": g[1], "key": g[2]})
         elif name == "fc@auxhypdef":
@@ -399,6 +437,12 @@ def parse_aux(text: str) -> Aux:
             if g[0].startswith("fc:"):
                 aux.positions[g[0]] = {k: int(v) for k, v in props.items()
                                        if k in ("posx", "posy", "abspage")}
+    for notion in aux.notions:
+        title = notion_titles.pop(notion["index"], "")
+        if title:
+            notion["title"] = title
+    if notion_titles:
+        raise ValueError("title for unknown notion index: " + ", ".join(notion_titles))
     return aux
 
 

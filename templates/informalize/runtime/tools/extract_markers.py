@@ -436,7 +436,8 @@ def entry_skeletons(aux: fc.Aux) -> list[dict]:
                         "decls": aux.decls_of(iid, p)})
     for n in aux.notions:
         out.append({"id": f"notion:{n['name']}", "notion": n["name"], "words": n["words"],
-                    "label": f"notion:{n['index']}", "number": f"n{n['index']}"})
+                    "label": f"notion:{n['index']}", "number": f"n{n['index']}",
+                    **({"title": n["title"]} if n.get("title") else {})})
     return out
 
 

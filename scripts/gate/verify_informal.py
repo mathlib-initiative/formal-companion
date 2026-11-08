@@ -178,8 +178,6 @@ PRINTED_LINT = (
     (re.compile(r"\\verb(?![A-Za-z*])"), "\\verb"),
     (re.compile(r"https?://"), "a URL"),
 )
-#: the constant a `\fcnotion` marks, whose braces hold no brace of their own
-NOTION = re.compile(r"\\fcnotion(?![A-Za-z])\s*\{([^{}]*)\}")
 #: a `\label` key a text file may write: letters, digits and `:._-`; in a numbered section's
 #: file `eq:<id>-<word>` of one of its items (STYLE.md), so no two sections share a label
 LABEL = re.compile(r"\\label(?![A-Za-z])\s*(?:\{([A-Za-z0-9][A-Za-z0-9:._-]*)\})?")
@@ -678,11 +676,10 @@ def lint_printed(cfg: GateConfig, path: str, text: str, problems: Problems) -> N
                                               f"annotations supply both -- so a notion the "
                                               f"conventions fix is plain mathematics inside "
                                               f"\\fcnotion{{<constant>}}{{<the words>}}")
-    for found in NOTION.finditer(body):
-        name = found.group(1).strip()
+    for start, _end, name in fc.notion_calls(body):
         if name in cfg.declarations or name in cfg.references:
             continue
-        line = body.count("\n", 0, found.start()) + 1
+        line = body.count("\n", 0, start) + 1
         problems.add(2, f"{path}:{line}", f"\\fcnotion{{{name[:80]}}} names no constant of "
                                           f"declarations.json, as an entry or as a row of its "
                                           f"`references`")

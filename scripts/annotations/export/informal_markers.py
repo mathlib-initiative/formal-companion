@@ -419,7 +419,13 @@ class _Export:
                             "the item's head")
 
     def notion_title(self, entry: dict, words: str) -> str:
-        """The notion's title: the text the page prints inside its boxes, in reading order."""
+        """An authored viewer label, or the printed words for older sources."""
+        if "title" in entry:
+            title = entry["title"]
+            if not isinstance(title, str) or not title.strip() or common.has_url(title):
+                raise ExportError(f"{entry['id']}: invalid notion viewer title")
+            self.report.counts["titles_authored"] = self.report.counts.get("titles_authored", 0) + 1
+            return title.strip()
         group = self.read_boxes(entry["id"], entry.get("boxes") or [])
         return self.printed(entry["id"], group.text, words, "the notion's boxes")
 

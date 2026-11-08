@@ -554,6 +554,11 @@ class TestThePrintedLint(unittest.TestCase):
         self.assertIn(doc.SLOTS["theorem"], names)
         self.assertEqual(vi.fc.printed_lean_names(main, names), [])
 
+    def test_optional_math_titles_still_validate_the_notion_constant(self):
+        found = self.lint(r"A \fcnotion[Subpath $\gamma_{[r,s]}$]{Mathlib.Imagined}{wish}.")
+        self.assertTrue(any("names no constant" in line for line in found))
+        self.assertFalse(any("prints the Lean name" in line for line in found))
+
     def test_a_notion_declarations_json_does_not_carry_is_refused(self):
         found = self.lint("A \\fcnotion{Mathlib.Imagined}{wish} is nowhere.")
         self.assertEqual(len(found), 1, found)

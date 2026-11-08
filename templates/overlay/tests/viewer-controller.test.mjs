@@ -65,6 +65,7 @@ async function start({
   storage = memoryStorage(),
   verso = undefined,
   windowRef = undefined,
+  renderMath = undefined,
 } = {}) {
   const record = generated === undefined ? await makeGenerated(sections) : generated;
   const urls = [];
@@ -100,6 +101,7 @@ async function start({
     storage,
     windowRef,
     searchDelay: 0,
+    ...(renderMath ? { renderMath } : {}),
   });
   return { documentRef, fetched, hashes: urls, pdfjs, result, storage };
 }
@@ -2163,3 +2165,27 @@ test("find: clearing a query removes results and reopening preserves a completed
   assert.equal(el(documentRef, "find-next").disabled, true);
   assert.deepEqual(result.state.search.matches, []);
 });
+
+for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MINIMAL)]]) {
+  test(`titles: authored LaTeX reaches the renderer on overview and detail (${mode})`, async () => {
+    const label = String.raw`Subpath \(\gamma_{[r,s]}\)`;
+    const sections = makeProofSections(PDF_SHA256);
+    sections["9/theorem-9.1"][0] = JSON.parse(JSON.stringify(sections["9/theorem-9.1"][0])
+      .replace("Theorem 9.1 (Doubling)", label.replaceAll("\\", "\\\\")));
+    const rendered = [];
+    const renderMath = (tex, doc) => {
+      rendered.push(tex);
+      const math = doc.createElement("math");
+      math.textContent = tex;
+      return math;
+    };
+    const { documentRef } = await start({config, sections, renderMath});
+    await turnTo(documentRef, 9);
+    assert.ok(rendered.includes(String.raw`\gamma_{[r,s]}`));
+    rendered.length = 0;
+    await openStep(documentRef, "a");
+    await fire(el(documentRef, "step-parent"), "click");
+    assert.ok(rendered.includes(String.raw`\gamma_{[r,s]}`));
+    assert.equal(el(documentRef, "item-label").children[0].children[1].tagName, "MATH");
+  });
+}

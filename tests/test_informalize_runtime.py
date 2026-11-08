@@ -378,6 +378,19 @@ class TestParsing(unittest.TestCase):
             {"index": "1", "name": "Metric.ball", "words": "the open ball $\\ball{x}{r}$"},
             {"index": "2", "name": "ExampleLib.GlueData", "words": "gluing data"}])
 
+    def test_notion_titles_preserve_math_and_leave_printed_words_separate(self):
+        aux = fc.parse_aux(r"\fc@auxnotion{1}{ExampleLib.map}{$\iota_S$}" + "\n" +
+                           r"\fc@auxnotiontitle{1}{Inclusion $\iota _S$}")
+        self.assertEqual(aux.notions[0]["title"], r"Inclusion $\iota_S$")
+        self.assertEqual(aux.notions[0]["words"], r"$\iota_S$")
+        entry = extract_markers.entry_skeletons(aux)[0]
+        self.assertEqual(entry["title"], r"Inclusion $\iota_S$")
+        source = r"\fcnotion[Subpath $\gamma_{[r,s]}$]{ExampleLib.map}{$\gamma$}"
+        self.assertEqual([n for _, _, n in fc.notion_calls(source)], ["ExampleLib.map"])
+        self.assertEqual(fc.printed_lean_names(source, ["ExampleLib.map"]), [])
+        with self.assertRaises(ValueError):
+            fc.parse_aux(r"\fc@auxnotiontitle{99}{Missing}")
+
     def test_a_title_is_read_in_the_spelling_a_person_types(self):
         # TeX's \write puts a space after every control word
         self.assertEqual(fc.tex_text("The map $\\pi _1(X)$ and \\emph {it}"),

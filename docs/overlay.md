@@ -553,3 +553,22 @@ identifiers, extensions`, and `type` first elsewhere, with a two-space indent,
 UTF-8 and arrays of scalars on one line. The files are read back with the
 vendored reader before anything is written; a record the conversion cannot
 carry, or files that do not read back as the records, stop the export.
+
+
+### Mathematical labels
+
+Annotation subject titles can mix prose with LaTeX math delimited by `$...$`,
+`$$...$$`, `\(...\)` or `\[...\]`; all label math is set inline. The viewer uses
+bundled KaTeX 0.19.1 to produce MathML, rendered natively by the browser. Its
+module and MIT license live in `runtime/vendor/katex/` with the release integrity
+and file hash. Rendering needs no CDN, remote stylesheet or font download.
+`trust: false`, strict parsing, a fresh macro dictionary and expansion/size limits
+apply separately to each formula. Invalid or unsupported formulas remain readable
+as literal source, without breaking the rest of the label. Ordinary label text
+still uses text nodes; only KaTeX-generated MathML is parsed and imported.
+
+An informalization author can name a notion independently of its printed words:
+`\fcnotion[Inclusion map]{Example.inclusion}{$i_S:S\to X$}`. The optional title is
+preserved in markers and exported verbatim, including delimited standard LaTeX.
+Prefer descriptive titles when a repeated formula adds no information. Omitting
+the title preserves existing glyph extraction and Unicode-script formatting.

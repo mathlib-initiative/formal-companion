@@ -501,3 +501,12 @@ as braced `_{...}` or `^{...}` notation, including nested scripts. The overlay
 renders these and Unicode scripts consistently in the page overview, detail heading
 and hover preview using text nodes and HTML sub/sup elements. PDF content and the
 box check's plain-text comparison are unchanged (`docs/overlay.md`, section 4).
+
+Notion markers accept an optional viewer title, `\fcnotion[title]{constant}{words}`.
+The title passes through the auxiliary records and markers into the annotation;
+it does not change the printed text, box geometry or stable notion identifier.
+Without it, the existing PDF-glyph extraction remains the fallback. Explicit
+LaTeX math in annotation labels is rendered by pinned, local KaTeX as native
+MathML on every title surface. Only generated MathML is parsed; trusted commands
+are disabled, expansion/size are bounded, and invalid math stays literal text.
+No external scripts, styles or fonts are loaded.

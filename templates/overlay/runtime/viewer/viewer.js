@@ -19,7 +19,8 @@
  * are the vendored build's, and viewer.css has the rules they are written for.
  *
  * Security (docs/overlay.md section 4): every string from those files reaches
- * the DOM through `textContent` or an attribute setter, never `innerHTML`; an
+ * the DOM through `textContent` or an attribute setter, never `innerHTML`. Explicit
+ * LaTeX labels use locally bundled KaTeX to generate MathML (viewer-math.js); an
  * `href` is used only when a card's page resolves to an `https:` URL or a
  * page of this site, and a token's only when it is a page of this site; the
  * hover card and the text layer's scale are placed through CSSOM, never a
@@ -27,6 +28,7 @@
  * `pdf.publish` names an open license, from `../<file_name>` beside the
  * config; PDF.js runs with `isEvalSupported: false`.
  */
+import { mathRuns, mathNode } from "./viewer-math.js";
 import {
   CARD_PAGE_SIZE,
   CONFIG_URL,
@@ -320,6 +322,7 @@ export async function bootstrapViewer({
   locationRef = globalThis.location,
   generatedUrl = GENERATED_URL,
   pageUrl = globalThis.location?.href,
+  renderMath = mathNode,
   pdfjsLoader = () => import("../vendor/pdfjs/pdf.min.mjs"),
   versoUrl = VERSO_URL,
   searchDelay = 150,
@@ -399,8 +402,17 @@ export async function bootstrapViewer({
     return node;
   }
 
-  /** Sets a node to a title's text, its script characters as `<sub>` and `<sup>`. */
+  /** Typeset explicit LaTeX; keep legacy extracted scripts and plain text readable. */
   function setTitleText(node, value, depth = 0) {
+    if (depth === 0) {
+      const parts = mathRuns(value);
+      if (parts.some((part) => part.kind === "math")) {
+        node.replaceChildren(...parts.map((part) => part.kind === "math"
+          ? (renderMath(part.text, documentRef) ?? part.raw)
+          : setTitleText(make("span", ""), part.text, 1)));
+        return node;
+      }
+    }
     const runs = depth < 32 ? scriptRuns(value) : [["text", value]];
     if (runs.some(([kind]) => kind !== "text")) {
       node.replaceChildren(...runs.map(([kind, run]) => (kind === "text" ? run

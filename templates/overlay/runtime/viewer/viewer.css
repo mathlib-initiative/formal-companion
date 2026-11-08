@@ -1902,3 +1902,8 @@ a.related-link:hover .related-name .leaf {
     stroke-width: 3;
   }
 }
+
+/* Native MathML from authored LaTeX labels; no remote fonts or inline styles. */
+.item-title math, .item-subtitle math, .index-label math, #item-label math {
+  font-size: 1em;
+}

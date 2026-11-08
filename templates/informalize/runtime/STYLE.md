@@ -198,6 +198,13 @@ Let $S$ be a \fcnotion{Finite}{finite} set.
 \end{lemma}
 ```
 
+Give a formula annotation a short descriptive viewer title when repeating its
+symbols would be unhelpful: `\fcnotion[Inclusion map]{<constant>}{<printed formula>}`.
+This optional title changes only the annotation label, not the PDF or its box.
+For useful notation in a title, use standard LaTeX inside `$...$` or `\(...\)`;
+for example `[Subpath $\gamma_{[r,s]}$]`. Use standard commands, not macros defined
+only in the document. Prefer names such as "Inclusion map" to a repeated arrow.
+
 Mark each retained notion once. Notions cannot be nested. A useful first occurrence
 inside a hypothesis needs no separate introductory sentence. Do not retain a sentence
 solely to preserve a definition link. Print no Lean name or URL: no `\texttt`, no `\verb`, no `\href`, no `\url`.

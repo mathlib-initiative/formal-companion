@@ -583,7 +583,20 @@ def retitled_fixture(case: unittest.TestCase, prints: dict | None = None,
 
 @unittest.skipIf(shutil.which("pdftotext") is None, "poppler's pdftotext is not on PATH")
 class TestTheTitlesAreTheOnesThePagePrints(unittest.TestCase):
-    """A card is titled with the text of the PDF inside its boxes, never with LaTeX."""
+    """Explicit titles win; older sources still use the printed PDF words."""
+
+    def test_authored_title_is_independent_of_the_pdf_words_and_preserves_latex(self):
+        fixture = Fixture(scratch(self))
+        before, _ = fixture.export()
+        data = fixture.markers()
+        entry = next(e for e in data["entries"] if e["id"] == "notion:ExampleLib.GlueData")
+        entry["title"] = r"Gluing data $F_i$"
+        fixture.write_markers(data)
+        fixture.commit("name the notion for the viewer")
+        after, report = fixture.export()
+        self.assertEqual(by_id(after, "items")[entry["id"]]["title"], r"Gluing data $F_i$")
+        self.assertEqual(before["locations"], after["locations"])
+        self.assertEqual(report.counts["titles_authored"], 1)
 
     def test_a_notion_is_titled_with_the_text_inside_its_boxes(self):
         fixture = Fixture(scratch(self))
