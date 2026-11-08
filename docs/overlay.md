@@ -167,6 +167,14 @@ links**, or Escape, restores the annotations and panel without reloading the
 PDF or clearing the selected passage. Reading mode lasts for the current
 visit, including page turns, and starts off on a fresh load.
 
+On desktop, drag the divider between the PDF and the Lean panel to resize the
+panel. Its grip highlights on hover or keyboard focus. Arrow Left/Right resize
+it (Shift takes larger steps); Home/End choose the limits. Double-click or
+Enter restores the default width. The preferred width is saved locally per
+viewer, clamped to leave room for both panes, and restored after reading mode.
+Storage failures do not disable resizing. Below 1000px the divider disappears
+and the existing bottom-sheet layout is used.
+
 Mathematical labels render Unicode script characters and braced scripts
 (`_{...}` and `^{...}`) as HTML subscripts and superscripts in the page overview,
 selected-passage heading and hover preview. Braced scripts preserve capitals,

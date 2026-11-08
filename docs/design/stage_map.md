@@ -510,3 +510,12 @@ LaTeX math in annotation labels is rendered by pinned, local KaTeX as native
 MathML on every title surface. Only generated MathML is parsed; trusted commands
 are disabled, expansion/size are bounded, and invalid math stays literal text.
 No external scripts, styles or fonts are loaded.
+
+
+## PDF viewer panel resizing
+
+The desktop overlay has a draggable, keyboard-operable vertical separator.
+The panel width is saved in local browser storage per viewer; bounds keep both
+panes usable when the viewport changes. Reading mode hides the separator and
+restores the preferred width on exit. Below 1000px the existing bottom sheet
+has no divider. Double-click or Enter resets the width (`docs/overlay.md`, section 4).

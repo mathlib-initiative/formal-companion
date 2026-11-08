@@ -29,6 +29,7 @@
  * config; PDF.js runs with `isEvalSupported: false`.
  */
 import { mathRuns, mathNode } from "./viewer-math.js";
+import { installPanelResize } from "./viewer-layout.js";
 import {
   CARD_PAGE_SIZE,
   CONFIG_URL,
@@ -338,7 +339,7 @@ export async function bootstrapViewer({
   const ui = Object.fromEntries(
     [
       "back-link", "page-heading", "page-lede", "keys",
-      "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace",
+      "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace", "panel-divider",
       "previous-page", "next-page", "page-number", "page-count",
       "find-toggle", "find-bar", "find-input", "find-count", "find-previous", "find-next", "find-close", "find-highlights",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness", "toggle-reading",
@@ -1847,11 +1848,15 @@ export async function bootstrapViewer({
     await renderPage();
   }
 
+  let panelResize = null;
+
   /** Read the PDF alone, retaining the page, zoom and selected passage. */
   function showReadingMode(shown) {
     state.readingMode = shown;
     setClass(ui.workspace, "is-reading", shown);
     ui.details.hidden = shown;
+    ui["panel-divider"].hidden = shown;
+    panelResize?.refresh();
     // SVG has no HTMLElement.hidden setter: write the attribute for [hidden].
     if (shown) ui.overlay.setAttribute("hidden", "");
     else ui.overlay.removeAttribute("hidden");
@@ -1927,6 +1932,9 @@ export async function bootstrapViewer({
     ui["page-number"].max = String(state.pdfDocument.numPages);
     ui["page-count"].textContent = `/ ${state.pdfDocument.numPages}`;
     ui.workspace.hidden = false;
+    panelResize = installPanelResize({ workspace: ui.workspace, details: ui.details,
+      divider: ui["panel-divider"], documentRef, windowRef, storage,
+      storageKey: state.config.storageKey, onResize: hideHover });
     selectRegion(null);
     await renderPage();
     ui["toggle-reading"].disabled = false;
@@ -2059,7 +2067,7 @@ export async function bootstrapViewer({
         return showMatch(state.search.active + (event.shiftKey ? -1 : 1));
       }
     }
-    if (!isViewerShortcut(event)) {
+    if (event.defaultPrevented || event.target === ui["panel-divider"] || !isViewerShortcut(event)) {
       return;
     }
     if (event.key === "ArrowLeft") changePage(state.currentPage - 1);

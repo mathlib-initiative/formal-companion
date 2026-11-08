@@ -2189,3 +2189,16 @@ for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MIN
     assert.equal(el(documentRef, "item-label").children[0].children[1].tagName, "MATH");
   });
 }
+
+
+test("panel divider: resize keys do not turn PDF pages; reading mode hides and restores it", async () => {
+  const { documentRef, result } = await start();
+  const divider = el(documentRef, 'panel-divider');
+  const page = result.state.currentPage;
+  await fire(documentRef, 'keydown', { target: divider, key: 'ArrowRight' });
+  assert.equal(result.state.currentPage, page);
+  await fire(el(documentRef, 'toggle-reading'), 'click');
+  assert.equal(divider.hidden, true);
+  await fire(el(documentRef, 'toggle-reading'), 'click');
+  assert.equal(divider.hidden, false);
+});

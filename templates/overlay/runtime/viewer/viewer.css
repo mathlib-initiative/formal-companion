@@ -445,7 +445,8 @@ kbd {
 .workspace {
   display: grid;
   grid-row: 2;
-  grid-template-columns: minmax(0, 1fr) clamp(380px, 40vw, 600px);
+  grid-template-columns: minmax(0, 1fr) 8px
+    clamp(280px, var(--details-width, clamp(380px, 40vw, 600px)), calc(100% - 328px));
   min-height: 0;
 }
 
@@ -454,6 +455,39 @@ kbd {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
+
+/* A visible grip and a generous hit area without covering the PDF or its links. */
+.panel-divider {
+  position: relative;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--surface);
+  border-inline: 1px solid var(--line);
+}
+.panel-divider::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 20px);
+  left: 2px;
+  width: 2px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--faint);
+}
+.panel-divider:hover,
+.panel-divider:focus-visible,
+.is-resizing .panel-divider {
+  background: var(--bridge-soft);
+  outline: 2px solid var(--bridge);
+  outline-offset: -2px;
+}
+.workspace.is-resizing,
+.workspace.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+.workspace.is-reading .panel-divider { display: none; }
 
 .viewer-column {
   position: relative;
@@ -846,7 +880,6 @@ kbd {
   min-height: 0;
   overflow-y: auto;
   padding: 18px 28px 28px;
-  border-left: 1px solid var(--line);
   background: var(--surface);
 }
 
@@ -1827,6 +1860,7 @@ a.related-link:hover .related-name .leaf {
 /* ---- narrow: the formal pane becomes a bottom sheet -------------------------- */
 
 @media (max-width: 999px) {
+  .panel-divider { display: none; }
   .workspace {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 46%;
