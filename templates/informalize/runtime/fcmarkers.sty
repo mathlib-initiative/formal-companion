@@ -323,7 +323,7 @@
 % ---------------------------------------------------------------------------
 % Notions
 %
-% \fcnotion{<constant>}{<words>}: the words of a notion the conventions fix,
+% \fcnotion{<constant>}{<words>}: a notion at its useful occurrence in prose or an item,
 % printed alone, with a box recorded around them.  The constant is the marker's
 % argument and nothing else: the text names no Lean declaration and links to no
 % documentation page, and the annotation export joins the box to the constant.
@@ -349,7 +349,7 @@
     {\detokenize{#2}}}%
   \leavevmode
   \fc@savepos{fc:notion:\the\fc@notioncount:start}%
-  #2%
+  #2\/% include italic overhang before recording a statement word's end
   \fc@savepos{fc:notion:\the\fc@notioncount:end}%
   \global\fc@innotionfalse}
 

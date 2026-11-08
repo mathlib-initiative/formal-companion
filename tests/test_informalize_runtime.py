@@ -1214,6 +1214,10 @@ class TestTheConventionsNotions(_Built):
         self.assertTrue(next(e for e in entries if e.get("notion") == "Set")["boxes"])
         out = self.check(repo, outdir, "--strict")
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        sheets = self.tool(repo, str(outdir), "--dest", str(self.root / "inline-sheets"),
+                           script="proof_sheets")
+        self.assertEqual(sheets.returncode, 0, sheets.stdout + sheets.stderr)
+        self.assertIn("0 ink under a stroke, 0 cut word", sheets.stdout)
 
 
 class TestTheBuildRefuses(_Built):
