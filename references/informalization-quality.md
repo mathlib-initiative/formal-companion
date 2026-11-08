@@ -29,6 +29,11 @@ special case. For example, introduce the finite set in the corollary that
 uses it, rather than adding a separate paragraph announcing the finite case.
 
 Make sections readable on their own, but do not repeat a catalogue of symbols.
+Check neighboring section openings for repeated introductions of the same notation.
+State what new notation denotes, and briefly give the action of an induced map
+or functor. An explicit parameter formula can clarify what an adjective such as
+"linear" leaves unclear. These explanations make the notation usable without
+requiring a separate background definition.
 A letter keeps its meaning within an argument; a later argument can introduce
 it afresh. State a stronger assumption only where it is required. In
 particular, a metric lemma must not silently make a later topological space
