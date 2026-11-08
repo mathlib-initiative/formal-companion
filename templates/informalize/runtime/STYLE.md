@@ -243,6 +243,11 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
   Expand the PDF proof when it omits a mathematical argument needed by its reader;
   do not expand it merely to mirror representation bookkeeping. An excerpt beginning
   an argument must say what remains before the enclosing lemma is concluded.
+- Keep each sidebar proof note to one short sentence by default, combining the
+  mathematical point with the essential Lean correspondence. Do not restate the
+  step title and then explain it again. Omit routine implementation commentary
+  and contrasts with abandoned formulations; put necessary notation details in
+  the expandable notes. Give a helper chain one short orientation sentence.
 - Review the whole rendered document for disconnected setup, repeated definitions,
   stranded headings and awkward short paragraphs. Fix prose and grouping before manual
   spacing. Compilation and marker checks are necessary, not a typesetting review.

@@ -561,8 +561,10 @@ Proof annotations can also carry an authored explanation of the correspondence:
   broader/narrower and other qualified relations retain their labels.
 - Object-end extension `proof_context`: `declaration` is the enclosing source
   declaration's name, `lines` its complete range, `conclusion` the mathematical
-  fact established by this excerpt, and `explanation` how the selected lines
-  establish or invoke it. Optional `notation` rows have `math` and `lean` fields;
+  fact established or invoked by this excerpt. Prefer one short `conclusion`
+  sentence combining that fact with the essential Lean correspondence; the
+  optional `explanation` is only for information that cannot fit clearly there.
+  Optional `notation` rows have `math` and `lean` fields;
   optional `bookkeeping` explains representation or endpoint identifications.
   The enclosing-source link reuses the excerpt's validated destination with the
   enclosing line range. Use a source-file destination for these contexts.
@@ -574,6 +576,11 @@ the complete list of links appears above one selected excerpt, initially the
 first. Every excerpt retains
 its own source link and exact-snippet Verso hovers. Explanations accept inline
 LaTeX and backticked names through the text renderer, never raw HTML.
+
+Avoid a restatement of the step title followed by another paragraph saying the
+same thing. Omit routine implementation commentary and contrasts with abandoned
+formulations. Keep chain summaries to one short orientation sentence; place
+necessary notation details in the expandable notes.
 
 Authors must verify enclosing names and ranges against the same pinned source
 as the snippet. Explain jumps between helpers, distinguish the lemma's argument
