@@ -234,6 +234,15 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
 - When proofs are requested, give constructions, equalities and deductions, allowing
   concise sketches. Use earlier results instead of proving their elementary laws again.
   A strategy paragraph alone is not a proof.
+- Link specific proof sentences and equations to the arguments that support them.
+  In the annotations, identify the enclosing Lean lemma, explain the selected lines
+  mathematically, and distinguish proving a helper from invoking it. When one sentence
+  compresses a substantive chain, expose its intermediate lemmas and their invocations
+  in dependency order. Source-file order need not be the order of the exposition.
+- Keep notation correspondences and explanations of endpoint transports in the sidebar.
+  Expand the PDF proof when it omits a mathematical argument needed by its reader;
+  do not expand it merely to mirror representation bookkeeping. An excerpt beginning
+  an argument must say what remains before the enclosing lemma is concluded.
 - Review the whole rendered document for disconnected setup, repeated definitions,
   stranded headings and awkward short paragraphs. Fix prose and grouping before manual
   spacing. Compilation and marker checks are necessary, not a typesetting review.

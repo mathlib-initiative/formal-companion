@@ -543,6 +543,36 @@ one end per range. A `noMatch` step's object ends name the Lean it was checked
 against, with no snippet. A step that breaks the folder rule stays an item of its
 own, with its lines and relation, never guessed onto an item.
 
+Proof annotations can also carry an authored explanation of the correspondence:
+
+- Record extension `proof`: `kind` is `direct`, `helper`, or `chain`; `summary`
+  explains a chain's mathematical progression. For exact/close links the visible
+  label becomes "Proof excerpt", "Helper lemma", or "N linked lemmas". The
+  underlying Literature Links relation and provenance remain unchanged; absence,
+  broader/narrower and other qualified relations retain their labels.
+- Object-end extension `proof_context`: `declaration` is the enclosing source
+  declaration's name, `lines` its complete range, `conclusion` the mathematical
+  fact established by this excerpt, and `explanation` how the selected lines
+  establish or invoke it. Optional `notation` rows have `math` and `lean` fields;
+  optional `bookkeeping` explains representation or endpoint identifications.
+  The enclosing-source link reuses the excerpt's validated destination with the
+  enclosing line range. Use a source-file destination for these contexts.
+
+The viewer shows the enclosing declaration and mathematical explanation above
+the unchanged numbered excerpt. Notation and bookkeeping are under "Reading
+the Lean notation". In a `chain`, object ends are in logical dependency order;
+each is an expandable entry, with the first initially open. Every excerpt retains
+its own source link and exact-snippet Verso hovers. Explanations accept inline
+LaTeX and backticked names through the text renderer, never raw HTML.
+
+Authors must verify enclosing names and ranges against the same pinned source
+as the snippet. Explain jumps between helpers, distinguish the lemma's argument
+from its invocation, and name any omitted finishing work. A selected `have`
+that starts an argument must not be described as completing its enclosing proof.
+For compressed passages, link the intermediate mathematical lemmas and the
+calls that connect them. Keep the PDF region on its specific sentence or equation;
+multiple supporting excerpts do not justify enlarging it to the entire proof.
+
 `scripts/overlay/defaults.py` writes the files with Literature Links folder
 defaults: `annotations/_defaults.json` holds what all records share and an
 item folder's `_defaults.json` what its records share beyond that (a member

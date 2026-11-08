@@ -1726,6 +1726,58 @@ test("steps: a step with lines of two declarations shows a card for each", async
   assert.deepEqual(keyCards(documentRef).map(([, name]) => textOf(name)), ["Box.double", "Box.bound"]);
 });
 
+test("proof guides: ordered helper chain retains exact excerpts and enclosing-source links", async () => {
+  const sections = makeProofSections(PDF_SHA256);
+  const step = sections["9/theorem-9.1"].find(r => r.id === "c");
+  step.relation = "closeMatch";
+  step.extensions[NAMESPACE].proof = { kind: "chain", summary: "Combine two lemmas, in this order." };
+  step.object.forEach((end, index) => {
+    end.extensions[NAMESPACE].destination = { href: "https://example.org/pinned/Proof.lean", fragment: `L${index + 7}` };
+    end.extensions[NAMESPACE].proof_context = {
+      declaration: index ? "bound" : "double", lines: index ? [5, 10] : [18, 45],
+      conclusion: index ? "Apply the bound." : "Combine the terms.",
+      explanation: "Use `previous_fact` here.",
+      notation: [{ math: "The local value", lean: "locVal" }],
+      bookkeeping: "The endpoints are already equal.",
+    };
+  });
+  const { documentRef, result } = await start({ sections, config: makeConfig(MINIMAL) });
+  await turnTo(documentRef, 10);
+  await openStep(documentRef, "c");
+  assert.equal(el(documentRef, "target-summary").textContent, "2 linked lemmas");
+  const chain = el(documentRef, "key-list").children[0];
+  const parts = chain.children.filter(n => n.tagName === "DETAILS");
+  assert.deepEqual(parts.map(p => textOf(p.children[0])), ["1. Combine the terms.", "2. Apply the bound."]);
+  assert.deepEqual(parts.map(p => p.open), [true, false]);
+  const cards = parts.map(p => p.children[1].children[0]);
+  assert.deepEqual(cards.map(c => textOf(c.children.find(n => n.tagName === "PRE"))), ["have := h", "theorem bound"]);
+  assert.deepEqual(result.state.selected.cards.map(c => c.proofContext.href),
+    ["https://example.org/pinned/Proof.lean#L18-L45", "https://example.org/pinned/Proof.lean#L5-L10"]);
+  assert.match(textOf(cards[0]), /Reading the Lean notation.*locVal.*endpoints are already equal/s);
+  assert.equal(el(documentRef, "key-more").hidden, true);
+});
+
+test("proof guides: context is inert text and cannot hide a broader correspondence", async () => {
+  const sections = makeProofSections(PDF_SHA256);
+  const step = sections["9/theorem-9.1"].find(r => r.id === "a");
+  step.relation = "broadMatch";
+  step.extensions[NAMESPACE].proof = { kind: "helper", summary: "Helper." };
+  step.object[0].extensions[NAMESPACE].destination = { href: "javascript:alert(1)" };
+  step.object[0].extensions[NAMESPACE].proof_context = {
+    declaration: "<img src=x onerror=alert(1)>", lines: [18, 45],
+    conclusion: "<script>alert(1)</script>", explanation: "`<b>literal</b>`",
+  };
+  const { documentRef, result } = await start({ sections });
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "a");
+  assert.equal(el(documentRef, "target-summary").textContent, "Broader");
+  assert.equal(result.state.selected.cards[0].proofContext.href, null);
+  const walk = n => typeof n === "object" ? [n, ...(n.children ?? []).flatMap(walk)] : [];
+  const nodes = walk(el(documentRef, "key-list"));
+  assert.ok(!nodes.some(n => ["SCRIPT", "IMG", "B"].includes(n.tagName)));
+  assert.match(textOf(el(documentRef, "key-list")), /<script>alert\(1\)<\/script>/);
+});
+
 test("steps: the note's backticked code is set as code, on a step only", async () => {
   const { documentRef } = await start(PROOF_FULL);
   await turnTo(documentRef, 9);
