@@ -879,7 +879,7 @@ kbd {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 0 28px;
+  padding: 18px 28px 28px;
   background: var(--surface);
 }
 
@@ -1014,10 +1014,10 @@ kbd {
   grid-template-columns: 14px minmax(96px, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  width: 100%;
+  width: calc(100% + 16px);
   min-height: 40px;
-  margin: 0;
-  padding: 8px 0;
+  margin: 0 -8px;
+  padding: 8px;
   border-radius: 6px;
   text-align: left;
 }
@@ -1108,9 +1108,9 @@ kbd {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  width: 100%;
-  margin: 0;
-  padding: 2px 0 2px 4px;
+  width: calc(100% + 8px);
+  margin: 0 -8px 0 0;
+  padding: 2px 8px 2px 4px;
   border-radius: 6px;
   color: var(--muted);
   font-size: 12.5px;
@@ -1221,8 +1221,8 @@ kbd {
 
 .nav-strip .text-button {
   height: 26px;
-  padding: 0;
-  margin-left: 0;
+  padding: 0 8px;
+  margin-left: -8px;
   border-radius: 6px;
   color: var(--muted);
 }
@@ -1765,8 +1765,8 @@ kbd {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin: 0;
-  padding: 5px 0;
+  margin: 0 -8px;
+  padding: 5px 8px;
   border-radius: 6px;
   color: var(--muted);
   text-decoration: none;
@@ -1867,7 +1867,7 @@ a.related-link:hover .related-name .leaf {
   }
 
   .details-column {
-    padding: 14px 0;
+    padding: 14px 20px;
     border-top: 1px solid var(--line);
     border-left: 0;
     box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.10);
