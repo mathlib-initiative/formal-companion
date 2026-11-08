@@ -50,6 +50,10 @@
       <section id="workspace" class="workspace" aria-label="PDF inspection workspace" hidden>
         <div class="viewer-column">
           <nav class="toolbar" aria-label="PDF controls">
+            <button id="find-toggle" class="find-toggle" type="button" aria-label="Find in PDF"
+                    aria-controls="find-bar" aria-expanded="false" aria-keyshortcuts="Meta+f Control+f"
+                    title="Find in PDF (⌘F / Ctrl+F)" disabled>Find</button>
+            <span class="toolbar-sep" aria-hidden="true"></span>
             <button id="previous-page" class="icon" type="button" aria-label="Previous page"
                     title="Previous page (←)" aria-keyshortcuts="ArrowLeft">‹</button>
             <input id="page-number" type="number" inputmode="numeric" min="1" value="1" aria-label="Page">
@@ -67,6 +71,18 @@
                     title="Rotate clockwise (R)" aria-keyshortcuts="R">↻</button>
           </nav>
 
+          <div id="find-bar" class="find-bar" role="search" aria-label="Search the PDF" hidden>
+            <input id="find-input" type="search" placeholder="Find in PDF…" aria-label="Search all PDF pages"
+                   autocomplete="off" spellcheck="false">
+            <span id="find-count" class="find-count" role="status" aria-live="polite"></span>
+            <button id="find-previous" class="icon" type="button" aria-label="Previous match"
+                    title="Previous match (Shift+Enter)" disabled>↑</button>
+            <button id="find-next" class="icon" type="button" aria-label="Next match"
+                    title="Next match (Enter)" disabled>↓</button>
+            <button id="find-close" class="icon" type="button" aria-label="Close PDF search"
+                    title="Close search (Esc)">×</button>
+          </div>
+
           <div
             id="page-scroller"
             class="page-scroller"
@@ -81,6 +97,7 @@
                 region boxes, so the reader can select and copy it.
               -->
               <div id="text-layer" class="text-layer"></div>
+              <div id="find-highlights" class="find-highlights" aria-hidden="true"></div>
               <svg
                 id="overlay"
                 class="overlay"

@@ -537,7 +537,7 @@ export const PAGE_TEXT = ["Theorem 1.1 (Volume bound). ", "Every box has a volum
  * appends one span per item of `PAGE_TEXT`; `textLayer: false` leaves it out,
  * as a build without one would, and `textLayerError` makes its render fail.
  */
-export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = null } = {}) {
+export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = null, pageTexts = null } = {}) {
   const streams = [];
   const page = {
     getViewport: (options) => fakeViewport(options),
@@ -551,6 +551,7 @@ export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = nu
   };
   const calls = [];
   const textLayers = [];
+  const textReads = [];
   class FakeTextLayer {
     constructor(options) {
       this.cancelled = 0;
@@ -563,11 +564,14 @@ export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = nu
       if (textLayerError) {
         throw new Error(textLayerError);
       }
-      this.options.container.append(...this.options.textContentSource.items.map((text) => {
+      this.textContentItemsStr = this.options.textContentSource.items;
+      this.textDivs = this.options.textContentSource.items.map((text) => {
         const span = fakeElement("span");
         span.textContent = text;
+        span.firstChild = { textContent: text };
         return span;
-      }));
+      });
+      this.options.container.append(...this.textDivs);
       this.rendered = true;
     }
 
@@ -579,11 +583,20 @@ export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = nu
     calls,
     streams,
     textLayers,
+    textReads,
     GlobalWorkerOptions: {},
     ...(textLayer ? { TextLayer: FakeTextLayer } : {}),
     getDocument: (options) => {
       calls.push(options);
-      return { promise: Promise.resolve({ getPage: async () => page, numPages }) };
+      return { promise: Promise.resolve({ getPage: async (number) => ({
+        ...page,
+        async getTextContent(options) {
+          textReads.push([number, options]);
+          const text = pageTexts?.[number - 1] ?? PAGE_TEXT.join("");
+          if (text instanceof Error) throw text;
+          return { items: [{ str: text }] };
+        },
+      }), numPages }) };
     },
   };
 }

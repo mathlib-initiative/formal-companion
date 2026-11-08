@@ -99,6 +99,7 @@ async function start({
     pdfjsLoader: async () => pdfjs,
     storage,
     windowRef,
+    searchDelay: 0,
   });
   return { documentRef, fetched, hashes: urls, pdfjs, result, storage };
 }
@@ -1039,7 +1040,7 @@ test("keyboard: every shortcut a button advertises does what the button does", a
   const advertised = [...SHELL.matchAll(/<button\b[^>]*>/g)]
     .map(([tag]) => [tag.match(/\sid="([^"]+)"/)?.[1], tag.match(/\saria-keyshortcuts="([^"]+)"/)?.[1],
                      tag.match(/\stitle="[^"]*\(([^)]+)\)"/)?.[1]])
-    .filter(([id, keys]) => id && keys);
+    .filter(([id, keys]) => id && keys && !keys.includes("Meta+"));
   assert.deepEqual(advertised.map(([id, , shown]) => [id, shown]),
                    [["previous-page", "←"], ["next-page", "→"], ["zoom-out", "−"], ["zoom-in", "+"],
                     ["rotate-right", "R"]], "each toolbar button names its key in its tooltip");
@@ -2045,4 +2046,103 @@ test("fonts: the serif and code stacks end in the system font, after their gener
     (await import("node:path")).join((await import("./fixtures.mjs")).VIEWER_DIR, "viewer.css"), "utf8");
   assert.match(css, /--serif:[^;]*, serif, system-ui;/);
   assert.match(css, /--mono:[^;]*, monospace, system-ui;/);
+});
+
+
+// --- whole-document find ----------------------------------------------------
+
+async function findPdf(documentRef, query) {
+  await fire(el(documentRef, "find-toggle"), "click");
+  el(documentRef, "find-input").value = query;
+  await fire(el(documentRef, "find-input"), "input");
+}
+
+test("find: Cmd+F and Ctrl+F open the PDF search, even from another input", async () => {
+  const { documentRef } = await start();
+  for (const modifier of ["metaKey", "ctrlKey"]) {
+    let prevented = false;
+    await fire(documentRef, "keydown", { key: "f", [modifier]: true, target: { tagName: "INPUT" },
+      preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(el(documentRef, "find-bar").hidden, false);
+    await fire(documentRef, "keydown", { key: "Escape", target: el(documentRef, "find-input") });
+    assert.equal(el(documentRef, "find-bar").hidden, true);
+  }
+});
+
+test("find: all-page results navigate and wrap with Enter and Shift+Enter, retaining reading mode", async () => {
+  const pdfjs = fakePdfjs({ numPages: 3, pageTexts: ["path path", "nothing", "a Path"] });
+  const { documentRef, result } = await start({ pdfjs });
+  await fire(el(documentRef, "toggle-reading"), "click");
+  await findPdf(documentRef, "PATH");
+  assert.equal(el(documentRef, "find-count").textContent, "1 of 3");
+  assert.equal(pdfjs.textReads.length, 3, "page three is searched while page one is displayed");
+  await fire(documentRef, "keydown", { key: "Enter", target: el(documentRef, "find-input") });
+  assert.equal(el(documentRef, "find-count").textContent, "2 of 3");
+  await fire(el(documentRef, "find-next"), "click");
+  assert.equal(result.state.currentPage, 3);
+  assert.equal(el(documentRef, "find-count").textContent, "3 of 3");
+  await fire(el(documentRef, "find-next"), "click");
+  assert.equal(result.state.currentPage, 1);
+  await fire(documentRef, "keydown", { key: "Enter", shiftKey: true, target: el(documentRef, "find-input") });
+  assert.equal(result.state.currentPage, 3);
+  assert.equal(result.state.readingMode, true);
+  await fire(documentRef, "keydown", { key: "Escape", target: el(documentRef, "find-input") });
+  assert.equal(result.state.readingMode, true, "the first Escape only closes search");
+  assert.equal(el(documentRef, "find-bar").hidden, true);
+  assert.deepEqual(el(documentRef, "find-highlights").children, []);
+});
+
+test("find: missing text, no results and extraction failures are explicit and do not disable reading", async () => {
+  for (const [texts, query, expected] of [
+    [["path", "nothing"], "other", /No matches/],
+    [["", ""], "path", /No searchable text/],
+    [[new Error("broken"), "path"], "path", /1 page could not be searched/],
+  ]) {
+    const { documentRef, result } = await start({ pdfjs: fakePdfjs({ numPages: 2, pageTexts: texts }) });
+    await findPdf(documentRef, query);
+    assert.match(el(documentRef, "find-count").textContent, expected);
+    assert.equal(el(documentRef, "error").hidden, true);
+    assert.equal(result.state.pdfDocument.numPages, 2);
+  }
+});
+
+
+test("find: closing while extraction is pending prevents stale navigation or counts", async () => {
+  const pdfjs = fakePdfjs({ numPages: 3 });
+  let release;
+  const task = pdfjs.getDocument({});
+  const pdf = await task.promise;
+  const page = await pdf.getPage(1);
+  pdf.getPage = async (number) => ({ ...page,
+    getTextContent: () => new Promise((resolve) => { release = resolve; }),
+  });
+  pdfjs.getDocument = () => task;
+  const { documentRef, result } = await start({ pdfjs });
+  await fire(el(documentRef, "find-toggle"), "click");
+  el(documentRef, "find-input").value = "path";
+  const pending = fire(el(documentRef, "find-input"), "input");
+  // Let getPage resolve, so the text extraction itself is in flight.
+  await Promise.resolve();
+  await Promise.resolve();
+  await fire(el(documentRef, "find-close"), "click");
+  release({ items: [{ str: "path" }] });
+  await pending;
+  assert.equal(result.state.currentPage, 1);
+  assert.equal(el(documentRef, "find-bar").hidden, true);
+  assert.deepEqual(result.state.search.matches, []);
+});
+
+test("find: clearing a query removes results and reopening preserves a completed search", async () => {
+  const { documentRef, result } = await start({ pdfjs: fakePdfjs({ numPages: 1 }) });
+  await findPdf(documentRef, "volume");
+  assert.equal(el(documentRef, "find-count").textContent, "1 of 2");
+  await fire(el(documentRef, "find-close"), "click");
+  await fire(el(documentRef, "find-toggle"), "click");
+  assert.equal(el(documentRef, "find-count").textContent, "1 of 2");
+  el(documentRef, "find-input").value = "";
+  await fire(el(documentRef, "find-input"), "input");
+  assert.equal(el(documentRef, "find-count").textContent, "");
+  assert.equal(el(documentRef, "find-next").disabled, true);
+  assert.deepEqual(result.state.search.matches, []);
 });

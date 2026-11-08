@@ -481,3 +481,14 @@ refuses on a mismatch; with no spec recorded, preflight only prints the version
 and continues (`run/remote.py::_tend_version_step`). Without them the supported
 path is the local Workflow fleet under ~100 items.
 `references/runbook-server.md` §0 says the same thing to an operator.
+
+
+## PDF viewer search
+
+The overlay viewer searches all pages of the verified PDF through PDF.js text
+extraction, with an in-memory page cache. Find, Command-F and Control-F open
+it; matches navigate between pages and wrap in both directions. Search-only
+normalization keeps original text offsets for highlights without changing the
+PDF or its selectable text. Queries and text indexes are never written to a
+workspace, annotation record or generated artifact. Search works in reading
+mode; Escape closes search first (`docs/overlay.md`, section 4).

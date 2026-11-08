@@ -75,6 +75,7 @@ import {
   verifyPdfBytes,
   versoRuns,
 } from "./viewer-core.js";
+import { createPdfTextIndex, searchTextRange } from "./viewer-search.js";
 
 export const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -321,6 +322,7 @@ export async function bootstrapViewer({
   pageUrl = globalThis.location?.href,
   pdfjsLoader = () => import("../vendor/pdfjs/pdf.min.mjs"),
   versoUrl = VERSO_URL,
+  searchDelay = 150,
   windowRef = globalThis,
   storage = (() => {
     try {
@@ -335,6 +337,7 @@ export async function bootstrapViewer({
       "back-link", "page-heading", "page-lede", "keys",
       "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
+      "find-toggle", "find-bar", "find-input", "find-count", "find-previous", "find-next", "find-close", "find-highlights",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness", "toggle-reading",
       "page-scroller", "page-stage", "pdf-canvas", "text-layer", "overlay", "region-bar", "region-peek",
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
@@ -365,6 +368,7 @@ export async function bootstrapViewer({
     renderTask: null,
     rotation: 0,
     selected: null,
+    search: { epoch: 0, index: null, matches: [], active: -1, busy: false, timer: null, scroll: false, failedPages: [] },
     siteUrl: "",
     textLayer: null,
     TextLayer: null,
@@ -1608,6 +1612,110 @@ export async function bootstrapViewer({
     updateBar();
   }
 
+  function showSearch() {
+    if (!state.search.index || ui.workspace.hidden) return;
+    ui["find-bar"].hidden = false;
+    ui["find-toggle"].setAttribute("aria-expanded", "true");
+    focusQuietly(ui["find-input"]);
+    ui["find-input"].select?.();
+    paintSearch();
+  }
+
+  function closeSearch() {
+    ++state.search.epoch;
+    clearTimer(state.search.timer);
+    state.search.timer = null;
+    state.search.busy = false;
+    ui["find-bar"].hidden = true;
+    ui["find-toggle"].setAttribute("aria-expanded", "false");
+    ui["find-highlights"].replaceChildren();
+    focusQuietly(ui["find-toggle"]);
+  }
+
+  function searchCount() {
+    const search = state.search;
+    let text = search.matches.length ? `${search.active + 1} of ${search.matches.length}` : "No matches";
+    if (search.failedPages.length) {
+      const n = search.failedPages.length;
+      text += ` · ${n} ${n === 1 ? "page could" : "pages could"} not be searched`;
+    }
+    ui["find-count"].textContent = text;
+    ui["find-previous"].disabled = ui["find-next"].disabled = !search.matches.length;
+  }
+
+  /** Range rectangles already include the PDF text layer's zoom and rotation. */
+  function paintSearch() {
+    ui["find-highlights"].replaceChildren();
+    if (ui["find-bar"].hidden || !state.textLayer || !ui["page-stage"].getBoundingClientRect) return;
+    const origin = ui["page-stage"].getBoundingClientRect();
+    let current = null;
+    for (const [i, match] of state.search.matches.entries()) {
+      if (match.page !== state.currentPage) continue;
+      const range = searchTextRange(documentRef, state.textLayer, match);
+      for (const rect of range?.getClientRects() ?? []) {
+        if (!rect.width || !rect.height) continue;
+        const mark = make("div", `find-highlight${i === state.search.active ? " is-current" : ""}`);
+        mark.style.left = `${rect.left - origin.left}px`;
+        mark.style.top = `${rect.top - origin.top}px`;
+        mark.style.width = `${rect.width}px`;
+        mark.style.height = `${rect.height}px`;
+        ui["find-highlights"].append(mark);
+        if (i === state.search.active && !current) current = rect;
+      }
+    }
+    if (current && state.search.scroll) {
+      const scroller = ui["page-scroller"];
+      const box = scroller.getBoundingClientRect();
+      scroller.scrollTop += current.top - box.top - box.height / 2;
+      if (current.left < box.left || current.right > box.right) {
+        scroller.scrollLeft += current.left - box.left - box.width / 2;
+      }
+      state.search.scroll = false;
+    }
+  }
+
+  async function showMatch(at) {
+    const search = state.search;
+    if (!search.matches.length || search.busy) return;
+    search.active = (at + search.matches.length) % search.matches.length;
+    search.scroll = true;
+    searchCount();
+    const match = search.matches[search.active];
+    if (match.page !== state.currentPage) await changePage(match.page);
+    else paintSearch();
+  }
+
+  async function runSearch() {
+    const search = state.search;
+    clearTimer(search.timer);
+    search.timer = null;
+    const epoch = ++search.epoch;
+    const query = ui["find-input"].value.trim();
+    search.matches = [];
+    search.active = -1;
+    search.failedPages = [];
+    search.busy = Boolean(query);
+    ui["find-highlights"].replaceChildren();
+    ui["find-previous"].disabled = ui["find-next"].disabled = true;
+    ui["find-count"].textContent = query ? "Searching…" : "";
+    if (!query) return;
+    const result = await search.index.search(query, {
+      cancelled: () => epoch !== search.epoch,
+      onProgress: (page) => { ui["find-count"].textContent = `Searching ${page}/${state.pdfDocument.numPages}…`; },
+    });
+    if (!result || epoch !== search.epoch) return;
+    search.busy = false;
+    search.matches = result.matches;
+    search.failedPages = result.failedPages;
+    if (result.matches.length) {
+      const near = result.matches.findIndex((match) => match.page >= state.currentPage);
+      await showMatch(near < 0 ? 0 : near);
+    } else {
+      searchCount();
+      if (!result.textPages && !result.failedPages.length) ui["find-count"].textContent = "No searchable text";
+    }
+  }
+
   async function renderPage() {
     if (!state.pdfDocument) {
       return;
@@ -1618,7 +1726,9 @@ export async function bootstrapViewer({
     state.textLayer?.cancel();
     state.textLayer = null;
     ui["text-layer"].replaceChildren();
+    ui["find-highlights"].replaceChildren();
     const page = await state.pdfDocument.getPage(state.currentPage);
+    if (epoch !== state.renderEpoch) return;
     // Records place regions on the displayed page: after the page's own
     // rotation, which the reader's rotation adds to.
     const own = Number.isInteger(page.rotate) ? page.rotate : 0;
@@ -1682,6 +1792,10 @@ export async function bootstrapViewer({
     } catch {
       // `cancel()` on the next render rejects this one; so does a page whose text cannot be read.
     }
+    if (epoch === state.renderEpoch) {
+      state.search.scroll = true;
+      paintSearch();
+    }
   }
 
   /** Verdicts are hidden until asked for; the choice is remembered beside the page. */
@@ -1742,6 +1856,9 @@ export async function bootstrapViewer({
   }
 
   ui["toggle-reading"].disabled = true;
+  ui["find-toggle"].disabled = true;
+  ui["find-bar"].hidden = true;
+  ui["find-previous"].disabled = ui["find-next"].disabled = true;
   // A refusal is an error message on the page, never a blank page: the two data
   // files are loaded inside this guard so the shell always says what went wrong.
   try {
@@ -1785,6 +1902,7 @@ export async function bootstrapViewer({
       data: bytes.slice(),
       isEvalSupported: false,
     }).promise;
+    state.search.index = createPdfTextIndex(state.pdfDocument);
     const remembered = rememberedPage(state.config.storageKey, { locationRef, storage });
     state.currentPage = remembered
       ? Math.min(Math.max(remembered, 1), state.pdfDocument.numPages)
@@ -1799,12 +1917,31 @@ export async function bootstrapViewer({
     selectRegion(null);
     await renderPage();
     ui["toggle-reading"].disabled = false;
+    ui["find-toggle"].disabled = false;
   } catch (error) {
     ui.workspace.hidden = true;
     setStatus("bad", "PDF not verified");
     showError(error);
   }
 
+  ui["find-toggle"].addEventListener("click", () => {
+    showSearch();
+    if (ui["find-input"].value && !state.search.matches.length) return runSearch();
+  });
+  ui["find-close"].addEventListener("click", closeSearch);
+  ui["find-previous"].addEventListener("click", () => showMatch(state.search.active - 1));
+  ui["find-next"].addEventListener("click", () => showMatch(state.search.active + 1));
+  ui["find-input"].addEventListener("input", () => {
+    ++state.search.epoch;
+    clearTimer(state.search.timer);
+    state.search.matches = [];
+    state.search.busy = true;
+    ui["find-highlights"].replaceChildren();
+    ui["find-previous"].disabled = ui["find-next"].disabled = true;
+    ui["find-count"].textContent = ui["find-input"].value.trim() ? "Searching…" : "";
+    if (!searchDelay || !ui["find-input"].value.trim()) return runSearch();
+    state.search.timer = setTimer(runSearch, searchDelay);
+  });
   ui["previous-page"].addEventListener("click", () => changePage(state.currentPage - 1));
   ui["next-page"].addEventListener("click", () => changePage(state.currentPage + 1));
   ui["page-number"].addEventListener("change", () => changePage(ui["page-number"].value));
@@ -1889,6 +2026,26 @@ export async function bootstrapViewer({
     });
   }
   documentRef.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f"
+        && state.search.index && !ui.workspace.hidden) {
+      event.preventDefault();
+      showSearch();
+      if (ui["find-input"].value && !state.search.matches.length) return runSearch();
+      return;
+    }
+    if (!ui["find-bar"].hidden && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSearch();
+        return;
+      }
+      if (event.key === "Enter" && event.target === ui["find-input"]) {
+        event.preventDefault();
+        if (state.search.timer) return runSearch();
+        return showMatch(state.search.active + (event.shiftKey ? -1 : 1));
+      }
+    }
     if (!isViewerShortcut(event)) {
       return;
     }

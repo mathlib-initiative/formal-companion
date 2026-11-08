@@ -272,6 +272,22 @@ a synthetic PDF and pins every value it writes against those rules. A page
 whose text cannot be read, or a build with no `TextLayer`, renders without a
 text layer and changes nothing else.
 
+The **Find** button or **⌘F / Ctrl+F** opens whole-document search. It extracts
+text from every page of the verified PDF, caches it for this visit, and shows
+the current match and total count. Search is literal and case insensitive;
+line breaks, ligatures and printed line-end hyphens are normalized only for
+matching. Enter and Shift+Enter (or the arrow buttons) move between matches,
+wrapping at the ends and opening the corresponding page. The current match
+is orange and other matches on that page are yellow. Their rectangles come
+from the unmodified text layer, so zoom, rotation, copying, annotations and
+reading mode continue to work. Escape closes search before leaving reading
+mode. Empty searches clear the marks; no matches, PDFs with no searchable
+text and pages whose text cannot be extracted receive explicit feedback.
+Scanned pages require an existing text layer; search does not perform OCR.
+The browser's own find remains available when the PDF could not be loaded.
+`viewer-search.js` holds the text index and offset mapping; its tests use
+synthetic text and the controller tests drive keyboard navigation.
+
 ## 5. Runtime tools (`runtime/tools/`)
 
 Run from the companion root as `python3 pdf-overlay/tools/<tool>.py`; they find
