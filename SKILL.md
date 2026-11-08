@@ -466,8 +466,8 @@ decls)`.
 
 ## References
 
-In the order an audit needs them. Each is loaded on demand: read the one whose
-trigger you have just hit, not the list.
+Read the reference whose trigger applies, rather than loading the whole list.
+For informal mathematical writing, first read `references/informalization-quality.md`.
 
 - `references/traps.md` — the trap → fix index. Read **before your first run on
   a new book**: the anchor edition is not the bundled edition, offset

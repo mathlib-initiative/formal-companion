@@ -334,17 +334,13 @@
 \newif\iffc@innotion
 
 \newcommand\fcnotion[2]{%
-  \iffc@initem
-    \PackageError{fcmarkers}{\string\fcnotion{\detokenize{#1}} inside item \fc@curid}%
-      {The conventions fix the notions; an item prints mathematics alone.}%
-  \fi
   \iffc@innotion
     \PackageError{fcmarkers}{\string\fcnotion{\detokenize{#1}} inside another notion}%
       {Notions cannot be nested.}%
   \fi
   \@ifundefined{fc@notion@\detokenize{#1}}{}{%
     \PackageError{fcmarkers}{The notion \detokenize{#1} is marked twice}%
-      {A notion is fixed once, where the conventions introduce it.}}%
+      {Mark a notion once, at its first useful occurrence.}}%
   \expandafter\global\expandafter\let
     \csname fc@notion@\detokenize{#1}\endcsname\@empty
   \global\advance\fc@notioncount\@ne

@@ -762,13 +762,12 @@ approved PDF (section 10) — but a **further fleet phase** after a runtime chan
   records `\fc@auxpart{<id>}{<letter>}`.
 - `\leanref{<full name>}` prints nothing and records `\fc@auxleanref{<id>}{<letter>}{<name>}`
   for the current part (empty letter in the item's own text).
-- `\fcnotion{<constant>}{<the words as printed>}`, in the conventions, prints the words
+- `\fcnotion{<constant>}{<the words as printed>}`, at a useful occurrence in prose, an item or a part, prints the words
   alone and records `\fc@auxnotion{<n>}{<constant>}{<the words>}` and the positions
   `fc:notion:<n>:start` and `:end`, the two ends of the words. The constant is the
   marker's argument and never reaches the page: the informal text prints no Lean name and
   no link to the library's documentation, which the annotations supply from this marker
-  (section 10). A constant marked twice, a notion inside another, and a `\fcnotion` inside
-  an item are LaTeX errors.
+  (section 10). A constant marked twice and a notion inside another are LaTeX errors.
 - `\fcdefhyp{<\macro>}{<key>}{<words>}`, used in `notation.sty`, defines `<\macro>` to print
   the words and record `\fc@auxhyp{<id>}{<letter>}{<key>}`, and `<\macro>*` to print them
   only (for a hypothesis named on one side of an equivalence); it records
@@ -930,9 +929,9 @@ with a harvest receipt (`corpus/<run>/RECEIPT.json`), and its task documents are
 `corpus/<run>/<task>/<name>.json`, where `cf harvest` lands them (section 8.5).
 `--phase judge` refuses when a section file differs from the attack run's `base_commit`, and
 plans a judge task only for a section whose attack documents hold a finding (its default
-`--sections`); `--phase edit` refuses a judge run that made no request, a section with an
-`in_v1` item that is still empty (the edit build is the whole document's, and the editor owns
-no section it could fill), and a judge run that is not applied: its `base_commit` must be an
+`--sections`); `--phase edit` also supports a whole-document editorial pass when there
+are no cross-file requests. It refuses a section with an `in_v1` item that is still empty,
+and a judge run that is not applied: its `base_commit` must be an
 ancestor of HEAD and every section file a judge fixed must differ from it, or the editor
 would work on the text the judges found and one of the two applies would be refused.
 `--phase draft`
@@ -1049,21 +1048,18 @@ is not known, so no phase relies on `depends_on`.
 | `draft` | `draft-NN`, one per section | `informal/sections/NN-<slug>.tex` |
 | `attack` | `attack-lean-NN` and `attack-tex-NN` per section | `findings/<task>/attack.json` only |
 | `judge` | `judge-NN`, one per section with a finding | `informal/sections/NN-<slug>.tex`, `findings/<task>/ruling.json` |
-| `edit` | `edit`, one | the conventions files, the section files the judge run's requests name, `findings/edit/edit.json`, `findings/edit/items-proposal.json` |
+| `edit` | `edit`, one | the conventions files and every declared section; the judge run's requests name, `findings/edit/edit.json`, `findings/edit/items-proposal.json` |
 
 - **items.** Reads the scope, `declarations.json`, the library's source and the reference
   work's name; chooses the items, sections, parts, roles, relations, junk and reference
   numbers; writes `items-review.md` for the maintainer (one row per item: id, kind, title,
   keys per part, reference and its source, departures, and why each scope member that is not
   a key was left out). Its timeout is long (`--agent-timeout 2h`).
-- **conventions.** Fixes the notation, the letters and their one meaning each, the standing
-  hypotheses (`hypotheses.json` and their `\fcdefhyp` lines) and the junk-value conventions
-  in `00-conventions.tex`; writes the project half of the style rules. It carries everything
-  the items would otherwise repeat -- the ambient objects and their structure, the typeclass
-  and universe binders, the index type of a family, the coercions, the side conditions the
-  library discharges inside a statement -- and says which definition of the library each
-  standard term it fixes is, linked to `declarations.json`'s `source_url` or to the matching
-  row of its `references` (section 5.3). The items link to nothing.
+- **conventions.** Prepares notation, standing hypotheses and material conventions. Its
+  optional conventions file may be empty. Variables are introduced in their section or
+  statement, not collected into a global catalogue. Useful notion markers may occur in
+  prose, items and parts; they do not justify adding explanatory sentences. The project
+  rules record assumed background and each section's mathematical role.
 - **draft.** Writes its section's items in `items.json` order, following `STYLE.md` and
   `STYLE-project.md`: statements follow the elaborated signature (hypotheses, quantifiers,
   ℕ versus ℤ, coercions) and read as a good textbook prints them (standard terms, the
@@ -1088,14 +1084,13 @@ is not known, so no phase relies on `depends_on`.
   finding is real only when the ruling's reason says what the reader would take the text to
   mean; a `style` finding is real only when its fix is shorter or more standard and no less
   faithful.
-- **edit.** One editor applies the judge run's requests to the shared files and the sections
-  they name, and answers each (`done` or `declined`, with the reason). A notion a statement
-  leans on that the conventions do not fix is fixed in `00-conventions.tex`, with its link,
-  and the statement stays as it is: the conventions grow so that the items do not. A change to
-  `items.json` is never made in a run: it is a proposal the maintainer applies by hand and
-  approves again (section 13). After the judge run and its edit run, `attack` runs again on
-  the touched sections, the judges' own fixes among them (section 8.1), and `judge` and
-  `edit` follow while findings remain.
+- **edit.** One editor applies or declines every judge request and performs a whole-document
+  exposition and layout pass. Its manifest owns the shared files and every declared section,
+  so repeated introductions and disconnected setup can be fixed beyond individual findings.
+  Item-table changes remain proposals for the maintainer. Retained mathematical hypotheses
+  stay exact; useful notion links are marked at natural occurrences rather than forcing
+  additional prose. The editor renders and inspects every page before delivery. Later attack
+  runs still review the touched sections, including judges' and editors' changes.
 
 Attack, ruling and edit documents:
 
@@ -1812,3 +1807,11 @@ after the publish approval.
    sums the agents' usage envelopes and estimates a call that ended without one, so a phase
    can overrun its cap by the calls in flight when it drains; the harvest's priced
    transcripts stay the figure the receipt records.
+
+### Editorial quality
+
+`references/informalization-quality.md` governs planning, drafting and review. Local
+introductions replace mandatory variable catalogues. A conventions file may be empty;
+notion markers are allowed in numbered items and lettered parts, with duplicate and nested
+notions still refused. The edit task owns every declared section so it can perform a
+whole-document exposition and layout pass, while item-table changes remain proposals.

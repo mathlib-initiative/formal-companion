@@ -134,7 +134,7 @@ class TestTheRegister(unittest.TestCase):
         self.assertIn("\\fcnotion{<constant>}{<the words as printed>}", conventions)
         self.assertIn("Print no Lean name and no link", conventions)
         self.assertIn("The conventions section", conventions)
-        self.assertIn("the conventions grow so that the items do not", self.prompt("edit"))
+        self.assertIn("read the whole document as one mathematical account", self.prompt("edit"))
 
 
 # ---------------------------------------------------------------------------
@@ -546,14 +546,13 @@ class TestThePrintedLint(unittest.TestCase):
 
     def test_the_rendered_main_tex_prints_no_lean_name(self):
         """Its introduction once printed the theorem's own name, and now names it as the
-        one that closes the text.  The rest of the printed lint is not main.tex's rule:
+        mathematical subject without an implementation identifier. The rest of the printed lint is not main.tex's rule:
         its bibliography cites the library by URL and sets the commit in monospace."""
         main = render((SKILL / "templates" / "informalize" / "project" / "main.tex")
                       .read_text(encoding="utf-8"), doc.SLOTS)
         names = set(self.cfg.declarations) | set(self.cfg.references)
         self.assertIn(doc.SLOTS["theorem"], names)
         self.assertEqual(vi.fc.printed_lean_names(main, names), [])
-        self.assertIn("the theorem closing this\ntext depends on", main)
 
     def test_a_notion_declarations_json_does_not_carry_is_refused(self):
         found = self.lint("A \\fcnotion{Mathlib.Imagined}{wish} is nowhere.")
@@ -659,7 +658,27 @@ class TestThePlannersPieces(unittest.TestCase):
         edit = iplan.make_tasks("edit", table, [], rulings=["judge-01"],
                                 request_files=["informal/sections/02-covers.tex"])[0]
         self.assertIn("informal/sections/02-covers.tex", edit.paths)
+        self.assertIn("informal/sections/01-gluing-spaces.tex", edit.paths,
+                      "whole-document editing includes a section without a judge request")
         self.assertNotIn("informal/items.json", edit.paths)
+
+    def test_editorial_pass_can_run_after_judges_have_no_cross_file_requests(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        ruling = {"section": "1", "rulings": [{"action": "fixed"}], "requests": []}
+        block = {"paths": {"judge-01": []}, "base_commit": "a" * 40}
+        with patch.object(iplan, "harvested_run", return_value=block), \
+                patch.object(iplan, "corpus_document", return_value=ruling):
+            data, facts = iplan._phase_inputs(SimpleNamespace(paths=object()), "x", "edit",
+                                               "x-judge-1", doc.ITEMS)
+        self.assertEqual(data, {"rulings/judge-01.json": ruling})
+        self.assertEqual(facts["request_files"], [])
+        self.assertEqual(facts["fixed_sections"], ["1"])
+        task = iplan.make_tasks("edit", doc.ITEMS, [], **{k: facts[k] for k in ("rulings", "request_files")})[0]
+        self.assertIn("informal/sections/01-gluing-spaces.tex", task.paths)
+        self.assertIn("informal/sections/02-covers.tex", task.paths)
+        self.assertNotIn("informal/items.json", task.paths)
 
     def test_the_wrappers_give_each_role_its_tools(self):
         env = iplan.wrapper_env("attack", "/h/r-gate")

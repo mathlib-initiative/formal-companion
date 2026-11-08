@@ -14,8 +14,8 @@ for `judge` and `edit`, from the harvest of the run before it (`--from-run`):
 * `attack` -- `attack-lean-NN` and `attack-tex-NN` per section, each one document;
 * `judge` -- `judge-NN` per section whose attack documents hold a finding: its section
   file and its ruling;
-* `edit` -- one task, `edit`: the conventions files, the section files the judge run's
-  requests name, its answers and a proposal for the item table.
+* `edit` -- one task, `edit`: the conventions files, every declared section, answers to
+  the judge run's requests and a proposal for the item table.
 
 `runs/<run-id>/` then holds `run.yaml` (its `informalize:` block: the id, phase, sections,
 base commit, the run it reads, each task's owned paths, the library's commit and the
@@ -169,9 +169,9 @@ def make_tasks(phase: str, table: dict | None, sections: list[str], *,
     out: list[Task] = []
     if phase == "edit":
         doc = "findings/edit/edit.json"
-        owned = sorted(set(CONVENTION_FILES) | set(request_files or ()))
+        owned = sorted(set(CONVENTION_FILES) | set(files.values()) | set(request_files or ()))
         return [Task("edit", "Apply the judges' requests",
-                     "Apply or decline every request of the judge run, in the shared files",
+                     "Apply the requests and review the whole document for exposition and layout",
                      owned + [doc, "findings/edit/items-proposal.json"], [doc],
                      rulings=list(rulings or []))]
     for number in sections:
@@ -702,9 +702,6 @@ def _phase_inputs(workspace, informalize_id: str, phase: str, from_run: str | No
         actions = [r.get("action") for r in doc.get("rulings") or [] if isinstance(r, dict)]
         if "fixed" in actions:
             fixed.append(str(doc.get("section") or ""))
-    if not requests:
-        raise CfError(f"judge run {from_run} made no request: there is nothing for an editor",
-                      hint="plan --phase attack --sections touched next")
     sections = set(section_paths(table or {}).values())
     files = sorted({str(r.get("file")) for r in requests if str(r.get("file")) in sections})
     return data, {"rulings": rulings, "request_files": files, "fixed_sections": fixed,

@@ -1191,18 +1191,29 @@ class TestTheConventionsNotions(_Built):
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertIn("(conventions: 1 hypotheses, 3 notions;", out.stdout)
 
-    def test_a_notion_marked_twice_or_inside_an_item_stops_the_build(self):
+    def test_a_notion_marked_twice_stops_the_build(self):
         twice = doc.CONVENTIONS_NOTIONS + "\nAgain \\fcnotion{IsOpen}{open}.\n"
         repo = self.repo("notions-twice", conventions_extra=twice)
         out = self.build(repo, self.root / "notions-twice-out", ok=False)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("The notion IsOpen is marked twice", out.stdout + out.stderr)
+
+    def test_notion_links_work_at_their_natural_occurrence_inside_an_item(self):
         inside = doc.SECTION_1.replace("Gluing data on $X$",
-                                       "\\fcnotion{IsOpen}{Gluing data} on $X$")
+                                       "\\fcnotion{ExampleLib.GlueData}{Gluing data} on $X$")
+        inside = inside.replace("The square formed by $U", "The square formed by the \\fcnotion{Set}{subsets} $U")
         repo = self.repo("notions-in-item", sections={"01-gluing-spaces": inside})
-        out = self.build(repo, self.root / "notions-in-item-out", ok=False)
-        self.assertNotEqual(out.returncode, 0)
-        self.assertIn("inside item 1.1", out.stdout + out.stderr)
+        outdir = self.root / "notions-in-item-out"
+        self.build(repo, outdir)
+        out = self.tool(repo, str(outdir), script="extract_markers")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        entries = json.loads((outdir / "markers.json").read_text())["entries"]
+        notion = next(e for e in entries if e.get("notion") == "ExampleLib.GlueData")
+        self.assertEqual(notion["words"], "Gluing data")
+        self.assertTrue(notion["boxes"])
+        self.assertTrue(next(e for e in entries if e.get("notion") == "Set")["boxes"])
+        out = self.check(repo, outdir, "--strict")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
 
 
 class TestTheBuildRefuses(_Built):

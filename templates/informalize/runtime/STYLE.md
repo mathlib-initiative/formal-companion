@@ -1,8 +1,8 @@
 # Rules for the informal text
 
-This repository's `informal/` states, without proofs, the definitions and results a Lean
-theorem depends on, in the order in which they build on one another. Each item, each
-part (a), (b), ... of an item, and each notion the conventions fix becomes a box in the PDF
+This repository's `informal/` explains the mathematical route to a Lean
+theorem through selected definitions, results and, when requested, proofs. Each item, each
+part (a), (b), ... of an item, and each retained notion becomes a box in the PDF
 that is linked to the Lean declaration stating it. The tools find the boxes and the links
 through the macros below, so the macros are not optional.
 
@@ -78,8 +78,9 @@ Let $U$ and $V$ be subsets of $X$ that cover it.
   `remark`. The option `id=` is the item's `"id"`, which is also the number the PDF prints;
   the title is the item's `"title"`, copied exactly: `items.json` holds titles as LaTeX
   source (`--` for an en dash, `$\pi_1$`), and the check compares the two as written.
-- Your section file holds items and at most a sentence or two of connecting prose between
-  them. Its heading comes from `sections.tex`: write no `\section`.
+- Your section file holds the argument, with short connected setup paragraphs where
+  several results share context. Put one-use variables inside their result; omit detached
+  special-case announcements and prose that only restates a familiar definition. Its heading comes from `sections.tex`: write no `\section`.
 - Refer to another item with `\itemref{1.2}` ("Theorem 1.2") or `\itemref[b]{1.2}`
   ("Theorem 1.2(b)"); never type an item number. The labels are `item:<id>` and
   `item:<id>:<letter>`, and a section's is `sec:<n>`.
@@ -155,18 +156,15 @@ standard term already says is unread, and an unread text states nothing.
 - Write the statement as a good textbook prints it: standard terms for standard notions
   (an open cover, a compact set, a path-connected space, the fundamental group
   $\pi_{1}(X,x)$), and the notation of `notation.sty` for them.
-- The conventions carry what the items share. The ambient objects and the structure they
-  bear, the letters, the notation, the coercions and the inclusions are fixed once in
-  `sections/00-conventions.tex`; an item repeats none of it and introduces only what is
-  particular to it.
+- Introduce objects near their use. Put variables used once into their result's first
+  sentence, and context shared by several results into a short section opening. A section
+  should be readable on its own without repeating a global catalogue of symbols. Reserve
+  `sections/00-conventions.tex` for conventions that change the mathematics, when any exist.
 - Lean's bookkeeping is not mathematics. Typeclass and instance binders, universe
   variables, the index type of a family, and the side conditions the library discharges
   inside a statement (that an inclusion is injective, that a point lies where a basepoint
-  must lie) are not hypotheses a reader needs named. The conventions say once how the text
-  reads them.
-- Name the letters the statement uses, and no others. "Let $I$ be an index type" belongs in
-  the conventions: write a family as $(U_{i})$, and name its index only where the statement
-  quantifies over it.
+  must lie) are not hypotheses a reader needs named. Leave them implicit unless they affect the mathematical reading.
+- Name the letters the statement uses, and no others. Write a family as $(U_i)$ and name its index only where it is mathematically needed.
 - Of two statements that say the same mathematics, the shorter is the right one. The only
   reason to add words is that the mathematics needs them: a sentence that explains,
   justifies or restates a hypothesis is not one of those reasons.
@@ -175,35 +173,28 @@ standard term already says is unread, and an unread text states nothing.
 
 ## The conventions section
 
-`sections/00-conventions.tex` is written once, by the conventions task, and every item
-rests on it. It fixes the ambient objects and the structure they bear, the letters and
-their one meaning each, the notation, the standing hypotheses and their macros, natural
-numbers against integers, the coercions the text leaves silent, and the junk values the
-items rely on. What it fixes, no item repeats.
+A conventions file may be empty. Do not fill it with definitions of assumed background,
+a list of every variable, or sentences needed only to host annotation markers. Keep only
+conventions that alter the mathematical reading, such as nonemptiness or a nonstandard
+composition order. Introduce other objects in the section or statement that uses them.
 
-It also says which definition of the library each notion it fixes is. **It never prints the
-Lean name, and never links to the Lean documentation**: the text is mathematics, and the
-annotations supply the name and the link. The notion is written in plain words, and those
-words are marked:
+A notion may be marked at its first useful occurrence in ordinary prose, a numbered
+item or a lettered part. It never prints the
+Lean name, and never links to the Lean documentation: the annotations supply both.
+Use `\fcnotion{<constant>}{<the words as printed>}` with a name copied from
+`declarations.json`, either its `declarations` or its `references`. The marker prints
+only the mathematical words and records their box. For example:
 
 ```latex
-The \fcnotion{interior}{interior of $A$} is written $\intr A$, and a subset of $X$
-may be \fcnotion{IsCompact}{compact} or \fcnotion{IsPathConnected}{path connected}.
+\begin{lemma}[id=1.1]{A finite sum}
+Let $S$ be a \fcnotion{Finite}{finite} set.
+...
+\end{lemma}
 ```
 
-`\fcnotion{<constant>}{<the words as printed>}` prints the words alone and records a box
-around them, the way an item records its own. The constant is the marker's first argument
-and reaches no page; the export joins the box to it.
-
-- The constant is one `declarations.json` holds: a declaration of the library, in its
-  `declarations`, or a constant of a library underneath it, in its `references`. Copy the
-  name from that file; never write one from memory. A name it does not carry is refused.
-- One `\fcnotion` per constant, where the conventions introduce the notion, and none
-  anywhere else: a second one is a LaTeX error, and the marker inside an item is one too.
-- The words are the ones the sentence prints: the term, or the notation, as a reader
-  meets it. Keep them short: the box is drawn around exactly them.
-
-The items mark nothing and link to nothing: they read as mathematics.
+Mark each retained notion once. Notions cannot be nested. A useful first occurrence
+inside a hypothesis needs no separate introductory sentence. Do not retain a sentence
+solely to preserve a definition link. Print no Lean name or URL: no `\texttt`, no `\verb`, no `\href`, no `\url`.
 
 ## The reference work
 
@@ -216,15 +207,23 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
 ## Style
 
 - Name every object: introduce each letter before using it ("Let $n$ be a natural
-  number"), unless the conventions already name it, in which case use it as they do.
-- No letter with two meanings (`STYLE-project.md` lists the letters and their one meaning
-  each).
+  number"), unless already introduced in the argument.
+- Keep a letter's meaning fixed within an argument. A later argument may introduce it
+  afresh; record local notation in `STYLE-project.md`.
 - Number an equation only if it is cited, and then always: use `equation` with
   `\label{eq:<id>-<word>}`, for example `eq:1.2-square`, and cite it with `\eqref`.
-- No asides: no digressions in parentheses, no footnotes, no "note that", no motivation,
-  history or proof sketches.
-- Connecting prose between items: at most a sentence or two, only to fix notation the
-  next items need.
+- Give each section a mathematical job; move specialized preliminaries near their first
+  substantial use. A section reduced to a notation list should be folded into its users.
+- Assume the background named in `STYLE-project.md`. Do not remind that homomorphisms
+  preserve multiplication, groupoids have inverses, or maps send paths to paths.
+- Name constructions that are used again, preferably with readable mathematical names
+  matching their linked Lean arguments. Never print tactic syntax or helper names.
+- When proofs are requested, give constructions, equalities and deductions, allowing
+  concise sketches. Use earlier results instead of proving their elementary laws again.
+  A strategy paragraph alone is not a proof.
+- Review the whole rendered document for disconnected setup, repeated definitions,
+  stranded headings and awkward short paragraphs. Fix prose and grouping before manual
+  spacing. Compilation and marker checks are necessary, not a typesetting review.
 - Plain English, short sentences.
 - Nothing about the drafting process in the text: no TODOs, review status or version
   notes. Put those in your report.

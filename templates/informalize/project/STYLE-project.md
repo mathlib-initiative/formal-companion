@@ -15,26 +15,26 @@ The macros of `notation.sty`, one row each.
 
 ## Letters
 
-Each letter keeps one meaning in the whole text.
+Keep a letter's meaning fixed within an argument; introduce it afresh in a later one when needed.
 
 | letter | meaning |
 |---|---|
 
 ## Standard terms
 
-The term the text uses for each notion, the Lean constant `sections/00-conventions.tex`
-marks it with (`\fcnotion`, which prints the term alone) and the sentence that fixes it.
-An item uses the term; it never spells the definition out again, and no page prints the
-constant.
+The assumed background and useful definition links. Mark a retained notion at its first
+natural occurrence, including inside a statement; never add prose solely to host a link.
 
-| term | constant | where it is fixed |
+| term | constant | first useful occurrence |
 |---|---|---|
 
-## What the conventions carry
+## Local introductions and material conventions
 
-What `sections/00-conventions.tex` fixes once, so that no item repeats it: the ambient
-objects and their structure, the typeclass and universe binders, the index type of a
-family, the coercions, and the side conditions the library discharges inside a statement.
+Put one-use variables in their result and shared context in a connected section opening.
+Record only conventions that change the mathematics, such as nonemptiness or composition
+order. The optional conventions file may be empty. List the audience's assumed background
+and the mathematical job of each section. Do not create a preliminary section that only
+collects notation used later.
 
 ## Standing hypotheses
 

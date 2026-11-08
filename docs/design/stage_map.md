@@ -465,6 +465,11 @@ snippet in its module, using the build's declaration line metadata when
 available to confine it to the enclosing proof. Ambiguous or stale snippets
 remain plain (`docs/overlay.md`, sections 4 and 5).
 
+Informalization follows `references/informalization-quality.md`: local introductions,
+selection by mathematical role and a whole-document editing pass. Notion markers may occur
+inside numbered items and parts. The edit task owns every declared section, still excluding
+the item table, so it can address exposition beyond the judges' individual requests.
+
 ## 5. The substrate
 
 Server fleets are driven by `tend` (the orchestrator) and `agentbox` (the
