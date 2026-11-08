@@ -446,7 +446,7 @@ kbd {
   display: grid;
   grid-row: 2;
   grid-template-columns: minmax(0, 1fr) 8px
-    clamp(280px, var(--details-width, clamp(380px, 40vw, 600px)), calc(100% - 428px));
+    clamp(280px, var(--details-width, clamp(380px, 40vw, 600px)), calc(100% - 8px));
   min-height: 0;
 }
 
@@ -493,6 +493,7 @@ kbd {
   position: relative;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--stage);
 }
 
@@ -746,6 +747,9 @@ kbd {
 
 /* The PDF controls: one floating pill at the bottom of the PDF pane. */
 .toolbar {
+  max-width: calc(100% - 16px);
+  overflow-x: auto;
+  overflow-y: hidden;
   position: absolute;
   z-index: 5;
   bottom: 16px;
@@ -761,6 +765,11 @@ kbd {
   box-shadow: var(--shadow);
   transform: translateX(-50%);
   white-space: nowrap;
+}
+
+/* Keep every control usable by scrolling when the PDF pane is narrowed. */
+.toolbar > * {
+  flex-shrink: 0;
 }
 
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {

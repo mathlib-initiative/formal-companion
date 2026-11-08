@@ -39,20 +39,36 @@ test('dragging in either direction resizes live and persists only at release', a
   assert.equal(setup({ stored: s.saved() }).width(), 550);
 });
 
-test('limits keep both panes visible and resizing the window preserves the preference', async () => {
-  const s = setup({ stored: '800' });
+test('limits keep the divider accessible and resizing the window preserves the preference', async () => {
+  const s = setup({ stored: '1100' });
   await s.resize(1000);
-  assert.equal(s.width(), 572);
-  assert.equal(s.saved(), '800');
+  assert.equal(s.width(), 992);
+  assert.equal(s.saved(), '1100');
   await s.resize(1400);
-  assert.equal(s.width(), 800);
+  assert.equal(s.width(), 1100);
   await fire(s.divider, 'keydown', key('End'));
-  assert.equal(s.width(), 972);
+  assert.equal(s.width(), 1392);
   await fire(s.divider, 'keydown', key('Home'));
   assert.equal(s.width(), 280);
   await fire(s.divider, 'keydown', key('ArrowRight'));
   assert.equal(s.width(), 280);
   assert.equal(s.divider.attributes['aria-valuenow'], '280');
+});
+
+test('dragging to the left edge collapses the PDF and the divider can pull it back', async () => {
+  const s = setup();
+  await fire(s.divider, 'pointerdown', pointer(720));
+  await fire(s.documentRef, 'pointermove', pointer(-100));
+  assert.equal(s.width(), 1192);
+  assert.equal(s.divider.attributes['aria-valuemax'], '1192');
+  await fire(s.documentRef, 'pointerup', pointer(-100));
+  assert.equal(s.saved(), '1192');
+  assert.equal(setup({ stored: s.saved() }).width(), 1192);
+  await fire(s.divider, 'pointerdown', pointer(4));
+  await fire(s.documentRef, 'pointermove', pointer(304));
+  await fire(s.documentRef, 'pointerup', pointer(304));
+  assert.equal(s.width(), 892);
+  assert.equal(s.saved(), '892');
 });
 
 test('keyboard resizes, reports width, and both reset gestures clear the saved preference', async () => {

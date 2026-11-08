@@ -171,7 +171,9 @@ On desktop, drag the divider between the PDF and the Lean panel to resize the
 panel. Its grip highlights on hover or keyboard focus. Arrow Left/Right resize
 it (Shift takes larger steps); Home/End choose the limits. Double-click or
 Enter restores the default width. The preferred width is saved locally per
-viewer, clamped to leave room for both panes, and restored after reading mode.
+viewer and restored after reading mode. The Lean panel can fill the workspace
+apart from the divider: drag it back to reveal the PDF again. In a narrow PDF
+pane, its controls scroll horizontally instead of overlapping the Lean panel.
 Storage failures do not disable resizing. Below 1000px the divider disappears
 and the existing bottom-sheet layout is used.
 
