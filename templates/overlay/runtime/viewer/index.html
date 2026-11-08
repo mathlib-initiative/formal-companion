@@ -28,8 +28,35 @@
       <span class="topbar-sep" aria-hidden="true"></span>
       <h1 id="page-heading">Source and formalization overlay</h1>
       <button id="toggle-reading" class="reading-toggle" type="button"
-              aria-controls="overlay details" aria-expanded="true"
-              title="Hide annotation boxes and the Lean panel" disabled>Read PDF</button>
+              aria-controls="overlay details" aria-expanded="true" aria-keyshortcuts="L"
+              title="Hide annotation boxes and the Lean panel (L)" disabled>Read PDF</button>
+      <div class="shortcut-menu">
+        <button id="toggle-shortcuts" class="shortcut-toggle" type="button" aria-label="Keyboard shortcuts"
+                aria-controls="shortcut-help" aria-expanded="false" aria-keyshortcuts="?"
+                title="Keyboard shortcuts (?)">?</button>
+        <section id="shortcut-help" class="shortcut-help" role="dialog" aria-labelledby="shortcut-heading" hidden>
+          <div class="shortcut-heading">
+            <h2 id="shortcut-heading">Keyboard shortcuts</h2>
+            <button id="close-shortcuts" class="icon" type="button" aria-label="Close keyboard shortcuts">×</button>
+          </div>
+          <dl class="shortcut-list">
+            <div><dt>Read PDF / show links</dt><dd><kbd>L</kbd></dd></div>
+            <div><dt>Find in the whole PDF</dt><dd><kbd>⌘ F</kbd> / <kbd>Ctrl F</kbd></dd></div>
+            <div><dt>Next / previous search match</dt><dd><kbd>Enter</kbd> / <kbd>Shift Enter</kbd></dd></div>
+            <div><dt>Previous / next page</dt><dd><kbd>←</kbd> / <kbd>→</kbd></dd></div>
+            <div><dt>Zoom in / out</dt><dd><kbd>+</kbd> / <kbd>−</kbd></dd></div>
+            <div><dt>Rotate clockwise</dt><dd><kbd>R</kbd></dd></div>
+            <div><dt>Close / go back</dt><dd><kbd>Esc</kbd></dd></div>
+            <div><dt>Show / hide shortcuts</dt><dd><kbd>?</kbd></dd></div>
+          </dl>
+          <p class="shortcut-note">Single-key shortcuts pause while typing. Search matches use Enter while the search field has focus.</p>
+          <details class="shortcut-context">
+            <summary>Keys within the Lean panel</summary>
+            <p>With a code token focused: <kbd>←</kbd> / <kbd>→</kbd> move between tokens; <kbd>Home</kbd> / <kbd>End</kbd> go to the first / last token; <kbd>Page Up</kbd> / <kbd>Page Down</kbd> scroll its hover.</p>
+            <p>With the divider focused: <kbd>←</kbd> / <kbd>→</kbd> resize the panel (hold Shift for larger steps); <kbd>Home</kbd> / <kbd>End</kbd> choose its minimum / maximum width; <kbd>Enter</kbd> resets it.</p>
+          </details>
+        </section>
+      </div>
       <button id="toggle-faithfulness" class="switch" type="button" aria-pressed="false" hidden>Show faithfulness</button>
       <details id="status-chip" class="status-chip">
         <summary aria-labelledby="status">
@@ -129,7 +156,7 @@
             <div id="legend" class="legend"></div>
             <div id="verdict-legend" class="legend" hidden></div>
             <p id="keys" class="keys">
-              <kbd>← →</kbd> page · <kbd>+ −</kbd> zoom · <kbd>R</kbd> rotate · <kbd>Esc</kbd> back
+              <kbd>← →</kbd> page · <kbd>+ −</kbd> zoom · <kbd>L</kbd> read PDF · <kbd>?</kbd> all shortcuts
             </p>
             <p id="index-footer" class="foot" hidden></p>
           </div>

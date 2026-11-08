@@ -253,7 +253,8 @@ export function isViewerShortcut(event) {
   if (event.shiftKey && String(event.key ?? "").length !== 1) {
     return false;
   }
-  return !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
+  return !event.target?.isContentEditable
+    && !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
 }
 
 /**
@@ -343,6 +344,7 @@ export async function bootstrapViewer({
       "previous-page", "next-page", "page-number", "page-count",
       "find-toggle", "find-bar", "find-input", "find-count", "find-previous", "find-next", "find-close", "find-highlights",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness", "toggle-reading",
+      "toggle-shortcuts", "shortcut-help", "close-shortcuts",
       "page-scroller", "page-stage", "pdf-canvas", "text-layer", "overlay", "region-bar", "region-peek",
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
@@ -1920,6 +1922,21 @@ export async function bootstrapViewer({
   }
 
   let panelResize = null;
+  let shortcutReturnFocus = null;
+
+  function showShortcuts(shown, restoreFocus = true) {
+    if (shown) shortcutReturnFocus = documentRef.activeElement ?? ui["toggle-shortcuts"];
+    ui["shortcut-help"].hidden = !shown;
+    ui["toggle-shortcuts"].setAttribute("aria-expanded", String(shown));
+    if (shown) {
+      hideHover();
+      focusQuietly(ui["close-shortcuts"]);
+    } else if (restoreFocus) {
+      focusQuietly(shortcutReturnFocus);
+    }
+  }
+
+  showShortcuts(false, false);
 
   /** Read the PDF alone, retaining the page, zoom and selected passage. */
   function showReadingMode(shown) {
@@ -1934,8 +1951,8 @@ export async function bootstrapViewer({
     ui["toggle-reading"].textContent = shown ? "Show links" : "Read PDF";
     ui["toggle-reading"].setAttribute("aria-expanded", String(!shown));
     ui["toggle-reading"].title = shown
-      ? "Show annotation boxes and the Lean panel (Esc)"
-      : "Hide annotation boxes and the Lean panel";
+      ? "Show annotation boxes and the Lean panel (L or Esc)"
+      : "Hide annotation boxes and the Lean panel (L)";
     ui["page-scroller"].setAttribute("aria-label", shown
       ? "Rendered PDF page" : "Rendered PDF page with selectable source regions");
     hidePeek();
@@ -2041,6 +2058,8 @@ export async function bootstrapViewer({
   ui["zoom-in"].addEventListener("click", () => changeZoom(state.zoom + 10));
   ui["rotate-right"].addEventListener("click", () => rotate(90));
   ui["toggle-reading"].addEventListener("click", () => showReadingMode(!state.readingMode));
+  ui["toggle-shortcuts"].addEventListener("click", () => showShortcuts(ui["shortcut-help"].hidden));
+  ui["close-shortcuts"].addEventListener("click", () => showShortcuts(false));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
   ui["back-to-page"].addEventListener("click", backToPage);
   ui["note-toggle"].addEventListener("click", () => {
@@ -2088,9 +2107,16 @@ export async function bootstrapViewer({
       ui["status-chip"].open = false;
     }
     const within = (node) => node === event.target || Boolean(node?.contains?.(event.target));
+    if (!ui["shortcut-help"].hidden && !within(ui["shortcut-help"]) && !within(ui["toggle-shortcuts"])) {
+      showShortcuts(false, false);
+    }
     if (hover.token && !within(hover.token) && !within(ui["hover-card"])) {
       hideHover();
     }
+  });
+  documentRef.addEventListener("focusin", (event) => {
+    if (!ui["shortcut-help"].hidden && event.target !== ui["toggle-shortcuts"]
+        && !ui["shortcut-help"].contains?.(event.target)) showShortcuts(false, false);
   });
   // The pointer may move onto the hover card (to read or scroll it); the card stays while it is there.
   ui["hover-card"].addEventListener("pointerenter", (event) => {
@@ -2118,14 +2144,28 @@ export async function bootstrapViewer({
     });
   }
   documentRef.addEventListener("keydown", (event) => {
-    if (event.isComposing) return;
+    if (event.isComposing || event.defaultPrevented) return;
+    if (event.key === "?" && isViewerShortcut(event)) {
+      event.preventDefault();
+      if (!event.repeat) showShortcuts(ui["shortcut-help"].hidden);
+      return;
+    }
+    if (!ui["shortcut-help"].hidden && event.key === "Escape"
+        && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      showShortcuts(false);
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f"
         && state.search.index && !ui.workspace.hidden) {
       event.preventDefault();
+      if (!ui["shortcut-help"].hidden) showShortcuts(false, false);
       showSearch();
       if (ui["find-input"].value && !state.search.matches.length) return runSearch();
       return;
     }
+    // While help has focus, its arrow keys scroll the help rather than turning PDF pages.
+    if (!ui["shortcut-help"].hidden) return;
     if (!ui["find-bar"].hidden && !event.metaKey && !event.ctrlKey && !event.altKey) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -2138,10 +2178,20 @@ export async function bootstrapViewer({
         return showMatch(state.search.active + (event.shiftKey ? -1 : 1));
       }
     }
-    if (event.defaultPrevented || event.target === ui["panel-divider"] || !isViewerShortcut(event)) {
+    if (!isViewerShortcut(event)) {
       return;
     }
-    if (event.key === "ArrowLeft") changePage(state.currentPage - 1);
+    if (event.key.toLowerCase() === "l" && !ui["toggle-reading"].disabled) {
+      event.preventDefault();
+      if (!event.repeat) {
+        showReadingMode(!state.readingMode);
+        // Hiding the panel must not leave keyboard focus in an invisible control.
+        if (state.readingMode && (ui.details.contains?.(documentRef.activeElement)
+            || documentRef.activeElement === ui["panel-divider"])) focusQuietly(ui["toggle-reading"]);
+      }
+    }
+    else if (event.target === ui["panel-divider"]) return;
+    else if (event.key === "ArrowLeft") changePage(state.currentPage - 1);
     else if (event.key === "ArrowRight") changePage(state.currentPage + 1);
     else if (event.key === "+" || event.key === "=") changeZoom(state.zoom + 10);
     else if (event.key === "-") changeZoom(state.zoom - 10);

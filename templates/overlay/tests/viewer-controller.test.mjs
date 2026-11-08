@@ -1044,18 +1044,20 @@ test("keyboard: every shortcut a button advertises does what the button does", a
                      tag.match(/\stitle="[^"]*\(([^)]+)\)"/)?.[1]])
     .filter(([id, keys]) => id && keys && !keys.includes("Meta+"));
   assert.deepEqual(advertised.map(([id, , shown]) => [id, shown]),
-                   [["previous-page", "←"], ["next-page", "→"], ["zoom-out", "−"], ["zoom-in", "+"],
+                   [["toggle-reading", "L"], ["toggle-shortcuts", "?"],
+                    ["previous-page", "←"], ["next-page", "→"], ["zoom-out", "−"], ["zoom-in", "+"],
                     ["rotate-right", "R"]], "each toolbar button names its key in its tooltip");
-  const snapshot = (state) => [state.currentPage, state.zoom, state.rotation];
+  const snapshot = ({ state, ui }) => [state.currentPage, state.zoom, state.rotation,
+    state.readingMode, ui["shortcut-help"].hidden];
   for (const [id, keys] of advertised) {
     const clicked = await start({ locationRef: { hash: "#page=5" } });
     await fire(el(clicked.documentRef, id), "click");
-    assert.notDeepEqual(snapshot(clicked.result.state), [5, 100, 0], `#${id} does something`);
+    assert.notDeepEqual(snapshot(clicked.result), [5, 100, 0, false, true], `#${id} does something`);
     for (const token of keys.split(" ")) {
       const key = token === "Plus" ? "+" : token;
       const pressed = await start({ locationRef: { hash: "#page=5" } });
       await fire(pressed.documentRef, "keydown", { key, shiftKey: key === "+" || /^[A-Z]$/.test(key) });
-      assert.deepEqual(snapshot(pressed.result.state), snapshot(clicked.result.state), `${token} on #${id}`);
+      assert.deepEqual(snapshot(pressed.result), snapshot(clicked.result), `${token} on #${id}`);
     }
   }
 });
@@ -1065,10 +1067,95 @@ test("keyboard: the shortcut test is the predicate's own, so both halves agree",
   assert.equal(isViewerShortcut({ ctrlKey: true, key: "ArrowRight", target: {} }), false);
   assert.equal(isViewerShortcut({ key: "ArrowRight", metaKey: true, target: {} }), false);
   assert.equal(isViewerShortcut({ key: "r", target: { tagName: "INPUT" } }), false);
+  assert.equal(isViewerShortcut({ key: "l", target: { tagName: "SPAN", isContentEditable: true } }), false);
   assert.equal(isViewerShortcut({ key: "+", shiftKey: true, target: {} }), true, "a shifted character counts");
   assert.equal(isViewerShortcut({ key: "ArrowRight", shiftKey: true, target: {} }), false,
                "a shifted named key does not");
   assert.equal(isViewerShortcut(null), false);
+});
+
+test("keyboard: L toggles reading without changing the selected passage or repeating", async () => {
+  const { documentRef, result } = await start();
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const selected = result.state.selected;
+  await fire(documentRef, "keydown", { key: "l" });
+  assert.equal(result.state.readingMode, true);
+  assert.equal(el(documentRef, "details").hidden, true);
+  await fire(documentRef, "keydown", { key: "l", repeat: true });
+  assert.equal(result.state.readingMode, true);
+  await fire(documentRef, "keydown", { key: "L", shiftKey: true });
+  assert.equal(result.state.readingMode, false);
+  assert.equal(result.state.selected, selected);
+  assert.equal(el(documentRef, "details").hidden, false);
+  const invalid = await start({ pdf: () => pdfResponse(new Uint8Array([1])) });
+  await fire(invalid.documentRef, "keydown", { key: "l" });
+  assert.equal(invalid.result.state.readingMode, false, "L respects the disabled control");
+});
+
+test("keyboard: L and ? leave typing, browser shortcuts and composition alone", async () => {
+  const { documentRef, result } = await start();
+  for (const key of ["l", "?"]) {
+    for (const modifier of ["ctrlKey", "metaKey", "altKey", "isComposing", "defaultPrevented"]) {
+      await fire(documentRef, "keydown", { key, [modifier]: true });
+    }
+    for (const target of [{ tagName: "INPUT" }, { tagName: "TEXTAREA" }, { tagName: "SELECT" },
+      { tagName: "SPAN", isContentEditable: true }]) {
+      await fire(documentRef, "keydown", { key, target });
+    }
+  }
+  assert.equal(result.state.readingMode, false);
+  assert.equal(el(documentRef, "shortcut-help").hidden, true);
+});
+
+test("keyboard help: toggles by key and button, restores focus, and Escape closes only help", async () => {
+  const { documentRef, result } = await start();
+  const trigger = el(documentRef, "toggle-shortcuts"), close = el(documentRef, "close-shortcuts");
+  const help = el(documentRef, "shortcut-help");
+  for (const node of [trigger, close]) node.focus = () => { documentRef.activeElement = node; };
+  documentRef.activeElement = trigger;
+  await fire(documentRef, "keydown", { key: "l" });
+  await fire(documentRef, "keydown", { key: "?", shiftKey: true });
+  assert.equal(help.hidden, false);
+  assert.equal(trigger.attributes["aria-expanded"], "true");
+  assert.equal(documentRef.activeElement, close);
+  await fire(documentRef, "keydown", { key: "?", repeat: true });
+  await fire(documentRef, "keydown", { key: "ArrowRight" });
+  await fire(documentRef, "keydown", { key: "r" });
+  assert.equal(help.hidden, false);
+  assert.equal(result.state.currentPage, 1);
+  assert.equal(result.state.rotation, 0);
+  await fire(documentRef, "keydown", { key: "Escape" });
+  assert.equal(help.hidden, true);
+  assert.equal(documentRef.activeElement, trigger);
+  assert.equal(result.state.readingMode, true, "one Escape does not also exit Read PDF");
+  await fire(trigger, "click");
+  await fire(documentRef, "keydown", { key: "?" });
+  assert.equal(help.hidden, true);
+  await fire(trigger, "click");
+  await fire(close, "click");
+  assert.equal(help.hidden, true);
+  assert.equal(trigger.attributes["aria-expanded"], "false");
+});
+
+test("keyboard help: outside click or focus dismisses it; search remains available", async () => {
+  const { documentRef, result } = await start();
+  const trigger = el(documentRef, "toggle-shortcuts"), help = el(documentRef, "shortcut-help");
+  const inside = el(documentRef, "close-shortcuts"), outside = el(documentRef, "page-scroller");
+  help.contains = (node) => node === inside;
+  await fire(trigger, "click");
+  await fire(documentRef, "click", { target: inside });
+  await fire(documentRef, "focusin", { target: inside });
+  assert.equal(help.hidden, false);
+  await fire(documentRef, "click", { target: outside });
+  assert.equal(help.hidden, true);
+  await fire(trigger, "click");
+  await fire(documentRef, "focusin", { target: outside });
+  assert.equal(help.hidden, true);
+  await fire(trigger, "click");
+  await fire(documentRef, "keydown", { key: "f", metaKey: true });
+  assert.equal(help.hidden, true);
+  assert.equal(el(documentRef, "find-bar").hidden, false);
+  assert.equal(result.state.currentPage, 1);
 });
 
 test("escape clears the selected region and Enter on a region selects it", async () => {

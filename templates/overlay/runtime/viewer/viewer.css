@@ -306,6 +306,89 @@ kbd {
   color: var(--bridge-ink);
 }
 
+.shortcut-menu {
+  position: relative;
+  flex: none;
+}
+
+.shortcut-toggle {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.shortcut-toggle:hover,
+.shortcut-toggle[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.shortcut-help {
+  position: fixed;
+  z-index: 500;
+  top: 56px;
+  right: 16px;
+  width: min(390px, calc(100vw - 32px));
+  max-height: calc(100dvh - 70px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+
+.shortcut-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.shortcut-heading h2 {
+  margin: 0;
+  font: 600 15px var(--sans);
+}
+
+.shortcut-list {
+  margin: 0;
+}
+
+.shortcut-list > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+}
+
+.shortcut-list dd {
+  flex: none;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.shortcut-note,
+.shortcut-context {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.shortcut-context summary {
+  cursor: pointer;
+}
+
+.shortcut-context p:last-child {
+  margin-bottom: 0;
+}
+
 /* Faithfulness: a switch drawn before its label. */
 .switch {
   display: inline-flex;

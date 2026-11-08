@@ -159,13 +159,19 @@ It fetches the PDF from `pdf.route`, or, when `pdf.publish` names an open
 license, from `../<file_name>`, and checks it against that sha256 (and
 `bytes`) before PDF.js sees it; the status note then names the license.
 
-The top bar's **Read PDF** button hides the annotation regions, their margin
+The top bar's **Read PDF** button (or **L**) hides the annotation regions, their margin
 mark and previews, any open Lean hover, and the counterparts panel. The PDF
 uses the whole workspace on wide and narrow screens; its text remains
 selectable and its page, zoom and rotation controls stay available. **Show
-links**, or Escape, restores the annotations and panel without reloading the
+links**, **L**, or Escape, restores the annotations and panel without reloading the
 PDF or clearing the selected passage. Reading mode lasts for the current
 visit, including page turns, and starts off on a fresh load.
+
+The small **?** button in the top bar, or the **?** key, opens the keyboard
+shortcut reference. It also lists search navigation and the keys available
+when a Lean token or the panel divider has focus. Escape closes help first;
+clicking outside also dismisses it. Single-key shortcuts do not run in input
+fields or editable content, and holding L or ? does not repeatedly toggle it.
 
 On desktop, drag the divider between the PDF and the Lean panel to resize the
 panel. Its grip highlights on hover or keyboard focus. Arrow Left/Right resize
