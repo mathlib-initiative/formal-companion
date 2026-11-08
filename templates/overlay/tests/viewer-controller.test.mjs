@@ -1746,14 +1746,18 @@ test("proof guides: ordered helper chain retains exact excerpts and enclosing-so
   await openStep(documentRef, "c");
   assert.equal(el(documentRef, "target-summary").textContent, "2 linked lemmas");
   const chain = el(documentRef, "key-list").children[0];
-  const parts = chain.children.filter(n => n.tagName === "DETAILS");
-  assert.deepEqual(parts.map(p => textOf(p.children[0])), ["1. Combine the terms.", "2. Apply the bound."]);
-  assert.deepEqual(parts.map(p => p.open), [true, false]);
-  const cards = parts.map(p => p.children[1].children[0]);
-  assert.deepEqual(cards.map(c => textOf(c.children.find(n => n.tagName === "PRE"))), ["have := h", "theorem bound"]);
+  const buttons = chain.children[1].children.map(li => li.children[0]);
+  assert.equal(buttons.length, 2);
+  assert.deepEqual(buttons.map(b => b.attributes['aria-pressed']), ["true", "false"]);
+  const excerpt = chain.children[2];
+  const first = excerpt.children[0];
+  assert.equal(textOf(first.children.find(n => n.tagName === "PRE")), "have := h");
+  await fire(buttons[1], "click");
+  assert.deepEqual(buttons.map(b => b.attributes['aria-pressed']), ["false", "true"]);
+  assert.equal(textOf(excerpt.children[0].children.find(n => n.tagName === "PRE")), "theorem bound");
   assert.deepEqual(result.state.selected.cards.map(c => c.proofContext.href),
     ["https://example.org/pinned/Proof.lean#L18-L45", "https://example.org/pinned/Proof.lean#L5-L10"]);
-  assert.match(textOf(cards[0]), /Reading the Lean notation.*locVal.*endpoints are already equal/s);
+  assert.match(textOf(first), /Reading the Lean notation.*locVal.*endpoints are already equal/s);
   assert.equal(el(documentRef, "key-more").hidden, true);
 });
 

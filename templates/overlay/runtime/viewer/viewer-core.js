@@ -733,7 +733,7 @@ function card(record, end, context) {
       ? recordExt.provenance.confirmed_by_human : null,
     resolution: text(destination?.resolution),
     role: text(end.role),
-    proofContext: proofContext(ext.proof_context, href),
+    proofContext: proofContext(ext.proof_context, href, end.title),
     snippet,
     target: ours ? cardTarget(end) : null,
     verdict,
@@ -741,7 +741,7 @@ function card(record, end, context) {
 }
 
 /** Optional, authored explanations. Source links stay on the card's already validated URL. */
-function proofContext(value, href) {
+function proofContext(value, href, title) {
   if (!isObject(value) || !text(value.declaration) || !text(value.conclusion)) return null;
   const lines = lineRange(value.lines);
   let enclosingHref = null;
@@ -752,6 +752,7 @@ function proofContext(value, href) {
   }
   return {
     declaration: text(value.declaration), lines, href: enclosingHref,
+    label: text(title) || text(value.conclusion),
     conclusion: text(value.conclusion), explanation: text(value.explanation),
     bookkeeping: text(value.bookkeeping),
     notation: asArray(value.notation).filter(isObject)

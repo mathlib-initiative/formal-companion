@@ -561,7 +561,8 @@ Proof annotations can also carry an authored explanation of the correspondence:
 The viewer shows the enclosing declaration and mathematical explanation above
 the unchanged numbered excerpt. Notation and bookkeeping are under "Reading
 the Lean notation". In a `chain`, object ends are in logical dependency order;
-each is an expandable entry, with the first initially open. Every excerpt retains
+the complete list of links appears above one selected excerpt, initially the
+first. Every excerpt retains
 its own source link and exact-snippet Verso hovers. Explanations accept inline
 LaTeX and backticked names through the text renderer, never raw HTML.
 

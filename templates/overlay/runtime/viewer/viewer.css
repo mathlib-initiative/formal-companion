@@ -1459,16 +1459,19 @@ kbd {
 .proof-enclosing a, .proof-notation dd { font-family: var(--mono); }
 .proof-conclusion { margin: 0 0 10px; line-height: 1.5; }
 .proof-explanation { margin: 0 0 14px; line-height: 1.5; color: var(--muted); }
-.proof-chain-part { border-top: 1px solid var(--line-strong); padding: 10px 0; }
-.proof-chain-part > summary { cursor: pointer; line-height: 1.5; }
-.proof-chain-part > .key-list { margin-top: 12px; }
-.proof-chain-part .proof-conclusion { display: none; }
+.proof-chain-links { list-style: none; padding: 0; margin: 0 0 16px; }
+.proof-chain-link {
+  display: block; width: 100%; text-align: left; padding: 6px 8px;
+  border: 0; border-left: 2px solid transparent; border-radius: 0;
+  background: transparent; color: var(--bridge-ink); line-height: 1.4;
+}
+.proof-chain-link[aria-pressed="true"] { border-left-color: var(--bridge); background: var(--bridge-soft); }
 .proof-chain-number { color: var(--faint); }
 .proof-details { margin: 12px 0 0; font-size: 13px; line-height: 1.5; }
 .proof-details > summary { cursor: pointer; color: var(--muted); }
 .proof-notation { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 12px; }
 .proof-notation dd { margin: 0; overflow-wrap: anywhere; }
-.proof-chain-part > summary:focus-visible, .proof-details > summary:focus-visible {
+.proof-chain-link:focus-visible, .proof-details > summary:focus-visible {
   outline: 2px solid var(--bridge); outline-offset: 3px;
 }
 

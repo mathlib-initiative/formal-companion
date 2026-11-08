@@ -1309,21 +1309,32 @@ export async function bootstrapViewer({
     return li;
   }
 
-  /** Keep a dependency chain in reading order, with one excerpt initially expanded. */
+  /** Keep the complete dependency chain above the selected excerpt. */
   function proofChain(cards, item) {
     const row = make("li", "proof-chain");
     if (item.proofGuide.summary) row.append(proofText("p", "proof-explanation", item.proofGuide.summary));
+    const links = make("ol", "proof-chain-links");
+    links.setAttribute("aria-label", "Linked lemmas in argument order");
+    const excerpt = make("ul", "key-list proof-chain-excerpt");
+    const buttons = [];
+    const select = index => {
+      hideHover();
+      buttons.forEach((button, i) => button.setAttribute("aria-pressed", String(i === index)));
+      excerpt.replaceChildren(stepCard(cards[index], item));
+    };
     cards.forEach((card, index) => {
-      const details = make("details", "proof-chain-part");
-      details.open = index === 0;
-      const summary = make("summary", "");
-      summary.append(make("span", "proof-chain-number", `${index + 1}. `),
-        makeTitle("span", "", card.proofContext?.conclusion || card.name));
-      const list = make("ul", "key-list");
-      list.append(stepCard(card, item));
-      details.append(summary, list);
-      row.append(details);
+      const entry = make("li", "");
+      const button = make("button", "proof-chain-link");
+      button.type = "button";
+      button.append(make("span", "proof-chain-number", `${index + 1}. `),
+        makeTitle("span", "", card.proofContext?.label || card.name));
+      button.addEventListener("click", () => select(index));
+      buttons.push(button);
+      entry.append(button);
+      links.append(entry);
     });
+    row.append(links, excerpt);
+    select(0);
     return row;
   }
 
