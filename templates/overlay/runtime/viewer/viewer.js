@@ -1129,17 +1129,15 @@ export async function bootstrapViewer({
     }
   }
 
-  /** A step's title and its text; its proof's item, a button above them. */
+  /** A descriptive step heading; its proof's item is a button above it. */
   function stepHead(item) {
     const parts = stepParts(item, state.index.items);
     const owner = state.index.items.get(item.stepOf);
     ui["step-parent"].hidden = !owner;
     setTitleText(ui["step-parent"], owner ? `Proof of ${labelParts(owner.label).title}` : "");
     ui["step-parent"].title = owner?.label ?? "";
-    ui["item-label"].replaceChildren(makeTitle("span", "item-title", parts.title));
-    if (parts.text) {
-      ui["item-label"].append(makeTitle("span", "item-subtitle", parts.text));
-    }
+    // The step counter already supplies its number; lead with the authored mathematics.
+    ui["item-label"].replaceChildren(makeTitle("span", "item-title", parts.text || parts.title));
   }
 
   /** A note's text with its backticked code set as code. */
@@ -1158,7 +1156,7 @@ export async function bootstrapViewer({
 
   /** A fallback title or detail note adds nothing when the heading already says it. */
   function repeatsHeading(item, value) {
-    const normalize = text => (text ?? "").trim().replace(/\s+/gu, " ");
+    const normalize = text => (text ?? "").trim().replace(/\s+/gu, " ").replace(/[.!?]$/u, "");
     const heading = isStep(item) ? stepParts(item, state.index.items).text : item?.label;
     return [item?.label, heading].some(label => normalize(label) === normalize(value));
   }
@@ -1291,7 +1289,10 @@ export async function bootstrapViewer({
       if (context.href) link.setAttribute("href", context.href);
       enclosing.append(link);
       if (context.lines) enclosing.append(` · ${linesText(context.lines).toLowerCase()}`);
-      li.append(enclosing, proofText("p", "proof-conclusion", context.conclusion));
+      li.append(enclosing);
+      if (!repeatsHeading(item, context.conclusion)) {
+        li.append(proofText("p", "proof-conclusion", context.conclusion));
+      }
       if (context.explanation) li.append(proofText("p", "proof-explanation", context.explanation));
     } else if (!repeatsHeading(item, card.fullName)) li.append(name);
     li.append(...card.ranges.flatMap(rangeNodes));

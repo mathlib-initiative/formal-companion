@@ -1766,8 +1766,9 @@ test("steps: a step's card shows its Lean lines, one range each, not the declara
   const { documentRef } = await start(PROOF_FULL);
   await turnTo(documentRef, 9);
   await openStep(documentRef, "b");
-  assert.equal(itemTitle(documentRef), "Step 2");
-  assert.equal(textOf(el(documentRef, "item-label").children[1]), "Collect the two terms");
+  assert.equal(itemTitle(documentRef), "Collect the two terms");
+  assert.equal(el(documentRef, "item-label").children.length, 1, "the description is the heading, not a repeated subtitle");
+  assert.equal(el(documentRef, "item-position").textContent, "2 of 4");
   assert.equal(el(documentRef, "key-list").children.length, 1, "three ranges of one declaration are one card");
   const [[, name, ...ranges]] = keyCards(documentRef);
   assert.equal(textOf(name), "Box.double");
@@ -1846,6 +1847,24 @@ test("proof guides: ordered helper chain retains exact excerpts and enclosing-so
     ["https://example.org/pinned/Proof.lean#L18-L45", "https://example.org/pinned/Proof.lean#L5-L10"]);
   assert.match(textOf(first), /Reading the Lean notation.*locVal.*endpoints are already equal/s);
   assert.equal(el(documentRef, "key-more").hidden, true);
+});
+
+test("proof guides: a conclusion already stated by the heading is omitted without losing notation or code", async () => {
+  const sections = makeProofSections(PDF_SHA256);
+  const step = sections["9/theorem-9.1"].find(r => r.id === "a");
+  step.object[0].extensions[NAMESPACE].proof_context = {
+    declaration: "double", lines: [18, 45],
+    conclusion: "Unfold the product.",
+    bookkeeping: "The endpoint types are implicit.",
+  };
+  const { documentRef } = await start({ sections });
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "a");
+  assert.equal(itemTitle(documentRef), "Unfold the product");
+  const card = el(documentRef, "key-list").children[0];
+  assert.ok(!card.children.some(node => node.classList.contains("proof-conclusion")));
+  assert.ok(card.children.some(node => node.tagName === "PRE"));
+  assert.match(textOf(card), /Reading the Lean notation.*endpoint types/s);
 });
 
 test("proof guides: context is inert text and cannot hide a broader correspondence", async () => {
@@ -1966,7 +1985,7 @@ test("steps: an item lists its proof's steps, across pages, and a row opens its 
   ]);
   await fire(steps[2], "click");
   assert.equal(result.state.currentPage, 10);
-  assert.equal(itemTitle(documentRef), "Step 3");
+  assert.equal(itemTitle(documentRef), "Bound each side");
   assert.equal(el(documentRef, "selection").hidden, false, "no page index between the two");
   assert.equal(el(documentRef, "page-number").value, "10");
 });
@@ -2011,7 +2030,7 @@ test("steps: a click on a step's box opens the step, and the way back lands on i
   await turnTo(documentRef, 9);
   await fire(polygonOf(documentRef, result.state.index.items.get("b").place.regionId), "click");
   assert.equal(result.state.selected.id, "b");
-  assert.equal(itemTitle(documentRef), "Step 2");
+  assert.equal(itemTitle(documentRef), "Collect the two terms");
   await fire(el(documentRef, "back-to-page"), "click");
   assert.equal(result.state.selected, null);
   assert.equal(focused.dataset.itemId, "b");
@@ -2181,8 +2200,8 @@ for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MIN
     assert.equal(step.title, "a: fₖ ≠ 0, ‖eₘ‖ = 1 and x⁻¹", "a tooltip keeps the label as written");
     await openStep(documentRef, "a");
     const [title, subtitle] = el(documentRef, "item-label").children;
-    assert.equal(textOf(title), "Step 1");
-    assert.equal(scripted(subtitle), "f_{k} ≠ 0, ‖e_{m}‖ = 1 and x^{−1}");
+    assert.equal(scripted(title), "f_{k} ≠ 0, ‖e_{m}‖ = 1 and x^{−1}");
+    assert.equal(subtitle, undefined);
     await fire(el(documentRef, "step-parent"), "click");
     const [item, itemSubtitle] = el(documentRef, "item-label").children;
     assert.equal(scripted(item), "Theorem 9.1");
@@ -2224,8 +2243,8 @@ test("titles: a label with no script characters stays one text, as it was", asyn
   const { documentRef } = await start(PROOF_FULL);
   await turnTo(documentRef, 9);
   await openStep(documentRef, "a");
-  const [, subtitle] = el(documentRef, "item-label").children;
-  assert.deepEqual([subtitle.textContent, subtitle.children], ["Unfold the product", []]);
+  const [title] = el(documentRef, "item-label").children;
+  assert.deepEqual([title.textContent, title.children], ["Unfold the product", []]);
   assert.deepEqual(el(documentRef, "step-parent").children, []);
 });
 
