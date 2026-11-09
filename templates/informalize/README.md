@@ -42,7 +42,8 @@ group holding the slot `name`.
 
 | slot | in | holds |
 |---|---|---|
-| `id`, `job` | `docs/maintenance.md` | the informalization id and PDF job name |
+| `id` | `docs/maintenance.md` | the informalization id |
+| `job` | `docs/maintenance.md` | the PDF job name |
 | `title_tex` | `main.tex` | the text's title (`text.title`), escaped for LaTeX |
 | `author_tex` | `main.tex` | `text.author`, escaped for LaTeX |
 | `license_tex` | `main.tex` | the license's name in a sentence, such as `the Apache License, Version~2.0` |

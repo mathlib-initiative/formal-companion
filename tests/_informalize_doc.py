@@ -32,6 +32,7 @@ if str(SKILL / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILL / "scripts"))
 
 from cflib.templates import render  # noqa: E402
+from informalize.project import DESTINATIONS, ROOT_DIRECTORIES  # noqa: E402
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 #: the commit the fake library's lake-manifest.json pins Mathlib at
@@ -40,6 +41,8 @@ JOB = "example-thm"
 
 #: what `cf informalize init` would fill the project templates' slots with
 SLOTS = {
+    "id": JOB,
+    "job": JOB,
     "title_tex": "The glue theorem, after ExampleLib",
     "author_tex": "A. Maintainer",
     "license_tex": "the Apache License, Version~2.0",
@@ -334,12 +337,11 @@ def write_repo(root: Path, *, sections: dict[str, str] | None = None,
     for template in sorted(p for p in PROJECT.rglob("*") if p.is_file()):
         rel = template.relative_to(PROJECT)
         text = render(template.read_text(encoding="utf-8"), SLOTS)
-        if rel.as_posix() == "gitignore":
-            dest = root / ".gitignore"
-        elif rel.as_posix() == "README.md":
-            dest = root / "README.md"
+        relative = rel.as_posix()
+        if rel.parts[0] in ROOT_DIRECTORIES:
+            dest = root / rel
         else:
-            dest = informal / rel
+            dest = root / DESTINATIONS.get(relative, f"informal/{relative}")
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(text, encoding="utf-8")
     notation = informal / "notation.sty"
