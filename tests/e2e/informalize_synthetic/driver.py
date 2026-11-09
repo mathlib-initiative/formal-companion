@@ -738,6 +738,18 @@ class Pipeline:
         wanted = ("python3", "bash", *TEX, *(POPPLER if poppler else ()))
         path = [str(Path(found).parent) for name in wanted
                 if (found := shutil.which(name))] + ["/usr/bin", "/bin"]
+        if not poppler:
+            # Poppler may share /usr/bin with TeX and the shell. Omitting its
+            # discovered directory alone does not make these tools unavailable.
+            tool_bin = work / "without-poppler" / "bin"
+            tool_bin.mkdir(parents=True, exist_ok=True)
+            for directory in dict.fromkeys(path):
+                for program in Path(directory).iterdir():
+                    link = tool_bin / program.name
+                    if (program.name not in POPPLER and program.is_file()
+                            and os.access(program, os.X_OK) and not link.exists()):
+                        link.symlink_to(program)
+            path = [str(tool_bin)]
         env = {"PATH": ":".join(dict.fromkeys(path)),
                "HOME": os.environ.get("HOME", str(self.made)), **TEXMF}
         argv = ["bash", "informal/tools/canonical_pdf.sh"]
