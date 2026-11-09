@@ -1,24 +1,28 @@
-# Hold pdf-overlay/ to the record the generator wrote.
-#
-# Written once by `cf informalize overlay` (docs/proposals/informalize.md section 10) and
-# the output repository's from then on. `check_generated.py` needs nothing but Python and
-# this directory: it reads GENERATED.json and refuses a missing, changed or extra file, a
-# config it would not accept, an annotation the bundle does not hold, a stale export and a
-# verso.json that is not of a commit the cards pin.
 name: check
 
 on:
   push:
+    branches-ignore: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  generated:
+  validate:
+    name: Validate (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v4
-      - name: Check the generated overlay
-        run: python3 pdf-overlay/tools/check_generated.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Validate sources, annotations, and tests
+        run: make check

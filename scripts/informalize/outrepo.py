@@ -33,9 +33,11 @@ from cflib.errors import CfError
 from cflib.paths import WorkspacePaths
 
 #: directories a command may write under (section 1.3), relative to the repository
-ALLOWED_DIRS = ("informal", "annotations", "pdf-overlay", ".github/workflows", ".lake/overlay-pdf")
+ALLOWED_DIRS = ("informal", "annotations", "pdf-overlay", "docs", "tools", "tests",
+                ".github/workflows", ".lake/overlay-pdf")
 #: single files a command may write
-ALLOWED_FILES = ("site/index.html", "README.md", "LICENSE", ".gitignore")
+ALLOWED_FILES = ("site/index.html", "README.md", "LICENSE", ".gitignore",
+                 ".editorconfig", "AGENTS.md", "CONTRIBUTING.md", "Makefile")
 #: the stamp: the runtime's configuration names the id the repository was made for
 STAMP = "informal/informalize.json"
 #: the identity of a commit when the maintainer's git names none (a fresh machine, the
@@ -151,9 +153,8 @@ class OutputRepo:
             raise CfError(f"{relative!r} is not a path inside the output repository")
         if not self.allowed(relative):
             raise CfError(f"{relative} is not a path cf informalize may write",
-                          hint="only informal/, annotations/, pdf-overlay/, site/index.html, "
-                               ".github/workflows/, .lake/overlay-pdf/, README.md, LICENSE and "
-                               ".gitignore (docs/proposals/informalize.md section 1.3)")
+                          hint="only the source, documentation, tooling, tests and root scaffold "
+                               "paths listed in docs/proposals/informalize.md section 1.3")
         current = self.check_location()
         for part in pure.parts:
             current = current / part

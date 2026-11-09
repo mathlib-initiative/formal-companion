@@ -37,7 +37,6 @@ import getpass
 import html
 import importlib.util
 import json
-import posixpath
 import re
 import shutil
 import subprocess
@@ -72,7 +71,7 @@ CONVENTION = "informal-markers"
 #: the site's settings, which are the same for every informalization companion
 OUTPUT_ROOT = "site"
 INDEX_NAME = "index.html"
-LINK_TEXT = "Source overlay"
+LINK_TEXT = "Open the annotated PDF"
 #: the tools the companion runs, under its own `pdf-overlay/tools/`
 CHECK_TOOL = f"{overlay_sync.OVERLAY_DIRNAME}/tools/check_generated.py"
 SERVE_TOOL = f"{overlay_sync.OVERLAY_DIRNAME}/tools/serve.py"
@@ -127,11 +126,6 @@ def viewer_href(mount: str = overlay_sync.OVERLAY_DIRNAME, index: str = INDEX_NA
     return build_site_tool().link_href(SimpleNamespace(mount=mount, index=index))
 
 
-def back_href(mount: str = overlay_sync.OVERLAY_DIRNAME, index: str = INDEX_NAME) -> str:
-    """The landing page's href as the viewer spells it: the other way round."""
-    return posixpath.relpath(index, posixpath.dirname(posixpath.join(mount, "viewer", index)))
-
-
 def config_value(cfg: dict, repo: OutputRepo) -> dict:
     """`overlay.config.json` for this informalization companion, every key settled here."""
     job = cfg["text"]["job"]
@@ -140,7 +134,7 @@ def config_value(cfg: dict, repo: OutputRepo) -> dict:
     value = json.loads((repo.root / CONFIG).read_text(encoding="utf-8"))
     name = config.library_name(cfg["library"]["url"])
     value["lede"] = f"Each statement of the text, and the {name} declaration that states it."
-    value["back_link"] = {"href": back_href(), "text": "Back to the site"}
+    value.pop("back_link", None)
     value["display"] = {"strip_prefix": f"{cfg['library']['prefix']}.", "minimal": True}
     value["pdf"]["publish"] = {"license": cfg["text"]["license"]}
     value["site"] = {"output_root": OUTPUT_ROOT, "index": INDEX_NAME,
@@ -153,17 +147,9 @@ def config_value(cfg: dict, repo: OutputRepo) -> dict:
 def index_html(cfg: dict) -> bytes:
     """The landing page, with the overlay link block the build writes, so it writes it back."""
     tool = build_site_tool()
-    library = cfg["library"]
     values = {
         "title": html.escape(config.printed_title(cfg)),
-        "theorem": html.escape(library["theorem"]),
-        "library_name": html.escape(config.library_name(library["url"])),
-        "library_url": html.escape(library["url"], quote=True),
-        "library_commit": html.escape(library["commit"]),
-        "license_name": html.escape(project.LICENSE_NAMES[cfg["text"]["license"]][0]),
         "viewer_href": html.escape(viewer_href(), quote=True),
-        "pdf_href": html.escape(f"{overlay_sync.OVERLAY_DIRNAME}/{cfg['text']['job']}.pdf",
-                                quote=True),
         "link_block": tool.link_block(viewer_href(), LINK_TEXT, ""),
     }
     text = render((site_templates() / "index.html").read_text(encoding="utf-8"), values)
@@ -314,7 +300,8 @@ def overlay(workspace, informalize_id: str, *, pdf_url: str,
     # 1. the config, the landing page, the workflows and the .gitignore lines.  Everything
     # is rendered before anything is written: `overlay.sync.init` writes the config itself,
     # and a failure after it would leave the repository dirty for the next run to refuse.
-    files = {SITE_INDEX: index_html(cfg), **workflow_files(),
+    files = {**project.missing_repository_files(repo, cfg),
+             SITE_INDEX: index_html(cfg), **workflow_files(),
              GITIGNORE: ignore_bytes(repo.read_bytes(GITIGNORE))}
     value = config_value(cfg, repo)
     files[CONFIG] = (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
@@ -590,7 +577,7 @@ def _write_receipt(paths, informalize_id: str, repo: OutputRepo, cfg: dict, chec
     inputs["stages/I6.json"] = sha256_file(paths.informalize_receipt(informalize_id, "I6"))
     outputs = {}
     for relative in (CONFIG, GENERATED, BUNDLE, SITE_INDEX, VERSO,
-                     *sorted(workflow_files())):
+                     *sorted(workflow_files()), *sorted(project.repository_files(cfg))):
         path = repo.root / relative
         if path.is_file() and not path.is_symlink():
             outputs[f"repo/{relative}"] = sha256_file(path)

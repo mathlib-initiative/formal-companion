@@ -609,7 +609,9 @@ class TestInit(_Workspace):
         self.assertEqual(config.problems(settings), [])
         self.assertEqual(settings["reference"]["work"], "A. Author, Gluing, Example Press, 2001")
         self.assertIsNone(settings["caps"]["max_cost_per_phase"])
-        for relative in ("README.md", "LICENSE", ".gitignore", "informal/main.tex",
+        for relative in ("README.md", "LICENSE", ".gitignore", "Makefile", ".editorconfig",
+                         "AGENTS.md", "CONTRIBUTING.md", "docs/maintenance.md",
+                         "tools/README.md", "tests/test_repository.py", "informal/main.tex",
                          "informal/notation.sty", "informal/STYLE-project.md",
                          "informal/sections/00-conventions.tex", "informal/fcmarkers.sty",
                          "informal/tools/build_pdf.sh", "informal/informalize.json",
@@ -678,6 +680,51 @@ class TestInit(_Workspace):
         out = self.init()
         self.assertIn("nothing to commit", out)
         self.assertEqual(self.git("rev-parse", "HEAD"), head)
+
+    @unittest.skipUnless(shutil.which("make"), "make is needed for generated project commands")
+    def test_generated_project_checks_work_before_overlay_and_reject_changed_runtime(self):
+        self.init()
+        def make(target):
+            return subprocess.run(["make", target, f"PYTHON={sys.executable}"], cwd=self.repo,
+                                  capture_output=True, text=True)
+        checked = make("check")
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        absent = make("site")
+        self.assertNotEqual(absent.returncode, 0)
+        self.assertIn("Generate the overlay", absent.stderr)
+        runtime_file = self.repo / "informal/fcmarkers.sty"
+        runtime_file.write_bytes(runtime_file.read_bytes() + b"% changed\n")
+        broken = make("check")
+        self.assertNotEqual(broken.returncode, 0)
+        self.assertIn("fcmarkers.sty", broken.stderr)
+
+    def test_repository_scaffold_is_project_owned_and_backfill_excludes_tex(self):
+        self.init()
+        settings = read_yaml(self.paths.informalize_yaml(ID))
+        repo = OutputRepo(self.paths, ID)
+        custom = ("README.md", "CONTRIBUTING.md", "AGENTS.md", "Makefile",
+                  "docs/maintenance.md", "tests/test_repository.py", "tools/README.md")
+        for name in custom:
+            (self.repo / name).write_text("maintainer edit\n", encoding="utf-8")
+        self.init()
+        self.cf("informalize", "sync", ID)
+        self.assertEqual(project.missing_repository_files(repo, settings), {})
+        for name in custom:
+            self.assertEqual((self.repo / name).read_text(), "maintainer edit\n")
+        (self.repo / "docs/maintenance.md").unlink()
+        (self.repo / "informal/sections/00-conventions.tex").unlink()
+        missing = project.missing_repository_files(repo, settings)
+        self.assertEqual(set(missing), {"docs/maintenance.md"})
+
+    def test_repository_backfill_refuses_linked_documentation_directory(self):
+        self.init()
+        settings = read_yaml(self.paths.informalize_yaml(ID))
+        outside = scratch(self)
+        shutil.rmtree(self.repo / "docs")
+        (self.repo / "docs").symlink_to(outside)
+        with self.assertRaisesRegex(CfError, "symlink"):
+            project.missing_repository_files(OutputRepo(self.paths, ID), settings)
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_other_settings_are_refused_unless_forced(self):
         self.init()
@@ -860,11 +907,13 @@ class TestTheException(_Workspace):
         repo = OutputRepo(self.paths, ID)
         for good in ("informal/x.tex", "annotations/1/a.json", "pdf-overlay/GENERATED.json",
                      "site/index.html", ".github/workflows/tests.yml",
-                     ".lake/overlay-pdf/x.pdf", "README.md", "LICENSE", ".gitignore"):
+                     ".lake/overlay-pdf/x.pdf", "README.md", "LICENSE", ".gitignore",
+                     "Makefile", ".editorconfig", "AGENTS.md", "CONTRIBUTING.md",
+                     "docs/maintenance.md", "tools/export.py", "tests/test_export.py"):
             with self.subTest(path=good):
                 repo.target(good)
         for bad in ("site/other.html", "lean/X.lean", "informal/../x", "/etc/passwd",
-                    "informal//x", "Makefile", ".git/config", "informal/./x"):
+                    "informal//x", "unrelated.txt", ".git/config", "informal/./x"):
             with self.subTest(path=bad), self.assertRaises(CfError):
                 repo.target(bad)
 

@@ -465,6 +465,23 @@ snippet in its module, using the build's declaration line metadata when
 available to confine it to the enclosing proof. Ambiguous or stale snippets
 remain plain (`docs/overlay.md`, sections 4 and 5).
 
+New output repositories start with a short README, CONTRIBUTING.md, AGENTS.md,
+a Makefile, .editorconfig, and separate docs/, tools/, and tests/ directories.
+These are project-owned: init writes absent files, sync never replaces them,
+and overlay adds missing repository scaffold files to older projects without
+restoring deleted mathematical templates. `make check` runs the project's
+runtime-integrity and regression tests and, when present, the overlay validator.
+`make site` requires an overlay and runs those checks before building it.
+
+The I7 homepage opens the annotated PDF directly, retaining query strings and
+fragments, with no redundant back link. Its Pages workflow depends on reusable
+checks on Python 3.11 and 3.13 before building and deploying. I7's receipt pins
+the repository scaffolding as well as the site and workflows. These defaults
+contain no project-specific source names, release pins, or invented public URLs.
+The output write exception includes docs/, tools/, tests/, CONTRIBUTING.md,
+AGENTS.md, Makefile, and .editorconfig; all existing stamp, path, symlink, and
+git protections still apply.
+
 Informalization follows `references/informalization-quality.md`: local introductions,
 selection by mathematical role and a whole-document editing pass. Notion markers may occur
 inside numbered items and parts. The edit task owns every declared section, still excluding

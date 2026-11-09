@@ -54,6 +54,7 @@ from _fakehost import FakeHost                                # noqa: E402
 from cflib.errors import CfError                              # noqa: E402
 from cflib.hashing import sha256_file                         # noqa: E402
 from cflib.paths import WorkspacePaths                        # noqa: E402
+from cflib.yamlio import load_yaml
 from cflib.workspace import Workspace                         # noqa: E402
 from informalize import overlay as ioverlay                   # noqa: E402
 from informalize import pdf as ipdf                           # noqa: E402
@@ -441,12 +442,17 @@ class TestTheGeneratedOverlayFiles(unittest.TestCase):
         settings["text"]["title"] = "The Seifert--van Kampen theorem, after ExampleLib"
         raw = ioverlay.index_html(settings).decode("utf-8")
         self.assertIn("<title>The Seifert–van Kampen theorem, after ExampleLib</title>", raw)
-        self.assertIn("<h1>The Seifert–van Kampen theorem, after ExampleLib</h1>", raw)
+        self.assertNotIn("<h1>", raw)
         self.assertNotIn("Seifert--van", raw)
 
-    def test_the_two_hrefs_point_at_each_other(self):
-        self.assertEqual(ioverlay.viewer_href(), "pdf-overlay/viewer/index.html")
-        self.assertEqual(ioverlay.back_href(), "../../index.html")
+    def test_homepage_opens_viewer_and_preserves_deep_links(self):
+        raw = ioverlay.index_html(self.settings()).decode("utf-8")
+        self.assertIn('new URL("pdf-overlay/viewer/index.html", window.location.href)', raw)
+        self.assertIn("viewer.search = window.location.search", raw)
+        self.assertIn("viewer.hash = window.location.hash", raw)
+        self.assertIn("window.location.replace(viewer.href)", raw)
+        self.assertIn("<noscript>", raw)
+        self.assertIn("Open the annotated PDF", raw)
 
     def test_the_workflows_are_copied_whole(self):
         files = ioverlay.workflow_files()
@@ -457,8 +463,15 @@ class TestTheGeneratedOverlayFiles(unittest.TestCase):
         self.assertIn("serve.py --build-only", pages)
         # a Pages artifact, never a branch deploy (section 10)
         self.assertNotIn("gh-pages", pages)
-        self.assertIn("check_generated.py",
-                      files[".github/workflows/check.yml"].decode("utf-8"))
+        checks = load_yaml(files[".github/workflows/check.yml"].decode("utf-8"))
+        workflow = load_yaml(pages)
+        self.assertEqual(workflow["jobs"]["check"]["uses"], "./.github/workflows/check.yml")
+        self.assertEqual(workflow["jobs"]["build"]["needs"], "check")
+        self.assertEqual(workflow["jobs"]["deploy"]["needs"], "build")
+        validation = checks["jobs"]["validate"]
+        self.assertEqual(validation["strategy"]["matrix"]["python"], ["3.11", "3.13"])
+        self.assertIn({"name": "Validate sources, annotations, and tests", "run": "make check"},
+                      validation["steps"])
 
     def test_the_gitignore_lines_are_added_once(self):
         self.assertEqual(ioverlay.ignore_bytes(None).decode("utf-8").splitlines(),

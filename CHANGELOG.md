@@ -43,6 +43,12 @@ release has something to say.
 
 ### Added
 
+- **A maintainable informalization repository from the first init.** Generated
+  projects include concise reader documentation, contribution and maintenance
+  guides, a Makefile, editor settings, and separate tools and tests. Existing
+  project edits are preserved. The PDF viewer becomes the homepage, and Pages
+  waits for reusable Python 3.11/3.13 checks before deploying.
+
 - **The canonical PDF and the overlay by command: `cf informalize pdf-command`,
   `fetch-pdf`, `overlay` and `check-site`.** Components 6, 7 and 8's runbook section of
   `docs/proposals/informalize.md` (its sections 9 and 10), the last two stages of the mode

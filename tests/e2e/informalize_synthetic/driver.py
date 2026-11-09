@@ -837,8 +837,17 @@ class Pipeline:
         code, text = self.cf("informalize", "overlay", ID, "--pdf-url", "http://x/y.pdf",
                              ok=False)
         check(code != 0 and "https" in text, f"a plain-http release URL was taken:\n{text}")
-        self.cf("informalize", "overlay", ID, "--pdf-url", PDF_URL)
+        # An older project lacks the repository scaffold but retains its README.
+        # Adding these files must not invalidate the already approved PDF sources.
         repo = self.repo
+        scaffold = ("Makefile", "docs/maintenance.md", "tests/test_repository.py")
+        readme = (repo / "README.md").read_bytes()
+        self.git(repo, "rm", "--", *scaffold)
+        self.git(repo, "commit", "-qm", "Simulate a repository before the scaffold")
+        self.cf("informalize", "overlay", ID, "--pdf-url", PDF_URL)
+        check((repo / "README.md").read_bytes() == readme, "overlay replaced the README")
+        for relative in scaffold:
+            check((repo / relative).is_file(), f"overlay did not add {relative}")
         for relative in ("pdf-overlay/overlay.config.json", "pdf-overlay/GENERATED.json",
                          "pdf-overlay/annotations.bundle.json", "site/index.html",
                          ".github/workflows/pages.yml", ".github/workflows/check.yml"):
@@ -852,6 +861,12 @@ class Pipeline:
               f"the generated config is not the mode's: {settings}")
         cached = repo / settings["pdf"]["cache_dir"] / settings["pdf"]["file_name"]
         check(cached.is_file(), "the PDF cache was not seeded")
+        check("back_link" not in settings, "the viewer links back to its own redirect")
+        if shutil.which("make"):
+            built = subprocess.run(["make", "site", f"PYTHON={sys.executable}"], cwd=repo,
+                                   capture_output=True, text=True)
+            check(built.returncode == 0,
+                  f"the generated make site command failed:\n{built.stdout}{built.stderr}")
         check(self.git(repo, "status", "--porcelain").strip() == "",
               "cf informalize overlay left the output repository dirty")
         notions = sorted(p.name for p in (repo / "annotations").rglob("notion-*.json"))

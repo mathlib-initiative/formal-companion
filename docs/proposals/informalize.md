@@ -92,7 +92,8 @@ those four files and the stage it describes to `docs/design/stage_map.md` (secti
 > `cf informalize` subcommands write there, only into a repository carrying that stamp, and
 > only these paths: `informal/`, `annotations/`, `pdf-overlay/`, `site/index.html`, the
 > workflow directory `.github/workflows/`, the ignored PDF cache `.lake/overlay-pdf/`,
-> `README.md`, `LICENSE` and `.gitignore`. They refuse
+> `README.md`, `LICENSE`, `.gitignore`, `.editorconfig`, `AGENTS.md`,
+> `CONTRIBUTING.md`, `Makefile`, and the project directories `docs/`, `tools/`, `tests/`. They refuse
 > a `repo/` that is a symlink or resolves outside `informalize/<id>/`, refuse to write through
 > a symlinked component, and run git there only through `cflib.gitsafe`. They never write to
 > the library they read. `cf overlay` keeps its own exception (rule 5) for this repository as
@@ -175,7 +176,8 @@ The output repository:
 
 ```text
 repo/
-  README.md LICENSE .gitignore            I0, from the project templates
+  README.md LICENSE .gitignore .editorconfig AGENTS.md CONTRIBUTING.md Makefile   I0
+  docs/ tools/ tests/                      I0, project-owned maintenance and checks
   informal/
     informalize.json GENERATED.json       I0/I1 (cf-owned)
     fcmarkers.sty STYLE.md tools/         the runtime, verbatim (section 7)

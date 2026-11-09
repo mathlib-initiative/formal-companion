@@ -4,25 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }}</title>
-<style>
-  body { font: 16px/1.5 system-ui, -apple-system, sans-serif; max-width: 40rem;
-         margin: 3rem auto; padding: 0 1rem; }
-  code { font-size: 0.9em; }
-  h1 { font-size: 1.5rem; }
-</style>
+<script>
+  const viewer = new URL("{{ viewer_href }}", window.location.href);
+  viewer.search = window.location.search;
+  viewer.hash = window.location.hash;
+  window.location.replace(viewer.href);
+</script>
+<noscript><meta http-equiv="refresh" content="0;url={{ viewer_href }}"></noscript>
 </head>
 <body>
-<h1>{{ title }}</h1>
-<p>An informal text of <code>{{ theorem }}</code>, written from the Lean library that
-states it (<a href="{{ library_url }}">{{ library_name }}</a>, at commit
-<code>{{ library_commit }}</code>). Every statement is the Lean's, in words; the proofs
-are the library's. Each statement has a box on the PDF, and the box opens a card naming
-the declarations that state it, with their source at that commit.</p>
-<ul>
-<li><a href="{{ viewer_href }}">Read the text beside the Lean</a></li>
-<li><a href="{{ pdf_href }}">The PDF</a></li>
-</ul>
-<p>The text and the PDF are released under {{ license_name }}.</p>
 {{ link_block }}
 </body>
 </html>

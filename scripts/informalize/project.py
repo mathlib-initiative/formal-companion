@@ -4,7 +4,7 @@ New code, for docs/proposals/informalize.md sections 4 and 7.1.  Two kinds:
 
 * the project templates under `templates/informalize/project/` (`main.tex`,
   `notation.sty`, `sections/00-conventions.tex`, `STYLE-project.md` into `informal/`,
-  `README.md` and `gitignore` as the root's `README.md` and `.gitignore`), rendered with
+  the root documents, Makefile, tools and tests into their repository paths), rendered with
   `cflib.templates.render` from the slots `templates/informalize/README.md` lists;
 * the license of the text, `LICENSE`: the text of `text.license` from
   `templates/informalize/licenses/<SPDX id>.txt`, one per license `pdf.publish` admits
@@ -27,6 +27,7 @@ from cflib.templates import render
 from overlay.config import OPEN_LICENSES
 
 from informalize.config import library_name, printed_title
+from informalize.outrepo import OutputRepo
 
 #: the license's name in a sentence, in Markdown and in LaTeX
 LICENSE_NAMES = {
@@ -42,7 +43,10 @@ LICENSE_NAMES = {
 assert tuple(LICENSE_NAMES) == OPEN_LICENSES
 
 #: where each project template lands, relative to the repository
-DESTINATIONS = {"README.md": "README.md", "gitignore": ".gitignore"}
+DESTINATIONS = {"README.md": "README.md", "gitignore": ".gitignore",
+                "editorconfig": ".editorconfig", "AGENTS.md": "AGENTS.md",
+                "CONTRIBUTING.md": "CONTRIBUTING.md", "Makefile": "Makefile"}
+ROOT_DIRECTORIES = ("docs", "tools", "tests")
 
 _TEX_SPECIAL = {"\\": r"\textbackslash{}", "{": r"\{", "}": r"\}", "$": r"\$", "&": r"\&",
                 "#": r"\#", "^": r"\textasciicircum{}", "_": r"\_", "%": r"\%",
@@ -79,6 +83,8 @@ def slots(cfg: dict) -> dict[str, str]:
         bibitem = ""
         rules = "The text cites no reference work and uses no `\\fcref`."
     return {
+        "id": cfg["id"],
+        "job": cfg["text"]["job"],
         "title_tex": tex_escape(title),
         "author_tex": tex_escape(author),
         "license_tex": tex_name,
@@ -103,9 +109,28 @@ def project_files(cfg: dict) -> dict[str, bytes]:
         relative = path.relative_to(root).as_posix()
         if "__pycache__" in relative or relative.endswith(".pyc"):
             continue
-        destination = DESTINATIONS.get(relative, f"informal/{relative}")
+        if relative.split("/", 1)[0] in ROOT_DIRECTORIES:
+            destination = relative
+        else:
+            destination = DESTINATIONS.get(relative, f"informal/{relative}")
         out[destination] = render(path.read_text(encoding="utf-8"), values).encode("utf-8")
     return out
+
+
+def repository_files(cfg: dict) -> dict[str, bytes]:
+    """Project-owned repository scaffolding, excluding mathematical source files.
+
+    The overlay stage adds missing scaffold files to older output repositories
+    without restoring removed TeX templates or replacing maintainer edits.
+    """
+    return {path: raw for path, raw in project_files(cfg).items()
+            if not path.startswith("informal/")}
+
+
+def missing_repository_files(repo: OutputRepo, cfg: dict) -> dict[str, bytes]:
+    """Missing scaffold files only, with the normal path and symlink checks."""
+    return {path: raw for path, raw in repository_files(cfg).items()
+            if not repo.target(path).exists()}
 
 
 def license_text(cfg: dict, *, year: int | None = None) -> bytes:

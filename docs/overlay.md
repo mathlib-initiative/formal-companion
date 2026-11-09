@@ -61,7 +61,8 @@ annotation document format of `vendor/formal_companion_annotations/`;
    repository carrying that stamp, and only these paths: `informal/`,
    `annotations/`, `pdf-overlay/`, `site/index.html`, the workflow directory
    `.github/workflows/`, the ignored PDF cache `.lake/overlay-pdf/`,
-   `README.md`, `LICENSE` and `.gitignore`. They refuse a `repo/` that is a
+   `README.md`, `LICENSE`, `.gitignore`, `.editorconfig`, `AGENTS.md`,
+   `CONTRIBUTING.md`, `Makefile`, and the project directories `docs/`, `tools/`, `tests/`. They refuse a `repo/` that is a
    symlink or resolves outside `informalize/<id>/`, refuse to write through a
    symlinked component, and run git there only through `cflib.gitsafe`. They
    never write to the library they read. `cf overlay` keeps its own exception

@@ -33,22 +33,25 @@ needed by `extract_markers.py`, `proof_sheets.py` and `check_items.py` without
 
 `cf informalize init` renders each file under `project/` once, with `cflib.templates.render`,
 into the output repository: `main.tex`, `notation.sty`, `sections/00-conventions.tex` and
-`STYLE-project.md` into `informal/`, `README.md` into the root, and `gitignore` as the
-root's `.gitignore` (a file of that name here would be this repository's). From then on
+`STYLE-project.md` into `informal/`. The root receives `README.md`, `CONTRIBUTING.md`,
+`AGENTS.md`, and `Makefile`; `gitignore` and `editorconfig` become `.gitignore` and
+`.editorconfig`. `docs/`, `tools/`, and `tests/` retain their paths at the repository
+root. The starter tests check the recorded runtime without TeX or Lean. From then on
 those files are the project's, and `sync` never touches them. `{{{ name }}}` is a brace
 group holding the slot `name`.
 
 | slot | in | holds |
 |---|---|---|
+| `id`, `job` | `docs/maintenance.md` | the informalization id and PDF job name |
 | `title_tex` | `main.tex` | the text's title (`text.title`), escaped for LaTeX |
 | `author_tex` | `main.tex` | `text.author`, escaped for LaTeX |
 | `license_tex` | `main.tex` | the license's name in a sentence, such as `the Apache License, Version~2.0` |
 | `library_name_tex` | `main.tex` | the library's name (the last component of `library.url`), escaped for LaTeX |
 | `library_url` | `main.tex`, `README.md` | `library.url`, as it is (`\url` reads it verbatim) |
-| `library_commit` | `main.tex`, `README.md`, `STYLE-project.md` | the 40-hex `library.commit` |
+| `library_commit` | `main.tex`, `docs/maintenance.md`, `STYLE-project.md` | the 40-hex `library.commit` |
 | `reference_bibitem_tex` | `main.tex` | `\bibitem{reference}` and `reference.work` escaped for LaTeX, or nothing when there is no reference work |
 | `title` | `README.md`, `STYLE-project.md` | the text's title as the title page prints it (`informalize.config.printed_title`), as Markdown text |
-| `theorem` | `README.md`, `STYLE-project.md` | the theorem's full Lean name |
+| `theorem` | `docs/maintenance.md`, `STYLE-project.md` | the theorem's full Lean name |
 | `library_name` | `README.md`, `STYLE-project.md` | the library's name |
 | `license_name` | `README.md` | the license's name, such as `the Apache License, Version 2.0` |
 | `reference_rules` | `STYLE-project.md` | a paragraph: the reference work's citation line and that the text cites its numbers only, through `\fcref`; or that the text cites no reference work and uses no `\fcref` |
@@ -71,21 +74,23 @@ and copies `templates/informalize/site/workflows/pages.yml` and its `check.yml` 
 into the output repository's workflow directory
 (`docs/proposals/informalize.md` section 10). They belong to stage I7, not to `init`, which is
 why they are not under `project/`: the landing page is rewritten whenever the overlay is, so a
-second `cf informalize overlay` writes the same bytes. The two workflows are copied whole (a
-`${{ ... }}` expression is a workflow's, not a slot); `index.html` has these slots, each
-already escaped for HTML:
+second `cf informalize overlay` writes the same bytes. The homepage redirects to the viewer, preserving query strings and fragments;
+the viewer has no redundant back link. Missing root scaffolding is added to older
+projects without replacing existing files or restoring removed TeX templates.
+The two workflows are copied whole (a
+`${{ ... }}` expression is a workflow's, not a slot). Pages waits for the reusable
+Python 3.11/3.13 checks before its build and deploy jobs. `index.html` uses the
+following slots; text and href values are escaped for HTML:
 
 | slot | holds |
 |---|---|
-| `title` | the text's title as the title page prints it (`informalize.config.printed_title`) |
-| `theorem` | the theorem's full Lean name |
-| `library_name` | the library's name (the last component of `library.url`) |
-| `library_url` | `library.url` |
-| `library_commit` | the 40-hex `library.commit` |
-| `license_name` | the license's name in a sentence, such as `the Apache License, Version 2.0` |
-| `viewer_href` | the viewer's href as the site index spells it (`pdf-overlay/viewer/index.html`) |
-| `pdf_href` | the published PDF's href beside it |
-| `link_block` | the overlay link block `build_site.py` would inject, written by that tool's own `link_block`, so the site build replaces it in place and the tracked file does not change |
+| `title` | the title as the PDF prints it |
+| `viewer_href` | the viewer's relative href |
+| `link_block` | the exact block `build_site.py` injects, making rebuilds idempotent |
+
+The README has no invented public URL. Add the actual viewer and versioned PDF
+links when publication is configured. Project-local proof exporters and tests
+belong in tools/ and tests/; the scaffold does not copy one exposition's adapter.
 
 ## `schema/`: the formats, for a reader
 
