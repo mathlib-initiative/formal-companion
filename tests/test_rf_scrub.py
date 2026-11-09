@@ -290,6 +290,12 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
     (".github/workflows/check.yml",
      "the same: templates/informalize/site/workflows/check.yml, written into the output "
      "repository beside it"),
+    ("docs/maintenance.md",
+     "the informalize OUTPUT repository's maintainer guide, rendered from "
+     "templates/informalize/project/docs/maintenance.md"),
+    ("tests/test_repository.py",
+     "the same output repository's runtime check, rendered from "
+     "templates/informalize/project/tests/test_repository.py"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:
