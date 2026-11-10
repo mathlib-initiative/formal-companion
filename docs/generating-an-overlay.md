@@ -146,17 +146,14 @@ so proof steps belong to a companion whose annotations come from that producer.
 
 ## Browsers
 
-PR #50 records this viewer in Chromium 152 and Firefox 159 against a private companion,
-with one comment in its files changed since, and it has also been driven in Chromium
-against a synthetic one. It stops in Safari 17.4. The vendored PDF.js 6.2.108 reads
-`Iterator.prototype` when it loads, and that browser's engine has no `Iterator` global:
-under the JavaScriptCore shell of macOS 14.4, importing `pdf.min.mjs` throws
-`ReferenceError: Can't find variable: Iterator`. JPEG 2000 figures draw as empty frames,
-with the warning `JpxError: OpenJPEG failed to initialize`, because the vendored PDF.js
-has no OpenJPEG decoder beside it. Commit `75fa8aa` records that Firefox
-on macOS draws a box for some script characters after a letter, which is why titles set
-scripts as markup. The tests of `templates/overlay/tests/` run under Node with a fake
-DOM and a fake PDF.js, so they cannot see a browser's limits.
+PR #54 tested the viewer in Safari 17.4, Chrome 154 and Firefox 159. The
+vendored legacy build of PDF.js supplies the `Iterator` builtin that
+the default build requires and Safari 17.4 lacks. JPEG 2000 and JBIG2 images
+can draw as empty frames because the required WebAssembly decoders are absent.
+
+The Node suite tests the viewer with a fake DOM. The tests in
+`pdfjs-build.test.mjs` load the vendored PDF.js with the newer builtins
+removed to check the compatibility fix.
 
 ## Checking it in CI
 
