@@ -1,6 +1,6 @@
 # Third-party code in `pdf-overlay/`
 
-Two third-party components are vendored here: PDF.js and Literature Links.
+The overlay vendors PDF.js, Literature Links and KaTeX.
 Everything else under this directory was written for the formal-companion
 overlay, except the one block of stylesheet rules named under "PDF.js" below,
 which follows PDF.js's own.
@@ -55,3 +55,12 @@ says which files it covers and where they came from.
 - License: **Apache License 2.0**; Copyright 2026 the Literature Links contributors
 - Files: `tools/literature_links/`, copied without modification and pinned by
   sha256 in `GENERATED.json`
+
+## KaTeX
+
+- Project: KaTeX, <https://github.com/KaTeX/KaTeX>
+- Version: **0.19.1**
+- License: **MIT**, reproduced in `vendor/katex/LICENSE`
+- Files and release digests: `vendor/katex/README.md`
+
+The viewer imports the bundled module to render delimited LaTeX as MathML.

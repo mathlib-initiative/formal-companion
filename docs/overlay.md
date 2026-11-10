@@ -191,8 +191,8 @@ Mathematical labels render Unicode script characters and braced scripts
 (`_{...}` and `^{...}`) as HTML subscripts and superscripts in the page overview,
 selected-passage heading and hover preview. Braced scripts preserve capitals,
 brackets and nested scripts for which Unicode has no standalone characters.
-Only this script notation is interpreted; label contents are inserted as text,
-never HTML or executable TeX. Plain text and unbraced underscores stay literal.
+Delimited LaTeX math is rendered as MathML. Plain text and unbraced
+underscores stay literal. See [Mathematical labels](#mathematical-labels).
 
 From the records alone it builds:
 
@@ -276,9 +276,9 @@ From the records alone it builds:
   with none points to the nearest pages that have some.
 
 A region it cannot place is dropped with a notice, never guessed at; a record
-with no region left adds nothing. Every string reaches the DOM through
-`textContent` or attribute setters. `viewer-core.js` is the pure half;
-`viewer.js` the controller.
+with no region left adds nothing. The viewer inserts ordinary strings through
+`textContent` or attribute setters and imports only generated MathML for formulas.
+`viewer-core.js` is the pure half and `viewer.js` is the controller.
 
 Every rendered page carries PDF.js's own **text layer** over the canvas and
 under the region boxes: the page's text as transparent spans, which a reader

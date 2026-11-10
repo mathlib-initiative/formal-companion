@@ -42,7 +42,7 @@ the model tier is for.
 | [Audit](#quick-start) | Does this Lean say what the source says? | Run on two real companions of one book |
 | [PDF overlay](#pdf-overlay) | Where on each page is an item, and which declarations formalize it? | Generates the overlays of three private companions |
 | [Locate](#locate) | Which passages of a source are formalized, in which library, and how closely? | Experimental |
-| [Informalize](docs/proposals/informalize.md) | What does this Lean library's theorem say, in a text a reader can read? | Published [Seifert–van Kampen example](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/pdf-overlay/viewer/index.html); [Status](docs/status.md) |
+| [Informalize](docs/proposals/informalize.md) | What does this Lean library's theorem say, in a text a reader can read? | Published [Seifert–van Kampen example](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/); [Status](docs/status.md) |
 
 Audit and locate write only to a workspace outside this repository. `cf overlay` writes
 only `pdf-overlay/` and `annotations/` in the companion, and `cf informalize` only the
