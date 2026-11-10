@@ -362,6 +362,42 @@ test("text: a layer that fails, or a build without one, leaves a page that still
   }
 });
 
+test("PDF links: HTTPS annotations are positioned, kept in reading mode and cleared on page turn", async () => {
+  const url = "https://example.org/reader#page=2";
+  const rect = [40, 700, 140, 720];
+  const pdfjs = fakePdfjs({ pageAnnotations: [[
+    { subtype: "Link", url, rect },
+    { subtype: "Link", url: "javascript:alert(1)", rect },
+    { subtype: "Link", dest: "chapter", rect },
+    { subtype: "Link", url, rect: [0, 0, 0, 0] },
+    { subtype: "Widget", url, rect },
+  ]] });
+  const { documentRef } = await start({ pdfjs });
+  const layer = el(documentRef, "pdf-links");
+  assert.equal(layer.children.length, 1);
+  const [link] = layer.children;
+  assert.equal(link.tagName, "A");
+  assert.equal(link.href, url);
+  assert.equal(link.target, "_blank");
+  assert.equal(link.rel, "noopener noreferrer");
+  assert.deepEqual([link.style.left, link.style.top, link.style.width, link.style.height],
+                   ["40px", "80px", "100px", "20px"]);
+  await fire(el(documentRef, "toggle-reading"), "click");
+  assert.equal(layer.children[0], link);
+  await turnTo(documentRef, 2);
+  assert.equal(layer.children.length, 0);
+});
+
+test("PDF links: a late result for a previous page is discarded", async () => {
+  let resolveAnnotations;
+  const pending = new Promise((resolve) => { resolveAnnotations = resolve; });
+  const { documentRef } = await start({ pdfjs: fakePdfjs({ pageAnnotations: [pending] }) });
+  await turnTo(documentRef, 2);
+  resolveAnnotations([{ subtype: "Link", url: "https://example.org/", rect: [40, 700, 140, 720] }]);
+  await new Promise(setImmediate);
+  assert.equal(el(documentRef, "pdf-links").children.length, 0);
+});
+
 // --- the page index ---------------------------------------------------------
 
 test("index: with nothing selected the panel lists the page's passages", async () => {

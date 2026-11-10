@@ -64,6 +64,7 @@ import {
   regionCoverage,
   regionVerdict,
   reviewFooter,
+  safeHttpsUrl,
   scriptRuns,
   sha256Hex,
   sharedRole,
@@ -345,7 +346,7 @@ export async function bootstrapViewer({
       "find-toggle", "find-bar", "find-input", "find-count", "find-previous", "find-next", "find-close", "find-highlights",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness", "toggle-reading",
       "toggle-shortcuts", "shortcut-help", "close-shortcuts",
-      "page-scroller", "page-stage", "pdf-canvas", "text-layer", "overlay", "region-bar", "region-peek",
+      "page-scroller", "page-stage", "pdf-canvas", "text-layer", "pdf-links", "overlay", "region-bar", "region-peek",
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
@@ -1804,6 +1805,41 @@ export async function bootstrapViewer({
     }
   }
 
+  /** Paint external PDF links using the same viewport as the canvas. */
+  async function renderPdfLinks(page, viewport, epoch) {
+    let annotations;
+    try {
+      annotations = await page.getAnnotations({ intent: "display" });
+    } catch {
+      // An unreadable link layer leaves the page and its source regions usable.
+      return;
+    }
+    if (epoch !== state.renderEpoch) return;
+    for (const annotation of annotations) {
+      const { subtype, url, rect } = annotation;
+      if (subtype !== "Link" || typeof url !== "string" || !safeHttpsUrl(url.split("#", 1)[0])
+          || !Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) {
+        continue;
+      }
+      const [x1, y1] = viewport.convertToViewportPoint(rect[0], rect[1]);
+      const [x2, y2] = viewport.convertToViewportPoint(rect[2], rect[3]);
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width === 0 || height === 0) continue;
+      const link = make("a", "pdf-link");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.title = url;
+      link.setAttribute("aria-label", annotation.contentsObj?.str || url);
+      link.style.left = `${Math.min(x1, x2)}px`;
+      link.style.top = `${Math.min(y1, y2)}px`;
+      link.style.width = `${width}px`;
+      link.style.height = `${height}px`;
+      ui["pdf-links"].append(link);
+    }
+  }
+
   async function renderPage() {
     if (!state.pdfDocument) {
       return;
@@ -1814,6 +1850,7 @@ export async function bootstrapViewer({
     state.textLayer?.cancel();
     state.textLayer = null;
     ui["text-layer"].replaceChildren();
+    ui["pdf-links"].replaceChildren();
     ui["find-highlights"].replaceChildren();
     const page = await state.pdfDocument.getPage(state.currentPage);
     if (epoch !== state.renderEpoch) return;
@@ -1860,6 +1897,7 @@ export async function bootstrapViewer({
     ui["page-stage"].hidden = false;
     hidePeek();
     renderOverlay(displayed, viewport);
+    void renderPdfLinks(page, viewport, epoch);
     if (state.region && !state.readingMode) {
       // A zoom or a rotation keeps the selected passage in view.
       scrollRegionIntoView(state.region);

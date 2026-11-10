@@ -283,10 +283,10 @@ with no region left adds nothing. Every string reaches the DOM through
 Every rendered page carries PDF.js's own **text layer** over the canvas and
 under the region boxes: the page's text as transparent spans, which a reader
 selects and copies as in any PDF reader, with no normalization, so a ligature
-or a dash is copied as the PDF spells it. The boxes stay the only thing on the
-page that takes a pointer — a click on one opens its card, as before, and the
-SVG the boxes live in takes none — so a selection started anywhere but on a box
-runs through the boxes as through any other text. Where a drag that *starts* on
+or a dash is copied as the PDF spells it. Source boxes open their cards. External
+HTTPS links embedded in the PDF open in a new tab and remain active in reading
+mode. The link and source overlays pass pointer events through outside their
+interactive regions, so readers can select text there. Where a drag that *starts* on
 a box anchors its selection is the browser's own call, and no browser has been
 watched making it (`docs/generating-an-overlay.md`); the rest is what the CSS
 asks for. The spans are the vendored build's: its `TextLayer`

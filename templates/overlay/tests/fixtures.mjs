@@ -537,7 +537,7 @@ export const PAGE_TEXT = ["Theorem 1.1 (Volume bound). ", "Every box has a volum
  * appends one span per item of `PAGE_TEXT`; `textLayer: false` leaves it out,
  * as a build without one would, and `textLayerError` makes its render fail.
  */
-export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = null, pageTexts = null } = {}) {
+export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = null, pageTexts = null, pageAnnotations = [] } = {}) {
   const streams = [];
   const page = {
     getViewport: (options) => fakeViewport(options),
@@ -590,6 +590,9 @@ export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = nu
       calls.push(options);
       return { promise: Promise.resolve({ getPage: async (number) => ({
         ...page,
+        async getAnnotations() {
+          return pageAnnotations[number - 1] ?? [];
+        },
         async getTextContent(options) {
           textReads.push([number, options]);
           const text = pageTexts?.[number - 1] ?? PAGE_TEXT.join("");
