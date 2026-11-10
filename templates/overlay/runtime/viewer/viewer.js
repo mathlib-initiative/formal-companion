@@ -1967,7 +1967,7 @@ export async function bootstrapViewer({
       // `cancel()` on the next render rejects this one; so does a page whose text cannot be read.
     }
     if (epoch === state.renderEpoch) {
-      state.search.scroll = true;
+      state.search.scroll = !destination;
       paintSearch();
     }
   }
