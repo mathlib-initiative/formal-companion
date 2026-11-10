@@ -209,8 +209,6 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
 
 ## Informalization
 
-Read `references/informalization-quality.md` before outlining the account.
-
 The reverse direction (`docs/proposals/informalize.md`): from a Lean library at a
 pinned commit and one theorem, **write the source** — the items of the theorem's
 dependency closure, an informal LaTeX text a fleet attacks against the Lean, and
@@ -220,7 +218,8 @@ repository, its runtime and that closure (**cf never builds a library**);
 tend run per phase (`items`, `conventions`, `draft`, `attack`, `judge`, `edit`),
 after the maintainer's approvals; then `pdf-command` → `fetch-pdf` for the
 canonical PDF and `overlay` → `check-site` for the annotations and the site.
-Every component of section 11 is built; `docs/status.md` records the published example.
+Read `references/informalization-quality.md` before outlining. The published
+example is in `docs/status.md`.
 
 ## Command index
 

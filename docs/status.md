@@ -164,9 +164,9 @@ them with `CF_REQUIRE_TEX=1`.
 **Published example.** The Seifert–van Kampen account went through all six
 informalization phases. Its [published viewer](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/)
 links statements and individual proof steps to TauCeti at
-`37f5e9dce5ac83d2825198ac72d7f5d64eb26c85`. The
-[companion repository](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti)
-holds its source, annotations, generated-file manifest and build workflows.
+`37f5e9dce5ac83d2825198ac72d7f5d64eb26c85`. The first publication has a
+[pinned source tree](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/tree/v1)
+and a [canonical PDF](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/releases/tag/v1).
 The phase receipts remain in the operator's workspace.
 
 **Not implemented.** Nothing of section 11; the optional later work it names (blueprint
