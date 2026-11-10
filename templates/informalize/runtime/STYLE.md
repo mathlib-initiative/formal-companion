@@ -234,6 +234,8 @@ does not state for that declaration. Write no `\fcref` where `items.json` gives 
 - When proofs are requested, give constructions, equalities and deductions, allowing
   concise sketches. Use earlier results instead of proving their elementary laws again.
   A strategy paragraph alone is not a proof.
+- Use a diagram for compatibility squares and repeated geometric arguments.
+  Label the shared arrows or boundary paths and state which composites are equal.
 - Link specific proof sentences and equations to the arguments that support them.
   In the annotations, identify the enclosing Lean lemma, explain the selected lines
   mathematically, and distinguish proving a helper from invoking it. When one sentence

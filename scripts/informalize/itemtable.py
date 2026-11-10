@@ -243,4 +243,3 @@ def checklist_markdown(informalize_id: str, work: str | None, rows: list[dict],
 def dumps(doc: dict) -> bytes:
     """items.json as `approve` writes it back."""
     return (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
-
