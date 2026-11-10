@@ -284,8 +284,9 @@ Every rendered page carries PDF.js's own **text layer** over the canvas and
 under the region boxes: the page's text as transparent spans, which a reader
 selects and copies as in any PDF reader, with no normalization, so a ligature
 or a dash is copied as the PDF spells it. Source boxes open their cards. External
-HTTPS links embedded in the PDF open in a new tab and remain active in reading
-mode. The link and source overlays pass pointer events through outside their
+HTTPS links embedded in the PDF open in a new tab. Internal references jump
+to their destinations at the current zoom. Both work in reading mode. The
+link and source overlays pass pointer events through outside their
 interactive regions, so readers can select text there. Where a drag that *starts* on
 a box anchors its selection is the browser's own call, and no browser has been
 watched making it (`docs/generating-an-overlay.md`); the rest is what the CSS

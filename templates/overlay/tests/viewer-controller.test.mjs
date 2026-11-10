@@ -388,6 +388,40 @@ test("PDF links: HTTPS annotations are positioned, kept in reading mode and clea
   assert.equal(layer.children.length, 0);
 });
 
+test("PDF links: named and explicit destinations go to the cited position", async () => {
+  const rect = [40, 700, 140, 720];
+  const ref = { num: 22, gen: 0 };
+  const pdfjs = fakePdfjs({
+    pageRefs: [{ num: 4, gen: 0 }, ref],
+    destinations: { definition: [ref, { name: "XYZ" }, 0, 320, null] },
+    pageAnnotations: [
+      [{ subtype: "Link", dest: "definition", rect }],
+      [{ subtype: "Link", dest: [1, { name: "FitH" }, 640], rect }],
+    ],
+  });
+  const { documentRef, result } = await start({ pdfjs });
+  const layer = el(documentRef, "pdf-links");
+  const scroller = el(documentRef, "page-scroller");
+  const scrolls = [];
+  Object.assign(scroller, {
+    scrollLeft: 0, scrollTop: 0,
+    getBoundingClientRect: () => ({ left: 0, top: 100 }),
+    scrollTo: ({ top }) => scrolls.push(top),
+  });
+  el(documentRef, "page-stage").getBoundingClientRect = () => ({ left: 28, top: 128 });
+  await fire(el(documentRef, "toggle-reading"), "click");
+  await fire(el(documentRef, "zoom-in"), "click");
+  await new Promise(setImmediate);
+  assert.equal(layer.children[0].href, "#page=2");
+  const click = { preventDefault() {} };
+  await fire(layer.children[0], "click", click);
+  assert.equal(result.state.currentPage, 2);
+  assert.equal(result.state.zoom, 110);
+  assert.equal(layer.children[0].href, "#page=2");
+  await fire(layer.children[0], "click", click);
+  assert.deepEqual(scrolls, [532, 180]);
+});
+
 test("PDF links: a late result for a previous page is discarded", async () => {
   let resolveAnnotations;
   const pending = new Promise((resolve) => { resolveAnnotations = resolve; });

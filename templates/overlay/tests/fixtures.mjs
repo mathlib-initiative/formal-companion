@@ -537,7 +537,10 @@ export const PAGE_TEXT = ["Theorem 1.1 (Volume bound). ", "Every box has a volum
  * appends one span per item of `PAGE_TEXT`; `textLayer: false` leaves it out,
  * as a build without one would, and `textLayerError` makes its render fail.
  */
-export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = null, pageTexts = null, pageAnnotations = [] } = {}) {
+export function fakePdfjs({
+  numPages = 12, textLayer = true, textLayerError = null, pageTexts = null,
+  pageAnnotations = [], destinations = {}, pageRefs = [],
+} = {}) {
   const streams = [];
   const page = {
     getViewport: (options) => fakeViewport(options),
@@ -588,18 +591,23 @@ export function fakePdfjs({ numPages = 12, textLayer = true, textLayerError = nu
     ...(textLayer ? { TextLayer: FakeTextLayer } : {}),
     getDocument: (options) => {
       calls.push(options);
-      return { promise: Promise.resolve({ getPage: async (number) => ({
-        ...page,
-        async getAnnotations() {
-          return pageAnnotations[number - 1] ?? [];
-        },
-        async getTextContent(options) {
-          textReads.push([number, options]);
-          const text = pageTexts?.[number - 1] ?? PAGE_TEXT.join("");
-          if (text instanceof Error) throw text;
-          return { items: [{ str: text }] };
-        },
-      }), numPages }) };
+      return { promise: Promise.resolve({
+        numPages,
+        getDestination: async (name) => Object.hasOwn(destinations, name) ? destinations[name] : null,
+        getPageIndex: async ({ num, gen }) => pageRefs.findIndex((ref) => ref.num === num && ref.gen === gen),
+        getPage: async (number) => ({
+          ...page,
+          async getAnnotations() {
+            return pageAnnotations[number - 1] ?? [];
+          },
+          async getTextContent(options) {
+            textReads.push([number, options]);
+            const text = pageTexts?.[number - 1] ?? PAGE_TEXT.join("");
+            if (text instanceof Error) throw text;
+            return { items: [{ str: text }] };
+          },
+        }),
+      }) };
     },
   };
 }

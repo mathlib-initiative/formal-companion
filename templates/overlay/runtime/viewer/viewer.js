@@ -1805,7 +1805,40 @@ export async function bootstrapViewer({
     }
   }
 
-  /** Paint external PDF links using the same viewport as the canvas. */
+  async function resolvePdfDestination(destination) {
+    try {
+      const target = typeof destination === "string"
+        ? await state.pdfDocument.getDestination(destination)
+        : destination;
+      if (!Array.isArray(target)) return null;
+      const ref = target[0];
+      const index = Number.isInteger(ref) ? ref : await state.pdfDocument.getPageIndex(ref);
+      if (index >= 0 && index < state.pdfDocument.numPages) return { page: index + 1, target };
+    } catch {
+      // A broken cross-reference should not affect the other links on the page.
+    }
+    return null;
+  }
+
+  /** Keep the reader's zoom and put the referenced location in view. */
+  function scrollPdfDestination(page, viewport, target) {
+    const [, type, first, second, , top] = target;
+    let [left, , , upper] = page.view;
+    if (["XYZ", "FitV", "FitBV", "FitR"].includes(type?.name) && Number.isFinite(first)) left = first;
+    const y = type?.name === "FitR" ? top : type?.name === "XYZ" ? second : first;
+    if (["XYZ", "FitH", "FitBH", "FitR"].includes(type?.name) && Number.isFinite(y)) upper = y;
+    const [x, offset] = viewport.convertToViewportPoint(left, upper);
+    const scroller = ui["page-scroller"];
+    const stage = ui["page-stage"].getBoundingClientRect();
+    const frame = scroller.getBoundingClientRect();
+    scroller.scrollTo({
+      left: Math.max(0, scroller.scrollLeft + stage.left - frame.left + x - 24),
+      top: Math.max(0, scroller.scrollTop + stage.top - frame.top + offset - 24),
+    });
+    focusQuietly(scroller);
+  }
+
+  /** Paint PDF links using the same viewport as the canvas. */
   async function renderPdfLinks(page, viewport, epoch) {
     let annotations;
     try {
@@ -1816,9 +1849,8 @@ export async function bootstrapViewer({
     }
     if (epoch !== state.renderEpoch) return;
     for (const annotation of annotations) {
-      const { subtype, url, rect } = annotation;
-      if (subtype !== "Link" || typeof url !== "string" || !safeHttpsUrl(url.split("#", 1)[0])
-          || !Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) {
+      const { subtype, url, dest, rect } = annotation;
+      if (subtype !== "Link" || !Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) {
         continue;
       }
       const [x1, y1] = viewport.convertToViewportPoint(rect[0], rect[1]);
@@ -1826,12 +1858,26 @@ export async function bootstrapViewer({
       const width = Math.abs(x2 - x1);
       const height = Math.abs(y2 - y1);
       if (!Number.isFinite(width) || !Number.isFinite(height) || width === 0 || height === 0) continue;
+      const external = typeof url === "string" && safeHttpsUrl(url.split("#", 1)[0]);
+      const destination = !external && dest ? await resolvePdfDestination(dest) : null;
+      if (epoch !== state.renderEpoch) return;
+      if (!external && !destination) continue;
       const link = make("a", "pdf-link");
-      link.href = url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.title = url;
-      link.setAttribute("aria-label", annotation.contentsObj?.str || url);
+      if (destination) {
+        link.href = `#page=${destination.page}`;
+        link.title = `Go to PDF page ${destination.page}`;
+        link.addEventListener("click", (event) => {
+          if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          return changePage(destination.page, destination.target);
+        });
+      } else {
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.title = url;
+      }
+      link.setAttribute("aria-label", annotation.contentsObj?.str || link.title);
       link.style.left = `${Math.min(x1, x2)}px`;
       link.style.top = `${Math.min(y1, y2)}px`;
       link.style.width = `${width}px`;
@@ -1840,7 +1886,7 @@ export async function bootstrapViewer({
     }
   }
 
-  async function renderPage() {
+  async function renderPage(destination) {
     if (!state.pdfDocument) {
       return;
     }
@@ -1898,7 +1944,9 @@ export async function bootstrapViewer({
     hidePeek();
     renderOverlay(displayed, viewport);
     void renderPdfLinks(page, viewport, epoch);
-    if (state.region && !state.readingMode) {
+    if (destination) {
+      scrollPdfDestination(page, viewport, destination);
+    } else if (state.region && !state.readingMode) {
       // A zoom or a rotation keeps the selected passage in view.
       scrollRegionIntoView(state.region);
     }
@@ -1941,13 +1989,13 @@ export async function bootstrapViewer({
     }
   }
 
-  async function changePage(requested) {
+  async function changePage(requested, destination) {
     if (!state.pdfDocument) {
       return;
     }
     state.currentPage = Math.min(Math.max(Number(requested) || 1, 1), state.pdfDocument.numPages);
     selectRegion(null);
-    await renderPage();
+    await renderPage(destination);
   }
 
   async function changeZoom(requested) {
