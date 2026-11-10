@@ -52,6 +52,14 @@ detect/*/deps.json
 # The companion a pipeline generates is its own git repository (cf ingest, S0):
 pipelines/*/repo/
 
+# Informalize: the output repository is its own git repository (cf informalize init),
+# and the library's copy, the Verso build's folder and the canonical PDF are large or
+# rebuilt from the host:
+informalize/*/repo/
+informalize/*/library/
+informalize/*/verso/
+informalize/*/pdf/
+
 # Locate: a sourceset's page text sits under sourcesets/<id>/sources/, which the
 # `sources/` line above already ignores. Library indexes and the two corpus databases are
 # large derived artifacts, rebuilt from the probe output:

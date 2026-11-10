@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:formal-companion:informalize-v1",
+  "title": "informalize.yaml, version 1",
+  "description": "The settings of one informalization companion, docs/proposals/informalize.md section 5.1, as a JSON Schema for a reader (the file itself is YAML). The identifier above names this schema and is never fetched. The implementation is scripts/informalize/config.py, which also checks what a schema cannot: that the module is under the prefix and that workers plus reviewers stay under the workspace's concurrent sessions. tests/test_informalize_cli.py holds the keys, the patterns and the licenses to that module.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "id", "library", "text", "caps"],
+  "properties": {
+    "schema": {"const": "formal-companion/informalize"},
+    "schema_version": {"const": 1},
+    "id": {
+      "description": "Lowercase letters, digits and -, at most 40 characters, so that <id>-lib is a universe id and <id>-<phase>-<n> a run id.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+    },
+    "library": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "commit", "module", "theorem", "prefix", "license", "library_cache"],
+      "properties": {
+        "url": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._~%!$&'()*+,;=:@/-]*)?$"},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "module": {"description": "The theorem's module.", "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_']*(?:\\.[A-Za-z_][A-Za-z0-9_']*)*$"},
+        "theorem": {"description": "The theorem's full Lean name.", "type": "string", "pattern": "^[^\\s.]+(?:\\.[^\\s.]+)*$"},
+        "prefix": {"description": "The module prefix of the library's own modules.", "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_']*(?:\\.[A-Za-z_][A-Za-z0-9_']*)*$"},
+        "license": {
+          "description": "null until I1 reads the library's license file; set by hand with init --library-license.",
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$"
+        },
+        "license_method": {"const": "manual"},
+        "library_cache": {"description": "Let I1 run the library's own cache script, which may download and run code.", "type": "boolean"}
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "author", "license", "job"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 300},
+        "author": {"type": "string", "minLength": 1, "maxLength": 300},
+        "license": {"enum": ["Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT"]},
+        "job": {"description": "The PDF is <job>.pdf.", "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"}
+      }
+    },
+    "reference": {
+      "description": "The reference work whose numbers the text cites: a citation line, never a sentence of the work.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["work"],
+      "properties": {"work": {"type": "string", "minLength": 1, "maxLength": 300}}
+    },
+    "caps": {
+      "description": "What cf plan-informalize uses when its flags are absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workers", "reviewers", "max_cost_per_phase", "agent_timeout"],
+      "properties": {
+        "workers": {"type": "integer", "minimum": 1},
+        "reviewers": {"type": "integer", "minimum": 1},
+        "max_cost_per_phase": {"description": "Dollars; null leaves each plan to name its own --max-cost.", "type": ["number", "null"], "exclusiveMinimum": 0},
+        "agent_timeout": {"description": "The bridge's duration format, from 5m to 3h.", "type": ["string", "null"]}
+      }
+    }
+  }
+}

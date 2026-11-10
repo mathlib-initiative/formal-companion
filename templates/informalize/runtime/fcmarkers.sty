@@ -1,0 +1,456 @@
+% fcmarkers.sty: numbered items, lettered parts and position markers for an
+% informal text written from a Lean library.
+%
+% Part of formal-companion's informalize runtime (docs/proposals/informalize.md,
+% section 7.2, in the formal-companion skill), ported from the pilot's
+% rrmarkers.sty.  `cf informalize sync` copies it byte for byte into the output
+% repository's informal/ and records its sha256 in GENERATED.json, so it is
+% changed in the skill and never here.  Apache License 2.0 (LICENSE-runtime).
+%
+% Interface (STYLE.md says how a drafter uses it):
+%   \begin{theorem}[id=1.2]{Title} ... \end{theorem}
+%       also definition, lemma, proposition, corollary, example, remark;
+%       prints "Theorem 1.2 (Title)": the id is the printed number
+%   \itempart{a}{...}             one lettered part of the current item
+%   \leanref{Full.Lean.name}      records a declaration for the current item
+%                                 or part, and prints nothing
+%   \fcnotion{Full.Lean.name}{the interior of $A$}
+%       prints the words alone and records a box around them, for a notion
+%       the conventions fix.  The constant goes into the first argument and
+%       never onto the page: the informal text prints no Lean name and no
+%       link to the library's documentation, which Literature Links supplies
+%       from this marker.  Once per constant, and never inside an item
+%   \fcdefhyp{\hypOpen}{open}{$U$ and $V$ are open}      (in notation.sty)
+%       \hypOpen prints the words and records the hypothesis `open';
+%       \hypOpen* prints them only (one side of an equivalence, say).
+%       TeX drops the space after a control word, and \@ifstar drops one
+%       before the token it looks at, so the words end with \xspace: it puts
+%       the space back before a letter ("\hypOpen and" prints "... open and")
+%       and adds none before punctuation ("\hypOpen." prints "... open.")
+%   \fcref{Theorem 4.1}           "[1, Theorem 4.1]": a number of the
+%   \fcref*{Theorem 4.1}          reference work (bibliography key
+%                                 `reference'); the star adds a dagger, which
+%                                 marks a number the library's documentation
+%                                 does not state (source "inferred")
+%   \itemref{1.2}, \itemref[b]{1.2}     "Theorem 1.2", "Theorem 1.2(b)"
+%   \fcinputsection{1}{01-gluing-spaces}{Gluing spaces}   (in sections.tex)
+%       prints the heading of section 1 and inputs sections/01-gluing-spaces;
+%       with \FCOnly (a comma list of section numbers, defined before
+%       \documentclass by build_pdf.sh --only) another section only advances
+%       the section counter, so no number changes
+%
+% Everything a tool needs is written to the .aux file:
+%   \fc@auxgeometry{key=value,...}         page and text block, in sp
+%   \fc@auxsection{n}{1 or 0}{file}{title} 1 when the section was typeset; n as a
+%                                          number (2 for 02)
+%   \fc@auxitem{id}{kind}{section}{title}
+%   \fc@auxkind{id}{Kind}                  read back by \itemref
+%   \fc@auxpart{id}{letter}
+%   \fc@auxleanref{id}{letter or empty}{name}
+%   \fc@auxnotion{n}{constant}{the words as printed}
+%   \fc@auxnotiontitle{n}{optional viewer title}
+%   \fc@auxhyp{id}{letter or empty}{key}
+%   \fc@auxhypdef{key}{\macro}
+%   \fc@auxref{id}{letter or empty}{number}{* or empty}
+%   \zref@newlabel{fc:<id>:start}{\posx{..}\posy{..}\abspage{..}}, and
+%   fc:<id>:above, :end and :below, and the same four for fc:<id>:<letter>;
+%   fc:notion:<n>:start and :end, the two ends of a notion's words.
+% A start marker sits on the baseline of the first line (in the theorem head
+% or the part label).  An above marker sits on the vertical list just before
+% the first line and its interline glue, so between the material before the
+% item or part and the top of its first line.  An end marker sits on the
+% baseline of the last line (mode h) or, after a closing display or list, at
+% the bottom of the last box (mode v); in mode h a below marker follows the
+% last line on the vertical list, at the bottom of its box, so below every
+% denominator and limit of that line.  Positions are pdfTeX's
+% \pdflastxpos/\pdflastypos: sp from the lower left corner of the page.
+
+\NeedsTeXFormat{LaTeX2e}[2020/10/01]
+\ProvidesPackage{fcmarkers}[2026/11/03 v1.0 informalize item and part markers]
+
+\RequirePackage{amsthm}
+\RequirePackage{keyval}
+\RequirePackage{xspace}
+\RequirePackage{zref-savepos}
+\RequirePackage{zref-abspage}
+
+\providecommand\phantomsection{}
+
+% ---------------------------------------------------------------------------
+% Position markers
+
+\zref@newlist{fcpos}
+\zref@addprops{fcpos}{posx,posy,abspage}
+
+% \fc@savepos{name}: the marker name is expanded now, the position and the
+% page at shipout.
+\newcommand*\fc@savepos[1]{%
+  \begingroup
+    \edef\fc@tmp{\endgroup
+      \noexpand\ZREF@zsavepos\noexpand\zref@labelbylist{fcpos}{#1}}%
+  \fc@tmp}
+
+\newcommand*\fc@auxwrite[1]{%
+  \if@filesw
+    \begingroup
+      \let\protect\@unexpandable@protect
+      \immediate\write\@auxout{#1}%
+    \endgroup
+  \fi}
+
+% Above marker, #1 the marker's prefix (fc:<id> or fc:<id>:<letter>), used in
+% horizontal mode at the outer level of the first line: \vadjust pre puts it
+% on the vertical list before that line and its interline glue, so it lies
+% above the line's tallest ink whatever the line holds.  The penalty keeps the
+% glue after it from becoming a place to break the page.
+\newcommand*\fc@above[1]{%
+  \vadjust pre{\fc@savepos{#1:above}\nobreak}}
+
+% End marker, #1 the marker's prefix.  In horizontal mode it goes at the end
+% of the last line, and a below marker after that line on the vertical list.
+% An empty paragraph (the one TeX resumes after a closing display) is dropped
+% first, and the marker then goes on the vertical list, where no page break
+% can separate it from the box above it: \postdisplaypenalty is 10000 inside
+% items, and a part list ends with penalty 10000 before its closing glue.
+\newcommand*\fc@endmark[1]{%
+  \ifhmode
+    \ifnum\lastnodetype=\m@ne
+      \par
+    \else
+      \unskip
+    \fi
+  \fi
+  \ifhmode
+    \fc@savepos{#1:end}%
+    \vadjust{\fc@savepos{#1:below}}%
+    \par
+  \else
+    \fc@savepos{#1:end}%
+  \fi}
+
+% Page and text block geometry, and the hypotheses notation.sty defined,
+% written once per run.
+\newtoks\fc@hypdefs
+\AddToHook{begindocument/end}{%
+  \fc@auxwrite{\string\fc@auxgeometry{%
+    pdfpagewidth=\number\pdfpagewidth,%
+    pdfpageheight=\number\pdfpageheight,%
+    textleft=\number\dimexpr1in+\hoffset+\oddsidemargin\relax,%
+    texttop=\number\dimexpr1in+\voffset+\topmargin+\headheight+\headsep\relax,%
+    textwidth=\number\textwidth,%
+    textheight=\number\textheight,%
+    strutheight=\number\ht\strutbox,%
+    strutdepth=\number\dp\strutbox,%
+    baselineskip=\number\baselineskip,%
+    topskip=\number\topskip}}%
+  \the\fc@hypdefs}
+
+% Records read back from the .aux on the next run.
+\def\fc@auxgeometry#1{}
+\def\fc@auxsection#1#2#3#4{}
+\def\fc@auxitem#1#2#3#4{}
+\def\fc@auxpart#1#2{}
+\def\fc@auxleanref#1#2#3{}
+\def\fc@auxnotion#1#2#3{}
+\def\fc@auxnotiontitle#1#2{}
+\def\fc@auxhyp#1#2#3{}
+\def\fc@auxhypdef#1#2{}
+\def\fc@auxref#1#2#3#4{}
+\def\fc@auxkind#1#2{\global\@namedef{fc@kind@#1}{#2}}
+
+% ---------------------------------------------------------------------------
+% Items
+
+\newif\iffc@initem
+\def\fc@curid{}
+\def\fc@curpart{}
+\newcount\fc@partcount
+
+\define@key{fcitem}{id}{\def\fc@id{#1}}
+
+% One counter for every kind.  It is stepped so that \label and hyperref have
+% an anchor, but what it prints is the item's id: ids are the printed numbers.
+\newcounter{fcitem}
+\renewcommand\thefcitem{\fc@curid}
+\def\theHfcitem{\fc@curid}
+
+\newtheoremstyle{fcplain}
+  {\topsep}{\topsep}{\itshape}{}{\bfseries}{.}{5pt plus 1pt minus 1pt}
+  {\fc@starthead\thmname{#1}\thmnumber{ #2}\thmnote{ {\the\thm@notefont(#3)}}}
+\newtheoremstyle{fcdefinition}
+  {\topsep}{\topsep}{\normalfont}{}{\bfseries}{.}{5pt plus 1pt minus 1pt}
+  {\fc@starthead\thmname{#1}\thmnumber{ #2}\thmnote{ {\the\thm@notefont(#3)}}}
+\newtheoremstyle{fcremark}
+  {\topsep}{\topsep}{\normalfont}{}{\itshape}{.}{5pt plus 1pt minus 1pt}
+  {\fc@starthead\thmname{#1}\thmnumber{ #2}\thmnote{ {\the\thm@notefont(#3)}}}
+
+\theoremstyle{fcplain}
+\newtheorem{fc@theorem}[fcitem]{Theorem}
+\newtheorem{fc@lemma}[fcitem]{Lemma}
+\newtheorem{fc@proposition}[fcitem]{Proposition}
+\newtheorem{fc@corollary}[fcitem]{Corollary}
+\theoremstyle{fcdefinition}
+\newtheorem{fc@definition}[fcitem]{Definition}
+\newtheorem{fc@example}[fcitem]{Example}
+\theoremstyle{fcremark}
+\newtheorem{fc@remark}[fcitem]{Remark}
+\theoremstyle{plain}
+
+% Inside the theorem head: the item's label and its start marker.
+\def\fc@starthead{%
+  \iffc@initem
+    \begingroup\edef\fc@tmp{\endgroup\noexpand\label{item:\fc@curid}}\fc@tmp
+    \fc@savepos{fc:\fc@curid:start}%
+  \fi}
+
+% \fc@beginitem{kind}{Kind}{options}{title}
+\newcommand\fc@beginitem[4]{%
+  \iffc@initem
+    \PackageError{fcmarkers}{Item \fc@curid\space is still open}%
+      {Items cannot be nested.}%
+  \fi
+  \def\fc@id{}%
+  \setkeys{fcitem}{#3}%
+  \ifx\fc@id\@empty
+    \PackageError{fcmarkers}{Item without an id}%
+      {Write \string\begin{#1}[id=<id from items.json>]{<title>}.}%
+  \fi
+  \@ifundefined{fc@seen@\fc@id}{}{%
+    \PackageError{fcmarkers}{Item \fc@id\space appears twice}%
+      {Each id of items.json is used once.}}%
+  \expandafter\global\expandafter\let\csname fc@seen@\fc@id\endcsname\@empty
+  \global\fc@initemtrue
+  \xdef\fc@curid{\fc@id}%
+  \gdef\fc@curpart{}%
+  \global\fc@partcount\z@
+  \postdisplaypenalty\@M
+  \if\relax\detokenize{#4}\relax
+    \begin{fc@#1}%
+  \else
+    \begin{fc@#1}[{#4}]%
+  \fi
+  \fc@auxwrite{\string\fc@auxitem{\fc@curid}{#1}{\thesection}{\detokenize{#4}}}%
+  \fc@auxwrite{\string\fc@auxkind{\fc@curid}{#2}}%
+  \fc@standinghyps
+  \leavevmode\fc@above{fc:\fc@curid}%
+  \ignorespaces}
+
+% \fc@enditem{kind}
+\newcommand\fc@enditem[1]{%
+  \fc@endmark{fc:\fc@curid}%
+  \end{fc@#1}%
+  \global\fc@initemfalse
+  \gdef\fc@curid{}%
+  \gdef\fc@curpart{}}
+
+% \fc@declareitem{kind}{Kind}
+\newcommand\fc@declareitem[2]{%
+  \@ifundefined{#1}{}{%
+    \PackageWarning{fcmarkers}{Redefining environment `#1'}%
+    \expandafter\let\csname #1\endcsname\relax
+    \expandafter\let\csname end#1\endcsname\relax}%
+  \newenvironment{#1}[2][]%
+    {\fc@beginitem{#1}{#2}{##1}{##2}}%
+    {\fc@enditem{#1}}}
+
+\fc@declareitem{definition}{Definition}
+\fc@declareitem{lemma}{Lemma}
+\fc@declareitem{proposition}{Proposition}
+\fc@declareitem{theorem}{Theorem}
+\fc@declareitem{corollary}{Corollary}
+\fc@declareitem{example}{Example}
+\fc@declareitem{remark}{Remark}
+
+% ---------------------------------------------------------------------------
+% Parts
+
+\newlength\fc@partlabelwidth
+\newcommand\fc@partlabel[1]{\textup{(#1)}}
+
+% Inside the part label: the part's anchor, label and start marker.
+\newcommand\fc@partstart[1]{%
+  \protected@edef\@currentlabel{\fc@curid(#1)}%
+  \phantomsection
+  \begingroup\edef\fc@tmp{\endgroup\noexpand\label{item:\fc@curid:#1}}\fc@tmp
+  \fc@savepos{fc:\fc@curid:#1:start}}
+
+\newcommand\itempart[2]{%
+  \iffc@initem\else
+    \PackageError{fcmarkers}{\string\itempart{#1} outside an item}%
+      {Parts belong inside definition, lemma, ... environments.}%
+  \fi
+  \ifx\fc@curpart\@empty\else
+    \PackageError{fcmarkers}{\string\itempart{#1} inside part (\fc@curpart)}%
+      {Parts cannot be nested.}%
+  \fi
+  \global\advance\fc@partcount\@ne
+  \edef\fc@expected{\@alph\fc@partcount}%
+  \ifnum\pdfstrcmp{\detokenize{#1}}{\fc@expected}=\z@\else
+    \PackageError{fcmarkers}{Part (#1) of item \fc@curid\space should be
+      (\fc@expected)}{Letter the parts a, b, c, ... in order.}%
+  \fi
+  \ifhmode\unskip\par\fi
+  \if@inlabel\leavevmode\par\fi
+  \gdef\fc@curpart{#1}%
+  \fc@auxwrite{\string\fc@auxpart{\fc@curid}{#1}}%
+  \settowidth\fc@partlabelwidth{\normalfont\fc@partlabel{m}}%
+  \begin{list}{}{%
+    \@endparpenalty\@M
+    \setlength\topsep{\z@}\setlength\partopsep{\z@}%
+    \setlength\itemsep{\z@}\setlength\parsep{\z@}%
+    \setlength\labelwidth{\fc@partlabelwidth}%
+    \setlength\labelsep{0.5em}%
+    \setlength\leftmargin{\dimexpr\labelwidth+\labelsep\relax}%
+    \renewcommand\makelabel[1]{##1\hfil}}%
+  \item[{\fc@partstart{#1}\fc@partlabel{#1}}]%
+  \leavevmode\fc@above{fc:\fc@curid:#1}%
+  \ignorespaces#2%
+  \fc@endmark{fc:\fc@curid:#1}%
+  \end{list}%
+  \gdef\fc@curpart{}%
+  \@endpetrue}
+
+% ---------------------------------------------------------------------------
+% Declarations, hypotheses and the reference work
+
+\newcommand\leanref[1]{%
+  \@bsphack
+  \iffc@initem
+    \fc@auxwrite{\string\fc@auxleanref{\fc@curid}{\fc@curpart}{\detokenize{#1}}}%
+  \else
+    \PackageError{fcmarkers}{\string\leanref{\detokenize{#1}} outside an item}%
+      {A declaration is recorded for the item or part it appears in.}%
+  \fi
+  \@esphack}
+
+% ---------------------------------------------------------------------------
+% Notions
+%
+% \fcnotion[<viewer title>]{<constant>}{<words>}: a notion at its useful occurrence in prose or an item,
+% printed alone, with a box recorded around them.  The constant is the marker's
+% argument and nothing else: the text names no Lean declaration and links to no
+% documentation page, and the annotation export joins the box to the constant.
+% The two markers sit at the ends of the words, in the glue beside them, so the
+% box's side edges cross no ink; a notion broken over two lines gets one box per
+% line (extract_markers.py). The optional title is metadata only; it does not
+% alter the printed words or their boxes. It may contain delimited LaTeX math.
+\newcount\fc@notioncount
+\newif\iffc@innotion
+
+\newcommand\fcnotion[3][]{%
+  \iffc@innotion
+    \PackageError{fcmarkers}{\string\fcnotion{\detokenize{#2}} inside another notion}%
+      {Notions cannot be nested.}%
+  \fi
+  \@ifundefined{fc@notion@\detokenize{#2}}{}{%
+    \PackageError{fcmarkers}{The notion \detokenize{#2} is marked twice}%
+      {Mark a notion once, at its first useful occurrence.}}%
+  \expandafter\global\expandafter\let
+    \csname fc@notion@\detokenize{#2}\endcsname\@empty
+  \global\advance\fc@notioncount\@ne
+  \global\fc@innotiontrue
+  \fc@auxwrite{\string\fc@auxnotion{\the\fc@notioncount}{\detokenize{#2}}%
+    {\detokenize{#3}}}%
+  \if\relax\detokenize{#1}\relax\else
+    \fc@auxwrite{\string\fc@auxnotiontitle{\the\fc@notioncount}{\detokenize{#1}}}%
+  \fi
+  \leavevmode
+  \fc@savepos{fc:notion:\the\fc@notioncount:start}%
+  #3\/% include italic overhang before recording a statement word's end
+  \fc@savepos{fc:notion:\the\fc@notioncount:end}%
+  \global\fc@innotionfalse}
+
+% A scoped block lets its opening prose state a shared hypothesis once.
+% LaTeX's environment group restores the outer list, including for nested blocks.
+% Each enclosed item records the active hypotheses in the existing aux format,
+% so rule 5 still detects a missing or an unneeded hypothesis for that item.
+\newif\iffc@standing
+\fc@standingfalse
+\def\fc@standinghyps{}
+\newenvironment{fcassumptions}{%
+  \iffc@initem
+    \PackageError{fcmarkers}{Standing assumptions cannot begin inside an item}%
+      {Place the block around the opening prose and the statements that share it.}%
+  \fi
+  \fc@standingtrue
+}{% the environment's group ends the scope
+}
+
+\newcommand*\fc@hyp[1]{%
+  \iffc@initem
+    \fc@auxwrite{\string\fc@auxhyp{\fc@curid}{\fc@curpart}{#1}}%
+  \else
+    \iffc@standing
+      \@ifundefined{fc@standinghyp@#1}{%
+        \expandafter\let\csname fc@standinghyp@#1\endcsname\@empty
+        \expandafter\def\expandafter\fc@standinghyps\expandafter{%
+          \fc@standinghyps\fc@hyp{#1}}%
+      }{}%
+    \fi
+  \fi}
+
+% \fcdefhyp{\macro}{key}{words}: a standing hypothesis, in fixed words that
+% the checks can find.  Used in notation.sty, once per key of hypotheses.json.
+% The words end with \xspace, so "\hypOpen and" keeps the space TeX drops
+% after a control word, and "\hypOpen." gains none.
+\newcommand\fcdefhyp[3]{%
+  \ifdefined#1%
+    \PackageError{fcmarkers}{\string#1 is already defined}%
+      {Name the hypothesis with a macro of its own.}%
+  \fi
+  \@ifundefined{fc@hypkey@#2}{}{%
+    \PackageError{fcmarkers}{Hypothesis `#2' is defined twice}%
+      {Each key of hypotheses.json has one \string\fcdefhyp.}}%
+  \expandafter\global\expandafter\let\csname fc@hypkey@#2\endcsname\@empty
+  \DeclareRobustCommand#1{\@ifstar{#3\xspace}{\fc@hyp{#2}#3\xspace}}%
+  \global\fc@hypdefs\expandafter{\the\fc@hypdefs
+    \fc@auxwrite{\string\fc@auxhypdef{#2}{\string#1}}}}
+
+% \fcref{number}, \fcref*{number}: a number of the reference work.
+\newcommand\fcref{\@ifstar{\fc@ref{*}}{\fc@ref{}}}
+\newcommand\fc@ref[2]{%
+  \iffc@initem
+    \fc@auxwrite{\string\fc@auxref{\fc@curid}{\fc@curpart}{\detokenize{#2}}{#1}}%
+  \fi
+  \textup{\cite[#2]{reference}%
+    \if\relax\detokenize{#1}\relax\else\textsuperscript{\dag}\fi}}
+
+% \itemref{id} and \itemref[letter]{id}: "Lemma 6.4", "Lemma 6.4(b)".
+\newcommand\itemref[2][]{%
+  \@ifundefined{fc@kind@#2}{\textbf{??}}{\csname fc@kind@#2\endcsname}~%
+  \if\relax\detokenize{#1}\relax\ref{item:#2}\else\ref{item:#2:#1}\fi}
+
+% ---------------------------------------------------------------------------
+% Sections
+
+\providecommand*\FCOnly{}
+\newif\iffc@wanted
+\newcommand\fcinputsection[3]{%
+  \ifnum#1>\c@section\relax\else
+    \PackageError{fcmarkers}{Section #1 comes after section \the\c@section}%
+      {List the sections in sections.tex in order, each once.}%
+  \fi
+  \if\relax\detokenize\expandafter{\FCOnly}\relax
+    \global\fc@wantedtrue
+  \else
+    \global\fc@wantedfalse
+    \@for\fc@sec:=\FCOnly\do{%
+      \ifnum\fc@sec=#1\relax\global\fc@wantedtrue\fi}%
+  \fi
+  \iffc@wanted
+    \fc@auxwrite{\string\fc@auxsection{\number#1}{1}{\detokenize{#2}}{\detokenize{#3}}}%
+    \setcounter{section}{\numexpr#1-1\relax}%
+    \section{#3}\label{sec:\number#1}%
+    \input{sections/#2}%
+  \else
+    \fc@auxwrite{\string\fc@auxsection{\number#1}{0}{\detokenize{#2}}{\detokenize{#3}}}%
+    \setcounter{section}{#1}%
+  \fi}
+
+% Two lines whose ink would come within 2pt of each other (a tilde under a
+% superscript, say) get extra space, so the box edge between two parts never
+% has to cross ink.
+\setlength{\lineskiplimit}{2pt}
+\setlength{\lineskip}{2pt}
+
+\endinput

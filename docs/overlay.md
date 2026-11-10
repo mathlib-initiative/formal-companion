@@ -53,7 +53,21 @@ annotation document format of `vendor/formal_companion_annotations/`;
    nowhere else; they refuse either directory when it is a symlink or resolves
    outside the companion, refuse to write through a symlinked component, and
    run no git in the companion (CLAUDE.md section 4, CONTRIBUTING.md
-   invariant 3, SKILL.md rule 10).
+   invariant 3, SKILL.md rule 10). **A second exception: the repository
+   informalize creates.** `cf informalize init` creates
+   `informalize/<id>/repo/` inside the workspace, a git repository of its own
+   that the workspace's git ignores, and stamps it: `informal/informalize.json`
+   names the id. Only `cf informalize` subcommands write there, only into a
+   repository carrying that stamp, and only these paths: `informal/`,
+   `annotations/`, `pdf-overlay/`, `site/index.html`, the workflow directory
+   `.github/workflows/`, the ignored PDF cache `.lake/overlay-pdf/`,
+   `README.md`, `LICENSE`, `.gitignore`, `.editorconfig`, `AGENTS.md`,
+   `CONTRIBUTING.md`, `Makefile`, and the project directories `docs/`, `tools/`, `tests/`. They refuse a `repo/` that is a
+   symlink or resolves outside `informalize/<id>/`, refuse to write through a
+   symlinked component, and run git there only through `cflib.gitsafe`. They
+   never write to the library they read. `cf overlay` keeps its own exception
+   (this rule) for that repository as for any companion
+   (`docs/proposals/informalize.md` section 1.3).
 6. **Hardening carries over**: TLS verification, HTTPS-only redirects, atomic
    writes, loopback-only binding, the CSP, no HTML-string injection, and PDF.js
    with `isEvalSupported: false`.
@@ -146,13 +160,39 @@ It fetches the PDF from `pdf.route`, or, when `pdf.publish` names an open
 license, from `../<file_name>`, and checks it against that sha256 (and
 `bytes`) before PDF.js sees it; the status note then names the license.
 
-The top bar's **Read PDF** button hides the annotation regions, their margin
+The top bar's **Read PDF** button (or **L**) hides the annotation regions, their margin
 mark and previews, any open Lean hover, and the counterparts panel. The PDF
-uses the whole workspace on wide and narrow screens; its page, zoom and
-rotation controls stay available. **Show
-links**, or Escape, restores the annotations and panel without reloading the
+uses the whole workspace on wide and narrow screens; its text remains
+selectable and its page, zoom and rotation controls stay available. **Show
+links**, **L**, or Escape, restores the annotations and panel without reloading the
 PDF or clearing the selected passage. Reading mode lasts for the current
 visit, including page turns, and starts off on a fresh load.
+
+The small **?** button in the top bar, or the **?** key, opens the keyboard
+shortcut reference. It also lists search navigation and the keys available
+when a Lean token or the panel divider has focus. Escape closes help first;
+clicking outside also dismisses it. Single-key shortcuts do not run in input
+fields or editable content, and holding L or ? does not repeatedly toggle it.
+While PDF search is open, Enter / Shift+Enter move to the next / previous
+match from the search field, either match arrow, or the PDF text. Other
+focused controls keep their own Enter action.
+
+On desktop, drag the divider between the PDF and the Lean panel to resize the
+panel. Its grip highlights on hover or keyboard focus. Arrow Left/Right resize
+it (Shift takes larger steps); Home/End choose the limits. Double-click or
+Enter restores the default width. The preferred width is saved locally per
+viewer and restored after reading mode. The Lean panel can fill the workspace
+apart from the divider: drag it back to reveal the PDF again. In a narrow PDF
+pane, its controls scroll horizontally instead of overlapping the Lean panel.
+Storage failures do not disable resizing. Below 1000px the divider disappears
+and the existing bottom-sheet layout is used.
+
+Mathematical labels render Unicode script characters and braced scripts
+(`_{...}` and `^{...}`) as HTML subscripts and superscripts in the page overview,
+selected-passage heading and hover preview. Braced scripts preserve capitals,
+brackets and nested scripts for which Unicode has no standalone characters.
+Delimited LaTeX math is rendered as MathML. Plain text and unbraced
+underscores stay literal. See [Mathematical labels](#mathematical-labels).
 
 From the records alone it builds:
 
@@ -221,7 +261,10 @@ From the records alone it builds:
   title), its `note` with backticked code set as code, and one card per
   declaration in the record's order, with every range of it the record names:
   the end's snippet with its `location.lines` in a gutter, or the line numbers
-  alone with no snippet, and how far a snippet with `truncated` runs. A step
+  alone with no snippet, and how far a snippet with `truncated` runs. Each
+  range uses its own target and exact snippet to find Verso runs, with the
+  same token highlighting, identifier hovers and keyboard support as statements.
+  A step
   whose record is `noMatch` has no card: it says it was checked and lists the
   record's object ends, the Lean the absence is scoped to, by declaration else
   by module, with their lines; a declaration links only where a card of the same
@@ -233,9 +276,45 @@ From the records alone it builds:
   with none points to the nearest pages that have some.
 
 A region it cannot place is dropped with a notice, never guessed at; a record
-with no region left adds nothing. Every string reaches the DOM through
-`textContent` or attribute setters. `viewer-core.js` is the pure half;
-`viewer.js` the controller.
+with no region left adds nothing. The viewer inserts ordinary strings through
+`textContent` or attribute setters and imports only generated MathML for formulas.
+`viewer-core.js` is the pure half and `viewer.js` is the controller.
+
+Every rendered page carries PDF.js's own **text layer** over the canvas and
+under the region boxes: the page's text as transparent spans, which a reader
+selects and copies as in any PDF reader, with no normalization, so a ligature
+or a dash is copied as the PDF spells it. Source boxes open their cards. External
+HTTPS links embedded in the PDF open in a new tab. Internal references jump
+to their destinations at the current zoom. Both work in reading mode. The
+link and source overlays pass pointer events through outside their
+interactive regions, so readers can select text there. Where a drag that *starts* on
+a box anchors its selection is the browser's own call, and no browser has been
+watched making it (`docs/generating-an-overlay.md`); the rest is what the CSS
+asks for. The spans are the vendored build's: its `TextLayer`
+places each one as a percentage of the page before the reader's rotation and
+leaves the scale, the rotation and the font height to CSS, so `viewer.css`
+carries the rules they are written for (only the build's two JavaScript files
+are vendored) and `viewer.js` sets `--total-scale-factor` through CSSOM.
+`templates/overlay/tests/text-layer.test.mjs` runs that real `TextLayer` over
+a synthetic PDF and pins every value it writes against those rules. A page
+whose text cannot be read, or a build with no `TextLayer`, renders without a
+text layer and changes nothing else.
+
+The **Find** button or **⌘F / Ctrl+F** opens whole-document search. It extracts
+text from every page of the verified PDF, caches it for this visit, and shows
+the current match and total count. Search is literal and case insensitive;
+line breaks, ligatures and printed line-end hyphens are normalized only for
+matching. Enter and Shift+Enter (or the arrow buttons) move between matches,
+wrapping at the ends and opening the corresponding page. The current match
+is orange and other matches on that page are yellow. Their rectangles come
+from the unmodified text layer, so zoom, rotation, copying, annotations and
+reading mode continue to work. Escape closes search before leaving reading
+mode. Empty searches clear the marks; no matches, PDFs with no searchable
+text and pages whose text cannot be extracted receive explicit feedback.
+Scanned pages require an existing text layer; search does not perform OCR.
+The browser's own find remains available when the PDF could not be loaded.
+`viewer-search.js` holds the text index and offset mapping; its tests use
+synthetic text and the controller tests drive keyboard navigation.
 
 ## 5. Runtime tools (`runtime/tools/`)
 
@@ -267,7 +346,10 @@ bytecode writing off.
   snippet matched from the anchor's line or up to six lines above: whitespace
   runs match whitespace runs, comments are skipped on both sides, a trailing
   `…` is kept, and an internal `…`, a mismatch or a match that does not cover
-  the anchor gives no statement. A statement is `[kind, text, hover,
+  the anchor gives no statement. A projection excerpt of the exporter's
+  `structure Name where / … / field` form is the exception: its actual field
+  must match its own anchor in that structure or class; the context label and
+  omission marker remain plain text. A statement is `[kind, text, hover,
   binding, href]` runs whose texts joined are the snippet; a link is kept
   only when its page is a file of the site that holds its anchor and that
   anchor is a declaration's own (the name after a declaration keyword, or a
@@ -284,11 +366,27 @@ bytecode writing off.
   statement would go for a spelling, so the producer gives the commit. A card
   with no statement in the file may pin what it likes. `verso_extract.py
   --pages <dir> --bundle <bundle> --out pdf-overlay/verso.json --commit
-  <sha>` writes that file from a Verso build elsewhere: a card is found by
+  <sha>` writes that file from a Verso build elsewhere (for an informal
+  companion, `cf informalize verso-command` prints the lines that make that
+  build on a host and run this tool there: `docs/proposals/informalize.md`
+  section 10): a card is found by
   its module's page and its declaration's anchor (the build's `xref.json`,
   else Verso's slug of the name), no token keeps a link, and `build`
-  records the commit and the build's Verso revision; it stops before
-  writing on a statement whose card pins no full commit. The receipt records
+  records the commit and the build's Verso revision. An end with a
+  line range is matched against that module's code boxes, with
+  goals and messages excluded. Its excerpt must match uniquely, preserving
+  its exact text. When the build's sibling `literate/<module>.json` records
+  the enclosing declaration's source range, matching is confined to that
+  declaration; this disambiguates identical code in different proofs.
+  Missing, stale or ambiguous excerpts remain plain. It also records
+  `build.dependencies`, the repository HTTPS URIs and full commits of the
+  git dependencies in the primary build's `lake-manifest.json`. Repeat
+  `--dependency-pages REPOSITORY=DIR` to include pages built separately for
+  those packages. A repository absent from the manifest is refused; each
+  dependency card must pin its own recorded revision. Hover IDs are remapped
+  when combining page builds so one package's signature cannot replace
+  another's. It stops before writing on a statement whose card pins no full
+  commit. The receipt records
   `verso.json` with the other files, and its `verso.source` is `site`,
   `committed` (with the build commit) or `none`. With `pdf.publish` it also
   publishes the cached PDF at `<mount>/<file_name>`, after checking it against
@@ -356,7 +454,7 @@ cf overlay check <companion>
   "annotations": {
     "directory": "annotations",
     "extension": "org.mathlib-initiative.formal-companion.overlay",
-    "export": {"convention": "attribution-table", "commit": "<companion commit>", "source_id": "..."},
+    "export": {"convention": "attribution-table", "commit": "<the checkout's HEAD>", "source_id": "..."},
     "inputs": [{"path": "<curation file>", "sha256": "..."}],
     "count": 1085,
     "manifest_sha256": "<sha256 of `sha256sum` lines of the files, `_defaults.json` included, sorted by path>",
@@ -376,6 +474,15 @@ annotation per line, in path order, folder defaults applied.
 `"released": false`).
 `export` and `inputs` appear when `cf overlay export` wrote the files; with
 `export`, `check` and `check_generated.py` require a non-empty `inputs`.
+`export.commit` is the checkout's HEAD in full: for a convention whose
+companion IS the checkout that is the document's `companion.commit`, and for
+one whose companion is another repository (`informal-markers`, whose companion
+is the Lean library its text is about, `docs/exporters.md` section 8) the
+export's report names it and `export.lean` is `{repo, commit}` of that
+library, which the object ends point into. Which of the two a convention is
+settles it, not what the report happens to hold: an export of the second kind
+whose report does not name the commit it read is refused, rather than
+recording the library's commit as the export's.
 
 ## 7. The annotation files
 
@@ -392,9 +499,11 @@ Literature Links 1.0 records:
 | `kind`, `status`, `note` | the item kind lower-cased; the item's coverage as a recommended status (`formalized`, `partial_only` as `partial`, `not_formalized`, and `support_only` as `not_formalized`; `example_only`, `private_only` and `out_of_scope` give none), else `formalized` for an item with a key link; the coverage note |
 
 The repository is `https://<companion.repo>`, or for a local checkout the
-companion root relative to the file. A declaration's line is not written
-beside its name: it is the declaration's first line, and `snippet.line` keeps
-it.
+companion root relative to the file. A dependency declaration carrying both
+`x_repo` and `x_commit` instead uses `https://<x_repo>` and its own pinned
+commit as `version`; its snippet and destination describe that dependency.
+A declaration's line is not written beside its name: it is the declaration's
+first line, and `snippet.line` keeps it.
 
 Everything else the viewer needs is under the extension key
 `org.mathlib-initiative.formal-companion.overlay`, on the end it describes or
@@ -421,8 +530,9 @@ on the record:
   (body, fields, constructors) up to 60 lines (docs/exporters.md section 1).
 
 The section folder is the item number's first two parts (`1.2.7` is `1.2`);
-otherwise the item's section or a cluster locator's `Section N.M`; otherwise
-`other` (a two-part number may be an equation's). An item with one record is
+otherwise the item's section, as `N.M` or as one number, or a cluster
+locator's `Section N.M`; otherwise `other` (a two-part number may be an
+equation's). An item with one record is
 a file `<item>__<role>__<declaration>.json`, or `<item>.json` for a record
 that links nothing; an item with several is a folder `<item>/` of
 `<role>__<declaration>.json` files. Every character outside `[A-Za-z0-9._-]`
@@ -444,6 +554,44 @@ one end per range. A `noMatch` step's object ends name the Lean it was checked
 against, with no snippet. A step that breaks the folder rule stays an item of its
 own, with its lines and relation, never guessed onto an item.
 
+Proof annotations can also carry an authored explanation of the correspondence:
+
+- Record extension `proof`: `kind` is `direct`, `helper`, or `chain`; `summary`
+  explains a chain's mathematical progression. For exact/close links the visible
+  label becomes "Proof excerpt", "Helper lemma", or "N linked lemmas". The
+  underlying Literature Links relation and provenance remain unchanged; absence,
+  broader/narrower and other qualified relations retain their labels.
+- Object-end extension `proof_context`: `declaration` is the enclosing source
+  declaration's name, `lines` its complete range, `conclusion` the mathematical
+  fact established or invoked by this excerpt. Prefer one short `conclusion`
+  sentence combining that fact with the essential Lean correspondence; the
+  optional `explanation` is only for information that cannot fit clearly there.
+  Optional `notation` rows have `math` and `lean` fields;
+  optional `bookkeeping` explains representation or endpoint identifications.
+  The enclosing-source link reuses the excerpt's validated destination with the
+  enclosing line range. Use a source-file destination for these contexts.
+
+The viewer shows the enclosing declaration above the numbered excerpt. The
+mathematical explanation, notation, and bookkeeping are under the collapsed
+"Reading the Lean notation" section. In a `chain`, object ends are in logical dependency order;
+the complete list of links appears above one selected excerpt, initially the
+first. Every excerpt retains
+its own source link and exact-snippet Verso hovers. Explanations accept inline
+LaTeX and backticked names through the text renderer, never raw HTML.
+
+Avoid a restatement of the step title followed by another paragraph saying the
+same thing. Omit routine implementation commentary and contrasts with abandoned
+formulations. Keep chain summaries to one short orientation sentence; place
+necessary notation details in the expandable notes.
+
+Authors must verify enclosing names and ranges against the same pinned source
+as the snippet. Explain jumps between helpers, distinguish the lemma's argument
+from its invocation, and name any omitted finishing work. A selected `have`
+that starts an argument must not be described as completing its enclosing proof.
+For compressed passages, link the intermediate mathematical lemmas and the
+calls that connect them. Keep the PDF region on its specific sentence or equation;
+multiple supporting excerpts do not justify enlarging it to the entire proof.
+
 `scripts/overlay/defaults.py` writes the files with Literature Links folder
 defaults: `annotations/_defaults.json` holds what all records share and an
 item folder's `_defaults.json` what its records share beyond that (a member
@@ -464,3 +612,22 @@ identifiers, extensions`, and `type` first elsewhere, with a two-space indent,
 UTF-8 and arrays of scalars on one line. The files are read back with the
 vendored reader before anything is written; a record the conversion cannot
 carry, or files that do not read back as the records, stop the export.
+
+
+### Mathematical labels
+
+Annotation subject titles can mix prose with LaTeX math delimited by `$...$`,
+`$$...$$`, `\(...\)` or `\[...\]`; all label math is set inline. The viewer uses
+bundled KaTeX 0.19.1 to produce MathML, rendered natively by the browser. Its
+module and MIT license live in `runtime/vendor/katex/` with the release integrity
+and file hash. Rendering needs no CDN, remote stylesheet or font download.
+`trust: false`, strict parsing, a fresh macro dictionary and expansion/size limits
+apply separately to each formula. Invalid or unsupported formulas remain readable
+as literal source, without breaking the rest of the label. Ordinary label text
+still uses text nodes; only KaTeX-generated MathML is parsed and imported.
+
+An informalization author can name a notion independently of its printed words:
+`\fcnotion[Inclusion map]{Example.inclusion}{$i_S:S\to X$}`. The optional title is
+preserved in markers and exported verbatim, including delimited standard LaTeX.
+Prefer descriptive titles when a repeated formula adds no information. Omitting
+the title preserves existing glyph extraction and Unicode-script formatting.

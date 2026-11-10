@@ -8,6 +8,11 @@ all.
 The local corpus half is always printed, needs no network, and is the number
 that actually matters: how many findings are home and whether the last harvest
 receipt said the corpus was whole.
+
+The remote half also reads the spend watchdog's last record
+(``<tend root>/watchdog.json``), which for a run whose spend tend cannot see --
+an informalize phase, where `cf run` starts one at the smoke stage -- is the
+only report of what the fleet has spent against its cap.
 """
 from __future__ import annotations
 
@@ -37,6 +42,13 @@ def remote_steps(host: dict, run_id: str, names: dict) -> list[dict]:
         # `ls -1` counted its task directories; a flat directory counts the same
         ssh(f"find {shlex.quote(entrypoint + '/findings')} -type f -name '*.json' "
             f"2>/dev/null | wc -l", "findings merged on the entrypoint"),
+        # The spend watchdog's last check: with agentbox, tend's own budget counts no
+        # agent's spend, so for a run that has one (an informalize phase: `cf run` starts
+        # it at the smoke stage) this record IS the run's spend against its cap.  A run
+        # with no watchdog says so rather than failing the step.
+        ssh(f"cat {shlex.quote(tend_root + '/watchdog.json')} 2>/dev/null "
+            f"|| echo 'no watchdog record on this root'",
+            "the spend watchdog's last check (spend_usd against max_cost, and any drain)"),
         ssh(f"tail -n 20 {shlex.quote(tend_root + '/run.log')}", "last 20 log lines"),
         ssh(f"tail -n 5 {shlex.quote(tend_root + '/agentbox-worker.err')} 2>/dev/null || true",
             "bridge stderr (agentbox failures land here, not in tend)"),

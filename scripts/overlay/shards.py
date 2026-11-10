@@ -14,9 +14,10 @@ section.  :func:`convert` is the whole mapping:
   region's box as ``{page, rect}`` (``[x, y, width, height]`` fractions of the
   displayed page from the top left; a quad region becomes its bounding box,
   the quads kept in the extension) and the item's label as ``title``;
-* ``object``: one ``lean`` end, the companion's repository at the export
-  commit with the declaration (or, for an anonymous example, its module and
-  the line it starts on) as ``location`` and the link's role as ``role``; an
+* ``object``: one ``lean`` end, the declaration's dependency repository and
+  pinned commit, or the companion's repository at the export commit, with
+  the declaration (or, for an anonymous example, its module and the line it
+  starts on) as ``location`` and the link's role as ``role``; an
   item that links nothing has ``"object": []``, or, when its coverage is
   ``not_formalized``, the repository at the commit with ``relation: noMatch``;
 * ``relation`` from the link's relation token, ``kind``, ``status`` and
@@ -92,6 +93,8 @@ CSL_TYPE = "book"
 
 _CLUSTER_SECTION = re.compile(r"\bSection (\d+)\.(\d+)", re.ASCII)
 _DOTTED = re.compile(r"(\d+)\.(\d+)", re.ASCII)
+#: An ``item.section`` that is one number: the folder is that number.
+_PLAIN_SECTION = re.compile(r"[0-9]+", re.ASCII)
 _HTTPS = re.compile(r"https://[^\s#\\]+\Z")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 #: Device names Windows reserves whatever the extension (`nul.json` is `NUL`).
@@ -152,16 +155,21 @@ def section_of(item: dict, clusters: dict) -> str:
     """The section folder an item's records go to.
 
     A number with three or more parts names its section (``1.2.7`` is in
-    ``1.2``); otherwise the item's own ``section`` or a cluster locator that
-    says ``Section N.M``; otherwise ``other`` (a two-part number such as
-    ``3.4`` may be an equation or a section, so it names no section).
+    ``1.2``); otherwise the item's own ``section``, as ``N.M`` or as one
+    number (a document whose sections are numbered ``1``, ``2``, ... says so
+    there), or a cluster locator that says ``Section N.M``; otherwise ``other``
+    (a two-part number such as ``3.4`` may be an equation or a section, so it
+    names no section).
     """
     parts = str(item.get("number") or "").split(".")
     if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
         return f"{parts[0]}.{parts[1]}"
-    match = _DOTTED.search(str(item.get("section") or ""))
+    section = str(item.get("section") or "").strip()
+    match = _DOTTED.search(section)
     if match:
         return f"{match.group(1)}.{match.group(2)}"
+    if _PLAIN_SECTION.fullmatch(section):
+        return section
     for cluster in item.get("clusters") or []:
         match = _CLUSTER_SECTION.search(str((clusters.get(cluster) or {}).get("locator") or ""))
         if match:
@@ -469,6 +477,9 @@ class _Converter:
     def lean_end(self, decl: dict, link: dict, verdicts: list[dict]) -> dict:
         """The object end of one link: the repository at the commit, the declaration in it, and its card."""
         end = dict(self.project, location=lean_location(decl), role=link["role"])
+        dependency_repo = repo_url(decl.get("x_repo"))
+        if dependency_repo and decl.get("x_commit"):
+            end.update(uri=dependency_repo, version=decl["x_commit"])
         if "profile" in end["location"]:
             self.out.counts["unlocated_anonymous_declarations"] += 1
         ext: dict = {"declaration": {"id": decl["id"]}}

@@ -1,0 +1,25 @@
+You are a section drafter of run `{{run_id}}` (task file `tasks/$TEND_TASK_ID.yaml`, worktree $TEND_WORKTREE_PATH). Your task file names your section, its file and its items; your manifest is `{{tasks_dir}}/$TEND_TASK_ID.json`.
+
+## Read first
+`informal/STYLE.md` and `informal/STYLE-project.md` (follow both), `informal/sections/00-conventions.tex` and `informal/notation.sty`, your section's items in `informal/items.json`, their declarations' signatures in `informal/declarations.json`, and their statements and docstrings in the library's source under `{{library_src}}/`.
+
+## Write your section file, and only it
+Your items in `items.json` order, each `\begin{<kind>}[id=<id>]{<title>}` with the item's title copied as it stands.
+
+Write each statement as a good textbook prints it, and exactly as faithfully as the signature demands. Use a standard term only when it says exactly the Lean's hypothesis, never more. Introduce one-use variables inside their result; give repeated context in a connected section opening. Avoid detached announcements of special cases, elementary definition reminders and prose added only to host annotations. Use `\fcnotion` at a useful first occurrence, including inside a statement, with a constant copied from declarations.json. Match meaningful mathematical names to the Lean where it improves recognition, without printing implementation syntax.
+
+Make the section contribute to the route to the main theorem. The source inventory is not an obligation to print every helper. Preserve all mathematical hypotheses, including assumptions local to an auxiliary lemma. Of two statements that say the same mathematics, write the shorter.
+
+For each:
+- the statement, faithful to the elaborated signature: every hypothesis, the order of the quantifiers, ℕ versus ℤ, the coercions; a standing hypothesis through its macro of `notation.sty`;
+- one `\itempart{<letter>}{...}` per part, in order;
+- `\leanref{<full name>}` for every key declaration, in its part (or in the item's own text when its part is null), and for a helper only where a reader wants it;
+- a sentence for each junk value the item lists;
+- `\fcref{<number>}` where `items.json` gives the item or the part a reference number, `\fcref*{<number>}` when its source is `inferred`, once;
+- coherent connecting prose only where it advances the argument; when the project requests proofs, give actual constructions and deductions, allowing concise sketches, and use earlier results rather than reproving them.
+The file writes no `\section`: `sections.tex` does.
+
+## Check, commit, finish
+`{{build_command}} --only <your section number> build/$TEND_TASK_ID`, then `{{check_command}} build/$TEND_TASK_ID --section <your section number> --aux-only --strict --declarations {{gate_dir}}/declarations.json`. A reference into a section not yet drafted prints `??` and is not an error. Fix what they name, commit, set `status: complete` in your task file and commit it.
+
+{{finish_block}}

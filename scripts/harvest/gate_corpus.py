@@ -22,6 +22,11 @@ task manifests that config names are held to the plan's own records of them
 (:func:`run_config_problems`: the staged ``gate.json``, ``run.yaml``,
 ``planned.json``), so the pins the gate compares are the plan's
 (references/locate-documents.md section 10).
+
+An informalize phase is re-gated by its own gate too (:func:`gate_informal_corpus`),
+but as a subprocess -- ``python3 -I`` on a copy of the planned ``gate/``, the way the
+run host runs it -- rather than in-process: that gate reads everything it pins from
+its own directory, so the copy and its config are the whole of what it needs.
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ import hashlib
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -40,7 +46,8 @@ if str(_SCRIPTS) not in sys.path:  # pragma: no cover - import side effect
 
 from gate import verify_findings as vf  # noqa: E402
 
-from harvest._compat import CfError, finding_name, hashing, iter_finding_files  # noqa: E402
+from harvest._compat import CfError, finding_name, hashing, iter_finding_files, vocab  # noqa: E402
+from harvest import informal_files  # noqa: E402
 
 #: A harvested corpus keeps its findings directly in ``corpus/<run-id>/``, not in
 #: a ``findings/`` subdirectory the way a worker's worktree does.
@@ -392,6 +399,141 @@ def run_config_problems(cfg_path: Path, *, run_doc: dict | None = None,
     return problems
 
 
+#: the informalize gate, and the phases whose one document is a file of
+#: ``informal/`` the harvest landed rather than a ``findings/<task>/*.json``
+#: (docs/proposals/informalize.md sections 8.2 and 8.3)
+INFORMAL_GATE = "verify_informal.py"
+INFORMAL_PHASE_DOCUMENT = {"items": "informal/items.json",
+                           "conventions": "informal/hypotheses.json"}
+#: what settles an informalize gate that could not run
+INFORMAL_GATE_HINT = ("re-plan the phase (`cf plan-informalize`), which stages the gate "
+                      "again, and harvest it once more")
+#: the phases with no document for ``--findings`` to re-check at home: every
+#: phase that writes neither a ``findings/`` document nor one of the two files of
+#: :data:`INFORMAL_PHASE_DOCUMENT`.  A draft task's output is its section's
+#: ``.tex``, which the gate judges on the host over the change set (rules 1, 2, 3
+#: and 9, the build among them) and has no ``--findings`` mode for; an empty
+#: document list there is the phase's shape, not an empty corpus.
+INFORMAL_NO_DOCUMENT = tuple(p for p in vocab.INFORMALIZE_PHASES
+                             if p not in INFORMAL_PHASE_DOCUMENT
+                             and p not in informal_files.FINDINGS_PHASES)
+
+
+def _informal_messages(output: str) -> tuple[list[str], list[str]]:
+    """``(problems, broken)`` from what the gate printed: its own two shapes."""
+    problems, broken = [], []
+    for line in output.splitlines():
+        text = line.strip()
+        if text.startswith("- "):
+            problems.append(text[2:])
+        elif text.startswith("FAIL: "):
+            broken.append(text[len("FAIL: "):].split(" — ", 1)[0])
+    return problems, broken
+
+
+def gate_informal_corpus(dest: str | Path, gate_config: str | Path, *,
+                         gate_dir: str | Path, phase: str, repo: str | Path,
+                         tree: str | Path) -> dict:
+    """Run the INFORMALIZE gate (``--findings``) over what an informalize harvest landed.
+
+    The gate runs out of tree, as it runs on the host: the run's own staged
+    ``gate/`` is copied beside the run's ``gate.local.json`` (which becomes its
+    ``gate.json``, so the pins and the paths are this machine's) and invoked with
+    ``python3 -I``, never imported here.  What it checks is what the phase
+    wrote: the documents the findings rsync landed in *dest*, read with
+    ``--root`` at the run's planned ``repo/`` -- the base commit's files, so rule
+    6 reads the text the attackers quoted -- or, for the items and the
+    conventions phase, the one file of ``informal/`` the harvest landed under
+    *tree*, which is then the root (docs/proposals/informalize.md section 8.5).
+
+    A phase of :data:`INFORMAL_NO_DOCUMENT` -- draft -- has nothing for
+    ``--findings`` to read: its tasks write ``.tex`` the gate judges on the host
+    over the change set, and the gate has no mode that re-checks one at home.
+    That is a pass with ``files: 0`` and a note, not the empty corpus the other
+    phases are refused for.
+
+    Returns the shape :func:`gate_corpus` returns, so the receipt and
+    :func:`render` read it alike; a gate that could not run says so in
+    ``broken`` and the receipt is not complete.
+    """
+    cfg_path = Path(gate_config).expanduser()
+    if not cfg_path.exists():
+        raise CfError(f"no gate config at {cfg_path}",
+                      hint="`cf plan-informalize` writes runs/<id>/gate.local.json; pass "
+                           "--gate-config")
+    gate_dir = Path(gate_dir)
+    script = gate_dir / INFORMAL_GATE
+    block = {"from": "run", "dir": str(gate_dir), "script": INFORMAL_GATE, "sha256": None}
+    single = INFORMAL_PHASE_DOCUMENT.get(phase)
+    root = Path(tree) if single else Path(repo)
+    documents = [single] if single else [str(p) for p in iter_finding_files(Path(dest))]
+    if phase in INFORMAL_NO_DOCUMENT and not documents:
+        # nothing is run, so a gate copy that is gone refuses nothing; name it when
+        # it is there, as every other gate block names the code that judged
+        if script.is_file():
+            block["sha256"] = hashing.sha256_file(script)
+        return _informal_no_document(cfg_path, phase, block)
+    if not script.is_file():
+        return _informal_not_run(cfg_path, phase, block,
+                                 [f"the run's gate copy {script} is missing"])
+    block["sha256"] = hashing.sha256_file(script)
+    if not root.is_dir():
+        return _informal_not_run(cfg_path, phase, block,
+                                 [f"{root} is not a directory, so the gate has no informal/ "
+                                  f"to read the documents against"])
+    if not documents:
+        return _informal_not_run(cfg_path, phase, block,
+                                 [f"{dest} holds no {phase} document to validate (an empty "
+                                  f"corpus is not a clean one)"])
+    with tempfile.TemporaryDirectory(prefix="cf-informal-gate-") as tmp:
+        here = Path(tmp) / "gate"
+        shutil.copytree(gate_dir, here, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        shutil.copy2(cfg_path, here / "gate.json")
+        argv = [sys.executable, "-I", str(here / INFORMAL_GATE),
+                "--gate-config", str(here / "gate.json"), "--root", str(root)]
+        for document in documents:
+            argv += ["--findings", str(document)]
+        done = subprocess.run(argv, cwd=tmp, text=True, capture_output=True)
+    problems, broken = _informal_messages((done.stdout or "") + (done.stderr or ""))
+    if done.returncode != 0 and not problems and not broken:
+        broken = [f"the gate exited {done.returncode}: "
+                  f"{((done.stderr or done.stdout or '').strip() or 'and said nothing')[-300:]}"]
+    out = {"ok": done.returncode == 0, "exit": done.returncode, "config": str(cfg_path),
+           "preset": f"informalize-{phase}", "sources": [], "files": len(documents),
+           "problems": [f"the gate could not run: {b}" for b in broken] + problems,
+           "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0,
+           "root": str(root), "gate_code": block}
+    if broken:
+        out["broken"] = broken
+        out["hint"] = INFORMAL_GATE_HINT
+    return out
+
+
+def _informal_no_document(cfg_path: Path, phase: str, block: dict) -> dict:
+    """A pass for a phase whose contributions the gate judged only on the host.
+
+    Not :func:`_informal_not_run`: nothing failed to run.  The gate ran per
+    contribution on the run host, over the change set, and there is no document
+    of this phase for ``--findings`` to read again -- so the receipt says that,
+    in ``note``, rather than calling a corpus with no document broken.
+    """
+    return {"ok": True, "exit": 0, "config": str(cfg_path), "preset": f"informalize-{phase}",
+            "sources": [], "files": 0, "problems": [], "partial_quotes": [],
+            "binding_notes": [], "unbound_quotes": 0, "gate_code": block,
+            "note": f"a {phase} task writes no document the gate can re-read at home; its "
+                    f"contributions were gated on the host over the change set, and the "
+                    f"files it wrote are reconciled in the receipt's informalize block"}
+
+
+def _informal_not_run(cfg_path: Path, phase: str, block: dict, problems: list[str]) -> dict:
+    """An informalize gate result for a gate that did not run, with what settles it."""
+    return {"ok": False, "exit": 3, "config": str(cfg_path), "preset": f"informalize-{phase}",
+            "sources": [], "files": 0,
+            "problems": [f"the gate could not run: {p}" for p in problems],
+            "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0,
+            "broken": list(problems), "gate_code": block, "hint": INFORMAL_GATE_HINT}
+
+
 def checkout_gate_code() -> dict:
     """The ``gate_code`` block of a re-gate by this checkout's gate (``--checkout-gate``)."""
     script = _SCRIPTS / "gate" / "verify_locate.py"
@@ -597,12 +739,14 @@ def render(result: dict, max_named: int = 12) -> str:
             + ("PASSED" if result["ok"] else f"FAILED ({len(result['problems'])} problem(s))"))
     lines = [head]
     code = result.get("gate_code") or {}
+    script = code.get("script") or "verify_locate.py"
     if code.get("from") == "run":
-        lines.append(f"  gate code: the run's own copy ({code.get('dir')}), verify_locate.py "
-                     + (f"{str(code['sha256'])[:12]}, {code.get('files')} file(s) as planned"
+        lines.append(f"  gate code: the run's own copy ({code.get('dir')}), {script} "
+                     + (f"{str(code['sha256'])[:12]}"
+                        + (f", {code['files']} file(s) as planned" if code.get("files") else "")
                         if code.get("sha256") else "not checked"))
     elif code.get("from") == "checkout":
-        lines.append(f"  gate code: this checkout's, verify_locate.py "
+        lines.append(f"  gate code: this checkout's, {script} "
                      f"{str(code.get('sha256') or '')[:12]}")
     skipped = result.get("skipped") or {}
     if skipped.get("skips"):
@@ -636,6 +780,8 @@ def render(result: dict, max_named: int = 12) -> str:
                          f"wide bound reaches (a footnote mark, a dd or a paragraph that "
                          f"finishes a sentence), {cut['wide_unheld']} such tail(s) no "
                          f"passage holds")
+    if result.get("note"):
+        lines.append("  note: " + result["note"])
     for problem in result["problems"][:max_named]:
         lines.append("  - " + problem)
     if len(result["problems"]) > max_named:

@@ -650,6 +650,9 @@ export function locatorText(locator) {
   }
   const printed = pageList(locator.printed);
   const physical = pageList(locator.physical);
+  if (printed && printed === physical) {
+    return printed;
+  }
   return [printed && `printed ${printed}`, physical && `PDF ${physical}`].filter(Boolean).join(", ");
 }
 
@@ -730,10 +733,36 @@ function card(record, end, context) {
       ? recordExt.provenance.confirmed_by_human : null,
     resolution: text(destination?.resolution),
     role: text(end.role),
+    proofContext: proofContext(ext.proof_context, href, end.title),
     snippet,
     target: ours ? cardTarget(end) : null,
     verdict,
   };
+}
+
+/** Optional, authored explanations. Source links stay on the card's already validated URL. */
+function proofContext(value, href, title) {
+  if (!isObject(value) || !text(value.declaration) || !text(value.conclusion)) return null;
+  const lines = lineRange(value.lines);
+  let enclosingHref = null;
+  if (href && lines) {
+    const url = new URL(href);
+    url.hash = `L${lines[0]}-L${lines[1]}`;
+    enclosingHref = url.href;
+  }
+  return {
+    declaration: text(value.declaration), lines, href: enclosingHref,
+    label: text(title) || text(value.conclusion),
+    conclusion: text(value.conclusion), explanation: text(value.explanation),
+    bookkeeping: text(value.bookkeeping),
+    notation: asArray(value.notation).filter(isObject)
+      .map(row => ({ math: text(row.math), lean: text(row.lean) })).filter(row => row.math && row.lean),
+  };
+}
+
+function proofGuide(value) {
+  if (!isObject(value) || !["direct", "helper", "chain"].includes(value.kind)) return null;
+  return { kind: value.kind, summary: text(value.summary) };
 }
 
 /**
@@ -914,6 +943,7 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
           label: title || itemId,
           locator: locatorText(ext.locator),
           place: null,
+          proofGuide: proofGuide(ext.proof),
           relations: [],
           stepOf: null,
           steps: [],
@@ -1074,28 +1104,43 @@ const NUMBERING = /^(?:\p{L}?[\d.]*\d\p{L}?|[ivxlc]+|\p{L})$/iu;
 
 const SUBSCRIPTS = "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₔₕₖₗₘₙₚₛₜᵢᵣᵤᵥᵦᵧᵨᵩᵪⱼ";
 const SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿʰʲʳʷʸˡˢˣᴬᴮᴰᴱᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿᵀᵁⱽᵂᵃᵇᶜᵈᵉᶠᵍᵏᵐᵒᵖᵗᵘᵛᶻᵝᵞᵟᵠᵡ";
-const SCRIPT_RUN = new RegExp(`((?:[${SUBSCRIPTS}]\\p{M}*)+)|((?:[${SUPERSCRIPTS}]\\p{M}*)+)`, "gu");
+const SCRIPT_RUN = new RegExp(`([_^])\\{|((?:[${SUBSCRIPTS}]\\p{M}*)+)|((?:[${SUPERSCRIPTS}]\\p{M}*)+)`, "gu");
 
 /**
- * A title cut into `[kind, text]` runs: "text", or "sub" or "sup" with the
- * plain characters its script characters stand for. Firefox on macOS draws a
- * box for U+2096, U+2098 and U+2099 after a serif letter, and a plain letter
- * set small needs no font to hold them.
+ * A title cut into text/sub/sup runs. Unicode script characters are normalized
+ * to plain letters; braced scripts retain characters Unicode cannot express,
+ * such as a capital S or [r,s]. Braces may nest, but no TeX commands or HTML
+ * are interpreted. The renderer handles each script's contents the same way.
  */
 export function scriptRuns(value) {
   const whole = text(value);
   const runs = [];
   let at = 0;
-  for (const match of whole.matchAll(SCRIPT_RUN)) {
-    if (match.index > at) {
-      runs.push(["text", whole.slice(at, match.index)]);
+  SCRIPT_RUN.lastIndex = 0;
+  for (let match; (match = SCRIPT_RUN.exec(whole));) {
+    let end = SCRIPT_RUN.lastIndex;
+    let kind, content;
+    if (match[1]) {
+      let depth = 1;
+      while (end < whole.length && depth) {
+        if (whole[end] === "{") depth += 1;
+        if (whole[end] === "}") depth -= 1;
+        end += 1;
+      }
+      // A malformed or empty script remains literal text.
+      if (depth || end === SCRIPT_RUN.lastIndex + 1) continue;
+      kind = match[1] === "_" ? "sub" : "sup";
+      content = whole.slice(SCRIPT_RUN.lastIndex, end - 1);
+      SCRIPT_RUN.lastIndex = end;
+    } else {
+      kind = match[2] ? "sub" : "sup";
+      content = match[0].normalize("NFKC");
     }
-    runs.push([match[1] ? "sub" : "sup", match[0].normalize("NFKC")]);
-    at = match.index + match[0].length;
+    if (match.index > at) runs.push(["text", whole.slice(at, match.index)]);
+    runs.push([kind, content]);
+    at = end;
   }
-  if (at < whole.length) {
-    runs.push(["text", whole.slice(at)]);
-  }
+  if (at < whole.length) runs.push(["text", whole.slice(at)]);
   return runs;
 }
 
@@ -1153,7 +1198,7 @@ export function stepCards(item) {
       groups.set(key, { ...entry, ranges: [] });
     }
     if (entry.lines || entry.snippet) {
-      groups.get(key).ranges.push({ lines: entry.lines, snippet: entry.snippet });
+      groups.get(key).ranges.push({ lines: entry.lines, snippet: entry.snippet, target: entry.target });
     }
   }
   return [...groups.values()];
@@ -1187,6 +1232,17 @@ export function stepParts(item, items) {
  */
 export function stepRelation(item, { minimal = false } = {}) {
   const shown = asArray(item?.relations).filter((relation) => !minimal || relation !== "exactMatch");
+  // The guide describes the correspondence, not a stronger claim of formal equivalence.
+  // Absence and broader/narrower claims must never be hidden by an authored guide.
+  const guide = isStep(item) && item.proofGuide;
+  if (guide && asArray(item.relations).every(r => ["exactMatch", "closeMatch"].includes(r))) {
+    const count = stepCards(item).length;
+    return {
+      word: guide.kind === "chain" ? `${count} linked lemmas`
+        : guide.kind === "helper" ? "Helper lemma" : "Proof excerpt",
+      title: [guide.summary, ...shown.map(r => RELATION_SUMMARIES[r] ?? "")].filter(Boolean).join(" "),
+    };
+  }
   return {
     title: shown.map((relation) => RELATION_SUMMARIES[relation] ?? "").filter(Boolean).join(" "),
     word: shown.map((relation) => RELATION_WORDS[relation] ?? relation).join(", "),

@@ -968,6 +968,8 @@ test("steps: a step's ranges are grouped by declaration in the record's order, w
   assert.equal(stepCards(items.get("b")).length, 1, "three ranges of one declaration are one card");
   assert.deepEqual(only.ranges.map((range) => range.lines), [[22, 23], [25, 25], [27, 40]]);
   assert.deepEqual(only.ranges.map((range) => range.snippet.line), [22, 25, 27]);
+  assert.deepEqual(only.ranges.map((range) => range.target),
+                   items.get("b").cards.map((card) => card.target), "each range retains its hover lookup target");
   assert.equal(only.ranges[2].snippet.truncated, true);
   assert.equal(only.ranges[0].snippet.truncated, undefined);
   assert.deepEqual(stepCards(items.get("c")).map((entry) => entry.fullName), ["Notes.Box.double", "Notes.Box.bound"]);
@@ -1080,5 +1082,18 @@ test("titles: script characters become runs of the plain characters they stand f
 test("titles: other mathematics is left as written", () => {
   for (const value of ["½ × Ŝ", "⟨u, v⟩ ⟂ ℝ", "𝐅 𝑇 𝒫 ℒ", "x′", "⋯ ∑ √", "ê", "α β λ"]) {
     assert.deepEqual(scriptRuns(value), [["text", value]]);
+  }
+});
+
+
+test("titles: braced scripts preserve capitals, brackets and nested script content", () => {
+  assert.deepEqual(scriptRuns("ι_{S} : S → X"), [["text", "ι"], ["sub", "S"], ["text", " : S → X"]]);
+  assert.deepEqual(scriptRuns("γ_{[r,s]} and x^{Q}"),
+    [["text", "γ"], ["sub", "[r,s]"], ["text", " and x"], ["sup", "Q"]]);
+  assert.deepEqual(scriptRuns("Π₁(ι_{Uᵢ})"),
+    [["text", "Π"], ["sub", "1"], ["text", "(ι"], ["sub", "Uᵢ"], ["text", ")"]]);
+  assert.deepEqual(scriptRuns("ι_{U_{i}}"), [["text", "ι"], ["sub", "U_{i}"]]);
+  for (const literal of ["x_S", "x^Q", "x_{}", "x_{S", "a < b", "<img src=x>"]) {
+    assert.deepEqual(scriptRuns(literal), [["text", literal]]);
   }
 });

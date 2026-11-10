@@ -34,8 +34,9 @@ source or their owners' details into this repo.
 SKILL.md README.md CLAUDE.md CONTRIBUTING.md CHANGELOG.md POLICY.md LICENSE
 docs/design/stage_map.md   the current spec; change it in the same commit as the code
 docs/design/archive/       the design record it came from (historical)
-docs/proposals/            designs: pdf-to-companion.md (not yet built) and
+docs/proposals/            designs: pdf-to-companion.md (not yet built),
                            wikipedia-locate.md (locate; its §1 says what is built)
+                           and informalize.md (its status line says what is built)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
 vendor/              literature_links/: Literature Links 1.0.1,
@@ -66,6 +67,21 @@ scripts/corpus/      locate's universes (`cf corpus`): the host probe drivers an
                      corpus.sqlite and its read API; templates/corpus/ holds the probe
                      and its acceptance canary (references/locate-documents.md §8)
 scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
+scripts/informalize/ the informalize mode behind `cf informalize`: informalize.yaml, the
+                     output repository and the exception it is written under, the runtime
+                     sync, the item table and `check-items`, receipts and approvals, the
+                     library's builds (`library.py`; `library_host.sh` and `library_host.py`,
+                     and for the overlay's hovers `verso_host.sh` and `verso_host.py`, run on
+                     the host beside locate's drivers, with no cflib), the scope,
+                     the fleet's planner (`plan.py`, behind `cf plan-informalize`), whose
+                     gate is scripts/gate/verify_informal.py, `apply.py`, which puts a
+                     harvested phase's files into the output repository and writes the
+                     phase's stage receipt, `pdf.py`, the canonical PDF's two ends
+                     (`cf informalize pdf-command` and `fetch-pdf`, around the runtime's
+                     `tools/canonical_pdf.sh` on the host), and `overlay.py`, the
+                     annotations, the generated site and its checks
+                     (`cf informalize overlay` and `check-site`)
+                     (docs/proposals/informalize.md)
 scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
                      its three presets, outcomes with the derived status, and the
                      Literature Links export (references/locate-documents.md);
@@ -77,8 +93,17 @@ scripts/bench/       locate's benchmark (`cf bench`; references/locate-bench.md)
                      workflows/locate-label.workflow.js, its frozen labeler
 templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
                      tests/ holds its node --test suites
+templates/informalize/ runtime/ is copied verbatim into an output repository's informal/
+                     (fcmarkers.sty, STYLE.md, the build, check and canonical-PDF tools);
+                     project/ holds the templates `cf informalize init` renders once,
+                     site/ the landing page and the two workflows `cf informalize overlay`
+                     writes, licenses/
+                     the text of each open license it writes as LICENSE, and schema/
+                     informalize.yaml's and items.json's JSON Schemas, for a reader
+                     (docs/proposals/informalize.md sections 7 and 10)
 templates/campaign/  the host-side sequencer `cf campaign render` writes
-templates/tend/      the tend root's config, faithfulness and locate (`*-locate*`)
+templates/tend/      the tend root's config, faithfulness, locate (`*-locate*`) and
+                     informalize (`*-informalize*`)
 templates/  workflows/  tests/  .github/workflows/
 ```
 
@@ -103,7 +128,9 @@ Those two lines move together or not at all.
 - No network in library code. The only exceptions are the errata fetcher
   (curl, raw HTML kept, never a summarising fetch), an explicit
   `cf onboard --download` of a PDF the author publishes himself, the
-  run/harvest commands (ssh/rsync to an allowlisted host), and the Wikipedia
+  run/harvest commands and `cf informalize fetch-library` and `fetch-pdf`, each
+  `--execute --i-have-consent`
+  (ssh/rsync to an allowlisted host), and the Wikipedia
   fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — `scripts/sources/wikinet.py`,
   the one module that may reach Wikipedia: curl, the raw bytes kept, one fixed
   parameter set, each revision fetched once, and only under an explicit
@@ -139,7 +166,16 @@ Those two lines move together or not at all.
   where a document is written, and `tests/test_vendored_format.py` checks that
   every value the skill writes is one the format admits (containment, not
   equality). What the format does not carry (ledger verdicts, finding kinds)
-  goes under `x_` keys.
+  goes under `x_` keys. The second documented copy is the informalize runtime's:
+  `templates/informalize/runtime/tools/fccommon.py` runs in an output repository
+  and on a run host, where `cflib` cannot be imported, so it inlines the item
+  kinds, the roles, the relations, the reference sources and the informalize
+  item id (`cflib.items.INFORMAL_ITEM_ID`, the second item grammar beside the
+  book one), and `tests/test_informalize_runtime.py` pins each copy to `cflib`,
+  as `gate/verify_findings.py`'s `finding_id` is pinned. The informalize gate,
+  `gate/verify_informal.py`, likewise inlines the fleet documents' enums
+  (`INFORMALIZE_SEVERITIES` and its four siblings, the phases, the attempt cap),
+  and `tests/test_informalize_fleet.py` pins those.
 - **One item grammar, one namespace rule.** `scripts/cflib/items.py`. Never
   write another item regex; never let an unparseable id become a key. Parsing
   is whitespace-tolerant and produces a *reject list* callers must report. An
@@ -205,6 +241,21 @@ Those two lines move together or not at all.
   generator commit they stamp is read from THIS checkout, through
   `cflib.gitsafe`. `docs/overlay.md` rule 5 is the whole exception; widening it
   is a change to that file in the same commit.
+  **A second exception: the repository informalize creates.** `cf informalize
+  init` creates `informalize/<id>/repo/` inside the workspace, a git repository
+  of its own that the workspace's git ignores, and stamps it:
+  `informal/informalize.json` names the id. Only `cf informalize` subcommands
+  write there, only into a repository carrying that stamp, and only these
+  paths: `informal/`, `annotations/`, `pdf-overlay/`, `site/index.html`, the
+  workflow directory `.github/workflows/`, the ignored PDF cache
+  `.lake/overlay-pdf/`, `README.md`, `LICENSE`, `.gitignore`, `.editorconfig`, `AGENTS.md`,
+   `CONTRIBUTING.md`, `Makefile`, and the project directories `docs/`, `tools/`, `tests/`. They refuse a
+  `repo/` that is a symlink or resolves outside `informalize/<id>/`, refuse to
+  write through a symlinked component, and run git there only through
+  `cflib.gitsafe`. They never write to the library they read. `cf overlay`
+  keeps its own exception (rule 5) for this repository as for any companion.
+  `scripts/informalize/outrepo.py` is that exception in code, and
+  `docs/proposals/informalize.md` section 1.3 its wording.
 
 ## 5. Adding a command
 
@@ -287,6 +338,11 @@ The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
 `CF_M1_ENFORCE_BARS=1` (assert the proposal's recall bars instead of only
 reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
 and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
+`tests/test_informalize_runtime.py` builds PDFs and skips without pdflatex, latexmk,
+kpsewhich, poppler or a package of `tex_packages`, and so does the one build test of
+`tests/test_informalize_cli.py` (without poppler's part) and the fleet's phases that build in
+`tests/test_e2e_informalize_synthetic.py`; `CF_REQUIRE_TEX=1` makes that skip a failure, and
+CI's `informalize-tex` job sets it.
 Tests that compare this checkout with a frozen base commit skip in a checkout
 that does not hold it, such as a shallow clone; `CF_REQUIRE_BASE_COMMITS=1`
 makes that a failure (`tests/_base_commits.py`), and CI sets it and takes the
@@ -332,3 +388,20 @@ bad documents refused under the rule they break, then harvest, the locate
 tally, the Literature Links export and the bench. Run it with `python3
 tests/e2e/locate_synthetic/driver.py [--keep <dir>]`; the suite runs it as
 `tests/test_e2e_locate_synthetic.py`.
+
+`tests/e2e/informalize_synthetic/driver.py` is the same for the informalize fleet: an
+informalize id over a fake library, each phase planned with `cf plan-informalize`, its
+contributions written in worktrees of an entrypoint made as `cf run` makes one, and judged by
+the staged gate as the run host runs it (a copy of the planned `gate/`, `python3 -I`, PATH and
+HOME alone); good contributions pass, bad ones are refused under the rule they break, and a
+task at the attempt cap is ended by `attempt_cap.py` and admitted. Between phases each run is
+harvested with `cf harvest` from that entrypoint and applied with `cf informalize apply`,
+which commits what it wrote in the output repository and writes the phase's stage
+receipt. Then stage I6 — the tree `cf informalize pdf-command` writes,
+`informal/tools/canonical_pdf.sh` run in a copy of it as the host runs it, a run without
+poppler stopping at exit 4, and `fetch-pdf` over a local ssh and rsync — and stage I7,
+`cf informalize overlay` and `check-site` with the two approvals. The phases that build
+need TeX, every package of `tex_packages` included, and are skipped without them; I6 and
+I7 need poppler besides.
+Run it with `python3 tests/e2e/informalize_synthetic/driver.py [--keep <dir>]`; the suite
+runs it as `tests/test_e2e_informalize_synthetic.py`.

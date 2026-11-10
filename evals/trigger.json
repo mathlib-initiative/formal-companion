@@ -30,6 +30,12 @@
     "why": "Adjudicate / tally / route over a corpus somebody else produced -- `cf import-corpus` is the entry point."
   },
   {
+    "id": "write-up-from-lean",
+    "query": "Our Lean library proves a big theorem and there is nothing written about it anywhere. Can you write up the statement, and the definitions and lemmas it rests on, in LaTeX, and make sure the write-up really says what the Lean says?",
+    "should_trigger": true,
+    "why": "The informalize mode runs the audit backwards: it takes the theorem's dependency closure out of the Lean, writes the statements, and has a fleet attack the text against the declarations. The description's informalize clause is the only thing a router sees, and this prompt is what measures it."
+  },
+  {
     "id": "single-declaration",
     "query": "Does this one lemma match Theorem 1.2.13 in the book? Here is the statement and here is the page.",
     "should_trigger": false,

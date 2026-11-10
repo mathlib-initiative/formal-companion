@@ -121,6 +121,58 @@ reviews rejected in each run (commit `0514feb`). Inventory pilots ran over 83 ar
 host, and none shows frozen bench gold. Milestones L-M4 to L-M6 are open, and no coverage
 figure for Wikipedia appears in this repository.
 
+## Informalization
+
+**Built.** Components 1 to 9 of `docs/proposals/informalize.md` section 11: the
+specification with `tests/test_informalize_spec.py`, which holds it to the code it names; the LaTeX
+runtime and the project templates
+(`templates/informalize/`); `cf informalize init | sync | status | build-command |
+fetch-library | verso-command | scope | apply | pdf-command | fetch-pdf | overlay |
+check-site | check-items | approve | reference-checklist`, with `cf run` (which starts
+the phase's spend watchdog at the smoke stage) and `cf harvest`;
+`cf plan-informalize` with the out-of-tree gate `scripts/gate/verify_informal.py`, the
+phase prompts and the tend config; `cf export informal-markers`, which turns a
+canonical PDF's boxes into one annotation document, with `cf informalize verso-command`,
+which prints the lines that build the library's literate HTML with Verso on a host and cut
+the committed `pdf-overlay/verso.json` of section 10 out of it, so that a card shows its
+declaration as the literate page does; and the two stages that make what a reader sees —
+`pdf-command` and `fetch-pdf` for the canonical PDF the host builds twice from clean
+(`informal/tools/canonical_pdf.sh`), `overlay` and `check-site` for the annotations, the
+generated landing page, the two workflows and the built site. A run from `init` to
+`approve <id> publish` needs a person only for the six approvals of section 13, for the
+two host jobs, which are started from printed lines, and for publishing itself; nothing
+it writes is written or committed by hand, the hovers' `pdf-overlay/verso.json` included.
+`references/runbook-server.md` section 10 is the whole sequence.
+
+**Synthetic end-to-end checks.** `tests/e2e/informalize_synthetic/driver.py` takes
+an informalize id over a fake library through every phase: the planner, contributions
+written in worktrees of an entrypoint made as `cf run` makes one, the staged gate run as
+a run host runs it (a copy of `gate/`, `python3 -I`, a bare environment) admitting good
+contributions and refusing bad ones under the rule they break, a task ended at the
+attempt cap, and `cf harvest` and `cf informalize apply` between phases; then stage I6 —
+the tree `pdf-command` writes, `canonical_pdf.sh` run in a copy of it as the host runs it,
+a run without poppler stopping at exit 4, and `fetch-pdf` over a local ssh and rsync — and
+stage I7, `cf informalize overlay` and `check-site` with the two approvals, each run
+twice so that the repository is clean after both and the second run commits nothing, and
+once more over a `pdf-overlay/verso.json` left where the Verso step leaves one.
+`tests/test_informalize_runtime.py` builds a two-section document of five items and six
+parts with pdflatex and checks the boxes
+against the lines the pilot's got wrong. Those builds, and the fleet phases that build,
+skip without TeX, and I6 and I7 skip without poppler; CI's `informalize-tex` job runs
+them with `CF_REQUIRE_TEX=1`.
+
+**Published example.** The Seifert–van Kampen account went through all six
+informalization phases. Its [published viewer](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/)
+links statements and individual proof steps to TauCeti at
+`37f5e9dce5ac83d2825198ac72d7f5d64eb26c85`. The first publication has a
+[pinned source tree](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/tree/v1)
+and a [canonical PDF](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/releases/tag/v1).
+The phase receipts remain in the operator's workspace.
+
+**Not implemented.** Nothing of section 11; the optional later work it names (blueprint
+`\lean{}` and `\label{}` from the marker package, so that the audit's blueprint adapter
+can read the text a second time) has not been started.
+
 ## PDF-to-companion pipeline
 
 `docs/proposals/pdf-to-companion.md` designs ten stages, and the deterministic parts of

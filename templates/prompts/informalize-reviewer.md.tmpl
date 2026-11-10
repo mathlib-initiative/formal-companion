@@ -1,0 +1,13 @@
+You are reviewing contribution worktree $TEND_WORKTREE_ID for task file `tasks/$TEND_TASK_ID.yaml` in worktree $TEND_WORKTREE_PATH (the current git worktree).
+
+Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json` (the paths the task owns), then the change: `git diff {{merge_target_branch}}...HEAD`.
+{{#if has_findings_check}}
+You may run the document rules on what the task wrote, `{{gate_command}} --findings <path>` (`{{findings_path}}`); never add `--changed-files` (beside `--findings` the gate refuses it, exit 3).
+{{/if}}
+
+## How to finish (required)
+Your stdout is not read, and there is no `final_result` tool on this bridge. Finish by writing **`.tend/agent_result.json`** in the worktree:
+
+{"schema_version": 1, "verdict": "approve", "notes": "what you checked", "feedback_text": ""}
+
+`verdict` is `approve` or `request_changes`. When requesting changes, `feedback_text` must be non-empty and name the mismatch or the rule. Do not merge anything.

@@ -275,6 +275,16 @@ class VersoCase(unittest.TestCase):
 
 
 class TestTheStatement(VersoCase):
+    def test_a_field_excerpt_keeps_its_context_label_and_hovers_only_the_actual_field(self):
+        snippet = "structure Box where\n  …\n  side : ℝ"
+        runs = self.statement("Notes.Box.side", snippet)
+        self.assertIsNotNone(runs)
+        self.assertEqual(joined(runs), snippet)
+        self.assertIn(["el", "…"], runs)
+        self.assertTrue(any(r[0] == "const" and r[1] == "side" and r[2] == 14 for r in runs))
+        self.assertIsNone(self.statement("Notes.Box.side", snippet.replace("Box", "OtherBox")))
+        self.assertIsNone(self.statement("Notes.Box", snippet), "the field must cover its own anchor")
+
     def test_a_one_element_box_gives_the_snippet_with_its_tokens_body_included(self):
         snippet = ("noncomputable def volume (b : Box) : ℝ :=\n  b.side * b.side + zero")
         runs = self.statement("Notes.Box.volume", snippet)
@@ -534,6 +544,72 @@ class PagesCase(VersoCase):
         return VERSO.extract_pages(self.site, entries(*ends), commit=commit)
 
 
+class TestProofRangePages(PagesCase):
+    def test_a_proof_range_keeps_its_exact_text_local_bindings_and_hovers(self):
+        snippet = '  exact "a b"'
+        value, counts = self.pages(remote_end("", snippet, line=77, kind="proof_step"))
+        [runs] = value["statements"][remote_key("Notes.Box", 77)]
+        self.assertEqual(joined(runs), snippet)
+        self.assertIn(["kw", "exact"], runs)
+        self.assertIn(["lit", '"a b"', 52], runs)
+        self.assertEqual(value["hovers"]["52"]["signature"], '"a b" : String')
+        self.assertEqual(counts, {"statements": 1, "targets": 1})
+        self.assertEqual(VERSO.committed_problems(value), [])
+
+    def test_a_named_proof_range_on_the_viewers_own_site_uses_the_proof_not_just_its_header(self):
+        end = lean_end("Notes.Box.two", 'exact "a b"')
+        end["location"]["lines"] = [9]
+        value, _ = self.extract(end)
+        [runs] = value["statements"][f"{BOX_PAGE}#Notes___Box___two"]
+        self.assertEqual(joined(runs), 'exact "a b"')
+        self.assertIn(["lit", '\"a b\"', 52], runs)
+
+    def repeated(self):
+        def declaration(name, hover):
+            return box(block(tok("keyword", "theorem"), gap(),
+                tok("const", name, ident=f"Notes___Box___{name}"), gap(" : True := by\n\n  "),
+                tok("keyword", "exact"), gap(), tok("var", "h", hover, "var-h")))
+        self.write(BOX_PAGE, page(declaration("a", 11), declaration("b", 41)))
+
+    def test_repeated_excerpts_without_context_are_refused(self):
+        self.repeated()
+        value, _ = self.pages(remote_end("", "exact h", line=12, kind="proof_step"))
+        self.assertEqual(value["statements"], {})
+        self.assertEqual(value["hovers"], {})
+
+    def test_build_line_metadata_selects_the_correct_proof_for_repeated_text(self):
+        self.repeated()
+        meta = self.site.parent / "literate" / "Notes" / "Box.json"
+        meta.parent.mkdir(parents=True)
+        meta.write_text(json.dumps({"module": "Notes.Box", "items": {"items": [
+            {"range": [{"line": 1}, {"line": 5}], "defines": ["Notes.Box.a"]},
+            {"range": [{"line": 10}, {"line": 15}], "defines": ["Notes.Box.b"]},
+        ]}}))
+        value, _ = self.pages(remote_end("", "exact h", line=12, kind="proof_step"))
+        [runs] = value["statements"][remote_key("Notes.Box", 12)]
+        self.assertEqual(joined(runs), "exact h")
+        self.assertIn(["var", "h", 41], runs)
+        self.assertEqual(value["hovers"]["41"]["signature"], "False")
+        self.assertNotIn("11", value["hovers"], "another proof's binding must not be borrowed")
+        # The selected declaration cannot borrow a unique snippet from its neighbour.
+        bad = remote_end("", "theorem a : True := by", line=12, kind="proof_step")
+        self.assertEqual(self.pages(bad)[0]["statements"], {})
+
+    def test_blank_lines_do_not_make_one_occurrence_ambiguous_and_stale_text_stays_plain(self):
+        self.write(BOX_PAGE, page(box(block(gap("\n\n  "), tok("keyword", "exact"), gap(),
+                                             tok("var", "h", 11)))))
+        value, _ = self.pages(remote_end("", "  exact h", line=4, kind="proof_step"))
+        self.assertIn(remote_key("Notes.Box", 4), value["statements"])
+        self.assertEqual(self.pages(remote_end("", "exact changed", line=4, kind="proof_step"))[0]["statements"], {})
+
+    def test_goal_views_are_not_proof_code_and_a_trailing_cut_mark_stays(self):
+        self.assertEqual(self.pages(remote_end("", "False", line=7, kind="proof_step"))[0]["statements"], {})
+        value, _ = self.pages(remote_end("", 'exact "a b"…', line=7, kind="proof_step"))
+        [runs] = value["statements"][remote_key("Notes.Box", 7)]
+        self.assertEqual(joined(runs), 'exact "a b"…')
+        self.assertEqual(runs[-1], ["el", "…"])
+
+
 class TestPagesOfABuildElsewhere(PagesCase):
     def test_a_card_is_found_by_its_module_and_declaration_and_filed_under_its_own_key(self):
         snippet = "noncomputable def volume (b : Box) : ℝ :=\n  b.side * b.side + zero"
@@ -614,6 +690,47 @@ class TestPagesOfABuildElsewhere(PagesCase):
         self.assertNotIn("build", uncommitted)
         self.assertEqual([line[:6] for line in VERSO.committed_problems(uncommitted)], ["build:"],
                          "a committed file must say which commit its build is of")
+
+    def test_dependency_pages_keep_their_own_hovers_and_pinned_revision(self):
+        repo = "https://git.example.invalid/dependency"
+        project = self.site.parent.parent.parent
+        manifest = project / "lake-manifest.json"
+        data = json.loads(manifest.read_text())
+        data["packages"].append({"name": "dependency", "type": "git", "url": repo + ".git",
+                                 "rev": "d" * 40})
+        manifest.write_text(json.dumps(data))
+        dependency = project / ".lake/packages/dependency/.lake/build/literate-html"
+        module_page = dependency / "Dependency/Box/index.html"
+        module_page.parent.mkdir(parents=True)
+        module_page.write_text(page(box(block(
+            tok("keyword", "def"), gap(), tok("const", "three", 10, ident="Dependency___Box___three"),
+            gap(" := 3")))))
+        (dependency / VERSO.DOCS_NAME).write_text(json.dumps({"10": "<code>Dependency.Box.three : Nat</code>"}))
+        own = remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3)
+        dep = remote_end("Dependency.Box.three", "def three := 3", module="Dependency.Box",
+                         version="d" * 40)
+        dep["uri"] = repo
+        value, counts = VERSO.extract_pages(self.site, entries(own, dep), commit=self.COMMIT,
+                                            dependency_pages={repo: dependency})
+        self.assertEqual(value["build"]["dependencies"], {repo: "d" * 40})
+        self.assertEqual(counts, {"statements": 2, "targets": 2})
+        self.assertEqual(VERSO.committed_problems(value), [])
+        self.assertIsNone(VERSO.unpinned(value, entries(own, dep)))
+        kept, counts = VERSO.joined(value, entries(own, dep))
+        self.assertEqual(counts["dropped"], 0)
+        self.assertEqual(kept["hovers"]["10"]["signature"], "Notes.Box.side_pos (b : Box) : 0 < b.side")
+        [runs] = kept["statements"][VERSO.card_target(dep)]
+        hover_id = next(str(r[2]) for r in runs if r[0] == "const" and r[1] == "three")
+        self.assertNotEqual(hover_id, "10", "different page builds can reuse hover IDs")
+        self.assertEqual(kept["hovers"][hover_id]["signature"], "Dependency.Box.three : Nat")
+        dep["version"] = "e" * 40
+        cut, counts = VERSO.joined(value, entries(own, dep))
+        self.assertEqual(counts["dropped"], 1)
+        self.assertNotIn(VERSO.card_target(dep), cut["statements"])
+        self.assertNotIn(hover_id, cut["hovers"])
+        with self.assertRaises(VERSO.overlay_annotations.AnnotationError):
+            VERSO.extract_pages(self.site, entries(own, dep), commit=self.COMMIT,
+                                dependency_pages={"https://git.example.invalid/unknown": dependency})
 
     def test_the_command_writes_the_committed_form_one_entry_a_line(self):
         ends = (remote_end("Notes.Box.three", "def three := 3"), remote_end("Notes.Box.uno", "def uno := 1", line=2))
@@ -714,6 +831,10 @@ class TestTheCommittedFile(PagesCase):
             ("hovers['10']", lambda v: v["hovers"]["10"].update(doc="")),
             ("build", lambda v: v["build"].update(commit="HEAD")),
             ("build", lambda v: v["build"].pop("commit")),
+            ("build.dependencies", lambda v: v["build"].update(dependencies=[])),
+            ("build.dependencies", lambda v: v["build"].update(dependencies={"https://git.example.invalid/lib": "tag"})),
+            ("build.dependencies", lambda v: v["build"].update(dependencies={"http://git.example.invalid/lib": "a" * 40})),
+            ("build.dependencies", lambda v: v["build"].update(dependencies={"https://[": "a" * 40})),
             ("build", lambda v: v.pop("build")),
             ("a list of statements", lambda v: v["statements"].update({key: []})),
         )

@@ -393,7 +393,7 @@ class TestExport(OverlayCase):
                       "--commit", "b" * 40)
         self.assertEqual(code, 0)
         self.assertIn("warn pdf-overlay/data/declaration-snippets.json is not read", err.getvalue())
-        self.assertIn("warn no snippet for 1 of the ids the refinement lists", err.getvalue())
+        self.assertIn("warn no snippet for 1 of the ids it links", err.getvalue())
         self.assertIn("Notes.gone", err.getvalue())
 
     def test_an_input_outside_the_companion_is_not_recorded(self):

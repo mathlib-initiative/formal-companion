@@ -20,17 +20,32 @@ from pathlib import Path
 NON_FINDING_FILES = {"RECEIPT.json", "run.yaml", "run.json", "manifest.json",
                      "tally.json", "journal-harvest.json", "gate.json",
                      "gate.local.json", "queue_remaining.json"}
+#: top-level directories of a corpus that hold no findings.  ``tree/`` is an
+#: informalize harvest's copy of the files its run changed in the output
+#: repository (``harvest/informal_files.py``, docs/proposals/informalize.md
+#: section 8.5): ``informal/items.json`` is a document of the text, not a
+#: finding, and counting it as one would make it an extra on every receipt.
+#: ``scripts/gate/verify_findings.py`` needs no copy of this: it lists the top
+#: level of a corpus directory only.  The rule is global and the name is not
+#: reserved, so it would also hide a task directory called ``tree``: no planner
+#: can write one.  A faithfulness corpus is flat (the exclusion needs a path of
+#: two components or more); a locate task is ``inv-<source>`` or ``loc-...``
+#: (``locate/plan.py``); an informalize task is named for its phase and section
+#: (``informalize/plan.py``).
+NON_FINDING_DIRS = {"tree"}
 
 
 def is_finding_name(rel: str) -> bool:
     """Is this posix path, relative to a corpus directory, a findings document?
 
     ``*.json``, not one of :data:`NON_FINDING_FILES` (by basename, at any depth),
-    and no path component hidden behind a dot.
+    not under one of :data:`NON_FINDING_DIRS`, and no path component hidden
+    behind a dot.
     """
     parts = [p for p in str(rel).split("/") if p]
     return (bool(parts) and parts[-1].endswith(".json")
             and parts[-1] not in NON_FINDING_FILES
+            and not (len(parts) > 1 and parts[0] in NON_FINDING_DIRS)
             and not any(p.startswith(".") for p in parts))
 
 

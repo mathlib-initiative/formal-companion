@@ -134,8 +134,13 @@ def _host_paths(ws, host: str, run_id: str, source_id: str) -> dict:
     entry = ws.hosts.get(host) or {}
     if not isinstance(entry, dict):
         entry = {}
-    root = str(entry.get("remote_root") or ws.hosts.get("remote_root")
-               or manifest_mod.default_remote_root()).rstrip("/")
+    # through `check_remote_root`, as `manifest.resolve_host` does: every path below is
+    # built from this one and quoted for the host's shell, so a `~` would be a directory
+    # of that name.  Refused here, at the plan, rather than by the `cf run` that would
+    # otherwise send the plan back to be made again.
+    root = manifest_mod.check_remote_root(
+        str(entry.get("remote_root") or ws.hosts.get("remote_root")
+            or manifest_mod.default_remote_root()), host)
     return {
         "kind": "remote",
         "remote_root": root,

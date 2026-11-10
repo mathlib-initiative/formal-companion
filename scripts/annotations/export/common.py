@@ -32,6 +32,9 @@ docs/proposals/pdf-to-companion.md section 5.4.
   keys it owns is present (invariant I14), at the version the vendored package
   knows.  A source's ``role`` is core (1.0.0rc1 and later), so a document whose only
   profile-shaped key is ``role`` declares nothing.
+* :func:`report_warnings` is what a successful export's counts say that the
+  user must see anyway: an input nothing read, a snippet not located, and a
+  snippet cut at a line the document does not give for its declaration.
 * :func:`has_url` is the exporters' own guard for the format's ``external-urls``
   lint (``L1``): a note, a title or a raw label that holds a URL is dropped and
   reported, so the documents pass the lint the viewer's deployment relies on.
@@ -277,8 +280,26 @@ def report_warnings(counts: dict) -> list[str]:
     out = [f"{rel} is not read; it can be deleted" for rel in counts.get("ignored_inputs") or []]
     unlocated = counts.get("snippets_unlocated") or []
     if unlocated:
-        out.append(f"no snippet for {len(unlocated)} of the ids the refinement lists (not in the Lean file "
-                   f"the ledger names): {', '.join(unlocated[:5])}" + (", …" if len(unlocated) > 5 else ""))
+        out.append(f"no snippet for {len(unlocated)} of the ids it links (not in the Lean file the "
+                   f"document names for them): {', '.join(unlocated[:5])}"
+                   + (", …" if len(unlocated) > 5 else ""))
+    stripped = counts.get("titles_not_printed") or []
+    if stripped:
+        out.append(f"{len(stripped)} title(s) could not be read from the PDF, so they are the "
+                   f"words with their TeX markup stripped and not what the page prints: "
+                   + ", ".join(stripped[:5]) + (", …" if len(stripped) > 5 else ""))
+    unread = counts.get("titles_glyphs_unread") or []
+    if unread:
+        out.append(f"{len(unread)} title(s) were read without the page's own glyphs "
+                   f"(poppler's pdftohtml is not on PATH, or what it read is not what "
+                   f"pdftotext cropped), so they are the flattened text, which prints a "
+                   f"double-struck letter and a script plainly: "
+                   + ", ".join(unread[:5]) + (", …" if len(unread) > 5 else ""))
+    differs = counts.get("snippets_line_differs") or []
+    if differs:
+        out.append(f"{len(differs)} snippet(s) were cut at a line the document does not give for "
+                   f"the declaration, so the source read may not be the pinned one: "
+                   + ", ".join(differs[:5]) + (", …" if len(differs) > 5 else ""))
     return out
 
 

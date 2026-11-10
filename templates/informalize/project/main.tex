@@ -1,0 +1,55 @@
+% {{ title_tex }}
+% Released under {{ license_tex }}.
+%
+% Build with `bash informal/tools/build_pdf.sh OUTDIR' from the repository's
+% root; informal/STYLE.md and informal/STYLE-project.md are the drafting rules.
+% `cf informalize init' wrote this file once from formal-companion's template,
+% and it is the maintainer's from then on.  Keep \usepackage{fcmarkers}, the
+% bibliography entry `reference' when the text cites a reference work, and
+% \input{sections}, the list of sections that `cf informalize approve <id>
+% items' writes.  The build makes the PDF reproducible by itself
+% (\pdftrailerid{}, \pdfsuppressptexinfo=-1, SOURCE_DATE_EPOCH).
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[letterpaper,margin=1.15in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\usepackage{xcolor}
+\usepackage[hyperfootnotes=false]{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={{{ title_tex }}},
+  pdfauthor={{{ author_tex }}},
+}
+\usepackage{fcmarkers}
+\usepackage{notation}
+
+\title{{{ title_tex }}}
+\author{{{ author_tex }}}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+This is an informal account of selected definitions and results from
+{{ library_name_tex }}~\cite{library}.
+
+\input{sections/00-conventions}
+\input{sections}
+
+\begin{thebibliography}{9}
+\raggedright
+{{ reference_bibitem_tex }}
+\bibitem{library}
+  The {{ library_name_tex }} contributors, \emph{{{ library_name_tex }}}, a library of
+  formal mathematics in Lean~4, \url{{{ library_url }}}, commit
+  \texttt{{{ library_commit }}}.
+\end{thebibliography}
+
+\end{document}

@@ -22,11 +22,18 @@ nobody reads, the verify/monitor stages recompute the digest of each
 transferred companion tree, so a read-only copy an agent made writable again is
 visible before its findings are harvested, and a locate run's verify stage
 checks its databases and every source layer its gate reads against the shas
-gate.json pins (references/locate-documents.md section 9).  They record their
+gate.json pins (references/locate-documents.md section 9), and an informalize
+phase's runs its own gate's self-check, which reads the library's source and the
+TeX the agents build with (docs/proposals/informalize.md section 8.3).  They record their
 output into run.yaml through :func:`execute`, including when they REFUSE: a
 step that exits non-zero raises, and the one outcome worth a durable record
 must not be the one that writes nothing, so :func:`execute` appends into a
 caller-owned ``results`` list rather than only returning it.
+
+An informalize phase's smoke stage starts one more thing beside ``tend run``: the
+spend watchdog (:func:`watchdog_steps`), because tend's own budget counts no
+agentbox spend and the cap in run.yaml is otherwise enforced by nobody
+(docs/proposals/informalize.md section 8.1).
 
 Nothing in this module runs anything unless ``execute=True`` is passed, and
 cf run only passes it when the operator gave --execute for a host on the
@@ -374,9 +381,74 @@ def _tree_check(host: dict, entry: dict) -> dict:
     return _ssh(host, cmd)
 
 
+#: seconds between the watchdog's checks on a run host (its own default; the campaign
+#: sequencer's ``CF_WATCH_INTERVAL`` is the same number)
+WATCHDOG_INTERVAL = 300
+
+
+def watchdog_log(remote_root: str, run_id: str) -> str:
+    """Where the watchdog's own output goes: beside the run root, one file per run."""
+    return f"{remote_root.rstrip('/')}/watchdog-{run_id}.log"
+
+
+def watchdog_steps(host: dict, *, run_id: str, tend_root: str, entrypoint: str,
+                   max_cost: float) -> list[dict]:
+    """Stop any watchdog left on this root, clear what it left, then start one (detached).
+
+    ``scripts/run/watchdog.py``, which `cf plan-informalize` stages in the root's
+    ``bin/``: it sums the agents' usage envelopes and runs ``tend-control drain`` when
+    the spend passes ``max_cost``, with no pilot thresholds, so its gate-failure rate and
+    its merged-task count decide nothing (docs/proposals/informalize.md section 8.1).
+    ``</dev/null`` with both streams redirected, as the ``tend run`` step has it:
+    otherwise ssh waits on the detached process's file descriptors and never returns.
+
+    ``watchdog.stop`` and ``watchdog.json`` go with the old process, as the campaign
+    sequencer removes them before each shard: the watchdog's loop leaves on the stop
+    file, so one left by a launch that was stopped by hand would make the new watchdog
+    write a single record and exit -- an unwatched fleet with no ceiling at all -- and a
+    record left from before would be what ``cf run --status`` reports as the spend now.
+    Nothing else removes them: the tend-root rsync has no ``--delete``.
+    """
+    script = f"{tend_root}/bin/watchdog.py"
+    log_path = watchdog_log(host["remote_root"], run_id)
+    command = (f"python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
+               f"--entrypoint {shlex.quote(entrypoint)} --max-cost {max_cost} "
+               f"--interval {WATCHDOG_INTERVAL} --tend {shlex.quote(host['tend_cmd'])}")
+    left = " ".join(shlex.quote(f"{tend_root}/{name}")
+                    for name in ("watchdog.stop", "watchdog.json"))
+    return [
+        {"stage": "smoke", "safe": False,
+         "title": "stop any spend watchdog left on this root by an earlier launch, and "
+                  "remove its stop file and last record (a stop file left there stops the "
+                  "new watchdog at its first check)",
+         **_ssh(host, f"set -e; python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
+                      f"--stop-others; rm -f {left}")},
+        {"stage": "smoke", "safe": False, "record_output": True,
+         "title": f"start the spend watchdog (drains the root at {max_cost} USD; its log is "
+                  f"{log_path})",
+         **_ssh(host, f"nohup sh -c {shlex.quote(command)} </dev/null "
+                      f">> {shlex.quote(log_path)} 2>&1 & echo started")},
+    ]
+
+
+def watchdog_stop_step(host: dict, *, tend_root: str) -> dict:
+    """The 'stop' stage's step: stop the spend watchdog this run's smoke stage started.
+
+    It is started without ``--parent``, so it polls until the root drains or its stop
+    file appears; a phase that is paused or finished by hand would otherwise leave it
+    on the host, one per phase (docs/proposals/informalize.md section 8.1).
+    """
+    script = f"{tend_root}/bin/watchdog.py"
+    return {"stage": "stop", "safe": False,
+            "title": "stop this phase's spend watchdog (it polls on until the root drains)",
+            **_ssh(host, f"python3 {shlex.quote(script)} --root {shlex.quote(tend_root)} "
+                         "--stop-others")}
+
+
 def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                   names: dict, budget: dict, concurrency: dict,
-                  force: bool = False, locate: dict | None = None) -> list[dict]:
+                  force: bool = False, locate: dict | None = None,
+                  informalize: dict | None = None) -> list[dict]:
     """The ordered command plan: preflight, transfer, verify, smoke, raise, monitor.
 
     Each step is ``{stage, title, argv, shell, safe}``; ``safe`` marks the
@@ -477,9 +549,23 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"{tend} tend-task verify {shlex.quote(entrypoint + '/tasks')}"), safe=True)
     add("verify", "orchestrator config",
         _ssh(host, f"{tend} tend validate-config --root {shlex.quote(tend_root)}"), safe=True)
-    gate_script = "verify_locate.py" if locate is not None else "verify_findings.py"
+    gate_script = ("verify_informal.py" if informalize is not None else
+                   "verify_locate.py" if locate is not None else "verify_findings.py")
     gate_dir = f"{root}/{names['gate']}"
-    if locate is not None:
+    if informalize is not None:
+        # The same reason as the locate gate below, and two more of its own: the
+        # gate builds the document with its own copy of the runtime, so a TeX
+        # installation without a package of `tex_packages` fails every task that
+        # builds, and the workers read the library's source at a path only this
+        # transfer puts there (docs/proposals/informalize.md section 8.3).
+        add("verify", "the informalize gate runs out of tree from its own directory (python3 "
+                      "-I --self-check: modules, the pinned sha256s, the task manifests, the "
+                      "library's source and, in a phase that builds, pdflatex, latexmk and "
+                      "every package of tex_packages)",
+            _ssh(host, f"python3 -I {shlex.quote(gate_dir + '/' + gate_script)} --gate-config "
+                       f"{shlex.quote(gate_dir + '/gate.json')} --self-check"),
+            safe=True, record_output=True)
+    elif locate is not None:
         # Not just present: the locate gate must RUN from its own directory, with
         # nothing else on the path (-I).  A gate directory staged without one of
         # its modules passed a `test -f` and then failed every worker's first
@@ -537,6 +623,17 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
             _tree_check(host, entry), safe=True, record_output=True,
             expected=entry["tree_sha256"])
 
+    if informalize is not None and budget.get("max_cost") is not None:
+        # The spend cap is enforced here, not by tend: with agentbox tend's own budget
+        # counts no agent's spend (manifest.check_budget_cap), so an informalize phase's
+        # ceiling is the watchdog the planner staged in the root's bin/.  It starts
+        # BEFORE `tend run`, so the first task is already watched, and with no pilot
+        # threshold: the cap is the whole rule here (section 8.1).  Two of them on one
+        # root would each drain it with its own figures, so a watchdog an earlier
+        # `--stage smoke` left is stopped first, as the campaign sequencer does.
+        steps.extend(watchdog_steps(host, run_id=run_id, tend_root=tend_root,
+                                    entrypoint=entrypoint, max_cost=budget["max_cost"]))
+
     # The limits go on `tend run` ITSELF, not through tend-control first.
     # tend-control writes into orchestrator.sqlite, which does not exist until a
     # run has started, so the old "hold the fleet at 1/1, then start it" order
@@ -577,6 +674,8 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
             expected=entry["tree_sha256"])
     add("stop", "pause (keeps state) / drain / stop",
         _ssh(host, f"{tend} tend-control pause --root {shlex.quote(tend_root)}"))
+    if informalize is not None and budget.get("max_cost") is not None:
+        steps.append(watchdog_stop_step(host, tend_root=tend_root))
     return steps
 
 

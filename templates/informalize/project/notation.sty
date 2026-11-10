@@ -1,0 +1,26 @@
+% notation.sty: the notation of this text, shared by every section.
+%
+% `cf informalize init' wrote this file once from formal-companion's template;
+% the conventions task fills it in, and the editor keeps it.  Section drafters
+% use these macros and define no global notation of their own (STYLE.md).
+%
+% Each standing hypothesis of hypotheses.json gets one \fcdefhyp here, with
+% the macro and the key hypotheses.json names, and the words the text prints:
+%
+%   \fcdefhyp{\hypOpen}{open}{$U$ and $V$ are open}
+%
+% "Suppose that \hypOpen." then prints the words and records the hypothesis
+% for the item or part it is written in; \hypOpen* prints the words only.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{notation}[2026/11/03 v1.0 notation]
+
+\RequirePackage{amsmath}
+\RequirePackage{amssymb}
+
+% Number systems.
+\providecommand\N{\mathbb{N}}
+\providecommand\Z{\mathbb{Z}}
+
+% Standing hypotheses (one \fcdefhyp per key of hypotheses.json).
+
+\endinput

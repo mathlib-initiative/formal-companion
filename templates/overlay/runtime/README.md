@@ -73,6 +73,6 @@ cf overlay check <companion>
 ## Reading the PDF alone
 
 Choose **Read PDF** in the viewer's top bar to hide the annotation boxes and
-Lean panel. Page, zoom and rotation controls still work. Choose **Show links**,
-or press Escape, to restore the annotations
+Lean panel. Page, zoom and rotation controls still work, and the PDF text is
+selectable. Choose **Show links**, or press Escape, to restore the annotations
 and your selected passage. Reading mode lasts for the current visit.

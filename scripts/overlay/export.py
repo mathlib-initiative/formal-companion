@@ -12,9 +12,11 @@ document; this module adds what they deliberately refuse to do, because
    defaults (`overlay.shards`, `overlay.defaults`), and check every file with
    the vendored `literature_links` scan;
 3. only then record the files (their count and manifest sha256) in
-   `pdf-overlay/GENERATED.json`, with the export, its commit and the sha256 of
-   every curation input it read, so the companion's CI can tell a stale export
-   without the skill, and replace the files in `<companion>/annotations/`.
+   `pdf-overlay/GENERATED.json`, with the export, the commit it read, the Lean
+   repository its ends point into when that is another one (:func:`_export_record`)
+   and the sha256 of every curation input it read, so the companion's CI can tell
+   a stale export without the skill, and replace the files in
+   `<companion>/annotations/`.
 
 A failed export, conversion or scan leaves the companion untouched.  The
 writes follow rule 5: `annotations/` and `pdf-overlay/GENERATED.json`, through
@@ -25,6 +27,7 @@ from __future__ import annotations
 import collections
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,10 +52,17 @@ __all__ = ["CONVENTIONS", "ExportResult", "export", "run_cf_export"]
 #: The `cf export` subcommands that write an annotation document.  `site-pages`
 #: writes a page manifest, which is an INPUT to one of these, not a document;
 #: `tests/test_overlay_cli.py` pins this set against the live `cf export` tree.
-CONVENTIONS = ("attribution-table", "docstring-tags")
+CONVENTIONS = ("attribution-table", "docstring-tags", "informal-markers")
+
+#: The conventions whose document's `companion` is a repository OTHER than the
+#: checkout exported, so the export's own commit comes from the report
+#: (:func:`_export_record`) and the companion goes in ``export.lean``.
+FOREIGN_COMPANION = ("informal-markers",)
 
 #: What a failed export prints back, at most.
 TAIL = 600
+#: A commit the record may carry as the export's: the checkout's HEAD, in full.
+FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass
@@ -108,6 +118,41 @@ def _inputs(root: Path, report: dict, doc: dict) -> list[dict]:
         path = root.joinpath(*pure.parts)
         if path.is_file() and not path.is_symlink() and Path(os.path.realpath(path)).is_relative_to(root):
             out.append({"path": rel, "sha256": overlay_sync.digest(path.read_bytes())})
+    return out
+
+
+def _export_record(doc: dict, report: dict, commit: str, convention: str, source_id: str) -> dict:
+    """The `export` block: the commit exported, the convention, the source, and the Lean.
+
+    Its ``commit`` is the checkout's HEAD in full.  For a convention whose
+    companion IS the checkout that is the document's `companion.commit`; for
+    one of :data:`FOREIGN_COMPANION` -- `informal-markers`, whose companion is
+    the library the Lean ends point into -- the report names it
+    (``counts.checkout_commit``, since `cf overlay` runs no git in the
+    companion) and the library goes in ``lean``, so the record still says
+    which bytes were exported and what they link to.
+
+    Which branch to take is the CONVENTION's answer, never a key the report
+    happens to carry: a report that could not be read would otherwise record
+    the library's commit as the export's, a plausible 40-hex sha for bytes
+    nobody exported, in the record whose one job is letting CI tell a stale
+    export.  So a foreign-companion convention whose report does not name the
+    checkout's HEAD is refused instead.
+    """
+    companion = doc.get("companion") or {}
+    if convention not in FOREIGN_COMPANION:
+        return {"commit": companion.get("commit") or commit,
+                "convention": convention, "source_id": source_id}
+    head = (report.get("counts") or {}).get("checkout_commit")
+    if not (isinstance(head, str) and FULL_COMMIT.fullmatch(head) and head.startswith(commit)):
+        raise CfError(f"the {convention} export's report does not name the commit it read "
+                      f"({commit}), so nothing was written",
+                      hint="its companion is the Lean library, not the checkout, so "
+                           "`counts.checkout_commit` is the only record of which bytes "
+                           "were exported; re-run the export and keep its report")
+    out = {"commit": head, "convention": convention, "source_id": source_id}
+    if companion.get("repo") and companion.get("commit") != head:
+        out["lean"] = {"repo": companion["repo"], "commit": companion.get("commit")}
     return out
 
 
@@ -239,8 +284,7 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
     block = {
         "count": len(conversion.files),
         "directory": overlay_sync.ANNOTATIONS_DIRNAME,
-        "export": {"commit": (doc.get("companion") or {}).get("commit") or commit,
-                   "convention": convention, "source_id": source["id"]},
+        "export": _export_record(doc, report, commit, convention, source["id"]),
         "extension": overlay_shards.NAMESPACE,
         "inputs": inputs,
         "manifest_sha256": overlay_sync.manifest_sha256(wanted),

@@ -1,0 +1,12 @@
+# Released PDFs and local build products.
+*.pdf
+.lake/
+/build/
+/site/*
+!/site/index.html
+
+# Python environments, bytecode, and editor metadata.
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store

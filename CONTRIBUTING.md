@@ -38,7 +38,21 @@ these are the four that bite hardest.
    `cf overlay export` write `<companion>/pdf-overlay/` and the annotation
    directory `<companion>/annotations/` and nowhere else, refusing either when
    it is a symlink or resolves outside the companion, and running no git
-   there at all (`docs/overlay.md` rule 5).
+   there at all (`docs/overlay.md` rule 5). **A second exception: the
+   repository informalize creates.** `cf informalize init` creates
+   `informalize/<id>/repo/` inside the workspace, a git repository of its own
+   that the workspace's git ignores, and stamps it: `informal/informalize.json`
+   names the id. Only `cf informalize` subcommands write there, only into a
+   repository carrying that stamp, and only these paths: `informal/`,
+   `annotations/`, `pdf-overlay/`, `site/index.html`, the workflow directory
+   `.github/workflows/`, the ignored PDF cache `.lake/overlay-pdf/`,
+   `README.md`, `LICENSE`, `.gitignore`, `.editorconfig`, `AGENTS.md`,
+   `CONTRIBUTING.md`, `Makefile`, and the project directories `docs/`, `tools/`, `tests/`. They refuse a `repo/` that is a
+   symlink or resolves outside `informalize/<id>/`, refuse to write through a
+   symlinked component, and run git there only through `cflib.gitsafe`. They
+   never write to the library they read. `cf overlay` keeps its own exception
+   for this repository as for any companion
+   (`docs/proposals/informalize.md` section 1.3).
 4. **Metadata only in this repo.** No book text, no page images, no statement
    tables, no findings, no host names, session ids or repo owners' identities.
    Examples in templates and docs are synthetic. `POLICY.md` is the whole rule

@@ -306,6 +306,80 @@ class WorkspacePaths:
         return self.stage_receipts_dir(pipeline_id) / (
             f"{_safe_id(stage, 'stage')}.stage-receipt.json")
 
+    # -- informalize (docs/proposals/informalize.md section 4) ---------
+    #
+    # One directory per informalize id.  repo/, library/ and pdf/ are ignored by the
+    # workspace's git (`cf init`'s .gitignore); repo/ is the output repository, a git
+    # repository of its own that only `cf informalize` writes.
+    @property
+    def informalize_root(self) -> Path:
+        return self.root / "informalize"
+
+    def informalize_dir(self, informalize_id: str) -> Path:
+        return self.informalize_root / _safe_id(informalize_id, "informalize id")
+
+    def informalize_yaml(self, informalize_id: str) -> Path:
+        return self.informalize_dir(informalize_id) / "informalize.yaml"
+
+    def informalize_repo(self, informalize_id: str) -> Path:
+        """The output repository `cf informalize init` creates."""
+        return self.informalize_dir(informalize_id) / "repo"
+
+    def informalize_library(self, informalize_id: str) -> Path:
+        """I1's copy of the library: the index, deps.json, src/ and host/."""
+        return self.informalize_dir(informalize_id) / "library"
+
+    def informalize_library_src(self, informalize_id: str) -> Path:
+        """The library's source at its commit, unpacked from `git archive`."""
+        return self.informalize_library(informalize_id) / "src"
+
+    def informalize_library_to_host(self, informalize_id: str) -> Path:
+        """What `cf informalize build-command` copies to the host: the drivers, the
+        one-line library list and the printed lines."""
+        return self.informalize_library(informalize_id) / "to-host"
+
+    def informalize_verso(self, informalize_id: str) -> Path:
+        """The overlay's Verso build (`cf informalize verso-command`), which never shares
+        a directory with I1's: the Verso require edits the library's lakefile."""
+        return self.informalize_dir(informalize_id) / "verso"
+
+    def informalize_verso_to_host(self, informalize_id: str) -> Path:
+        """What `cf informalize verso-command` copies to the host: the drivers, the same
+        one-line library list and the printed lines."""
+        return self.informalize_verso(informalize_id) / "to-host"
+
+    def informalize_scope(self, informalize_id: str) -> Path:
+        """I2's closure of the theorem (`cf informalize scope`)."""
+        return self.informalize_dir(informalize_id) / "scope.json"
+
+    def informalize_pdf_root(self, informalize_id: str) -> Path:
+        """I6's canonical PDFs, one directory per output repository commit."""
+        return self.informalize_dir(informalize_id) / "pdf"
+
+    def informalize_pdf(self, informalize_id: str, commit12: str) -> Path:
+        """``pdf/<commit12>/``: the canonical PDF of one commit, its receipt, its
+        markers and its proof sheets (`cf informalize fetch-pdf`)."""
+        return self.informalize_pdf_root(informalize_id) / _safe_id(commit12, "commit")
+
+    def informalize_pdf_to_host(self, informalize_id: str, commit12: str) -> Path:
+        """What `cf informalize pdf-command` copies to the host: the output repository's
+        files at that commit, and the printed lines."""
+        return self.informalize_pdf(informalize_id, commit12) / "to-host"
+
+    def informalize_stages_dir(self, informalize_id: str) -> Path:
+        return self.informalize_dir(informalize_id) / "stages"
+
+    def informalize_receipt(self, informalize_id: str, stage: str) -> Path:
+        """``stages/<stage>.json``: ``I0``, ``I3``, ``I5-draft-<run>``, ..."""
+        return self.informalize_stages_dir(informalize_id) / f"{_safe_id(stage, 'stage')}.json"
+
+    def informalize_approval(self, informalize_id: str, gate: str) -> Path:
+        """``stages/approve-<gate>.json``, written only by `cf informalize approve`."""
+        return self.informalize_stages_dir(informalize_id) / f"approve-{_safe_id(gate, 'gate')}.json"
+
+    def informalize_reference_checklist(self, informalize_id: str) -> Path:
+        return self.informalize_dir(informalize_id) / "reference-checklist.md"
+
     # -- locate (docs/proposals/wikipedia-locate.md; the layout is
     # references/locate-documents.md section 7) -------------------------
     #

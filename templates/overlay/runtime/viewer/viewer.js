@@ -14,15 +14,22 @@
  * without a DOM; this file keeps the injectable `fetch` / `document` /
  * `storage` seams the tests drive it through.
  *
+ * Each rendered page carries PDF.js's own text layer (`startTextLayer`) under
+ * the region boxes, so the page's text can be selected and copied; the spans
+ * are the vendored build's, and viewer.css has the rules they are written for.
+ *
  * Security (docs/overlay.md section 4): every string from those files reaches
- * the DOM through `textContent` or an attribute setter, never `innerHTML`; an
+ * the DOM through `textContent` or an attribute setter, never `innerHTML`. Explicit
+ * LaTeX labels use locally bundled KaTeX to generate MathML (viewer-math.js); an
  * `href` is used only when a card's page resolves to an `https:` URL or a
  * page of this site, and a token's only when it is a page of this site; the
- * hover card is placed through CSSOM, never a style attribute; the PDF is
- * requested only from `pdf.route`, or, when `pdf.publish` names an open
- * license, from `../<file_name>` beside the config; PDF.js runs with
- * `isEvalSupported: false`.
+ * hover card and the text layer's scale are placed through CSSOM, never a
+ * style attribute; the PDF is requested only from `pdf.route`, or, when
+ * `pdf.publish` names an open license, from `../<file_name>` beside the
+ * config; PDF.js runs with `isEvalSupported: false`.
  */
+import { mathRuns, mathNode } from "./viewer-math.js";
+import { installPanelResize } from "./viewer-layout.js";
 import {
   CARD_PAGE_SIZE,
   CONFIG_URL,
@@ -57,6 +64,7 @@ import {
   regionCoverage,
   regionVerdict,
   reviewFooter,
+  safeHttpsUrl,
   scriptRuns,
   sha256Hex,
   sharedRole,
@@ -71,6 +79,7 @@ import {
   verifyPdfBytes,
   versoRuns,
 } from "./viewer-core.js";
+import { createPdfTextIndex, searchTextRange } from "./viewer-search.js";
 
 export const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -245,7 +254,33 @@ export function isViewerShortcut(event) {
   if (event.shiftKey && String(event.key ?? "").length !== 1) {
     return false;
   }
-  return !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
+  return !event.target?.isContentEditable
+    && !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
+}
+
+/**
+ * Start PDF.js's own text layer for `page` in `container`: the page's text as
+ * transparent spans over the canvas, which the reader selects and copies. The
+ * vendored build's `TextLayer` writes every span and sizes the container from
+ * `--total-scale-factor`, which is the viewport's scale times the page's user
+ * unit (viewer.css says what each value it sets is read by). The returned
+ * layer renders on `render()` and stops on `cancel()`; with no `TextLayer` —
+ * an older vendored build — the page renders without one and nothing else
+ * changes.
+ */
+export function startTextLayer({ TextLayer, container, page, viewport }) {
+  container.replaceChildren();
+  container.removeAttribute?.("data-main-rotation");
+  if (typeof TextLayer !== "function" || typeof page?.streamTextContent !== "function") {
+    return null;
+  }
+  container.style?.setProperty?.("--total-scale-factor", String(viewport.scale * (viewport.userUnit || 1)));
+  return new TextLayer({
+    container,
+    // The text as the PDF spells it: normalization is for searching, not for copying.
+    textContentSource: page.streamTextContent({ disableNormalization: true }),
+    viewport,
+  });
 }
 
 
@@ -290,8 +325,10 @@ export async function bootstrapViewer({
   locationRef = globalThis.location,
   generatedUrl = GENERATED_URL,
   pageUrl = globalThis.location?.href,
+  renderMath = mathNode,
   pdfjsLoader = () => import("../vendor/pdfjs/pdf.min.mjs"),
   versoUrl = VERSO_URL,
+  searchDelay = 150,
   windowRef = globalThis,
   storage = (() => {
     try {
@@ -304,10 +341,12 @@ export async function bootstrapViewer({
   const ui = Object.fromEntries(
     [
       "back-link", "page-heading", "page-lede", "keys",
-      "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace",
+      "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace", "panel-divider",
       "previous-page", "next-page", "page-number", "page-count",
+      "find-toggle", "find-bar", "find-input", "find-count", "find-previous", "find-next", "find-close", "find-highlights",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness", "toggle-reading",
-      "page-scroller", "page-stage", "pdf-canvas", "overlay", "region-bar", "region-peek",
+      "toggle-shortcuts", "shortcut-help", "close-shortcuts",
+      "page-scroller", "page-stage", "pdf-canvas", "text-layer", "pdf-links", "overlay", "region-bar", "region-peek",
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
@@ -336,7 +375,10 @@ export async function bootstrapViewer({
     renderTask: null,
     rotation: 0,
     selected: null,
+    search: { epoch: 0, index: null, matches: [], active: -1, busy: false, timer: null, scroll: false, failedPages: [] },
     siteUrl: "",
+    textLayer: null,
+    TextLayer: null,
     verso: null,
     zoom: 100,
   };
@@ -364,11 +406,21 @@ export async function bootstrapViewer({
     return node;
   }
 
-  /** Sets a node to a title's text, its script characters as `<sub>` and `<sup>`. */
-  function setTitleText(node, value) {
-    const runs = scriptRuns(value);
+  /** Typeset explicit LaTeX; keep legacy extracted scripts and plain text readable. */
+  function setTitleText(node, value, depth = 0) {
+    if (depth === 0) {
+      const parts = mathRuns(value);
+      if (parts.some((part) => part.kind === "math")) {
+        node.replaceChildren(...parts.map((part) => part.kind === "math"
+          ? (renderMath(part.text, documentRef) ?? part.raw)
+          : setTitleText(make("span", ""), part.text, 1)));
+        return node;
+      }
+    }
+    const runs = depth < 32 ? scriptRuns(value) : [["text", value]];
     if (runs.some(([kind]) => kind !== "text")) {
-      node.replaceChildren(...runs.map(([kind, run]) => (kind === "text" ? run : make(kind, "", run))));
+      node.replaceChildren(...runs.map(([kind, run]) => (kind === "text" ? run
+        : setTitleText(make(kind, ""), run, depth + 1))));
     } else {
       node.textContent = value;
     }
@@ -1078,17 +1130,15 @@ export async function bootstrapViewer({
     }
   }
 
-  /** A step's title and its text; its proof's item, a button above them. */
+  /** A descriptive step heading; its proof's item is a button above it. */
   function stepHead(item) {
     const parts = stepParts(item, state.index.items);
     const owner = state.index.items.get(item.stepOf);
     ui["step-parent"].hidden = !owner;
     setTitleText(ui["step-parent"], owner ? `Proof of ${labelParts(owner.label).title}` : "");
     ui["step-parent"].title = owner?.label ?? "";
-    ui["item-label"].replaceChildren(makeTitle("span", "item-title", parts.title));
-    if (parts.text) {
-      ui["item-label"].append(makeTitle("span", "item-subtitle", parts.text));
-    }
+    // The step counter already supplies its number; lead with the authored mathematics.
+    ui["item-label"].replaceChildren(makeTitle("span", "item-title", parts.text || parts.title));
   }
 
   /** A note's text with its backticked code set as code. */
@@ -1097,12 +1147,28 @@ export async function bootstrapViewer({
       ? make("code", "", value) : value)));
   }
 
+  /** Authored mathematics and backticked Lean names, without accepting HTML. */
+  function proofText(tag, className, value) {
+    const node = make(tag, className);
+    node.append(...docBlocks(value).flatMap(block => block.parts.map(([kind, part]) =>
+      kind === "code" ? make("code", "", part) : makeTitle("span", "", part))));
+    return node;
+  }
+
+  /** A fallback title or detail note adds nothing when the heading already says it. */
+  function repeatsHeading(item, value) {
+    const normalize = text => (text ?? "").trim().replace(/\s+/gu, " ").replace(/[.!?]$/u, "");
+    const heading = isStep(item) ? stepParts(item, state.index.items).text : item?.label;
+    return [item?.label, heading].some(label => normalize(label) === normalize(value));
+  }
+
   /**
    * A minimal overlay keeps a record's note behind one control, closed until
    * asked for and then open from record to record; a full one shows it.
    */
   function renderNote(item) {
-    const note = Boolean(item?.coverageNote);
+    // Older exporters sometimes copied the heading into the optional note.
+    const note = Boolean(item?.coverageNote?.trim()) && !repeatsHeading(item, item.coverageNote);
     const behind = note && state.config.minimal;
     ui["note-toggle"].hidden = !behind;
     ui["note-toggle"].textContent = state.noteOpen ? "Less detail" : "More detail";
@@ -1195,12 +1261,12 @@ export async function bootstrapViewer({
   }
 
   /** One range of a step's Lean lines: its snippet, numbered, or only its line numbers when it has none. */
-  function rangeNodes({ lines, snippet }) {
+  function rangeNodes({ lines, snippet, target }) {
     const firstLine = snippet?.line ?? lines?.[0] ?? null;
     if (!snippet?.text) {
       return lines ? [make("p", "range-lines", linesText(lines))] : [];
     }
-    const nodes = statementNodes(snippet.text, null, firstLine);
+    const nodes = statementNodes(snippet.text, versoRuns(state.verso, { target, snippet }), firstLine);
     if (lines) {
       nodes[0].setAttribute("aria-label", linesText(lines));
     }
@@ -1211,13 +1277,68 @@ export async function bootstrapViewer({
   }
 
   /** A declaration a step links: its eyebrow, its name, and only the lines of it the step names. */
-  function stepCard(card) {
+  function stepCard(card, item) {
     const li = make("li", "key-card");
     li.tabIndex = -1;
     const name = nameNode(card.name, "decl-name");
     name.title = card.fullName;
-    li.append(eyebrow(card), name, ...card.ranges.flatMap(rangeNodes));
+    li.append(eyebrow(card));
+    const context = card.proofContext;
+    if (context) {
+      const enclosing = make("p", "proof-enclosing", "In ");
+      const link = make(context.href ? "a" : "span", "", context.declaration);
+      if (context.href) link.setAttribute("href", context.href);
+      enclosing.append(link);
+      if (context.lines) enclosing.append(` · ${linesText(context.lines).toLowerCase()}`);
+      li.append(enclosing);
+    } else if (!repeatsHeading(item, card.fullName)) li.append(name);
+    li.append(...card.ranges.flatMap(rangeNodes));
+    const conclusion = context && !repeatsHeading(item, context.conclusion) ? context.conclusion : "";
+    if (context && (conclusion || context.explanation || context.notation.length || context.bookkeeping)) {
+      const details = make("details", "proof-details");
+      details.append(make("summary", "", "Reading the Lean notation"));
+      if (conclusion) details.append(proofText("p", "proof-conclusion", conclusion));
+      if (context.explanation) details.append(proofText("p", "proof-explanation", context.explanation));
+      if (context.notation.length) {
+        const list = make("dl", "proof-notation");
+        for (const row of context.notation) {
+          list.append(makeTitle("dt", "", row.math), proofText("dd", "", `\`${row.lean}\``));
+        }
+        details.append(list);
+      }
+      if (context.bookkeeping) details.append(proofText("p", "", context.bookkeeping));
+      li.append(details);
+    }
     return li;
+  }
+
+  /** Keep the complete dependency chain above the selected excerpt. */
+  function proofChain(cards, item) {
+    const row = make("li", "proof-chain");
+    if (item.proofGuide.summary) row.append(proofText("p", "proof-explanation", item.proofGuide.summary));
+    const links = make("ol", "proof-chain-links");
+    links.setAttribute("aria-label", "Linked lemmas in argument order");
+    const excerpt = make("ul", "key-list proof-chain-excerpt");
+    const buttons = [];
+    const select = index => {
+      hideHover();
+      buttons.forEach((button, i) => button.setAttribute("aria-pressed", String(i === index)));
+      excerpt.replaceChildren(stepCard(cards[index], item));
+    };
+    cards.forEach((card, index) => {
+      const entry = make("li", "");
+      const button = make("button", "proof-chain-link");
+      button.type = "button";
+      button.append(make("span", "proof-chain-number", `${index + 1}. `),
+        makeTitle("span", "", card.proofContext?.label || card.name));
+      button.addEventListener("click", () => select(index));
+      buttons.push(button);
+      entry.append(button);
+      links.append(entry);
+    });
+    row.append(links, excerpt);
+    select(0);
+    return row;
   }
 
   /** A declaration or module a checked absence looked in, on one line. */
@@ -1321,8 +1442,10 @@ export async function bootstrapViewer({
     const shownRelated = cardsMatching(related, { query });
 
     renderKeyNote(item, keys);
-    const capped = state.keysAll ? shownKeys : shownKeys.slice(0, KEY_CARDS);
-    ui["key-list"].replaceChildren(...capped.map(step ? stepCard : keyCard));
+    const chain = step && item.proofGuide?.kind === "chain" && shownKeys.length > 1;
+    const capped = chain || state.keysAll ? shownKeys : shownKeys.slice(0, KEY_CARDS);
+    ui["key-list"].replaceChildren(...(chain ? [proofChain(capped, item)]
+      : capped.map(card => step ? stepCard(card, item) : keyCard(card))));
     ui["key-list"].hidden = !capped.length;
     // A neutral count, only when there is more than one: no heading says what the cards state.
     ui["key-count"].hidden = keys.length < 2 || state.config.minimal;
@@ -1577,13 +1700,205 @@ export async function bootstrapViewer({
     updateBar();
   }
 
-  async function renderPage() {
+  function showSearch() {
+    if (!state.search.index || ui.workspace.hidden) return;
+    ui["find-bar"].hidden = false;
+    ui["find-toggle"].setAttribute("aria-expanded", "true");
+    focusQuietly(ui["find-input"]);
+    ui["find-input"].select?.();
+    paintSearch();
+  }
+
+  function closeSearch() {
+    ++state.search.epoch;
+    clearTimer(state.search.timer);
+    state.search.timer = null;
+    state.search.busy = false;
+    ui["find-bar"].hidden = true;
+    ui["find-toggle"].setAttribute("aria-expanded", "false");
+    ui["find-highlights"].replaceChildren();
+    focusQuietly(ui["find-toggle"]);
+  }
+
+  function searchCount() {
+    const search = state.search;
+    let text = search.matches.length ? `${search.active + 1} of ${search.matches.length}` : "No matches";
+    if (search.failedPages.length) {
+      const n = search.failedPages.length;
+      text += ` · ${n} ${n === 1 ? "page could" : "pages could"} not be searched`;
+    }
+    ui["find-count"].textContent = text;
+    ui["find-previous"].disabled = ui["find-next"].disabled = !search.matches.length;
+  }
+
+  /** Range rectangles already include the PDF text layer's zoom and rotation. */
+  function paintSearch() {
+    ui["find-highlights"].replaceChildren();
+    if (ui["find-bar"].hidden || !state.textLayer || !ui["page-stage"].getBoundingClientRect) return;
+    const origin = ui["page-stage"].getBoundingClientRect();
+    let current = null;
+    for (const [i, match] of state.search.matches.entries()) {
+      if (match.page !== state.currentPage) continue;
+      const range = searchTextRange(documentRef, state.textLayer, match);
+      for (const rect of range?.getClientRects() ?? []) {
+        if (!rect.width || !rect.height) continue;
+        const mark = make("div", `find-highlight${i === state.search.active ? " is-current" : ""}`);
+        mark.style.left = `${rect.left - origin.left}px`;
+        mark.style.top = `${rect.top - origin.top}px`;
+        mark.style.width = `${rect.width}px`;
+        mark.style.height = `${rect.height}px`;
+        ui["find-highlights"].append(mark);
+        if (i === state.search.active && !current) current = rect;
+      }
+    }
+    if (current && state.search.scroll) {
+      const scroller = ui["page-scroller"];
+      const box = scroller.getBoundingClientRect();
+      scroller.scrollTop += current.top - box.top - box.height / 2;
+      if (current.left < box.left || current.right > box.right) {
+        scroller.scrollLeft += current.left - box.left - box.width / 2;
+      }
+      state.search.scroll = false;
+    }
+  }
+
+  async function showMatch(at) {
+    const search = state.search;
+    if (!search.matches.length || search.busy) return;
+    search.active = (at + search.matches.length) % search.matches.length;
+    search.scroll = true;
+    searchCount();
+    const match = search.matches[search.active];
+    if (match.page !== state.currentPage) await changePage(match.page);
+    else paintSearch();
+  }
+
+  async function runSearch() {
+    const search = state.search;
+    clearTimer(search.timer);
+    search.timer = null;
+    const epoch = ++search.epoch;
+    const query = ui["find-input"].value.trim();
+    search.matches = [];
+    search.active = -1;
+    search.failedPages = [];
+    search.busy = Boolean(query);
+    ui["find-highlights"].replaceChildren();
+    ui["find-previous"].disabled = ui["find-next"].disabled = true;
+    ui["find-count"].textContent = query ? "Searching…" : "";
+    if (!query) return;
+    const result = await search.index.search(query, {
+      cancelled: () => epoch !== search.epoch,
+      onProgress: (page) => { ui["find-count"].textContent = `Searching ${page}/${state.pdfDocument.numPages}…`; },
+    });
+    if (!result || epoch !== search.epoch) return;
+    search.busy = false;
+    search.matches = result.matches;
+    search.failedPages = result.failedPages;
+    if (result.matches.length) {
+      const near = result.matches.findIndex((match) => match.page >= state.currentPage);
+      await showMatch(near < 0 ? 0 : near);
+    } else {
+      searchCount();
+      if (!result.textPages && !result.failedPages.length) ui["find-count"].textContent = "No searchable text";
+    }
+  }
+
+  async function resolvePdfDestination(destination) {
+    try {
+      const target = typeof destination === "string"
+        ? await state.pdfDocument.getDestination(destination)
+        : destination;
+      if (!Array.isArray(target)) return null;
+      const ref = target[0];
+      const index = Number.isInteger(ref) ? ref : await state.pdfDocument.getPageIndex(ref);
+      if (index >= 0 && index < state.pdfDocument.numPages) return { page: index + 1, target };
+    } catch {
+      // A broken cross-reference should not affect the other links on the page.
+    }
+    return null;
+  }
+
+  /** Keep the reader's zoom and put the referenced location in view. */
+  function scrollPdfDestination(page, viewport, target) {
+    const [, type, first, second, , top] = target;
+    let [left, , , upper] = page.view;
+    if (["XYZ", "FitV", "FitBV", "FitR"].includes(type?.name) && Number.isFinite(first)) left = first;
+    const y = type?.name === "FitR" ? top : type?.name === "XYZ" ? second : first;
+    if (["XYZ", "FitH", "FitBH", "FitR"].includes(type?.name) && Number.isFinite(y)) upper = y;
+    const [x, offset] = viewport.convertToViewportPoint(left, upper);
+    const scroller = ui["page-scroller"];
+    const stage = ui["page-stage"].getBoundingClientRect();
+    const frame = scroller.getBoundingClientRect();
+    scroller.scrollTo({
+      left: Math.max(0, scroller.scrollLeft + stage.left - frame.left + x - 24),
+      top: Math.max(0, scroller.scrollTop + stage.top - frame.top + offset - 24),
+    });
+    focusQuietly(scroller);
+  }
+
+  /** Paint PDF links using the same viewport as the canvas. */
+  async function renderPdfLinks(page, viewport, epoch) {
+    let annotations;
+    try {
+      annotations = await page.getAnnotations({ intent: "display" });
+    } catch {
+      // An unreadable link layer leaves the page and its source regions usable.
+      return;
+    }
+    if (epoch !== state.renderEpoch) return;
+    for (const annotation of annotations) {
+      const { subtype, url, dest, rect } = annotation;
+      if (subtype !== "Link" || !Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) {
+        continue;
+      }
+      const [x1, y1] = viewport.convertToViewportPoint(rect[0], rect[1]);
+      const [x2, y2] = viewport.convertToViewportPoint(rect[2], rect[3]);
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width === 0 || height === 0) continue;
+      const external = typeof url === "string" && safeHttpsUrl(url.split("#", 1)[0]);
+      const destination = !external && dest ? await resolvePdfDestination(dest) : null;
+      if (epoch !== state.renderEpoch) return;
+      if (!external && !destination) continue;
+      const link = make("a", "pdf-link");
+      if (destination) {
+        link.href = `#page=${destination.page}`;
+        link.title = `Go to PDF page ${destination.page}`;
+        link.addEventListener("click", (event) => {
+          if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          return changePage(destination.page, destination.target);
+        });
+      } else {
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.title = url;
+      }
+      link.setAttribute("aria-label", annotation.contentsObj?.str || link.title);
+      link.style.left = `${Math.min(x1, x2)}px`;
+      link.style.top = `${Math.min(y1, y2)}px`;
+      link.style.width = `${width}px`;
+      link.style.height = `${height}px`;
+      ui["pdf-links"].append(link);
+    }
+  }
+
+  async function renderPage(destination) {
     if (!state.pdfDocument) {
       return;
     }
     const epoch = ++state.renderEpoch;
     state.renderTask?.cancel();
+    // A text layer still streaming is the page being left: its spans would land on this one.
+    state.textLayer?.cancel();
+    state.textLayer = null;
+    ui["text-layer"].replaceChildren();
+    ui["pdf-links"].replaceChildren();
+    ui["find-highlights"].replaceChildren();
     const page = await state.pdfDocument.getPage(state.currentPage);
+    if (epoch !== state.renderEpoch) return;
     // Records place regions on the displayed page: after the page's own
     // rotation, which the reader's rotation adds to.
     const own = Number.isInteger(page.rotate) ? page.rotate : 0;
@@ -1627,7 +1942,10 @@ export async function bootstrapViewer({
     ui["page-stage"].hidden = false;
     hidePeek();
     renderOverlay(displayed, viewport);
-    if (state.region && !state.readingMode) {
+    void renderPdfLinks(page, viewport, epoch);
+    if (destination) {
+      scrollPdfDestination(page, viewport, destination);
+    } else if (state.region && !state.readingMode) {
       // A zoom or a rotation keeps the selected passage in view.
       scrollRegionIntoView(state.region);
     }
@@ -1638,6 +1956,19 @@ export async function bootstrapViewer({
     ui["zoom-value"].textContent = `${state.zoom}%`;
     setStatus("ok", "Verified PDF");
     rememberPage(state.config.storageKey, state.currentPage, { historyRef, storage });
+    // The text comes after the page it belongs to: it streams, and nothing on
+    // the page waits for it. A layer that fails leaves a page that cannot be
+    // selected, and a viewer that works.
+    try {
+      state.textLayer = startTextLayer({ TextLayer: state.TextLayer, container: ui["text-layer"], page, viewport });
+      await state.textLayer?.render();
+    } catch {
+      // `cancel()` on the next render rejects this one; so does a page whose text cannot be read.
+    }
+    if (epoch === state.renderEpoch) {
+      state.search.scroll = !destination;
+      paintSearch();
+    }
   }
 
   /** Verdicts are hidden until asked for; the choice is remembered beside the page. */
@@ -1657,13 +1988,13 @@ export async function bootstrapViewer({
     }
   }
 
-  async function changePage(requested) {
+  async function changePage(requested, destination) {
     if (!state.pdfDocument) {
       return;
     }
     state.currentPage = Math.min(Math.max(Number(requested) || 1, 1), state.pdfDocument.numPages);
     selectRegion(null);
-    await renderPage();
+    await renderPage(destination);
   }
 
   async function changeZoom(requested) {
@@ -1676,19 +2007,38 @@ export async function bootstrapViewer({
     await renderPage();
   }
 
+  let panelResize = null;
+  let shortcutReturnFocus = null;
+
+  function showShortcuts(shown, restoreFocus = true) {
+    if (shown) shortcutReturnFocus = documentRef.activeElement ?? ui["toggle-shortcuts"];
+    ui["shortcut-help"].hidden = !shown;
+    ui["toggle-shortcuts"].setAttribute("aria-expanded", String(shown));
+    if (shown) {
+      hideHover();
+      focusQuietly(ui["close-shortcuts"]);
+    } else if (restoreFocus) {
+      focusQuietly(shortcutReturnFocus);
+    }
+  }
+
+  showShortcuts(false, false);
+
   /** Read the PDF alone, retaining the page, zoom and selected passage. */
   function showReadingMode(shown) {
     state.readingMode = shown;
     setClass(ui.workspace, "is-reading", shown);
     ui.details.hidden = shown;
+    ui["panel-divider"].hidden = shown;
+    panelResize?.refresh();
     // SVG has no HTMLElement.hidden setter: write the attribute for [hidden].
     if (shown) ui.overlay.setAttribute("hidden", "");
     else ui.overlay.removeAttribute("hidden");
     ui["toggle-reading"].textContent = shown ? "Show links" : "Read PDF";
     ui["toggle-reading"].setAttribute("aria-expanded", String(!shown));
     ui["toggle-reading"].title = shown
-      ? "Show annotation boxes and the Lean panel (Esc)"
-      : "Hide annotation boxes and the Lean panel";
+      ? "Show annotation boxes and the Lean panel (L or Esc)"
+      : "Hide annotation boxes and the Lean panel (L)";
     ui["page-scroller"].setAttribute("aria-label", shown
       ? "Rendered PDF page" : "Rendered PDF page with selectable source regions");
     hidePeek();
@@ -1698,6 +2048,9 @@ export async function bootstrapViewer({
   }
 
   ui["toggle-reading"].disabled = true;
+  ui["find-toggle"].disabled = true;
+  ui["find-bar"].hidden = true;
+  ui["find-previous"].disabled = ui["find-next"].disabled = true;
   // A refusal is an error message on the page, never a blank page: the two data
   // files are loaded inside this guard so the shell always says what went wrong.
   try {
@@ -1736,10 +2089,12 @@ export async function bootstrapViewer({
       "../vendor/pdfjs/pdf.worker.min.mjs",
       import.meta.url,
     ).href;
+    state.TextLayer = pdfjs.TextLayer ?? null;
     state.pdfDocument = await pdfjs.getDocument({
       data: bytes.slice(),
       isEvalSupported: false,
     }).promise;
+    state.search.index = createPdfTextIndex(state.pdfDocument);
     const remembered = rememberedPage(state.config.storageKey, { locationRef, storage });
     state.currentPage = remembered
       ? Math.min(Math.max(remembered, 1), state.pdfDocument.numPages)
@@ -1751,15 +2106,37 @@ export async function bootstrapViewer({
     ui["page-number"].max = String(state.pdfDocument.numPages);
     ui["page-count"].textContent = `/ ${state.pdfDocument.numPages}`;
     ui.workspace.hidden = false;
+    panelResize = installPanelResize({ workspace: ui.workspace, details: ui.details,
+      divider: ui["panel-divider"], documentRef, windowRef, storage,
+      storageKey: state.config.storageKey, onResize: hideHover });
     selectRegion(null);
     await renderPage();
     ui["toggle-reading"].disabled = false;
+    ui["find-toggle"].disabled = false;
   } catch (error) {
     ui.workspace.hidden = true;
     setStatus("bad", "PDF not verified");
     showError(error);
   }
 
+  ui["find-toggle"].addEventListener("click", () => {
+    showSearch();
+    if (ui["find-input"].value && !state.search.matches.length) return runSearch();
+  });
+  ui["find-close"].addEventListener("click", closeSearch);
+  ui["find-previous"].addEventListener("click", () => showMatch(state.search.active - 1));
+  ui["find-next"].addEventListener("click", () => showMatch(state.search.active + 1));
+  ui["find-input"].addEventListener("input", () => {
+    ++state.search.epoch;
+    clearTimer(state.search.timer);
+    state.search.matches = [];
+    state.search.busy = true;
+    ui["find-highlights"].replaceChildren();
+    ui["find-previous"].disabled = ui["find-next"].disabled = true;
+    ui["find-count"].textContent = ui["find-input"].value.trim() ? "Searching…" : "";
+    if (!searchDelay || !ui["find-input"].value.trim()) return runSearch();
+    state.search.timer = setTimer(runSearch, searchDelay);
+  });
   ui["previous-page"].addEventListener("click", () => changePage(state.currentPage - 1));
   ui["next-page"].addEventListener("click", () => changePage(state.currentPage + 1));
   ui["page-number"].addEventListener("change", () => changePage(ui["page-number"].value));
@@ -1767,6 +2144,8 @@ export async function bootstrapViewer({
   ui["zoom-in"].addEventListener("click", () => changeZoom(state.zoom + 10));
   ui["rotate-right"].addEventListener("click", () => rotate(90));
   ui["toggle-reading"].addEventListener("click", () => showReadingMode(!state.readingMode));
+  ui["toggle-shortcuts"].addEventListener("click", () => showShortcuts(ui["shortcut-help"].hidden));
+  ui["close-shortcuts"].addEventListener("click", () => showShortcuts(false));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
   ui["back-to-page"].addEventListener("click", backToPage);
   ui["note-toggle"].addEventListener("click", () => {
@@ -1814,9 +2193,16 @@ export async function bootstrapViewer({
       ui["status-chip"].open = false;
     }
     const within = (node) => node === event.target || Boolean(node?.contains?.(event.target));
+    if (!ui["shortcut-help"].hidden && !within(ui["shortcut-help"]) && !within(ui["toggle-shortcuts"])) {
+      showShortcuts(false, false);
+    }
     if (hover.token && !within(hover.token) && !within(ui["hover-card"])) {
       hideHover();
     }
+  });
+  documentRef.addEventListener("focusin", (event) => {
+    if (!ui["shortcut-help"].hidden && event.target !== ui["toggle-shortcuts"]
+        && !ui["shortcut-help"].contains?.(event.target)) showShortcuts(false, false);
   });
   // The pointer may move onto the hover card (to read or scroll it); the card stays while it is there.
   ui["hover-card"].addEventListener("pointerenter", (event) => {
@@ -1844,10 +2230,66 @@ export async function bootstrapViewer({
     });
   }
   documentRef.addEventListener("keydown", (event) => {
+    if (event.isComposing || event.defaultPrevented) return;
+    if (event.key === "?" && isViewerShortcut(event)) {
+      event.preventDefault();
+      if (!event.repeat) showShortcuts(ui["shortcut-help"].hidden);
+      return;
+    }
+    if (!ui["shortcut-help"].hidden && event.key === "Escape"
+        && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      showShortcuts(false);
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f"
+        && state.search.index && !ui.workspace.hidden) {
+      event.preventDefault();
+      if (!ui["shortcut-help"].hidden) showShortcuts(false, false);
+      showSearch();
+      if (ui["find-input"].value && !state.search.matches.length) return runSearch();
+      return;
+    }
+    // While help has focus, its arrow keys scroll the help rather than turning PDF pages.
+    if (!ui["shortcut-help"].hidden) return;
+    if (!ui["find-bar"].hidden && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSearch();
+        return;
+      }
+      if (event.key === "Enter") {
+        const target = event.target;
+        const searchControl = [ui["find-input"], ui["find-previous"], ui["find-next"]].includes(target);
+        const focusedControl = target?.closest?.(
+          "a, button, input, select, textarea, summary, [tabindex], [role='button'], [role='checkbox']",
+        );
+        // Search navigation survives a click back into the PDF. Other controls keep
+        // their own Enter action (page-number input, passage buttons, links, divider).
+        const readingText = !target?.isContentEditable
+          && !["INPUT", "SELECT", "TEXTAREA"].includes(target?.tagName)
+          && (!focusedControl || focusedControl === ui["page-scroller"]);
+        if (searchControl || readingText) {
+          event.preventDefault(); // Also suppress the match button's native click.
+          if (state.search.timer) return runSearch();
+          return showMatch(state.search.active + (event.shiftKey ? -1 : 1));
+        }
+      }
+    }
     if (!isViewerShortcut(event)) {
       return;
     }
-    if (event.key === "ArrowLeft") changePage(state.currentPage - 1);
+    if (event.key.toLowerCase() === "l" && !ui["toggle-reading"].disabled) {
+      event.preventDefault();
+      if (!event.repeat) {
+        showReadingMode(!state.readingMode);
+        // Hiding the panel must not leave keyboard focus in an invisible control.
+        if (state.readingMode && (ui.details.contains?.(documentRef.activeElement)
+            || documentRef.activeElement === ui["panel-divider"])) focusQuietly(ui["toggle-reading"]);
+      }
+    }
+    else if (event.target === ui["panel-divider"]) return;
+    else if (event.key === "ArrowLeft") changePage(state.currentPage - 1);
     else if (event.key === "ArrowRight") changePage(state.currentPage + 1);
     else if (event.key === "+" || event.key === "=") changeZoom(state.zoom + 10);
     else if (event.key === "-") changeZoom(state.zoom - 10);

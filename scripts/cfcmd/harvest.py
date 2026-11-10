@@ -28,7 +28,7 @@ from cost import pricing
 from harvest import audit_summary as audit_mod
 from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
-from harvest import harvest_journal, record as record_mod
+from harvest import harvest_journal, informal_files, record as record_mod
 from harvest import host_artifacts as host_mod
 from harvest import turn_records as turns_mod
 from recheck import pin as pin_mod
@@ -160,6 +160,21 @@ def run(args) -> int:
                  "this corpus. Re-run them against the pinned edition, or pass "
                  "--allow-edition-mismatch and say so in the report.")
 
+    if manifest.is_informalize(data):
+        # An informalize corpus is no companion's either: it reads no source, no
+        # faithfulness row is in it, and what it carries beside its documents is
+        # the text the run wrote, which `cf informalize apply` puts back.
+        block = receipt.get("informalize") or {}
+        if not block.get("ok", True):
+            log.warn(f"harvest INCOMPLETE: the files run {args.run_id} wrote did not all come "
+                     "home as the host holds them (the lines above name them). Fix the "
+                     f"transfer and run `cf harvest {args.run_id}` again.")
+        log.info(f"informalize {informal_files.phase_of(data)} run: the faithfulness tally, "
+                 "the companion pin and the companions' state.json are not written for it; "
+                 f"the {len(block.get('changed') or [])} file(s) this phase wrote are under "
+                 f"{Path(block.get('tree') or (dest / informal_files.TREE))}, to be copied "
+                 "into the output repository and committed there")
+        return 0 if receipt["complete"] else 1
     if is_locate(data):
         # A locate corpus is no companion's: it pins no companion revision, the
         # faithfulness tally has no row to count in it, and its counts belong to
@@ -272,6 +287,7 @@ def _price_envelopes(workspace, path, *, model: str | None = None) -> dict:
 
 def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
                    cost: dict | None = None) -> dict:
+    informalize = manifest.is_informalize(data)
     if args.source:
         source = harvest_mod.parse_source(args.source)
         # `--from host:/path` used to skip the allowlist entirely -- only the
@@ -286,13 +302,29 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
     host_files = (host_mod.remote_files(workspace, args.run_id, data)
                   if locate and source["kind"] == "remote" else [])
     host_dir = Path(workspace.paths.run_host_dir(args.run_id))
+    # An informalize phase's text is not in its findings: its tasks' owned paths
+    # are files of the output repository, which the fleet merged into the
+    # entrypoint beside findings/ (docs/proposals/informalize.md section 8.5).
+    wants_findings = not informalize or informal_files.writes_findings(data)
+    owned = informal_files.owned_paths(data) if informalize else []
+    entrypoint = informal_files.entrypoint_of(source, data) if informalize else ""
+    if informalize and not wants_findings:
+        # there is no findings directory on the host at all: the receipt's source
+        # is the entrypoint the files came from
+        source = {**source, "path": entrypoint}
+    tree = dest / informal_files.TREE
     if source["kind"] == "remote" and not args.execute:
         log.info(f"# dry run: harvesting {source['host']}:{source['path']} -> {dest}")
-        for step in (harvest_mod.list_commands(source, dest)
+        for step in ((harvest_mod.list_commands(source, dest) if wants_findings else [])
+                     + informal_files.list_commands(source, entrypoint, owned, tree)
                      + host_mod.commands(source["host"], host_files, host_dir)):
             log.info(f"# {step['title']}\n{step['shell']}")
         raise CfError("remote harvest needs --execute",
                       hint="the commands above are exactly what it will run")
+    informal = None
+    if informalize:
+        informal = informal_files.fetch(source, entrypoint, owned, tree,
+                                        base_files=_base_files(workspace, args.run_id))
     host = None
     if host_files:
         # outside the findings rsync, which carries *.json documents only, and
@@ -319,10 +351,27 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
         run_yaml_src=run_yaml_path if run_yaml_path.exists() else None,
         verify_sha=args.verify_sha, execute=True,
         allow_edition_mismatch=args.allow_edition_mismatch,
-        gate_runner=gate_runner(workspace, args, locate=locate, run_doc=data), cost=cost,
-        host_artifacts=host,
+        gate_runner=gate_runner(workspace, args, locate=locate, informalize=informalize,
+                                run_doc=data), cost=cost,
+        host_artifacts=host, findings=wants_findings, informalize=informal,
         audit_runner=audit_runner(data, host_dir, host) if locate else None,
         turns_runner=turns_runner(data, host_dir) if locate else None)
+
+
+def _base_files(workspace, run_id: str) -> dict[str, str]:
+    """``{path: sha256}`` of the base commit's files, from the run's own gate config.
+
+    What tells a file the run CHANGED from one its tasks owned and left alone.
+    """
+    path = Path(workspace.paths.run_dir(run_id)) / "gate.local.json"
+    try:
+        import json
+
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    base = doc.get("base_files") if isinstance(doc, dict) else None
+    return {str(k): str(v) for k, v in base.items()} if isinstance(base, dict) else {}
 
 
 def turns_runner(data: dict, host_dir: Path):
@@ -410,7 +459,8 @@ def _check_remote_source(workspace, args, source: dict) -> None:
 
 
 def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None,
-                locate: bool = False, run_doc: dict | None = None):
+                locate: bool = False, informalize: bool = False,
+                run_doc: dict | None = None):
     """A callable harvest() invokes on the landed corpus, or None with ``--no-gate``.
 
     ``--gate-config`` always wins.  Otherwise a run this workspace PLANNED has a
@@ -435,13 +485,28 @@ def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None,
     ``runs/<id>/tend-root/gate/`` and checked against ``run_doc``'s (run.yaml's)
     ``locate.gate_files`` -- never by whatever gate this checkout holds now --
     unless ``--checkout-gate`` says otherwise; the receipt's ``gate_code`` names
-    the gate that ran.
+    the gate that ran.  An informalize phase likewise: its own staged
+    ``verify_informal.py``, run out of tree with ``--findings`` over the
+    documents that landed (docs/proposals/informalize.md section 8.5).
     """
     if not getattr(args, "gate", True):
         return None
     explicit = getattr(args, "gate_config", None)
     planned = Path(workspace.paths.run_dir(args.run_id)) / "gate.local.json"
     config = Path(explicit).expanduser() if explicit else planned
+    if informalize:
+        gate_dir = Path(workspace.paths.tend_root(args.run_id)) / "gate"
+        run_dir = Path(workspace.paths.run_dir(args.run_id))
+        phase = informal_files.phase_of(run_doc)
+
+        def _run_informal_gate(dest: Path) -> dict:
+            result = gate_mod.gate_informal_corpus(
+                dest, config, gate_dir=gate_dir, phase=phase, repo=run_dir / "repo",
+                tree=dest / informal_files.TREE)
+            log.info(gate_mod.render(result))
+            return result
+
+        return _run_informal_gate
     if locate:
         # A locate run is gated by gate/verify_locate.py over the whole landed
         # corpus, with the gate.local.json its planner wrote: the same rules the

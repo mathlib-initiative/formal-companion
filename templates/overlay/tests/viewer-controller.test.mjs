@@ -16,6 +16,7 @@ import {
   BUNDLE_PATH,
   BUNDLE_URL,
   ORIGIN,
+  PAGE_TEXT,
   PAGE_URL,
   PDF_BYTES,
   PDF_URL,
@@ -64,6 +65,7 @@ async function start({
   storage = memoryStorage(),
   verso = undefined,
   windowRef = undefined,
+  renderMath = undefined,
 } = {}) {
   const record = generated === undefined ? await makeGenerated(sections) : generated;
   const urls = [];
@@ -98,6 +100,8 @@ async function start({
     pdfjsLoader: async () => pdfjs,
     storage,
     windowRef,
+    searchDelay: 0,
+    ...(renderMath ? { renderMath } : {}),
   });
   return { documentRef, fetched, hashes: urls, pdfjs, result, storage };
 }
@@ -314,6 +318,118 @@ test("pdf: with no pdf.publish the shell's note that the PDF stays on loopback i
   await start({ documentRef });
   assert.equal(el(documentRef, "status-note").textContent, "The shell's own note.");
   assert.match(SHELL, /<p id="status-note" class="status-pop">\s*The PDF is served only on loopback/);
+});
+
+// --- the text layer ---------------------------------------------------------
+
+test("text: a rendered page carries PDF.js's text layer, in the viewer's own container", async () => {
+  const pdfjs = fakePdfjs();
+  const { documentRef } = await start({ pdfjs });
+  const layer = el(documentRef, "text-layer");
+  assert.deepEqual(layer.children.map((span) => span.textContent), PAGE_TEXT);
+  assert.equal(pdfjs.textLayers.length, 1);
+  const [{ options }] = pdfjs.textLayers;
+  assert.equal(options.container, layer, "the layer fills the shell's own div, under the boxes");
+  assert.equal(options.viewport.scale, 1);
+  assert.equal(layer.style["--total-scale-factor"], "1", "the layer is sized through CSSOM");
+  assert.deepEqual(pdfjs.streams, [{ disableNormalization: true }], "the text is copied as the PDF spells it");
+});
+
+test("text: a page turn, a zoom and a rotation each cancel the layer they leave and start another", async () => {
+  const pdfjs = fakePdfjs();
+  const { documentRef } = await start({ pdfjs });
+  const layer = el(documentRef, "text-layer");
+  await fire(el(documentRef, "next-page"), "click");
+  assert.equal(pdfjs.textLayers.length, 2);
+  assert.equal(pdfjs.textLayers[0].cancelled, 1, "the page being left stops streaming");
+  assert.deepEqual(layer.children.map((span) => span.textContent), PAGE_TEXT, "and its spans are gone");
+  await fire(el(documentRef, "zoom-in"), "click");
+  assert.equal(pdfjs.textLayers[2].options.viewport.scale, 1.1);
+  assert.equal(layer.style["--total-scale-factor"], "1.1");
+  await fire(el(documentRef, "rotate-right"), "click");
+  assert.equal(pdfjs.textLayers[3].options.viewport.rotation, 90);
+  assert.deepEqual(pdfjs.textLayers.map((one) => one.cancelled), [1, 1, 1, 0]);
+});
+
+test("text: a layer that fails, or a build without one, leaves a page that still renders", async () => {
+  for (const pdfjs of [fakePdfjs({ textLayerError: "no text" }), fakePdfjs({ textLayer: false })]) {
+    const { documentRef, result } = await start({ pdfjs });
+    assert.equal(el(documentRef, "error").hidden, true);
+    assert.equal(el(documentRef, "status").textContent, "Verified PDF");
+    assert.equal(el(documentRef, "text-layer").children.length, 0);
+    await fire(el(documentRef, "next-page"), "click");
+    assert.equal(result.state.currentPage, 2, "and the page still turns");
+  }
+});
+
+test("PDF links: HTTPS annotations are positioned, kept in reading mode and cleared on page turn", async () => {
+  const url = "https://example.org/reader#page=2";
+  const rect = [40, 700, 140, 720];
+  const pdfjs = fakePdfjs({ pageAnnotations: [[
+    { subtype: "Link", url, rect },
+    { subtype: "Link", url: "javascript:alert(1)", rect },
+    { subtype: "Link", dest: "chapter", rect },
+    { subtype: "Link", url, rect: [0, 0, 0, 0] },
+    { subtype: "Widget", url, rect },
+  ]] });
+  const { documentRef } = await start({ pdfjs });
+  const layer = el(documentRef, "pdf-links");
+  assert.equal(layer.children.length, 1);
+  const [link] = layer.children;
+  assert.equal(link.tagName, "A");
+  assert.equal(link.href, url);
+  assert.equal(link.target, "_blank");
+  assert.equal(link.rel, "noopener noreferrer");
+  assert.deepEqual([link.style.left, link.style.top, link.style.width, link.style.height],
+                   ["40px", "80px", "100px", "20px"]);
+  await fire(el(documentRef, "toggle-reading"), "click");
+  assert.equal(layer.children[0], link);
+  await turnTo(documentRef, 2);
+  assert.equal(layer.children.length, 0);
+});
+
+test("PDF links: named and explicit destinations go to the cited position", async () => {
+  const rect = [40, 700, 140, 720];
+  const ref = { num: 22, gen: 0 };
+  const pdfjs = fakePdfjs({
+    pageRefs: [{ num: 4, gen: 0 }, ref],
+    destinations: { definition: [ref, { name: "XYZ" }, 0, 320, null] },
+    pageAnnotations: [
+      [{ subtype: "Link", dest: "definition", rect }],
+      [{ subtype: "Link", dest: [1, { name: "FitH" }, 640], rect }],
+    ],
+  });
+  const { documentRef, result } = await start({ pdfjs });
+  const layer = el(documentRef, "pdf-links");
+  const scroller = el(documentRef, "page-scroller");
+  const scrolls = [];
+  Object.assign(scroller, {
+    scrollLeft: 0, scrollTop: 0,
+    getBoundingClientRect: () => ({ left: 0, top: 100 }),
+    scrollTo: ({ top }) => scrolls.push(top),
+  });
+  el(documentRef, "page-stage").getBoundingClientRect = () => ({ left: 28, top: 128 });
+  await fire(el(documentRef, "toggle-reading"), "click");
+  await fire(el(documentRef, "zoom-in"), "click");
+  await new Promise(setImmediate);
+  assert.equal(layer.children[0].href, "#page=2");
+  const click = { preventDefault() {} };
+  await fire(layer.children[0], "click", click);
+  assert.equal(result.state.currentPage, 2);
+  assert.equal(result.state.zoom, 110);
+  assert.equal(layer.children[0].href, "#page=2");
+  await fire(layer.children[0], "click", click);
+  assert.deepEqual(scrolls, [532, 180]);
+});
+
+test("PDF links: a late result for a previous page is discarded", async () => {
+  let resolveAnnotations;
+  const pending = new Promise((resolve) => { resolveAnnotations = resolve; });
+  const { documentRef } = await start({ pdfjs: fakePdfjs({ pageAnnotations: [pending] }) });
+  await turnTo(documentRef, 2);
+  resolveAnnotations([{ subtype: "Link", url: "https://example.org/", rect: [40, 700, 140, 720] }]);
+  await new Promise(setImmediate);
+  assert.equal(el(documentRef, "pdf-links").children.length, 0);
 });
 
 // --- the page index ---------------------------------------------------------
@@ -938,6 +1054,7 @@ test("reading: page, zoom and rotation controls work while annotations stay hidd
     assert.equal(el(documentRef, "region-bar").hidden, true);
   }
   assert.deepEqual([result.state.currentPage, result.state.zoom, result.state.rotation], [3, 110, 90]);
+  assert.equal(el(documentRef, "text-layer").hidden, false, "the PDF text remains selectable");
   await fire(el(documentRef, "toggle-reading"), "click");
   assert.equal(result.state.currentPage, 3);
   assert.equal(el(documentRef, "overlay").attributes.hidden, undefined);
@@ -995,20 +1112,22 @@ test("keyboard: every shortcut a button advertises does what the button does", a
   const advertised = [...SHELL.matchAll(/<button\b[^>]*>/g)]
     .map(([tag]) => [tag.match(/\sid="([^"]+)"/)?.[1], tag.match(/\saria-keyshortcuts="([^"]+)"/)?.[1],
                      tag.match(/\stitle="[^"]*\(([^)]+)\)"/)?.[1]])
-    .filter(([id, keys]) => id && keys);
+    .filter(([id, keys]) => id && keys && !keys.includes("Meta+"));
   assert.deepEqual(advertised.map(([id, , shown]) => [id, shown]),
-                   [["previous-page", "←"], ["next-page", "→"], ["zoom-out", "−"], ["zoom-in", "+"],
+                   [["toggle-reading", "L"], ["toggle-shortcuts", "?"],
+                    ["previous-page", "←"], ["next-page", "→"], ["zoom-out", "−"], ["zoom-in", "+"],
                     ["rotate-right", "R"]], "each toolbar button names its key in its tooltip");
-  const snapshot = (state) => [state.currentPage, state.zoom, state.rotation];
+  const snapshot = ({ state, ui }) => [state.currentPage, state.zoom, state.rotation,
+    state.readingMode, ui["shortcut-help"].hidden];
   for (const [id, keys] of advertised) {
     const clicked = await start({ locationRef: { hash: "#page=5" } });
     await fire(el(clicked.documentRef, id), "click");
-    assert.notDeepEqual(snapshot(clicked.result.state), [5, 100, 0], `#${id} does something`);
+    assert.notDeepEqual(snapshot(clicked.result), [5, 100, 0, false, true], `#${id} does something`);
     for (const token of keys.split(" ")) {
       const key = token === "Plus" ? "+" : token;
       const pressed = await start({ locationRef: { hash: "#page=5" } });
       await fire(pressed.documentRef, "keydown", { key, shiftKey: key === "+" || /^[A-Z]$/.test(key) });
-      assert.deepEqual(snapshot(pressed.result.state), snapshot(clicked.result.state), `${token} on #${id}`);
+      assert.deepEqual(snapshot(pressed.result), snapshot(clicked.result), `${token} on #${id}`);
     }
   }
 });
@@ -1018,10 +1137,95 @@ test("keyboard: the shortcut test is the predicate's own, so both halves agree",
   assert.equal(isViewerShortcut({ ctrlKey: true, key: "ArrowRight", target: {} }), false);
   assert.equal(isViewerShortcut({ key: "ArrowRight", metaKey: true, target: {} }), false);
   assert.equal(isViewerShortcut({ key: "r", target: { tagName: "INPUT" } }), false);
+  assert.equal(isViewerShortcut({ key: "l", target: { tagName: "SPAN", isContentEditable: true } }), false);
   assert.equal(isViewerShortcut({ key: "+", shiftKey: true, target: {} }), true, "a shifted character counts");
   assert.equal(isViewerShortcut({ key: "ArrowRight", shiftKey: true, target: {} }), false,
                "a shifted named key does not");
   assert.equal(isViewerShortcut(null), false);
+});
+
+test("keyboard: L toggles reading without changing the selected passage or repeating", async () => {
+  const { documentRef, result } = await start();
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const selected = result.state.selected;
+  await fire(documentRef, "keydown", { key: "l" });
+  assert.equal(result.state.readingMode, true);
+  assert.equal(el(documentRef, "details").hidden, true);
+  await fire(documentRef, "keydown", { key: "l", repeat: true });
+  assert.equal(result.state.readingMode, true);
+  await fire(documentRef, "keydown", { key: "L", shiftKey: true });
+  assert.equal(result.state.readingMode, false);
+  assert.equal(result.state.selected, selected);
+  assert.equal(el(documentRef, "details").hidden, false);
+  const invalid = await start({ pdf: () => pdfResponse(new Uint8Array([1])) });
+  await fire(invalid.documentRef, "keydown", { key: "l" });
+  assert.equal(invalid.result.state.readingMode, false, "L respects the disabled control");
+});
+
+test("keyboard: L and ? leave typing, browser shortcuts and composition alone", async () => {
+  const { documentRef, result } = await start();
+  for (const key of ["l", "?"]) {
+    for (const modifier of ["ctrlKey", "metaKey", "altKey", "isComposing", "defaultPrevented"]) {
+      await fire(documentRef, "keydown", { key, [modifier]: true });
+    }
+    for (const target of [{ tagName: "INPUT" }, { tagName: "TEXTAREA" }, { tagName: "SELECT" },
+      { tagName: "SPAN", isContentEditable: true }]) {
+      await fire(documentRef, "keydown", { key, target });
+    }
+  }
+  assert.equal(result.state.readingMode, false);
+  assert.equal(el(documentRef, "shortcut-help").hidden, true);
+});
+
+test("keyboard help: toggles by key and button, restores focus, and Escape closes only help", async () => {
+  const { documentRef, result } = await start();
+  const trigger = el(documentRef, "toggle-shortcuts"), close = el(documentRef, "close-shortcuts");
+  const help = el(documentRef, "shortcut-help");
+  for (const node of [trigger, close]) node.focus = () => { documentRef.activeElement = node; };
+  documentRef.activeElement = trigger;
+  await fire(documentRef, "keydown", { key: "l" });
+  await fire(documentRef, "keydown", { key: "?", shiftKey: true });
+  assert.equal(help.hidden, false);
+  assert.equal(trigger.attributes["aria-expanded"], "true");
+  assert.equal(documentRef.activeElement, close);
+  await fire(documentRef, "keydown", { key: "?", repeat: true });
+  await fire(documentRef, "keydown", { key: "ArrowRight" });
+  await fire(documentRef, "keydown", { key: "r" });
+  assert.equal(help.hidden, false);
+  assert.equal(result.state.currentPage, 1);
+  assert.equal(result.state.rotation, 0);
+  await fire(documentRef, "keydown", { key: "Escape" });
+  assert.equal(help.hidden, true);
+  assert.equal(documentRef.activeElement, trigger);
+  assert.equal(result.state.readingMode, true, "one Escape does not also exit Read PDF");
+  await fire(trigger, "click");
+  await fire(documentRef, "keydown", { key: "?" });
+  assert.equal(help.hidden, true);
+  await fire(trigger, "click");
+  await fire(close, "click");
+  assert.equal(help.hidden, true);
+  assert.equal(trigger.attributes["aria-expanded"], "false");
+});
+
+test("keyboard help: outside click or focus dismisses it; search remains available", async () => {
+  const { documentRef, result } = await start();
+  const trigger = el(documentRef, "toggle-shortcuts"), help = el(documentRef, "shortcut-help");
+  const inside = el(documentRef, "close-shortcuts"), outside = el(documentRef, "page-scroller");
+  help.contains = (node) => node === inside;
+  await fire(trigger, "click");
+  await fire(documentRef, "click", { target: inside });
+  await fire(documentRef, "focusin", { target: inside });
+  assert.equal(help.hidden, false);
+  await fire(documentRef, "click", { target: outside });
+  assert.equal(help.hidden, true);
+  await fire(trigger, "click");
+  await fire(documentRef, "focusin", { target: outside });
+  assert.equal(help.hidden, true);
+  await fire(trigger, "click");
+  await fire(documentRef, "keydown", { key: "f", metaKey: true });
+  assert.equal(help.hidden, true);
+  assert.equal(el(documentRef, "find-bar").hidden, false);
+  assert.equal(result.state.currentPage, 1);
 });
 
 test("escape clears the selected region and Enter on a region selects it", async () => {
@@ -1632,8 +1836,9 @@ test("steps: a step's card shows its Lean lines, one range each, not the declara
   const { documentRef } = await start(PROOF_FULL);
   await turnTo(documentRef, 9);
   await openStep(documentRef, "b");
-  assert.equal(itemTitle(documentRef), "Step 2");
-  assert.equal(textOf(el(documentRef, "item-label").children[1]), "Collect the two terms");
+  assert.equal(itemTitle(documentRef), "Collect the two terms");
+  assert.equal(el(documentRef, "item-label").children.length, 1, "the description is the heading, not a repeated subtitle");
+  assert.equal(el(documentRef, "item-position").textContent, "2 of 4");
   assert.equal(el(documentRef, "key-list").children.length, 1, "three ranges of one declaration are one card");
   const [[, name, ...ranges]] = keyCards(documentRef);
   assert.equal(textOf(name), "Box.double");
@@ -1649,11 +1854,117 @@ test("steps: a step's card shows its Lean lines, one range each, not the declara
   assert.ok(!pres.map(textOf).includes("theorem double (b : Box) : 2 * b = b + b"), "the whole statement is not repeated");
 });
 
+test("steps: every numbered range uses its own Verso snippet and opens semantic hovers", async () => {
+  const verso = makeVerso();
+  verso.statements["Notes/Box/index.html#Notes___Box___double"] = [
+    [["kw", "rw"], ["tx", " ["], ["const", "two_mul", 101], ["tx", "]\n"], ["kw", "ring"]],
+    [["kw", "exact"], ["tx", " "], ["var", "h", 102]],
+  ];
+  verso.hovers[101] = { signature: "two_mul (n : Nat) : 2 * n = n + n" };
+  verso.hovers[102] = { signature: "b = b" };
+  const { documentRef } = await start({ ...PROOF_FULL, verso });
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "b");
+  const pres = keyCards(documentRef)[0].filter((node) => node.tagName === "PRE");
+  assert.deepEqual(pres.map(textOf), ["rw [two_mul]\nring", "exact h", "calc _ = _ := by\n  simp"]);
+  const theorem = tokensOf(pres[0]).find((node) => node.textContent === "two_mul");
+  assert.ok(theorem.classList.contains("has-hover"));
+  await fire(theorem, "pointerenter", { pointerType: "mouse" });
+  assert.equal(textOf(el(documentRef, "hover-card")), "two_mul (n : Nat) : 2 * n = n + n");
+  const local = tokensOf(pres[1]).find((node) => node.textContent === "h");
+  await keyboardFocus(local);
+  assert.equal(textOf(el(documentRef, "hover-card")), "h : b = b");
+  assert.deepEqual(pres.map((pre) => pre.children[0].dataset.line), ["22", "25", "27"]);
+});
+
 test("steps: a step with lines of two declarations shows a card for each", async () => {
   const { documentRef } = await start(PROOF_FULL);
   await turnTo(documentRef, 10);
   await openStep(documentRef, "c");
   assert.deepEqual(keyCards(documentRef).map(([, name]) => textOf(name)), ["Box.double", "Box.bound"]);
+});
+
+test("proof guides: ordered helper chain retains exact excerpts and enclosing-source links", async () => {
+  const sections = makeProofSections(PDF_SHA256);
+  const step = sections["9/theorem-9.1"].find(r => r.id === "c");
+  step.relation = "closeMatch";
+  step.extensions[NAMESPACE].proof = { kind: "chain", summary: "Combine two lemmas, in this order." };
+  step.object.forEach((end, index) => {
+    end.extensions[NAMESPACE].destination = { href: "https://example.org/pinned/Proof.lean", fragment: `L${index + 7}` };
+    end.extensions[NAMESPACE].proof_context = {
+      declaration: index ? "bound" : "double", lines: index ? [5, 10] : [18, 45],
+      conclusion: index ? "Apply the bound." : "Combine the terms.",
+      ...(index === 0 ? {
+        explanation: "Use `previous_fact` here.",
+        notation: [{ math: "The local value", lean: "locVal" }],
+        bookkeeping: "The endpoints are already equal.",
+      } : {}),
+    };
+  });
+  const { documentRef, result } = await start({ sections, config: makeConfig(MINIMAL) });
+  await turnTo(documentRef, 10);
+  await openStep(documentRef, "c");
+  assert.equal(el(documentRef, "target-summary").textContent, "2 linked lemmas");
+  const chain = el(documentRef, "key-list").children[0];
+  const buttons = chain.children[1].children.map(li => li.children[0]);
+  assert.equal(buttons.length, 2);
+  assert.deepEqual(buttons.map(b => b.attributes['aria-pressed']), ["true", "false"]);
+  const excerpt = chain.children[2];
+  const first = excerpt.children[0];
+  assert.equal(textOf(first.children.find(n => n.tagName === "PRE")), "have := h");
+  await fire(buttons[1], "click");
+  assert.deepEqual(buttons.map(b => b.attributes['aria-pressed']), ["false", "true"]);
+  assert.equal(textOf(excerpt.children[0].children.find(n => n.tagName === "PRE")), "theorem bound");
+  assert.deepEqual(result.state.selected.cards.map(c => c.proofContext.href),
+    ["https://example.org/pinned/Proof.lean#L18-L45", "https://example.org/pinned/Proof.lean#L5-L10"]);
+  const notes = first.children.find(node => node.tagName === "DETAILS");
+  assert.ok(notes && !notes.open);
+  assert.match(textOf(notes), /Reading the Lean notation.*Combine the terms.*previous_fact.*locVal.*endpoints are already equal/s);
+  assert.ok(!first.children.some(node => node.classList.contains("proof-conclusion")
+    || node.classList.contains("proof-explanation")));
+  const secondNotes = excerpt.children[0].children.find(node => node.tagName === "DETAILS");
+  assert.ok(secondNotes && !secondNotes.open);
+  assert.match(textOf(secondNotes), /Reading the Lean notation.*Apply the bound/s);
+  assert.equal(el(documentRef, "key-more").hidden, true);
+});
+
+test("proof guides: a conclusion already stated by the heading is omitted without losing notation or code", async () => {
+  const sections = makeProofSections(PDF_SHA256);
+  const step = sections["9/theorem-9.1"].find(r => r.id === "a");
+  step.object[0].extensions[NAMESPACE].proof_context = {
+    declaration: "double", lines: [18, 45],
+    conclusion: "Unfold the product.",
+    bookkeeping: "The endpoint types are implicit.",
+  };
+  const { documentRef } = await start({ sections });
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "a");
+  assert.equal(itemTitle(documentRef), "Unfold the product");
+  const card = el(documentRef, "key-list").children[0];
+  assert.doesNotMatch(textOf(card), /Unfold the product/);
+  assert.ok(card.children.some(node => node.tagName === "PRE"));
+  assert.match(textOf(card), /Reading the Lean notation.*endpoint types/s);
+});
+
+test("proof guides: context is inert text and cannot hide a broader correspondence", async () => {
+  const sections = makeProofSections(PDF_SHA256);
+  const step = sections["9/theorem-9.1"].find(r => r.id === "a");
+  step.relation = "broadMatch";
+  step.extensions[NAMESPACE].proof = { kind: "helper", summary: "Helper." };
+  step.object[0].extensions[NAMESPACE].destination = { href: "javascript:alert(1)" };
+  step.object[0].extensions[NAMESPACE].proof_context = {
+    declaration: "<img src=x onerror=alert(1)>", lines: [18, 45],
+    conclusion: "<script>alert(1)</script>", explanation: "`<b>literal</b>`",
+  };
+  const { documentRef, result } = await start({ sections });
+  await turnTo(documentRef, 9);
+  await openStep(documentRef, "a");
+  assert.equal(el(documentRef, "target-summary").textContent, "Broader");
+  assert.equal(result.state.selected.cards[0].proofContext.href, null);
+  const walk = n => typeof n === "object" ? [n, ...(n.children ?? []).flatMap(walk)] : [];
+  const nodes = walk(el(documentRef, "key-list"));
+  assert.ok(!nodes.some(n => ["SCRIPT", "IMG", "B"].includes(n.tagName)));
+  assert.match(textOf(el(documentRef, "key-list")), /<script>alert\(1\)<\/script>/);
 });
 
 test("steps: the note's backticked code is set as code, on a step only", async () => {
@@ -1753,7 +2064,7 @@ test("steps: an item lists its proof's steps, across pages, and a row opens its 
   ]);
   await fire(steps[2], "click");
   assert.equal(result.state.currentPage, 10);
-  assert.equal(itemTitle(documentRef), "Step 3");
+  assert.equal(itemTitle(documentRef), "Bound each side");
   assert.equal(el(documentRef, "selection").hidden, false, "no page index between the two");
   assert.equal(el(documentRef, "page-number").value, "10");
 });
@@ -1798,7 +2109,7 @@ test("steps: a click on a step's box opens the step, and the way back lands on i
   await turnTo(documentRef, 9);
   await fire(polygonOf(documentRef, result.state.index.items.get("b").place.regionId), "click");
   assert.equal(result.state.selected.id, "b");
-  assert.equal(itemTitle(documentRef), "Step 2");
+  assert.equal(itemTitle(documentRef), "Collect the two terms");
   await fire(el(documentRef, "back-to-page"), "click");
   assert.equal(result.state.selected, null);
   assert.equal(focused.dataset.itemId, "b");
@@ -1856,6 +2167,32 @@ test("minimal: a step's note opens on asking, and its claim never waits for that
   await fire(el(documentRef, "note-toggle"), "click");
   assert.deepEqual(noteState(documentRef), { expanded: "false", note: false, toggle: "More detail" });
 });
+
+for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MINIMAL)]]) {
+  test(`notes: a repeated step heading has no detail text or toggle (${mode})`, async () => {
+    const sections = makeProofSections(PDF_SHA256);
+    const step = sections["9/theorem-9.1"].find(record => record.id === "b");
+    step.note = "  Collect the two\n terms  ";
+    for (const end of step.object) {
+      delete end.location.declaration;
+      end.title = "Collect the two terms";
+    }
+    const { documentRef } = await start({ config, sections });
+    await turnTo(documentRef, 9);
+    await openStep(documentRef, "b");
+    assert.match(textOf(el(documentRef, "item-label")), /Collect the two terms/);
+    assert.doesNotMatch(textOf(el(documentRef, "key-list")), /Collect the two terms/);
+    assert.match(textOf(el(documentRef, "key-list")), /rw \[two_mul\]/);
+    assert.equal(el(documentRef, "coverage-note").hidden, true);
+    assert.equal(el(documentRef, "note-toggle").hidden, true);
+    assert.equal(el(documentRef, "target-summary").textContent, "Close match");
+    await fire(el(documentRef, "next-item"), "click");
+    await fire(el(documentRef, "next-item"), "click");
+    assert.equal(textOf(el(documentRef, "coverage-note")), "Lean takes finiteness from an instance.");
+    assert.equal(el(documentRef, "note-toggle").hidden, mode !== "minimal");
+    assert.equal(el(documentRef, "coverage-note").hidden, mode === "minimal");
+  });
+}
 
 test("minimal: a checked absence is the claim, and stays in sight with its note closed", async () => {
   const { documentRef } = await start(PROOF_MINIMAL);
@@ -1942,13 +2279,30 @@ for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MIN
     assert.equal(step.title, "a: fₖ ≠ 0, ‖eₘ‖ = 1 and x⁻¹", "a tooltip keeps the label as written");
     await openStep(documentRef, "a");
     const [title, subtitle] = el(documentRef, "item-label").children;
-    assert.equal(textOf(title), "Step 1");
-    assert.equal(scripted(subtitle), "f_{k} ≠ 0, ‖e_{m}‖ = 1 and x^{−1}");
+    assert.equal(scripted(title), "f_{k} ≠ 0, ‖e_{m}‖ = 1 and x^{−1}");
+    assert.equal(subtitle, undefined);
     await fire(el(documentRef, "step-parent"), "click");
     const [item, itemSubtitle] = el(documentRef, "item-label").children;
     assert.equal(scripted(item), "Theorem 9.1");
     assert.equal(scripted(itemSubtitle), "e_{k} ≠ 0 for x^{n}");
     assert.equal(el(documentRef, "step-parent").hidden, true);
+  });
+}
+
+for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MINIMAL)]]) {
+  test(`titles: capital and nested subscripts render in overview and details (${mode})`, async () => {
+    const label = "ι_{S} : S → X, Π₁(ι_{Uᵢ}), γ_{[r,s]} and x^{Q}";
+    const sections = makeProofSections(PDF_SHA256);
+    sections["9/theorem-9.1"][0] = JSON.parse(JSON.stringify(sections["9/theorem-9.1"][0])
+      .replace("Theorem 9.1 (Doubling)", label));
+    const { documentRef } = await start({ config, sections });
+    await turnTo(documentRef, 9);
+    const row = el(documentRef, "page-index").children.find((li) => li.children[1]);
+    const expected = "ι_{S} : S → X, Π_{1}(ι_{U_{i}}), γ_{[r,s]} and x^{Q}";
+    assert.equal(scripted(row.children[0].children[1].children[0]), expected);
+    await openStep(documentRef, "a");
+    await fire(el(documentRef, "step-parent"), "click");
+    assert.equal(scripted(el(documentRef, "item-label").children[0]), expected);
   });
 }
 
@@ -1968,8 +2322,8 @@ test("titles: a label with no script characters stays one text, as it was", asyn
   const { documentRef } = await start(PROOF_FULL);
   await turnTo(documentRef, 9);
   await openStep(documentRef, "a");
-  const [, subtitle] = el(documentRef, "item-label").children;
-  assert.deepEqual([subtitle.textContent, subtitle.children], ["Unfold the product", []]);
+  const [title] = el(documentRef, "item-label").children;
+  assert.deepEqual([title.textContent, title.children], ["Unfold the product", []]);
   assert.deepEqual(el(documentRef, "step-parent").children, []);
 });
 
@@ -1978,4 +2332,186 @@ test("fonts: the serif and code stacks end in the system font, after their gener
     (await import("node:path")).join((await import("./fixtures.mjs")).VIEWER_DIR, "viewer.css"), "utf8");
   assert.match(css, /--serif:[^;]*, serif, system-ui;/);
   assert.match(css, /--mono:[^;]*, monospace, system-ui;/);
+});
+
+
+// --- whole-document find ----------------------------------------------------
+
+async function findPdf(documentRef, query) {
+  await fire(el(documentRef, "find-toggle"), "click");
+  el(documentRef, "find-input").value = query;
+  await fire(el(documentRef, "find-input"), "input");
+}
+
+test("find: Cmd+F and Ctrl+F open the PDF search, even from another input", async () => {
+  const { documentRef } = await start();
+  for (const modifier of ["metaKey", "ctrlKey"]) {
+    let prevented = false;
+    await fire(documentRef, "keydown", { key: "f", [modifier]: true, target: { tagName: "INPUT" },
+      preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(el(documentRef, "find-bar").hidden, false);
+    await fire(documentRef, "keydown", { key: "Escape", target: el(documentRef, "find-input") });
+    assert.equal(el(documentRef, "find-bar").hidden, true);
+  }
+});
+
+test("find: all-page results navigate and wrap with Enter and Shift+Enter, retaining reading mode", async () => {
+  const pdfjs = fakePdfjs({ numPages: 3, pageTexts: ["path path", "nothing", "a Path"] });
+  const { documentRef, result } = await start({ pdfjs });
+  await fire(el(documentRef, "toggle-reading"), "click");
+  await findPdf(documentRef, "PATH");
+  assert.equal(el(documentRef, "find-count").textContent, "1 of 3");
+  assert.equal(pdfjs.textReads.length, 3, "page three is searched while page one is displayed");
+  await fire(documentRef, "keydown", { key: "Enter", target: el(documentRef, "find-input") });
+  assert.equal(el(documentRef, "find-count").textContent, "2 of 3");
+  await fire(el(documentRef, "find-next"), "click");
+  assert.equal(result.state.currentPage, 3);
+  assert.equal(el(documentRef, "find-count").textContent, "3 of 3");
+  await fire(el(documentRef, "find-next"), "click");
+  assert.equal(result.state.currentPage, 1);
+  await fire(documentRef, "keydown", { key: "Enter", shiftKey: true, target: el(documentRef, "find-input") });
+  assert.equal(result.state.currentPage, 3);
+  assert.equal(result.state.readingMode, true);
+  await fire(documentRef, "keydown", { key: "Escape", target: el(documentRef, "find-input") });
+  assert.equal(result.state.readingMode, true, "the first Escape only closes search");
+  assert.equal(el(documentRef, "find-bar").hidden, true);
+  assert.deepEqual(el(documentRef, "find-highlights").children, []);
+});
+
+test("find: Enter shortcuts survive focus on PDF text or either match arrow and wrap across pages", async () => {
+  const { documentRef, result } = await start({
+    pdfjs: fakePdfjs({ numPages: 3, pageTexts: ["path", "nothing", "path path"] }),
+  });
+  await findPdf(documentRef, "path");
+  const scroller = el(documentRef, "page-scroller");
+  const arrows = [el(documentRef, "find-previous"), el(documentRef, "find-next")];
+  for (const node of [scroller, ...arrows]) node.closest = () => node;
+  for (const target of [scroller, { tagName: "SPAN", closest: () => scroller },
+    { tagName: "BODY", closest: () => null }, ...arrows]) {
+    for (const [shiftKey, active, page] of [[false, 1, 3], [true, 0, 1], [true, 2, 3], [false, 0, 1]]) {
+      let prevented = false;
+      await fire(documentRef, "keydown", { key: "Enter", shiftKey, target,
+        preventDefault: () => { prevented = true; } });
+      assert.equal(result.state.search.active, active);
+      assert.equal(result.state.currentPage, page);
+      assert.equal(prevented, true, "the match button must not also fire its native click");
+    }
+  }
+  await fire(el(documentRef, "find-close"), "click");
+  await fire(documentRef, "keydown", { key: "Enter", target: scroller });
+  assert.equal(result.state.search.active, 0, "closed search does not capture Enter");
+});
+
+test("find: Enter navigation leaves unrelated controls, editing and modified keys alone", async () => {
+  const { documentRef, result } = await start({
+    pdfjs: fakePdfjs({ numPages: 1, pageTexts: ["path path path"] }),
+  });
+  await findPdf(documentRef, "path");
+  const otherControls = ["page-number", "find-close", "toggle-reading", "toggle-shortcuts", "panel-divider"]
+    .map((id) => el(documentRef, id));
+  const passage = { tagName: "BUTTON" };
+  for (const node of [...otherControls, passage]) node.closest = () => node;
+  for (const target of [...otherControls, passage, { tagName: "SPAN", closest: () => passage },
+    { tagName: "SPAN", isContentEditable: true }, { tagName: "INPUT" }, { tagName: "TEXTAREA" }]) {
+    await fire(documentRef, "keydown", { key: "Enter", target,
+      preventDefault: () => assert.fail("search must not take this control's Enter action") });
+    assert.equal(result.state.search.active, 0);
+  }
+  for (const modifier of ["ctrlKey", "metaKey", "altKey", "isComposing", "defaultPrevented"]) {
+    await fire(documentRef, "keydown", { key: "Enter", [modifier]: true, target: el(documentRef, "find-input"),
+      preventDefault: () => assert.fail("search must not capture this modified key") });
+    assert.equal(result.state.search.active, 0);
+  }
+});
+
+test("find: missing text, no results and extraction failures are explicit and do not disable reading", async () => {
+  for (const [texts, query, expected] of [
+    [["path", "nothing"], "other", /No matches/],
+    [["", ""], "path", /No searchable text/],
+    [[new Error("broken"), "path"], "path", /1 page could not be searched/],
+  ]) {
+    const { documentRef, result } = await start({ pdfjs: fakePdfjs({ numPages: 2, pageTexts: texts }) });
+    await findPdf(documentRef, query);
+    assert.match(el(documentRef, "find-count").textContent, expected);
+    assert.equal(el(documentRef, "error").hidden, true);
+    assert.equal(result.state.pdfDocument.numPages, 2);
+  }
+});
+
+
+test("find: closing while extraction is pending prevents stale navigation or counts", async () => {
+  const pdfjs = fakePdfjs({ numPages: 3 });
+  let release;
+  const task = pdfjs.getDocument({});
+  const pdf = await task.promise;
+  const page = await pdf.getPage(1);
+  pdf.getPage = async (number) => ({ ...page,
+    getTextContent: () => new Promise((resolve) => { release = resolve; }),
+  });
+  pdfjs.getDocument = () => task;
+  const { documentRef, result } = await start({ pdfjs });
+  await fire(el(documentRef, "find-toggle"), "click");
+  el(documentRef, "find-input").value = "path";
+  const pending = fire(el(documentRef, "find-input"), "input");
+  // Let getPage resolve, so the text extraction itself is in flight.
+  await Promise.resolve();
+  await Promise.resolve();
+  await fire(el(documentRef, "find-close"), "click");
+  release({ items: [{ str: "path" }] });
+  await pending;
+  assert.equal(result.state.currentPage, 1);
+  assert.equal(el(documentRef, "find-bar").hidden, true);
+  assert.deepEqual(result.state.search.matches, []);
+});
+
+test("find: clearing a query removes results and reopening preserves a completed search", async () => {
+  const { documentRef, result } = await start({ pdfjs: fakePdfjs({ numPages: 1 }) });
+  await findPdf(documentRef, "volume");
+  assert.equal(el(documentRef, "find-count").textContent, "1 of 2");
+  await fire(el(documentRef, "find-close"), "click");
+  await fire(el(documentRef, "find-toggle"), "click");
+  assert.equal(el(documentRef, "find-count").textContent, "1 of 2");
+  el(documentRef, "find-input").value = "";
+  await fire(el(documentRef, "find-input"), "input");
+  assert.equal(el(documentRef, "find-count").textContent, "");
+  assert.equal(el(documentRef, "find-next").disabled, true);
+  assert.deepEqual(result.state.search.matches, []);
+});
+
+for (const [mode, config] of [["full", makeConfig()], ["minimal", makeConfig(MINIMAL)]]) {
+  test(`titles: authored LaTeX reaches the renderer on overview and detail (${mode})`, async () => {
+    const label = String.raw`Subpath \(\gamma_{[r,s]}\)`;
+    const sections = makeProofSections(PDF_SHA256);
+    sections["9/theorem-9.1"][0] = JSON.parse(JSON.stringify(sections["9/theorem-9.1"][0])
+      .replace("Theorem 9.1 (Doubling)", label.replaceAll("\\", "\\\\")));
+    const rendered = [];
+    const renderMath = (tex, doc) => {
+      rendered.push(tex);
+      const math = doc.createElement("math");
+      math.textContent = tex;
+      return math;
+    };
+    const { documentRef } = await start({config, sections, renderMath});
+    await turnTo(documentRef, 9);
+    assert.ok(rendered.includes(String.raw`\gamma_{[r,s]}`));
+    rendered.length = 0;
+    await openStep(documentRef, "a");
+    await fire(el(documentRef, "step-parent"), "click");
+    assert.ok(rendered.includes(String.raw`\gamma_{[r,s]}`));
+    assert.equal(el(documentRef, "item-label").children[0].children[1].tagName, "MATH");
+  });
+}
+
+
+test("panel divider: resize keys do not turn PDF pages; reading mode hides and restores it", async () => {
+  const { documentRef, result } = await start();
+  const divider = el(documentRef, 'panel-divider');
+  const page = result.state.currentPage;
+  await fire(documentRef, 'keydown', { target: divider, key: 'ArrowRight' });
+  assert.equal(result.state.currentPage, page);
+  await fire(el(documentRef, 'toggle-reading'), 'click');
+  assert.equal(divider.hidden, true);
+  await fire(el(documentRef, 'toggle-reading'), 'click');
+  assert.equal(divider.hidden, false);
 });

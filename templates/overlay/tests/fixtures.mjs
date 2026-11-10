@@ -390,6 +390,18 @@ export function makeConfig(overrides = {}) {
 
 // --- a DOM stand-in ---------------------------------------------------------
 
+/** A style that takes both `style.left = x` and `style.setProperty("--x", y)`, and reports what it was given. */
+export function fakeStyle() {
+  return {
+    setProperty(name, value) {
+      this[name] = String(value);
+    },
+    getPropertyValue(name) {
+      return this[name] ?? "";
+    },
+  };
+}
+
 export function fakeElement(tag = "div") {
   const listeners = new Map();
   const element = {
@@ -401,7 +413,7 @@ export function fakeElement(tag = "div") {
     disabled: false,
     hidden: false,
     listeners,
-    style: {},
+    style: fakeStyle(),
     tagName: tag.toUpperCase(),
     textContent: "",
     title: "",
@@ -511,24 +523,91 @@ export function fakeViewport({ rotation = 0, scale = 1 } = {}) {
     convertToViewportPoint: (x, y) => [x * scale, (800 - y) * scale],
     height: 800 * scale,
     rotation,
+    scale,
+    userUnit: 1,
     width: 600 * scale,
   };
 }
 
-export function fakePdfjs({ numPages = 12 } = {}) {
+/** The two text items the fake page yields, one span each. */
+export const PAGE_TEXT = ["Theorem 1.1 (Volume bound). ", "Every box has a volume."];
+
+/**
+ * A PDF.js stand-in. Its `TextLayer` records what the viewer asked it for and
+ * appends one span per item of `PAGE_TEXT`; `textLayer: false` leaves it out,
+ * as a build without one would, and `textLayerError` makes its render fail.
+ */
+export function fakePdfjs({
+  numPages = 12, textLayer = true, textLayerError = null, pageTexts = null,
+  pageAnnotations = [], destinations = {}, pageRefs = [],
+} = {}) {
+  const streams = [];
   const page = {
     getViewport: (options) => fakeViewport(options),
     render: () => ({ cancel() {}, promise: Promise.resolve() }),
     rotate: 0,
+    streamTextContent: (options) => {
+      streams.push(options);
+      return { items: PAGE_TEXT };
+    },
     view: [0, 0, 600, 800],
   };
   const calls = [];
+  const textLayers = [];
+  const textReads = [];
+  class FakeTextLayer {
+    constructor(options) {
+      this.cancelled = 0;
+      this.options = options;
+      this.rendered = false;
+      textLayers.push(this);
+    }
+
+    async render() {
+      if (textLayerError) {
+        throw new Error(textLayerError);
+      }
+      this.textContentItemsStr = this.options.textContentSource.items;
+      this.textDivs = this.options.textContentSource.items.map((text) => {
+        const span = fakeElement("span");
+        span.textContent = text;
+        span.firstChild = { textContent: text };
+        return span;
+      });
+      this.options.container.append(...this.textDivs);
+      this.rendered = true;
+    }
+
+    cancel() {
+      this.cancelled += 1;
+    }
+  }
   return {
     calls,
+    streams,
+    textLayers,
+    textReads,
     GlobalWorkerOptions: {},
+    ...(textLayer ? { TextLayer: FakeTextLayer } : {}),
     getDocument: (options) => {
       calls.push(options);
-      return { promise: Promise.resolve({ getPage: async () => page, numPages }) };
+      return { promise: Promise.resolve({
+        numPages,
+        getDestination: async (name) => Object.hasOwn(destinations, name) ? destinations[name] : null,
+        getPageIndex: async ({ num, gen }) => pageRefs.findIndex((ref) => ref.num === num && ref.gen === gen),
+        getPage: async (number) => ({
+          ...page,
+          async getAnnotations() {
+            return pageAnnotations[number - 1] ?? [];
+          },
+          async getTextContent(options) {
+            textReads.push([number, options]);
+            const text = pageTexts?.[number - 1] ?? PAGE_TEXT.join("");
+            if (text instanceof Error) throw text;
+            return { items: [{ str: text }] };
+          },
+        }),
+      }) };
     },
   };
 }

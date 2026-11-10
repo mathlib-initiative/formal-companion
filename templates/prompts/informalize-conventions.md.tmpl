@@ -1,0 +1,20 @@
+You are the conventions task of run `{{run_id}}` (task file `tasks/$TEND_TASK_ID.yaml`, worktree $TEND_WORKTREE_PATH). Before any section is drafted you fix what every section shares.
+
+Prepare the notation and material conventions; do not write a global catalogue of
+variables. The intended reader is a mathematician familiar with the background named in
+STYLE-project.md. Put one-use variables inside their result and shared context in a short
+section opening. Keep an extra assumption local to the result that needs it.
+
+## Read first
+`informal/items.json` (approved: its ids are the printed numbers), `informal/declarations.json`, `informal/STYLE.md`, the templates you replace (`informal/notation.sty`, `informal/sections/00-conventions.tex`, `informal/STYLE-project.md`), and the library's source under `{{library_src}}/`.
+
+## Write
+1. `informal/hypotheses.json`: `{"schema": "formal-companion/informalize-hypotheses", "schema_version": 1, "hypotheses": [...]}`, one row per standing hypothesis the key declarations bind: `key` (letters, digits, `-`), `macro` (`\hypSomething`), and `binder_head` (the head constant of the hypothesis's printed type) or `binder_type` (a Python regular expression the whole printed type matches, spaces collapsed). An empty list when there is none.
+2. `informal/notation.sty`: one `\fcdefhyp{\macro}{key}{words}` per row of hypotheses.json (the words a statement prints for the hypothesis: the shortest wording that says the binder and nothing more, the standard term where one says exactly it), and the notation the sections use, defined with `\newcommand` or `\DeclareMathOperator`; each letter with one meaning within its argument.
+3. `informal/sections/00-conventions.tex`: leave it empty when no convention changes the mathematical reading. Otherwise state only such conventions, for example nonemptiness or a nonstandard composition order. Do not explain assumed background or introduce every letter here. Useful definition links may appear naturally in section prose, numbered statements or lettered parts: `\fcnotion{<constant>}{<the words as printed>}`, once per retained notion, with a name copied from `declarations.json`'s `declarations` or `references` (STYLE.md, "The conventions section"). **Print no Lean name and no link**. Never add a sentence solely to host a notion marker.
+4. `informal/STYLE-project.md`: record the audience's assumed background, each section's mathematical job, local notation, standing hypotheses and material conventions. Record useful notion constants and where their first natural occurrence belongs. Prefer readable mathematical names matching the Lean argument; keep a letter's meaning fixed within an argument. Preserve mathematical hypotheses without exposing typeclass or universe syntax.
+
+## Check, commit, finish
+Build the whole document, `{{build_command}} build/$TEND_TASK_ID`, then `{{check_command}} build/$TEND_TASK_ID --aux-only --strict --conventions --declarations {{gate_dir}}/declarations.json`, and `{{gate_command}} --findings informal/hypotheses.json`. Fix what they name, commit, set `status: complete` in your task file and commit it.
+
+{{finish_block}}

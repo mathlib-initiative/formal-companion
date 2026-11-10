@@ -13,7 +13,8 @@ and read no flags at all.
 So this module parses the documents and asks the real argparse tree:
 
 * every ``cf <command> [<sub>]`` written in a fenced block or in backticks
-  parses -- or is labelled on the same line as deleted / not implemented;
+  parses -- or is labelled on the same line as deleted / not implemented, a
+  subcommand of a real command (`cf informalize scope`) as much as a command;
 * every ``--flag`` written beside such a command belongs to that command, and a
   flag named on its own in the entry documents and their guides is a flag of
   *something*;
@@ -93,6 +94,9 @@ def _option_strings(parser) -> set[str]:
 
 
 COMMANDS, SUBCOMMANDS = cli_tree()
+#: the commands that take a subcommand, so the word after them names one
+WITH_SUBCOMMANDS = {path.split(" ")[0] for path in SUBCOMMANDS}
+_SUBCOMMAND_WORD = re.compile(r"[a-z][a-z0-9-]*")
 #: for a flag named in prose with no command beside it.
 ALL_FLAGS = {flag for flags in COMMANDS.values() for flag in flags}
 ALL_FLAGS |= {flag for flags in SUBCOMMANDS.values() for flag in flags}
@@ -193,7 +197,10 @@ def invocations(text: str) -> list[tuple[str, list[str], str]]:
         rest = match.group("rest")
         words = [w for w in rest.split() if w]
         path = words[0]
-        if len(words) > 1 and f"{path} {words[1]}" in SUBCOMMANDS:
+        if len(words) > 1 and (f"{path} {words[1]}" in SUBCOMMANDS or (
+                path in WITH_SUBCOMMANDS and _SUBCOMMAND_WORD.fullmatch(words[1]))):
+            # a subcommand, or a word where one belongs: `cf informalize scope <id>`
+            # names a subcommand whether or not this checkout has it yet
             path = f"{path} {words[1]}"
         found.append((path, _FLAG.findall(rest), span))
     return found
@@ -241,8 +248,12 @@ class TestEveryDocumentedCommandExists(unittest.TestCase):
                 head = path.split(" ")[0]
                 with self.subTest(doc=name, command=path):
                     if head in COMMANDS:
-                        if " " in path:
-                            self.assertIn(path, SUBCOMMANDS, f"{name}: {line}")
+                        if " " in path and path not in SUBCOMMANDS:
+                            # a subcommand a later change builds: labelled as such
+                            context = _blocks_naming(text, f"cf {path}")
+                            self.assertTrue(any(w in context for w in ABSENT_LABELS),
+                                            f"{name}: `cf {path}` is not a subcommand and "
+                                            f"nothing beside it says it is gone ({line})")
                         continue
                     # not a command: wherever it is named, the text must say so.
                     context = _blocks_naming(text, f"cf {head}")
@@ -253,6 +264,8 @@ class TestEveryDocumentedCommandExists(unittest.TestCase):
     def test_every_flag_beside_a_command_belongs_to_it(self):
         for name in DOCS:
             for path, flags, line in invocations(read(name)):
+                if " " in path and path not in SUBCOMMANDS:
+                    continue                     # labelled absent: no flags to hold it to
                 known = COMMANDS.get(path.split(" ")[0], set()) | SUBCOMMANDS.get(path, set())
                 if not known:
                     continue

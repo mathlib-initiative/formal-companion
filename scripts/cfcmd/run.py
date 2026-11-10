@@ -53,7 +53,8 @@ def register(subparsers) -> None:
     p.add_argument("--i-have-consent", action="store_true",
                    help="the owner of that host agreed to this run; recorded in run.yaml")
     p.add_argument("--include-sources", action="store_true",
-                   help="also transfer the companion repos (read-only)")
+                   help="also transfer the companion repos -- for an informalize phase, the "
+                        "library's source the workers read (read-only)")
     p.add_argument("--include-source-text", action="store_true", dest="include_source_text",
                    help="also transfer this run's source text/images (COPYRIGHTED)")
     p.add_argument("--max-cost", type=float, help="spend ceiling for this run")
@@ -95,6 +96,15 @@ def run(args) -> int:
     if args.show_status:
         return _status(workspace, args, data)
     planned_host = data.get("host") if isinstance(data.get("host"), dict) else {}
+    if manifest.is_informalize(data) and (args.local or planned_host.get("kind") == "local"):
+        # As for locate below: an informalize phase has no local fleet, and a run
+        # planned for `local` carries this machine's paths in gate.json and in the
+        # tend root (docs/proposals/informalize.md section 8.1).
+        raise CfError(
+            f"informalize run {args.run_id!r} was planned for this machine; an informalize "
+            "phase runs on an allowlisted host through tend",
+            hint="re-plan it for that host: `cf plan-informalize <id> --phase <phase> --host "
+                 f"<allowlisted host> --run-id {args.run_id} --i-have-consent`")
     if manifest.is_locate(data) and (args.local or planned_host.get("kind") == "local"):
         # Before the local branch, which creates runs/<id>/self-gate/ and then
         # refuses the run for naming no source: a locate run has no local fleet,
@@ -387,12 +397,16 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
 
     tasks = manifest.task_count(Path(workspace.root), args.run_id, data)
     locate = manifest.is_locate(data)
-    if locate and args.no_budget_cap:
-        raise CfError("--no-budget-cap does not apply to a locate run",
-                      hint="a recorded spend cap is a precondition: the shard's watchdog drains "
+    # A locate run and an informalize phase are both PLANNED with a mandatory cap,
+    # because the watchdog drains the run at the one run.yaml records: the recorded
+    # cap is what is sent, and --no-budget-cap has nothing to acknowledge.
+    recorded_cap = "locate" if locate else "informalize" if manifest.is_informalize(data) else ""
+    if recorded_cap and args.no_budget_cap:
+        raise CfError(f"--no-budget-cap does not apply to a {recorded_cap} run",
+                      hint="a recorded spend cap is a precondition: the watchdog drains "
                            "the root at it; record one with --max-cost")
     budget = manifest.check_budget_cap(workspace, data, args.max_cost, args.no_budget_cap,
-                                       locate=locate)
+                                       recorded_cap=recorded_cap)
     disk = manifest.disk_budget(entries, tasks, host)
     concurrency = _concurrency(workspace, data, args)
 
@@ -400,7 +414,9 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
                                  names=names, budget=budget, concurrency=concurrency,
                                  force=args.force,
                                  locate=(manifest.locate_gate(run_yaml_path.parent)[0]
-                                         if locate else None))
+                                         if locate else None),
+                                 informalize=(data["informalize"]
+                                              if manifest.is_informalize(data) else None))
     stages = remote.stages_upto(args.stage)
     if args.stage == "raise" and not args.smoke_verified:
         raise CfError(

@@ -44,7 +44,13 @@ is found by its Lean location instead of its link: its module's page
 build's `xref.json`, else `verso_slug` of its name), or for a tagged example
 its tag. It is filed under the same key, the same rules match the snippet,
 no token keeps a link (those pages are not the viewer's site), and `build`
-records the project commit and the build's Verso revision (`build_record`).
+records the project commit, the build's Verso revision and its dependency
+repository pins (`build_record`). Optional `--dependency-pages REPOSITORY=DIR`
+adds that dependency's pages, with hover IDs remapped across independent
+builds; a dependency card is kept only at its repository's own pinned commit.
+Line-only ends match their exact excerpts in the module's code boxes; sibling
+literate metadata, when present, confines the search to the enclosing declaration.
+Repeated or stale excerpts remain plain rather than borrowing another proof's bindings.
 `build_site.py` publishes it only for a site with no Verso pages, and only
 when its cards pin that commit (`unpinned`), each statement checked again
 against the bundle (`committed_problems`, `joined`). A card with a statement
@@ -216,24 +222,58 @@ def verso_slug(name: str) -> str:
                    for char in name)
 
 
-def object_locator(end: dict[str, Any], ids: dict[tuple[str, str], str]) -> Locator | None:
+def object_locator(end: dict[str, Any], ids: dict[tuple[str, str], str],
+                   site: Site | None = None) -> Locator | None:
     """`(page, how, what)` of an object end on a Verso build's own pages, from its Lean location alone:
-    its module's page and its declaration's anchor (`ids`, else `verso_slug` of its name), or for a
-    tagged example its tag."""
+    its module's page and its declaration's anchor (`ids`, else `verso_slug` of its name), a
+    tagged example's tag, or a range with its enclosing declaration when known."""
     location = end.get("location") if isinstance(end.get("location"), dict) else {}
     module = _trimmed(location.get("module"))
     page = module_page(module)
     if page is None:
         return None
     name = _trimmed(location.get("declaration"))
-    if name:
-        return page, "id", ids.get((name, module)) or verso_slug(name)
     ext = overlay_annotations.extension(end)
     declaration = ext.get("declaration") if isinstance(ext.get("declaration"), dict) else {}
     tag = declaration.get("id")
     if declaration.get("kind") == "example" and isinstance(tag, str) and EXAMPLE_ID.match(tag):
         return page, "tag", tag
+    lines = location.get("lines")
+    if isinstance(lines, list) and 1 <= len(lines) <= 2 and all(type(n) is int and n > 0 for n in lines):
+        first, last = lines[0], lines[-1]
+        if first <= last:
+            owner = (range_owner(site, module, first, last) if site else None) or name
+            return page, "range", ids.get((owner, module), verso_slug(owner)) if owner else ""
+    if name:
+        return page, "id", ids.get((name, module)) or verso_slug(name)
     return None
+
+
+def range_owner(site: Site, module: str, first: int, last: int) -> str | None:
+    """The declaration enclosing these lines in Verso's sibling literate data, when available.
+
+    HTML alone can highlight a unique excerpt. Build metadata disambiguates
+    repeated excerpts without borrowing another declaration's local bindings.
+    """
+    relative = module_page(module)
+    if relative is None:
+        return None
+    if module not in site.range_owners:
+        site.range_owners[module] = []
+        path = Site(site.root.parent / "literate").resolve(relative.removesuffix("/index.html") + ".json")
+        try:
+            data = json.loads(path.read_bytes()) if path else {}
+            commands = data.get("items", {}).get("items", []) if data.get("module") == module else []
+            for command in commands:
+                span, names = command.get("range"), command.get("defines")
+                if isinstance(span, list) and len(span) == 2 and isinstance(names, list) and len(names) == 1 \
+                        and isinstance(names[0], str) and names[0] \
+                        and all(isinstance(p, dict) and type(p.get("line")) is int for p in span):
+                    site.range_owners[module].append((span[0]["line"], span[1]["line"], names[0]))
+        except (OSError, ValueError, AttributeError, TypeError):
+            pass
+    owners = {name for start, stop, name in site.range_owners[module] if start <= first <= last <= stop}
+    return owners.pop() if len(owners) == 1 else None
 
 
 def site_file(page: str) -> str | None:
@@ -261,6 +301,7 @@ class Site:
         self.root = Path(os.path.realpath(root))
         self.pages: dict[str, mmap.mmap | bytes | None] = {}
         self.declared: dict[tuple[str, str], bool] = {}
+        self.range_owners: dict[str, list[tuple[int, int, str]]] = {}
 
     @staticmethod
     def parts(relative: str) -> tuple[str, ...] | None:
@@ -404,6 +445,8 @@ class Box(HTMLParser):
         #: (tag, skip, in a code block, token index, href) per open element.
         self.stack: list[tuple[str, bool, bool, int, str | None]] = []
         self.anchor_at: int | None = None
+        self.anchors: dict[str, int] = {}
+        self.declarations: dict[str, int] = {}
         self.blocks = 0
         self.done = False
         self.failed = False
@@ -457,6 +500,8 @@ class Box(HTMLParser):
             self.tokens.append((kind, values.get("data-verso-hover") or None,
                                 values.get("data-binding") or None, href))
             token = len(self.tokens) - 1
+        if not skip and block and values.get("id"):
+            self.anchors[values["id"]] = self.length
         if not self.tag and not skip and block and self.anchor_at is None and values.get("id") == self.anchor:
             self.anchor_at = self.length
         if tag not in VOID_TAGS:
@@ -500,6 +545,24 @@ def read_box(data: mmap.mmap | bytes, fragment: str, room: int) -> Box | None:
     """The box that holds the element with this id, parsed from its start, or None."""
     at = id_position(data, fragment)
     return _parse_box(data, at, Box(fragment, past_anchor=room)) if at >= 0 else None
+
+
+def read_range_boxes(data: mmap.mmap | bytes) -> list[Box]:
+    """All code boxes, excluding goal views and messages, parsed once for a module's ranges."""
+    boxes: list[Box] = []
+    start = 0
+    while True:
+        at = data.find(BOX_CLASS, start)
+        if at < 0:
+            return boxes
+        start = at + len(BOX_CLASS)
+        box = Box("", past_anchor=len(data))
+        box.anchor_at = 0
+        box = _parse_box(data, start, box)
+        if box:
+            box.declarations = {name: pos for name, pos in box.anchors.items()
+                                if declared_at(data, id_position(data, name))}
+            boxes.append(box)
 
 
 def read_tagged_box(data: mmap.mmap | bytes, tag: str, room: int) -> Box | None:
@@ -637,6 +700,16 @@ def statement_runs(box: Box, snippet: str, site: Site, page: str,
                    hovers: dict[str, Any], *, links: bool = True) -> list[list[Any]] | None:
     """The snippet as runs carrying the box's tokens (with no link unless `links`), or None when it
     does not match."""
+    # leansnippets.field_text labels a projection with a synthetic structure
+    # header. Match only the real field against its own anchor; the label and
+    # omission marker carry no borrowed token information.
+    field = re.fullmatch(r"(structure ([^\s]+) where\n  )…(\n)([ \t]+.+)", snippet, re.DOTALL)
+    if field and box.anchor_at is not None:
+        owner = re.search(r"(?:class|structure)\s+" + re.escape(field[2]) + r"(?=\s|\(|\{|:)",
+                          box.text[:box.anchor_at])
+        runs = statement_runs(box, field[4], site, page, hovers, links=links) if owner else None
+        if runs:
+            return [["tx", field[1]], ["el", ELLIPSIS], ["tx", field[3]], *runs]
     stripped = snippet.rstrip()
     elided = stripped.endswith(ELLIPSIS)
     want = stripped[:-1] if elided else snippet
@@ -654,6 +727,42 @@ def statement_runs(box: Box, snippet: str, site: Site, page: str,
             break
         line = text.rfind("\n", 0, line - 1) + 1
     return None
+
+
+def range_runs(boxes: list[Box], snippet: str, site: Site, page: str,
+               hovers: dict[str, Any], *, fragment: str = "", links: bool = True) -> list[list[Any]] | None:
+    """Match a proof excerpt uniquely, within its recorded declaration when one is known.
+
+    Deduplicate matches reached through the same leading blank lines/comments.
+    Missing, ambiguous and stale snippets remain plain; goal text is never a candidate.
+    """
+    stripped = snippet.rstrip()
+    want = stripped[:-1] if stripped.endswith(ELLIPSIS) else snippet
+    if ELLIPSIS in want or not want.strip():
+        return None
+    found: dict[tuple[int, int, int], tuple[Box, list[tuple[int, int]], list[tuple[int, int]]]] = {}
+    for number, box in enumerate(boxes):
+        text = box.text
+        lower, upper = 0, len(text)
+        if fragment:
+            if fragment not in box.declarations:
+                continue
+            anchor = box.declarations[fragment]
+            lower = text.rfind("\n", 0, anchor) + 1
+            upper = min((text.rfind("\n", 0, at) + 1 for at in box.declarations.values() if at > anchor),
+                        default=len(text))
+        for at in [lower, *(lower + m.end() for m in re.finditer("\n", text[lower:upper]))]:
+            comments: list[tuple[int, int]] = []
+            match = align(text, at, want, comments)
+            if match and match[1] <= upper:
+                key = (number, match[0][0][1], match[1])
+                found[key] = box, match[0], comments
+                if len(found) > 1:
+                    return None
+    if not found:
+        return None
+    box, pairs, comments = next(iter(found.values()))
+    return _runs(box, snippet, want, pairs, comments, site if links else None, page, hovers)
 
 
 def _runs(box: Box, snippet: str, want: str, pairs: list[tuple[int, int]],
@@ -800,20 +909,67 @@ def hover_table(site: Site) -> dict[str, Any]:
 
 def extract(site_root: Path, entries: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, int]]:
     """`(verso.json, {"targets": n, "statements": m})` for the bundle's cards over the built site."""
-    return _extract(Site(site_root), card_statements(entries), links=True)
+    site = Site(site_root)
+    ids = declaration_ids(site)
+
+    def locate(end: dict[str, Any]) -> Locator | None:
+        destination = card_locator(end)
+        source = object_locator(end, ids, site)
+        # Keep the rendered page's own path; only the source context is shared.
+        return (destination[0], "range", source[2]) if destination and source and source[1] == "range" else destination
+
+    return _extract(site, card_statements(entries, locate), links=True)
 
 
 def extract_pages(pages_root: Path, entries: list[tuple[str, dict[str, Any]]], *,
-                  commit: str | None = None) -> tuple[dict[str, Any], dict[str, int]]:
-    """`extract` over a Verso build that is not the viewer's site: each card found by its Lean location
-    (`object_locator`), no link kept, and the build recorded (`build_record`)."""
+                  commit: str | None = None,
+                  dependency_pages: dict[str, Path] | None = None) -> tuple[dict[str, Any], dict[str, int]]:
+    """Extract another build's pages, with optional pages of dependencies its manifest pins.
+
+    Each dependency is named by its repository URI. Hover IDs belong to one
+    page build, so merging remaps them before combining the statements.
+    """
     site = Site(pages_root)
     ids = declaration_ids(site)
-    value, counts = _extract(site, card_statements(entries, lambda end: object_locator(end, ids)), links=False)
+    value, counts = _extract(site, card_statements(entries, lambda end: object_locator(end, ids, site)), links=False)
     build = build_record(site.root, commit)
     if build:
         value["build"] = build
+    for repo, root in sorted((dependency_pages or {}).items()):
+        if repo not in build.get("dependencies", {}):
+            raise overlay_annotations.AnnotationError(f"dependency pages for {repo} have no pinned repository "
+                                                      "in the primary build's package manifest")
+        selected = [(path, dict(annotation, object=[end for end in annotation.get("object", [])
+                                                    if isinstance(end, dict) and end.get("uri") == repo]))
+                    for path, annotation in entries]
+        site = Site(root)
+        ids = declaration_ids(site)
+        extra, _ = _extract(site, card_statements(selected, lambda end: object_locator(end, ids, site)), links=False)
+        merge_statements(value, extra)
+    counts["statements"] = sum(len(v) for v in value["statements"].values())
     return value, counts
+
+
+def merge_statements(value: dict[str, Any], extra: dict[str, Any]) -> None:
+    """Add statements from another page build, remapping its independent hover IDs."""
+    numbers = {json.dumps(entry, sort_keys=True): key for key, entry in value["hovers"].items()}
+    next_id = max((int(key) for key in value["hovers"]), default=-1) + 1
+    remap = {}
+    for key, entry in extra["hovers"].items():
+        identity = json.dumps(entry, sort_keys=True)
+        if identity not in numbers:
+            numbers[identity] = str(next_id)
+            value["hovers"][str(next_id)] = entry
+            next_id += 1
+        remap[key] = int(numbers[identity])
+    for target, alternatives in extra["statements"].items():
+        for runs in alternatives:
+            copied = [list(run) for run in runs]
+            for run in copied:
+                if len(run) > 2 and run[2] is not None:
+                    run[2] = remap[str(run[2])]
+            if copied not in value["statements"].get(target, []):
+                value["statements"].setdefault(target, []).append(copied)
 
 
 def _extract(site: Site, targets: dict[str, list[tuple[Locator, str]]], *,
@@ -821,6 +977,7 @@ def _extract(site: Site, targets: dict[str, list[tuple[Locator, str]]], *,
     table = hover_table(site)
     statements: dict[str, list[list[list[Any]]]] = {}
     used: set[int] = set()
+    range_boxes: dict[str, list[Box]] = {}
     try:
         for target, pairs in targets.items():
             for (page_ref, how, what), text in pairs:
@@ -828,9 +985,14 @@ def _extract(site: Site, targets: dict[str, list[tuple[Locator, str]]], *,
                 data = site.page(page) if page else None
                 if data is None:
                     continue
-                room = len(text) + 256
-                box = read_box(data, what, room) if how == "id" else read_tagged_box(data, what, room)
-                runs = statement_runs(box, text, site, page, table, links=links) if box else None
+                if how == "range":
+                    if page not in range_boxes:
+                        range_boxes[page] = read_range_boxes(data)
+                    runs = range_runs(range_boxes[page], text, site, page, table, fragment=what, links=links)
+                else:
+                    room = len(text) + 256
+                    box = read_box(data, what, room) if how == "id" else read_tagged_box(data, what, room)
+                    runs = statement_runs(box, text, site, page, table, links=links) if box else None
                 if runs is None or runs in statements.get(target, []):
                     continue
                 statements.setdefault(target, []).append(runs)
@@ -887,9 +1049,29 @@ def declaration_ids(site: Site) -> dict[tuple[str, str], str]:
     return {key: anchors.pop() for key, anchors in found.items() if len(anchors) == 1}
 
 
+def dependency_uri(value: Any) -> str | None:
+    """A Lake HTTPS git URL in the repository form Literature Links uses."""
+    if not isinstance(value, str) or not re.fullmatch(r"https://[^\s?#]+", value):
+        return None
+    try:
+        if not urllib.parse.urlsplit(value).hostname:
+            return None
+    except ValueError:
+        return None
+    return value.rstrip("/").removesuffix(".git")
+
+
+def matches_build(build: dict[str, Any], end: dict[str, Any]) -> bool:
+    """The end pins its dependency's revision, or the primary project's commit."""
+    expected = build.get("dependencies", {}).get(end.get("uri"), build["commit"])
+    return end.get("version") == expected
+
+
 def build_record(root: Path, commit: str | None) -> dict[str, Any]:
-    """What `--pages` records about the build: the project commit given, and the Verso package the
-    project's `lake-manifest.json` names when the pages are its `.lake/build/<directory>`."""
+    """The project commit, Verso revision and dependency repository pins in lake-manifest.json.
+
+    The manifest is read only for pages in the project's .lake/build/<directory>.
+    """
     out: dict[str, Any] = {"commit": commit} if commit else {}
     if root.parent.name != "build" or root.parent.parent.name != ".lake":
         return out
@@ -903,6 +1085,11 @@ def build_record(root: Path, commit: str | None) -> dict[str, Any]:
             verso = {key: package[key] for key in ("inputRev", "rev") if isinstance(package.get(key), str)}
             if verso:
                 out["verso"] = verso
+        elif isinstance(package, dict) and package.get("type") == "git":
+            repo = dependency_uri(package.get("url"))
+            rev = package.get("rev")
+            if repo and _is_commit(rev):
+                out.setdefault("dependencies", {})[repo] = rev
     return out
 
 
@@ -934,7 +1121,7 @@ def inexact_pins(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]
     build, and what settles it; None when they can.
 
     A statement is of one tree, and `joined` keeps it for a card that pins the
-    build's commit. Another commit is another tree. A release tag, which
+    project's commit or its dependency's recorded revision. Another commit is another tree. A release tag, which
     Literature Links allows, or no `version` says nothing either way, and only
     the project's git could tell, so a statement that would go for that reason
     is refused rather than dropped, and so is a file when no card pins a commit
@@ -945,7 +1132,7 @@ def inexact_pins(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]
     cards = list(bundle_cards(entries))
     lost = {(target, "".join(run[1] for run in runs))
             for target, alternatives in value["statements"].items() for runs in alternatives}
-    lost -= {(target, text) for _path, end, target, text in cards if end.get("version") == commit}
+    lost -= {(target, text) for _path, end, target, text in cards if matches_build(value["build"], end)}
     inexact = [card for card in cards if not _is_commit(card[1].get("version"))]
     found = [card for card in inexact if card[2:] in lost] or (inexact if len(inexact) == len(cards) else [])
     if not found:
@@ -966,7 +1153,8 @@ def unpinned(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -
     if inexact:
         return inexact
     commit, commits = value["build"]["commit"], sorted(filter(_is_commit, pinned(entries)))
-    if not commits or commit in commits:
+    if not commits or any(matches_build(value["build"], end)
+                          for _path, end, _target, _text in bundle_cards(entries)):
         return None
     return (f"cut from a build of {commit}, but the cards pin {_named(commits)}; write it again with "
             "`verso_extract.py --pages` from a build of that commit")
@@ -1019,26 +1207,30 @@ def committed_problems(value: Any, limit: int = 10) -> list[str]:
         if problem:
             out.append(f"statements[{target!r}]: {problem}")
     build = value.get("build")
-    if not isinstance(build, dict) or set(build) - {"commit", "verso"} \
+    if not isinstance(build, dict) or set(build) - {"commit", "verso", "dependencies"} \
             or not (isinstance(build.get("commit"), str) and COMMIT.match(build["commit"])) \
             or not isinstance(build.get("verso", {}), dict) \
             or not all(isinstance(text, str) for text in build.get("verso", {}).values()):
         out.append("build: expected {commit, verso}: the commit the pages were built from (--commit) and "
                    "the Verso package's revisions")
+    if isinstance(build, dict) and "dependencies" in build:
+        dependencies = build["dependencies"]
+        if not isinstance(dependencies, dict) or not all(
+                dependency_uri(repo) == repo and _is_commit(rev) for repo, rev in dependencies.items()):
+            out.append("build.dependencies: expected repository HTTPS URIs mapped to full commits")
     return out[:limit] + ([f"and {len(out) - limit} more"] if len(out) > limit else [])
 
 
 def joined(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, int]]:
     """A committed `verso.json` (one `committed_problems` passes) cut to the bundle: a statement stays
     only where its runs' texts joined are the snippet of a card the viewer files under its target and
-    that card pins the build's commit, and a hover entry only where a statement left uses it.
+    that card pins its project's recorded commit, and a hover entry only where a statement left uses it.
     `(verso.json, {"targets", "statements", "dropped"})`."""
-    commit = value["build"]["commit"]
     cards: set[tuple[str, str]] = set()
     wanted: dict[str, set[str]] = {}
     for _path, end, target, text in bundle_cards(entries):
         cards.add((target, text))
-        if end.get("version") == commit:
+        if matches_build(value["build"], end):
             wanted.setdefault(target, set()).add(text)
     statements: dict[str, list[list[list[Any]]]] = {}
     dropped = 0
@@ -1117,6 +1309,8 @@ def main(argv: list[str] | None = None) -> int:
                     "overlay's site, for a committed pdf-overlay/verso.json.")
     parser.add_argument("--pages", required=True, type=Path, metavar="DIR",
                         help="the build's literate HTML root (its -verso-docs.json and module pages)")
+    parser.add_argument("--dependency-pages", action="append", default=[], metavar="REPOSITORY=DIR",
+                        help="pages of a dependency pinned in the primary build's package manifest; repeatable")
     parser.add_argument("--bundle", required=True, type=Path, metavar="FILE",
                         help="the companion's pdf-overlay/annotations.bundle.json")
     parser.add_argument("--out", required=True, type=Path, metavar="FILE", help="the verso.json to write")
@@ -1127,9 +1321,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--commit: expected a full lowercase commit sha")
     if not args.pages.is_dir():
         parser.error(f"--pages: {args.pages} is not a directory")
+    dependencies = {}
+    for item in args.dependency_pages:
+        repo, separator, directory = item.partition("=")
+        if not separator or dependency_uri(repo) != repo or not Path(directory).is_dir():
+            parser.error(f"--dependency-pages: expected a repository HTTPS URI and a directory, got {item!r}")
+        if repo in dependencies:
+            parser.error(f"--dependency-pages: repeated repository {repo}")
+        dependencies[repo] = Path(directory)
     try:
         entries = bundle_entries(args.bundle)
-        value, counts = extract_pages(args.pages, entries, commit=args.commit)
+        value, counts = extract_pages(args.pages, entries, commit=args.commit, dependency_pages=dependencies)
         inexact = inexact_pins(value, entries)
         if inexact:
             raise overlay_annotations.AnnotationError(inexact)

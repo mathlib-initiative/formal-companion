@@ -35,8 +35,10 @@ CHANGELOG.md      what a version number promises, and what changed
 POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
 docs/proposals/   designs: pdf-to-companion.md (the PDF-to-companion pipeline, not yet built),
-                  wikipedia-locate.md (locate; its section 1 lists what is built)
-                  and statement-cut.md (how locate's inventory cuts passages)
+                  wikipedia-locate.md (locate; its section 1 lists what is built),
+                  statement-cut.md (how locate's inventory cuts passages)
+                  and informalize.md (an informal companion written from a Lean
+                  library; its status line says what is built)
 docs/running-an-audit.md
                   the audit's program, an onboarding transcript, the overrides
 docs/workspace.md the workspace directory model and the rules it enforces
@@ -79,6 +81,17 @@ scripts/annotations/
                   checker, id rules) is vendor/formal_companion_annotations/
 scripts/overlay/  the overlay generator behind `cf overlay`: config, export,
                   sync, annotation files and folder defaults (docs/overlay.md)
+scripts/informalize/
+                  the informalize mode behind `cf informalize`: informalize.yaml,
+                  the output repository, the runtime sync, the item table, receipts
+                  and approvals, the library's build on the host (library_host.sh and
+                  library_host.py run there, with no cflib), the scope, the
+                  fleet's planner, plan.py (`cf plan-informalize`), whose gate is
+                  scripts/gate/verify_informal.py, apply.py, which puts a
+                  harvested phase's files into the output repository, pdf.py, the
+                  canonical PDF's two ends (`pdf-command`, `fetch-pdf`), and
+                  overlay.py, the annotations and the built site (`overlay`,
+                  `check-site`) (proposals/informalize.md)
 scripts/corpus/   locate's universes of libraries and corpus.sqlite (`cf corpus`)
 scripts/locate/   locate's candidates, planner, outcomes and export
                   (`cf locate`, `cf plan-locate`, `cf tally --locate`,
@@ -93,6 +106,17 @@ templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend co
 templates/overlay/
                   runtime/, copied verbatim into a companion's pdf-overlay/ (the
                   viewer, its tools and schemas, PDF.js), and tests/ (its node suites)
+templates/informalize/
+                  runtime/, copied verbatim into an informalize output repository's
+                  informal/ (fcmarkers.sty, STYLE.md, the build, check and
+                  canonical-PDF tools, and fcitems.py, the item table's rules the
+                  gate shares),
+                  project/, the templates `cf informalize init` renders once,
+                  site/, the landing page and the two workflows `cf informalize
+                  overlay` writes,
+                  licenses/, the text of each open license it writes as LICENSE,
+                  and schema/, informalize.yaml's and items.json's JSON Schemas
+                  (proposals/informalize.md sections 7 and 10)
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local,
                   and locate-label, the bench's frozen labeler)
 tests/            the test suite; baseline regressions skip unless the env names the baseline

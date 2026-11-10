@@ -1147,7 +1147,10 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
         # reviewer fixes: the gate (a challenge's OK line), the bridge and the recorder
         # whose tamper guard the turn machine shares (the audit's prompts and wrappers are
         # untouched); the watchdog, whose clean stop a full disk no longer fails (324daf5);
-        # and the vendored files a re-vendoring changed
+        # the findings gate, which took the orchestrator lookup the locate and informalize
+        # gates share, and the attempt cap, which gained an informalize form
+        # (docs/proposals/informalize.md section 8); and the vendored files a re-vendoring
+        # changed
         self.assertEqual({"tend-root/bin/audit_turn.py", "tend-root/gate/inventory_audit.py",
                           "tend-root/gate/inventory_render.py",
                           "tend-root/gate/inventory_edit.py",
@@ -1155,7 +1158,8 @@ class TestAnAuditedPlanIsTheBaseCommits(unittest.TestCase):
                           "tend-root/gate/verify_locate.py",
                           "tend-root/bin/bridge-agentbox.sh",
                           "tend-root/bin/review_record.py",
-                          "tend-root/bin/watchdog.py"} | staged_vendor(self.changed), differ)
+                          "tend-root/bin/watchdog.py", "tend-root/gate/verify_findings.py",
+                          "tend-root/bin/attempt_cap.py"} | staged_vendor(self.changed), differ)
         for name in AUDIT_PROMPTS:
             self.assertEqual(now[f"prompts/{name}"], then[f"prompts/{name}"], name)
         self.assertEqual(now_yaml["locate"]["audit"], {"rule": 1, "review_rounds": 3})

@@ -5,8 +5,9 @@
 [![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 
 formal-companion audits Lean 4 book companions against the sources they formalize,
-generates PDF overlays that link each item on a page to its declarations, and locates
-where a source's passages are formalized in Lean libraries.
+generates PDF overlays that link each item on a page to its declarations, locates
+where a source's passages are formalized in Lean libraries, and writes the informal
+text of a Lean theorem and its dependencies from the Lean itself.
 
 A *book companion* is a Lean repository whose declarations claim to formalize the
 numbered items of a textbook, lecture notes or a preprint. A proof of the wrong
@@ -34,17 +35,19 @@ defects, runs the model-free detectors and scores them against an answer key. Th
 the four defects of the kinds they can see. The other four take a reader, which is what
 the model tier is for.
 
-## The three tools
+## The four tools
 
 | Tool | Question it answers | Status |
 |---|---|---|
 | [Audit](#quick-start) | Does this Lean say what the source says? | Run on two real companions of one book |
 | [PDF overlay](#pdf-overlay) | Where on each page is an item, and which declarations formalize it? | Generates the overlays of three private companions |
 | [Locate](#locate) | Which passages of a source are formalized, in which library, and how closely? | Experimental |
+| [Informalize](docs/proposals/informalize.md) | What does this Lean library's theorem say, in a text a reader can read? | Published [Seifert–van Kampen example](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/); [Status](docs/status.md) |
 
 Audit and locate write only to a workspace outside this repository. `cf overlay` writes
-only `pdf-overlay/` and `annotations/` in the companion. `cf` never builds a companion, and
-it reports findings rather than fixing them.
+only `pdf-overlay/` and `annotations/` in the companion, and `cf informalize` only the
+repository it creates itself inside the workspace. `cf` never builds a companion or a
+library, and it reports findings rather than fixing them.
 
 ## Install
 

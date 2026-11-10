@@ -37,7 +37,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from ._compat import CfError, human_bytes
+from ._compat import CfError, cf_paths, human_bytes
 
 #: rsync flags used for every component (archive, no device/special files).
 BASE_RSYNC = ["-a", "--no-D", "--omit-dir-times"]
@@ -79,6 +79,28 @@ def default_remote_root() -> str:
 DEFAULT_TEND_DIR = "$HOME/tend"
 
 
+def check_remote_root(root: str, host_name: str) -> str:
+    """*root* as the commands may use it, or a refusal: it must be an absolute path.
+
+    Every remote path of a run is built from this one and quoted for the host's shell
+    (``shlex.quote``), so a ``~`` never expands there: a ``remote_root`` of
+    ``~/informalize-svk-tauceti`` made a literal directory named ``~`` in the operator's
+    home on the host, and the run's whole tree landed inside it.  Quoting is not
+    negotiable (a path with a space or a ``$`` must not be re-read by the shell), so the
+    spelling is: an absolute path, refused here, once, rather than in each command that
+    embeds it.  ``tend_dir`` keeps its own ``~``/``$HOME`` handling
+    (:func:`_remote_dir`), which is a ``cd`` the host's shell does expand.
+    """
+    text = str(root).strip()
+    if text.startswith("/"):
+        return text.rstrip("/") or "/"
+    where = f"hosts.{host_name}.remote_root" if host_name else "remote_root"
+    raise CfError(f"{where} {root!r} is not an absolute path",
+                  hint="every remote path is quoted for the host's shell, so a leading ~ "
+                       "would be a directory of that name; write the path out, e.g. "
+                       "/home/<user>/informalize-<id>")
+
+
 def _remote_dir(path: str) -> str:
     """*path* for a ``cd`` in the host's shell: ``~/x`` and ``$HOME/x`` expand there, the rest is quoted."""
     for prefix in ("~/", "$HOME/"):
@@ -105,6 +127,10 @@ def resolve_host(workspace, host: str) -> dict:
     other than the home directory (``~/locate-smoke``) sent every tend command
     into a directory that does not exist (field defect P4).
 
+    ``remote_root`` must be an absolute path (:func:`check_remote_root`): every remote
+    path is built from it and quoted for the host's shell, where a ``~`` would be a
+    directory of that name.
+
     ``tend_version_required`` is a comma-separated version spec (``">=0.4,<0.6"``)
     from ``hosts.<host>.tend_version``, ``hosts.tend_version`` or
     ``defaults.tend_version``.  The whole of ``scripts/plan`` + ``scripts/run``
@@ -116,8 +142,9 @@ def resolve_host(workspace, host: str) -> dict:
     hosts = _as_dict(workspace.hosts)
     entry = _as_dict(hosts.get(host)) or _as_dict(_as_dict(hosts.get("entries")).get(host))
     ssh = entry.get("ssh") or entry.get("target") or host
-    remote_root = str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
-                      or default_remote_root()).rstrip("/")
+    remote_root = check_remote_root(
+        str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
+            or default_remote_root()), host)
     budget_gb = workspace.default("worktree_budget_gb", None)
     tend_dir = str(entry.get("tend_dir") or hosts.get("tend_dir") or DEFAULT_TEND_DIR).rstrip("/") \
         or DEFAULT_TEND_DIR
@@ -421,7 +448,12 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
 
     entries.append(_entry("tasks", rd / "tasks", f"{root}/{names['entrypoint']}/tasks/",
                           note="tend task YAML, one per item"))
-    if (rd / "data").exists():
+    if is_informalize(run):
+        found, notes = informalize_entries(workspace_dir, run_id, run, root, names,
+                                           include_sources=include_sources)
+        entries.extend(found)
+        warnings.extend(notes)
+    elif (rd / "data").exists():
         entries.append(_entry("data", rd / "data", f"{root}/{names['entrypoint']}/data/",
                               note="statement tables the workers read"))
     elif not is_locate(run):
@@ -508,7 +540,7 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                                       f"{root}/{names['repos']}/.{name}.listing",
                                       note="the sent tree's paths and digests, so a refused "
                                            "digest names what differs"))
-        if not companions:
+        if not companions and not is_informalize(run):
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
     # A locate run's source text is its rendered layers, which locate_entries
     # above already sent (or warned about); run.yaml's faithfulness `sources`
@@ -557,6 +589,63 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
 def is_locate(run: dict) -> bool:
     """Is this run.yaml a locate run's (references/locate-documents.md section 9)?"""
     return isinstance((run or {}).get("locate"), dict)
+
+
+def is_informalize(run: dict) -> bool:
+    """Is this run.yaml an informalize phase's (docs/proposals/informalize.md section 8.1)?"""
+    return isinstance((run or {}).get("informalize"), dict)
+
+
+def informalize_entries(workspace_dir: Path, run_id: str, run: dict, root: str, names: dict, *,
+                        include_sources: bool) -> tuple[list[dict], list[str]]:
+    """What an informalize phase sends beyond its tasks: the repository, and the library.
+
+    The entrypoint's first commit is the output repository at the run's base
+    commit plus ``tasks/`` (docs/proposals/informalize.md section 8.1), and
+    `cf informalize apply` reads that commit's tree against the base commit's, so
+    nothing else goes into it -- the run's ``data/`` stays in the gate directory,
+    where the prompts point the workers at it.
+
+    ``library/src/`` is the library's Lean source at the pinned commit, which the
+    workers read beside their worktrees; it travels read-only, as a companion
+    repo does, with ``--include-sources`` and under the same before/after tree
+    digest.  Its destination is the one the plan recorded
+    (``remote.library_src``: one directory per id and library commit), so a run
+    of another id, or of this one at another commit, never replaces it under a
+    live run.
+    """
+    block = _as_dict(run.get("informalize"))
+    rd = Path(workspace_dir) / "runs" / run_id
+    entries = [_entry("repo", rd / "repo", f"{root}/{names['entrypoint']}/",
+                      note="the output repository at the base commit; with tasks/ it is the "
+                           "entrypoint's first commit")]
+    warnings: list[str] = []
+    dest = str(_as_dict(run.get("remote")).get("library_src") or "").strip("/")
+    informalize_id = str(block.get("id") or "")
+    if not include_sources:
+        warnings.append("the library's source was not included (--include-sources): the "
+                        "workers read it on the host, and the gate's self-check refuses a run "
+                        f"without it at {root}/{dest or 'library-src/<id>-<commit12>'}")
+        return entries, warnings
+    if not dest or not informalize_id:
+        warnings.append("run.yaml records no remote.library_src for this informalize run, so "
+                        "the library's source has no destination on the host; re-plan it")
+        return entries, warnings
+    src = cf_paths.WorkspacePaths(Path(workspace_dir)).informalize_library_src(informalize_id)
+    entry = _entry("library-src", src, f"{root}/{dest}/",
+                   flags=READONLY_CHMOD + ["--delete"]
+                   + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
+                   note="the library's Lean source at the pinned commit, transferred read-only")
+    if entry["exists"]:
+        walked = tree_digest(src, SOURCE_EXCLUDES)
+        entry["tree_sha256"] = recorded_tree_digests(run).get("library-src") or walked["sha256"]
+        planned = str(_as_dict(block.get("library")).get("src_sha256") or "")
+        if planned and planned != walked["sha256"]:
+            warnings.append(f"{src} is not the tree this run was planned against (run.yaml "
+                            "informalize.library.src_sha256): the workers would read a library "
+                            "source the plan never saw; re-plan the phase")
+    entries.append(entry)
+    return entries, warnings
 
 
 def locate_gate(run_dir: Path) -> tuple[dict, dict]:
@@ -886,41 +975,48 @@ def disk_budget(entries: list[dict], tasks: int, host: dict) -> dict:
 
 
 def check_budget_cap(workspace, run: dict, max_cost: float | None,
-                     no_budget_cap: bool, *, locate: bool = False) -> dict:
+                     no_budget_cap: bool, *, recorded_cap: str = "") -> dict:
     """Resolve the spend ceiling, or refuse to plan a run without one.
 
     the design critique: "No budget gate ... run.yaml carries a billing-path
     field but no max_cost".  With agentbox the only enforceable cap is
     gateway-side, so the cap recorded here is what the operator must also set at
     the gateway; tend's own --max-cost counts tend-agent sessions only.
+
+    ``recorded_cap`` names the mode whose PLANNER records a mandatory cap --
+    ``locate`` and ``informalize``, each planned with one because a watchdog
+    drains the run at it.  For those the recorded cap wins: a ``--max-cost`` that
+    disagrees with it is refused rather than sent, and ``--no-budget-cap`` does
+    not apply.
     """
     run_budget = _as_dict(run.get("budget"))
     budget = _as_dict(getattr(workspace, "budget", {}))
     currency = str(run_budget.get("currency") or budget.get("currency") or "USD")
     value = max_cost
-    if locate:
-        # A locate run's cap is a precondition, not a default (proposal section 6):
-        # the watchdog drains at the cap recorded in run.yaml, so a workspace-wide
-        # ceiling the run never recorded would leave it with nothing to drain at,
-        # and no flag acknowledges running without one.
+    if recorded_cap:
+        # The cap is a precondition, not a default (the locate proposal's section 6,
+        # docs/proposals/informalize.md section 8.1): the watchdog drains at the cap
+        # recorded in run.yaml, so a workspace-wide ceiling the run never recorded
+        # would leave it with nothing to drain at, and no flag acknowledges running
+        # without one.
         recorded = run_budget.get("max_cost")
         if value is not None and recorded is not None and float(value) != float(recorded):
             # The campaign, the sequencer and the shard's watchdog all read the
             # cap run.yaml records; sending at another one would raise tend's
             # ceiling past the cap the watchdog drains at, or below it.
             raise CfError(
-                f"--max-cost {float(value):g} differs from the spend cap this locate run "
-                f"records (budget.max_cost {float(recorded):g} in its run.yaml)",
+                f"--max-cost {float(value):g} differs from the spend cap this {recorded_cap} "
+                f"run records (budget.max_cost {float(recorded):g} in its run.yaml)",
                 hint="drop --max-cost to send it at the recorded cap, or re-plan it with "
-                     "`cf plan-locate ... --max-cost <usd>`")
+                     "--max-cost <usd> (`cf plan-locate`, `cf plan-informalize`)")
         if value is None and recorded is not None:
             value = float(recorded)
         if value is None or value <= 0:
             raise CfError(
-                "a locate run needs a spend cap recorded in its run.yaml (budget.max_cost) or "
-                "given as --max-cost, which cf run records",
-                hint="--no-budget-cap does not apply to locate: the per-shard watchdog drains "
-                     "the root at that cap")
+                f"a {recorded_cap} run needs a spend cap recorded in its run.yaml "
+                f"(budget.max_cost) or given as --max-cost, which cf run records",
+                hint=f"--no-budget-cap does not apply to {recorded_cap}: the watchdog drains "
+                     f"the root at that cap")
         no_budget_cap = False
     if value is None:
         for source in (run_budget, budget):
@@ -1027,8 +1123,10 @@ def gate_config_warnings(workspace_dir: Path, run_id: str, host: dict, run: dict
     must pass a changed-files check.
     """
     names = remote_names(run, run_id)
-    # a locate run's tend config calls the locate gate (references/locate-documents.md S9)
-    script = "verify_locate.py" if is_locate(run) else "verify_findings.py"
+    # a locate run's tend config calls the locate gate (references/locate-documents.md S9),
+    # an informalize phase's the informalize gate (docs/proposals/informalize.md section 8.3)
+    script = ("verify_informal.py" if is_informalize(run) else
+              "verify_locate.py" if is_locate(run) else "verify_findings.py")
     gate_path = f"{host['remote_root']}/{names['gate']}/{script}"
     config = workspace_dir / "runs" / run_id / "tend-root" / "config.yaml"
     if not config.exists():

@@ -23,10 +23,14 @@ coverage note is dropped and reported rather than written.
 
 **Contents**: 1 attribution-table · 2 docstring-tags · 3 what is lossy · 4 the
 tag review · 5 reproducing the references · 6 deliberate differences · 7 the
-locate record set
+locate record set · 8 informal-markers
 
 `cf export literature-links` is the one export that is not a companion's: it
 needs a workspace and writes a locate run's sealed record set (section 7).
+`cf export informal-markers` (section 8) reads a companion the skill wrote
+itself, an informalization companion's output repository, and is the one
+export whose `companion` is another repository than the checkout: the Lean
+library its text is about.
 
 ## 1. `cf export attribution-table`
 
@@ -372,3 +376,124 @@ truncated, and `SEAL.json` records the budget that applied. Every record is chec
 with the vendored Literature Links checker before the set is sealed; a passage
 whose challenge is owed is refused by name (hard rule 5), and the command exits 1
 after writing the rest.
+
+## 8. `cf export informal-markers`
+
+```sh
+cf export informal-markers <output repository> --commit <sha> \
+    --pdf <the canonical PDF> --pdf-url <its release URL> \
+    --library-src <the library's source at the commit> --out <doc.json> \
+    [--packages-src <a .lake/packages directory>] \
+    [--source-title <the text's title>] [--source-id <id>] [--page-offset <n>] \
+    [--items-approved] [--name <name>] [--repo-id host/org/name]
+```
+
+The informalize mode's own export (`docs/proposals/informalize.md` section
+10): the checkout is an informalization companion's **output repository**, and
+what it describes is the PDF the fleet wrote, box by box. It reads the four
+files `informal/informalize.json`, `items.json`, `declarations.json` and
+`markers.json`, the canonical PDF whose sha256 `markers.json` pins, and the
+library's source under `--library-src` for the snippets a card shows. It
+refuses a PDF the markers were not measured on, and an `informal/` that
+changed since the commit the PDF was built from (`markers.source_commit`),
+`markers.json` itself excepted.
+
+Nothing pins `--library-src` to the commit `informalize.json` names, so the
+export asks the item table's own question of it: every **key** declaration
+must stand at the keyword line `declarations.json` gives, by the same
+`fcitems.keyword_problem` that `cf informalize check-items` and the gate use,
+and a source that disagrees is refused rather than quoted. A helper is exempt
+there as it is there, since one may be a declaration a command such as
+`@[simps]` generated; a helper whose snippet is cut at another line is the
+`snippet.line_differs` bend, which the command prints as a warning. A Lean
+file `--library-src` does not hold at all is a refusal naming that flag.
+
+| input | becomes |
+|---|---|
+| `informalize.json`'s `library` | the document's `companion`: the **library** at its own commit, because the overlay makes every Lean end from `companion.repo` at `companion.commit`. The output repository's commit is the export's, which `cf overlay export` records as `export.commit` beside `export.lean` (`docs/overlay.md` section 6) |
+| the PDF and `--pdf-url` | one `kind: pdf` source: its sha256, bytes, page count and page size, titled by `--source-title` (else its id, which is the informalize id) |
+| each entry of `markers.json` | one item per part, and one per item without parts: `id_source: label`, so its id is `ids.item_label_id` (`theorem-1.2-a`), its `number` the printed number, its `sub` the letter, its `title` the item's (a part carries its item's, as the printed label repeats it) and its `section` the section the text prints it in. An item with parts is boxed around them, so its own box is not annotated. One location per box, a `PdfRegionSelector` of the fractions the markers give |
+| the `\leanref`s the build recorded in a box | one link each, with the role and the relation `items.json` gives the declaration (`exactMatch` as `exact`, `broadMatch` as `generalization`, `narrowMatch` as `special_case`, `relatedMatch` as `related`), and the declaration from `declarations.json` |
+| `declarations.json` and `--library-src` | one declaration record per linked declaration, its statement cut by `adapters.leansnippets` as a snippet, and a destination on the library's git host: `https://<host>/<org>/<lib>/blob/<commit>/<path>` with `resolution: exact` and the fragment `L<keyword line>` (site kind `other`: a blob page is none of the rendered Lean sites). `common.repo_id_from_url` reads the `<host>/<org>/<lib>`, and `cf informalize scope` builds each entry's `source_url` through the same reader, so the two agree on which URLs have a blob page (`docs/proposals/informalize.md` section 5.3) |
+| each notion entry of `markers.json` | one passage item: `id_source: declared` with the markers' id (`notion:<constant>`, so that rewording the notion does not re-key it), `kind: passage`, **the text the canonical PDF prints inside its boxes** as its `title` (below), one location per box, and one link to the constant the `\fcnotion` names, role `key`, relation `exact`. The conventions fix the notions and print neither the name nor a link; this record is what supplies them (`informal/STYLE.md`, "The conventions section") |
+| a notion of a **dependency** | its row in `declarations.json`'s `references`: the declaration record carries the module, the file Lake's layout gives it, and `x_package`, `x_repo`, `x_commit`. Its destination is the source line on that dependency's git host at the pinned commit when `--packages-src` holds the package's source (a snippet is cut there too), and otherwise the documentation page the row names, `site: doc_gen4`, with the page as `href` and the constant as `fragment`. The library mirror carries no `.lake/packages/`, so without `--packages-src` those cards show the page and no statement, and the report counts them |
+| the items approval | one provenance record, `actor: agent`, `method: agent_annotation`, `tool.name` `cf informalize`, and `confirmed_by_human` true with `--items-approved`, which the maintainer passes when the items approval pins the exported `items.json` (`cf informalize overlay`, which will pass it for him, is not implemented yet) |
+
+A **title is what the page prints**, never the LaTeX it was written with. The
+words a `\fcnotion` records are a drafter's source (`$\ball{x}{\rho}$`), and a
+card titled with those is a card no reader of the page recognises, so the
+export crops each of the notion's boxes out of the canonical PDF with poppler,
+at the `boxes.res_dpi` of `informalize.json`, and joins the crops in the order
+the markers list them, which is reading order. The reader is the box check's
+own (`check_items.read_box`, which rule 9 already runs over every box), so
+nothing is measured a second way and an approved PDF and its proof sheets stay
+valid: the titles are read at export time and nothing is rebuilt.
+
+What that reader gives is the page's own characters, not the ones a font's
+encoding spells them with. pdftotext clips the box and settles which characters
+are in it; `pdftohtml -xml` says what font, size and place the page gives each
+of them, and the two are held against each other. A capital of the AMS
+double-struck alphabet is its Unicode letter (`ℕ`, `ℝ`, and the U+1D538 block
+for a letter Unicode names no character of its own for), a capital of the math
+symbol font, where Computer Modern keeps the calligraphic alphabet, is its
+Unicode script capital (`ℋ`), and a character of that font that is not the
+operator the page prints is the operator (`∘` for `\circ`, which poppler reads
+as the white bullet of the encoding). A run the page sets small and low, or
+small and high, is written in the Unicode subscript or superscript characters
+for it — but only when every character of the run has one, so `Π₁(f)` and `ℋᵢ`
+are written and `ι` with an `S` under its shoulder stays `ιS`, counted in
+`counts.titles_scripts_kept` and the lossy `title.script_run`. Three spaces are
+the reader's and not the page's: the one at a script run's edge, the one before
+a closing parenthesis, and the one a binary operator does or does not stand in,
+each settled by the gap the page leaves (`MATH_SPACE_EM`, `TIGHT_SPACE_EM`), so
+`Π1 (f )` is `Π₁(f)` and `f ◦γ` is `f ∘ γ`. Everything else poppler gave is
+kept character for character, and only its white space is collapsed, a line
+break closed up (a hyphen at a line end kept, since nothing here can tell it
+from one TeX broke a word at) and a sentence's comma or full stop that the
+box's padding caught dropped. Where the glyphs cannot be had — `pdftohtml` is
+not on PATH, or what it reads is not what pdftotext cropped, which happens
+where poppler's two readers order a subscript differently in a box of several
+lines — the text is pdftotext's own, flattened, counted in
+`counts.titles_glyphs_unread` (which `cf export`, `cf overlay export` and `cf
+informalize overlay` print as a warning, the last two having no report to show)
+and the lossy `title.flattened_glyphs`. An
+**item** whose
+`items.json` title holds TeX markup is titled the same way, from the
+parenthesis its head prints (`Lemma 1.2 (…)`), and a part carries its item's; a
+title that is plain prose is the table's, with nothing cropped. A ligature is
+markup here like any other (`Seifert--van Kampen` is the source of a title the
+page prints with an en dash). Where poppler is absent, or a crop holds no text,
+or the crop caught a URL the box's padding reached, the title is the words with
+their TeX markup stripped and each ligature written as the character it prints:
+`counts.titles_from_pdf` counts the titles read from the page,
+`counts.titles_not_printed` names every one whose words hold markup and fell
+back (which `cf export` and `cf overlay export` print as a warning), and the
+lossy `title.printed_text` says why of each. A notion whose words are plain
+prose is titled by them, and reported nowhere, when no crop can be had. The
+annotation's **id** is the markers' either way, so a title that moves re-keys
+nothing.
+
+Lossy: `link.junk` (the junk values `items.json` lists have no field in the
+format; the text states each in a sentence of its own), `link.relation` (a
+relation no legacy token converts back to), `markers.leanrefs_outside_a_part`
+(a `\leanref` in the text of an item with parts, outside every part, which no
+box annotates), `item.title` (a title holding a URL, which the
+`external-urls` lint refuses), `title.printed_text` (a title the canonical PDF
+could not be read for, written as the words with their TeX markup stripped),
+`title.script_run` (a subscript or a superscript Unicode has no characters for,
+written beside its base as poppler read it), `title.flattened_glyphs` (a box
+whose glyphs could not be read, whose text is pdftotext's flattened one),
+`source.page_size` (markers with no page
+size in points) and `destination.reference` (a reference row with neither a
+documentation URL nor a pinned dependency, whose card has no page to open).
+Bent: `declaration.x_dependency` (the package, repository and pinned commit
+of a constant of a library underneath this one, under `x_` keys),
+`link.role_not_in_the_table` (a `\leanref` the item's table does not
+list is linked as a helper, with no relation), `snippet.line_differs` and
+`source.title` (no file of the output repository carries the text's title, so
+without `--source-title` the source is titled by its id). A box that names no
+declaration, and a key declaration no box names, are problems: the command
+exits 1. A declaration the Lean file `declarations.json` names for it does not
+hold keeps its link and its destination and gets no snippet, counted in
+`counts.snippets_unlocated`, which `cf overlay export` prints as a warning;
+so is `counts.snippets_line_differs`.

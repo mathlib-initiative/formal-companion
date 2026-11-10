@@ -198,6 +198,23 @@ class TestTheMapping(unittest.TestCase):
                           "provenance": {"actor": "agent", "method": "adjudication", "confirmed_by_human": False,
                                          "note": "two readings and a reconciler"}}]})
 
+    def test_a_dependency_declaration_names_its_own_repository_and_pinned_commit(self):
+        doc = document()
+        doc["declarations"][0].update(x_package="dependency", x_repo="git.example.invalid/library/core",
+                                    x_commit="2" * 40)
+        conversion = shards.convert(doc)
+        records = by_id(conversion)
+        [dependency] = records["theorem-1.2.3/key/Notes.Box.mono"]
+        [end] = dependency["object"]
+        self.assertEqual((end["uri"], end["version"]),
+                         ("https://git.example.invalid/library/core", "2" * 40))
+        self.assertEqual(end["location"], {"declaration": "Notes.Box.mono", "module": "Notes.Box"})
+        self.assertEqual(ext(end)["snippet"], {"text": "theorem mono : True", "line": 10})
+        [primary] = records["theorem-1.2.3/attributed/Notes.Box.part"]
+        self.assertEqual((primary["object"][0]["uri"], primary["object"][0]["version"]),
+                         ("https://git.example.invalid/owner/notes", "1" * 40))
+        self.assertEqual(shards.scan_problems(shards.file_bytes(conversion)), [])
+
     def test_the_records_about_one_item_share_its_id_and_its_regions(self):
         records = self.records["theorem-1.2.3"]
         self.assertEqual(sorted(r["object"][0]["role"] for r in records), ["attributed", "key"])

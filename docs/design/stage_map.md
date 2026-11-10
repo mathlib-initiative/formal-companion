@@ -137,6 +137,10 @@ lines move together or not at all.
   pipelines/<id>/             pipeline.yaml, doc.vN.json, stages/<stage>.stage-receipt.json
                               (docs/proposals/pdf-to-companion.md section 4.1; the
                               loader and the receipt writer exist, no stage does yet)
+  informalize/<id>/           informalize.yaml (committed), stages/ (I*.json receipts,
+                              approve-<gate>.json), reference-checklist.md, scope.json;
+                              library/, pdf/ and the output repository
+                              informalize/<id>/repo/ GITIGNORED (§4.2)
   ledger/                     accepted.<name>.jsonl, refuted.<name>.jsonl,
                               adjudicated.<name>.md, routed/findings.<name>.jsonl
   detect/<name>/              proxy-detection artifacts
@@ -427,6 +431,62 @@ invocation; the session runs it and hands the result back through
 `--transcribe`. `SKILL.md` §"Workflow stages" is the operator-facing version of
 this, and `references/workflow-patterns.md` holds the skeletons.
 
+### 4.2 The informalize stages
+
+Informalize runs the other way: from a Lean library at a 40-hex commit and one theorem it
+**writes** the source, an informal LaTeX text with a box per item and part, and plans from
+an informalize id rather than a companion or a sourceset
+(`docs/proposals/informalize.md`, whose section 3 is the full stage table and whose status
+line says what is built). Built so far:
+
+| stage | command | writes |
+|---|---|---|
+| I0 | `cf informalize init`, `sync [--check]`, `status` | `informalize/<id>/informalize.yaml`; the output repository `informalize/<id>/repo/` (git init, the runtime copied byte for byte into `informal/` and recorded in `informal/GENERATED.json`, `informal/informalize.json`, the project files and `LICENSE` rendered once); `stages/I0.json` |
+| I1 | `cf informalize build-command`, then `scripts/informalize/library_host.sh` on the host by hand, then `fetch-library --execute --i-have-consent` | `informalize/<id>/library/to-host/` (the drivers copied, `library.tsv`, the printed lines); after the fetch `library/{host,index,deps.json,src}` (the build's outputs, the probe's index, DumpDeps' dump, the source read-only), checked before they replace the last fetch; `library.license` in `informalize.yaml`; `informal/informalize.json`'s `source_date_epoch`, committed; `stages/I1.json` |
+| I2 | `cf informalize scope` | `informalize/<id>/scope.json` (the theorem's closure over DumpDeps' type and value dependencies inside the library, generated and private constants walked through, proof statuses re-decided); `informal/declarations.json`, committed; `stages/I2.json` |
+| I3 (part) | `cf informalize check-items`, `reference-checklist`, `approve <id> items`, `approve <id> references` | the renumbered `informal/items.json`, `informal/sections.tex` and an empty file per section, committed; `reference-checklist.md`; `stages/approve-<gate>.json` |
+| I3–I5 (planning) | `cf plan-informalize <id> --phase <phase>`, for `items`, `conventions`, `draft`, `attack`, `judge` and `edit` (`--from-run` for the last two) | one tend run per phase, `runs/<run>/`: `run.yaml` with its `informalize:` block, `repo/` (the output repository at HEAD, read from git's objects), `tasks/`, `prompts/`, `data/` (`scope.json` and the `--from-run` documents), `gate.json` and `gate.local.json`, and `tend-root/`, whose `gate/` holds `verify_informal.py`, `verify_findings.py`, the runtime as `tex/`, `declarations.json`, `hypotheses.json`, `data/` and the task manifests, each pinned by sha256; nothing in the output repository |
+| I3–I5 (running) | `cf run <run>` and `cf harvest <run>`, as for any run | the transfer sends `repo/` into the entrypoint, where `tasks/` beside it is its first commit, and with `--include-sources` `library/src/` read-only to `<remote_root>/library-src/<id>-<commit12>/`; the verify stage runs `verify_informal.py --self-check`; the harvest lands the documents in `corpus/<run>/`, the files of the tasks' owned paths in `corpus/<run>/tree/` against the host's own sha256, and the run's own gate re-run with `--findings` over both, in `RECEIPT.json`; nothing in the output repository. The smoke stage also starts the phase's spend watchdog on the host (`<tend-root>/bin/watchdog.py`, its log `<remote_root>/watchdog-<run>.log`), which drains the root at the cap `run.yaml` records |
+| I3–I5 (applying) | `cf informalize apply <id> --run <run>` | the paths under `informal/` the run wrote, out of `corpus/<run>/tree/` and committed as `Informalize <phase> (<run>): <n> files`; the phase's receipt, `stages/I3.json`, `I4.json` or `I5-<phase>-<run>.json`, which the next phase's plan and `cf informalize status` read. It refuses a repository whose HEAD is not the run's `base_commit`, a harvest that is not complete or found a path no task owns, a `tree/` that is not what the receipt records, and a written path outside `informal/`; after the items phase it runs `check-items` |
+
+The output repository is written under SKILL.md rule 10's second exception (the first is
+`cf overlay`'s, into a companion's `pdf-overlay/` and `annotations/`): only `cf informalize`, only into
+`informalize/<id>/repo/` when `informal/informalize.json` names the id, only the paths
+that exception lists, never through a link, with git through `cflib.gitsafe`
+(`scripts/informalize/outrepo.py`). Its item ids are printed numbers, `<section>.<n>`
+(`cflib.items.INFORMAL_ITEM_ID`, not the book grammar of §1.1), renumbered by the items
+approval only while every section file is empty and frozen from the first draft on. A
+receipt pins what its stage read and wrote and an approval what the maintainer signed, both
+by sha256, so a changed file voids it; `cf informalize status` prints only what it read.
+
+Proof-step ranges use the overlay's Verso token and hover renderer, just as
+statement cards do. The external-page extractor matches each range's exact
+snippet in its module, using the build's declaration line metadata when
+available to confine it to the enclosing proof. Ambiguous or stale snippets
+remain plain (`docs/overlay.md`, sections 4 and 5).
+
+New output repositories start with a short README, CONTRIBUTING.md, AGENTS.md,
+a Makefile, .editorconfig, and separate docs/, tools/, and tests/ directories.
+These are project-owned: init writes absent files, sync never replaces them,
+and overlay adds missing repository scaffold files to older projects without
+restoring deleted mathematical templates. `make check` runs the project's
+runtime-integrity and regression tests and, when present, the overlay validator.
+`make site` requires an overlay and runs those checks before building it.
+
+The I7 homepage opens the annotated PDF directly, retaining query strings and
+fragments, with no redundant back link. Its Pages workflow depends on reusable
+checks on Python 3.11 and 3.13 before building and deploying. I7's receipt pins
+the repository scaffolding as well as the site and workflows. These defaults
+contain no project-specific source names, release pins, or invented public URLs.
+The output write exception includes docs/, tools/, tests/, CONTRIBUTING.md,
+AGENTS.md, Makefile, and .editorconfig; all existing stamp, path, symlink, and
+git protections still apply.
+
+Informalization follows `references/informalization-quality.md`: local introductions,
+selection by mathematical role and a whole-document editing pass. Notion markers may occur
+inside numbered items and parts. The edit task owns every declared section, still excluding
+the item table, so it can address exposition beyond the judges' individual requests.
+
 ## 5. The substrate
 
 Server fleets are driven by `tend` (the orchestrator) and `agentbox` (the
@@ -438,3 +498,41 @@ refuses on a mismatch; with no spec recorded, preflight only prints the version
 and continues (`run/remote.py::_tend_version_step`). Without them the supported
 path is the local Workflow fleet under ~100 items.
 `references/runbook-server.md` §0 says the same thing to an operator.
+
+
+## PDF viewer search
+
+The overlay viewer searches all pages of the verified PDF through PDF.js text
+extraction, with an in-memory page cache. Find, Command-F and Control-F open
+it; matches navigate between pages and wrap in both directions. Search-only
+normalization keeps original text offsets for highlights without changing the
+PDF or its selectable text. Queries and text indexes are never written to a
+workspace, annotation record or generated artifact. Search works in reading
+mode; Escape closes search first (`docs/overlay.md`, section 4).
+
+
+## PDF viewer mathematical labels
+
+Informalization title extraction preserves PDF scripts without Unicode characters
+as braced `_{...}` or `^{...}` notation, including nested scripts. The overlay
+renders these and Unicode scripts consistently in the page overview, detail heading
+and hover preview using text nodes and HTML sub/sup elements. PDF content and the
+box check's plain-text comparison are unchanged (`docs/overlay.md`, section 4).
+
+Notion markers accept an optional viewer title, `\fcnotion[title]{constant}{words}`.
+The title passes through the auxiliary records and markers into the annotation;
+it does not change the printed text, box geometry or stable notion identifier.
+Without it, the existing PDF-glyph extraction remains the fallback. Explicit
+LaTeX math in annotation labels is rendered by pinned, local KaTeX as native
+MathML on every title surface. Only generated MathML is parsed; trusted commands
+are disabled, expansion/size are bounded, and invalid math stays literal text.
+No external scripts, styles or fonts are loaded.
+
+
+## PDF viewer panel resizing
+
+The desktop overlay has a draggable, keyboard-operable vertical separator.
+The panel width is saved in local browser storage per viewer; bounds keep both
+panes usable when the viewport changes. Reading mode hides the separator and
+restores the preferred width on exit. Below 1000px the existing bottom sheet
+has no divider. Double-click or Enter resets the width (`docs/overlay.md`, section 4).

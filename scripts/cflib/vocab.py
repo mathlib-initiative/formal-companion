@@ -1312,6 +1312,49 @@ ERROR_CODES = frozenset({"E-INVENTORY-MISS", "E-RETRIEVAL-MISS", "E-REJECTED-COR
 #: tag-blind on anchored G1 passages, ``inventory`` an article exhaustively (GX).
 BENCH_LABEL_MODES = frozenset({"anchor", "label", "calibrate", "inventory"})
 
+# --- informalize (docs/proposals/informalize.md section 5; references/vocabulary.md
+# section 1.12).  Tuples, in the order the documents list them.
+# templates/informalize/runtime/tools/fccommon.py, which runs where cflib cannot be
+# imported, keeps copies of the kinds, the roles and the reference sources, and
+# tests/test_informalize_runtime.py pins them to these.
+#: an item's ``kind`` (items.json), and the environment of fcmarkers.sty that prints it
+INFORMALIZE_KINDS = ("definition", "lemma", "proposition", "theorem", "corollary", "example",
+                     "remark")
+#: a declaration's ``role`` in an item: ``key`` states the item or a part, ``helper`` is
+#: one a reader may also want
+INFORMALIZE_ROLES = ("key", "helper")
+#: a declaration's ``relation`` to its item or part: the four Literature Links relations
+#: the legacy annotation format can carry (no token of it converts to ``closeMatch``)
+INFORMALIZE_RELATIONS = (EXACT_MATCH, BROAD_MATCH, NARROW_MATCH, RELATED_MATCH)
+#: where a reference work's number came from: the docstring of the declaration it names,
+#: its module's docstring, the work's own order (printed with a dagger), or nowhere
+REFERENCE_SOURCES = ("docstring", "module docstring", "inferred", "none")
+#: the fleet phases, one tend run each, in the order they run (section 8.2)
+INFORMALIZE_PHASES = ("items", "conventions", "draft", "attack", "judge", "edit")
+#: what the maintainer signs with `cf informalize approve` (section 13)
+APPROVAL_GATES = ("items", "references", "proof-sheets", "publish")
+#: The fleet's documents (section 8.2).  scripts/gate/verify_informal.py, which runs on a
+#: host where cflib cannot be imported, keeps copies of these five and of the attempt cap,
+#: and tests/test_informalize_fleet.py pins them to these.
+#: an attack finding's ``severity``: a reader infers something false or misses a hypothesis,
+#: the text is ambiguous, or it breaks a style rule
+INFORMALIZE_SEVERITIES = ("wrong", "imprecise", "style")
+#: the two attackers of a section: from each key declaration to the text, or the other way
+INFORMALIZE_DIRECTIONS = ("lean-first", "tex-first")
+#: a judge's ruling on a finding, and what it did about it
+INFORMALIZE_RULINGS = ("real", "not_real")
+INFORMALIZE_ACTIONS = ("fixed", "out_of_scope", "none")
+#: the editor's answer to a judge's request
+INFORMALIZE_ANSWERS = ("done", "declined")
+#: the genuine reviewer rejections after which a fleet task ends with its files as they
+#: were (``attempt_cap.py``'s informalize form, section 8.1): the locate cap's number
+INFORMALIZE_ATTEMPT_CAP = 3
+#: the gate's limit on one TeX build, in seconds (section 8.3 rule 2)
+INFORMALIZE_BUILD_TIMEOUT = 600
+#: the shortest run of words a text file shares with the library's docstrings and comments
+#: that the gate refuses as copied (section 8.3 rule 9)
+INFORMALIZE_COPY_RUN_WORDS = 12
+
 
 def check(value: str, allowed: Iterable[str], field: str) -> str:
     """Return ``value`` if it is in ``allowed``; otherwise raise CfError."""

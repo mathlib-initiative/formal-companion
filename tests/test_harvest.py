@@ -1595,6 +1595,24 @@ class TestRemoteTendCommandExportsPath(unittest.TestCase):
         facts = self._host({"allowlist": ["examplebox"], "tend_dir": "/opt/shared-tend"})
         self.assertIn("cd /opt/shared-tend &&", facts["tend_cmd"])
 
+    def test_a_remote_root_that_is_not_absolute_is_refused(self):
+        """A `~` is quoted into a directory of that name on the host, not the home.
+
+        Every remote path of a run is built from `remote_root` and quoted, so
+        `remote_root: ~/informalize-<id>` made a literal `~` directory in the operator's
+        home and put the whole run inside it.  `tend_dir`, which is a `cd` the host's
+        shell reads, keeps its own `~` handling (the test above).
+        """
+        from cflib.errors import CfError
+
+        for root in ("~/informalize-x", "~", "$HOME/runs", "runs/x", "./x"):
+            with self.subTest(remote_root=root), self.assertRaises(CfError) as caught:
+                self._host({"allowlist": ["examplebox"], "examplebox": {"remote_root": root}})
+            self.assertIn("absolute", str(caught.exception))
+        facts = self._host({"allowlist": ["examplebox"],
+                            "examplebox": {"remote_root": "/srv/runs/locate-smoke/"}})
+        self.assertEqual(facts["remote_root"], "/srv/runs/locate-smoke")
+
     def test_a_host_may_override_the_tend_command(self):
         facts = self._host({
             "allowlist": ["examplebox"],

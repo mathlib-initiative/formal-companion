@@ -1193,8 +1193,8 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                                    "--source-id", "demo-pdf", "--source-title", "A Demo Book"])
         self.assertEqual(status, 0, stderr.getvalue())
         self.assertIn("warn pdf-overlay/data/declaration-snippets.json is not read", stderr.getvalue())
-        self.assertIn("warn no snippet for 1 of the ids the refinement lists (not in the Lean file the ledger "
-                      "names): example:demo-unlocated", stderr.getvalue())
+        self.assertIn("warn no snippet for 1 of the ids it links (not in the Lean file the document "
+                      "names for them): example:demo-unlocated", stderr.getvalue())
 
     def test_a_ledger_file_git_ignores_is_a_refusal(self):
         def mutate(root):

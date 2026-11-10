@@ -10,7 +10,8 @@ No host address, account or profile name appears in this file. They live in `wor
 
 **Contents** — §0 the two tools this needs · §1 the topology · §2 preconditions ·
 §3 `cf plan-run` · §4 `cf run` · §5 monitoring · §6 failure modes · §7 `cf harvest` ·
-§8 the local fallback · §9 a locate root · §10 what stays manual · §11 sources.
+§8 the local fallback · §9 a locate root · §10 an informalization, from `init`
+to publish · §11 what stays manual · §12 sources.
 
 ---
 
@@ -398,7 +399,145 @@ root, bridge and harvest, with these differences:
   The sequencer needs, on the host: bash 4.4 or later (`mapfile -d`), GNU `comm` and `sort` (with
   `-z`), `flock`, `pgrep`, `grep`, `gzip`, `python3` and rsync.
 
-## 10. What stays manual, permanently
+## 10. An informalization, from `init` to publish
+
+The informalize mode (`docs/proposals/informalize.md`) runs the audit backwards: from a Lean
+library at a commit and one theorem it writes the source. Its fleet phases use the tend root,
+the bridge and the harvest of §3 to §7 unchanged; what follows is the **whole** sequence, in
+order, with what runs where. Nothing below is done by hand except the six approvals of §13 of
+that document and publishing itself.
+
+**Two machines.** Every `cf` command runs on the operator's machine — it never runs `lake`,
+`lean` or elan. The host runs two jobs you start by hand from printed lines (the library build
+of I1 and the canonical PDF of I6, plus the optional Verso build of the hovers), and the fleet
+phases that `cf run` drives. The host needs elan and lake, git, nice and ionice; TeX
+(`pdflatex`, `latexmk`, `kpsewhich`) with every package of `tex_packages`; and, for I6,
+poppler (`pdftotext`, `pdftoppm`, `pdfinfo`) — without poppler `canonical_pdf.sh` stops after
+the two builds with exit 4. The operator's machine needs python3 and git, and nothing else.
+
+**`workspace.yaml`.** Beside §2's settings, `hosts.<host>.remote_root` must be that host's own
+entry and its last part must be `informalize-<id>`: `build-command`, `pdf-command` and
+`fetch-*` refuse the workspace-wide root, the operator's home and another id's folder, so one
+host entry serves one informalize id and a second id needs that entry changed first.
+
+  1. **I0, the operator's machine.**
+
+     ```sh
+     cf informalize init <id> --library <https URL> --commit <40 hex> --module <M> \
+         --theorem <T> --prefix <P> --text-license <SPDX> --title <title> --author <name> \
+         [--reference "<citation line>"]
+     ```
+
+     writes `informalize/<id>/informalize.yaml` and creates the output repository
+     `informalize/<id>/repo/` — a git repository of its own that the workspace's git ignores,
+     with the LaTeX runtime, the project files and `LICENSE`. `cf informalize sync <id>
+     --check` says whether its runtime is this checkout's; every later stage refuses while it
+     is not.
+
+  2. **I1, the host.** `cf informalize build-command <id> --host <host>` runs nothing: it
+     writes `library/to-host/` and prints the three lines that copy the drivers there and
+     start the build, probe, canary and dependency dump, detached. Run them, wait for
+     `library/host/DONE` to hold `0` (the printed `tail`/`cat` line watches it), then, on the
+     operator's machine:
+
+     ```sh
+     cf informalize fetch-library <id> --host <host> --execute --i-have-consent
+     cf informalize scope <id>
+     ```
+
+     The fetch checks what came back before it replaces anything, writes the library's license
+     into `informalize.yaml` and the commit's time into `informal/informalize.json`; `scope`
+     writes `scope.json` and commits `informal/declarations.json`.
+
+  3. **I3 to I5, the fleet.** One tend run per phase, each `cf plan-informalize <id> --phase P
+     … --i-have-consent` → `cf run` (dry run, then `--execute --stage smoke`, then
+     `--stage raise`) → `cf harvest` → `cf informalize apply <id> --run <run>`, exactly as §3
+     to §7 describe. The phases are `items`, `conventions`, `draft`, then `attack`, `judge`
+     (`--from-run <attack run>`), `edit` (`--from-run <judge run>`) and `attack --sections
+     touched` again until no `wrong` or `imprecise` finding stands. Two approvals come after
+     the items phase and before any drafting:
+
+     ```sh
+     cf informalize approve <id> items --by "<name>" --in-v1 all
+     cf informalize reference-checklist <id>
+     cf informalize approve <id> references --by "<name>"
+     ```
+
+     The planner refuses a later phase while either is absent or stale. A phase's spend cap is
+     a precondition, and the watchdog `cf run` starts at the smoke stage is what enforces it
+     (§4): `cf run <run> --status` reads its last record.
+
+  4. **I6, the canonical PDF.** On the operator's machine:
+
+     ```sh
+     cf informalize pdf-command <id> --host <host>
+     ```
+
+     It runs nothing. It refuses an output repository with an uncommitted change, a harvested
+     phase nobody applied and a runtime that is not this checkout's; otherwise it writes the
+     repository's files at HEAD into `pdf/<commit12>/to-host/src/` and prints the lines that
+     rsync that tree to the host and start `informal/tools/canonical_pdf.sh --source-commit
+     <sha>` there, detached. Run them. On the host the script builds twice from clean into
+     `a/` and `b/`, refuses two PDFs with different sha256, runs `extract_markers.py`,
+     `check_items.py --strict` and `proof_sheets.py`, writes `pdf-receipt.json`, and writes
+     `DONE` last, on a failure too. When `DONE` holds `0`:
+
+     ```sh
+     cf informalize fetch-pdf <id> --host <host> --execute --i-have-consent
+     ```
+
+     brings the PDF, `markers.json`, the receipt and the proof sheets home to
+     `pdf/<commit12>/`, checks each against the others, commits `informal/markers.json` and
+     writes `stages/I6.json`. Then **read the proof sheets and the PDF** and sign:
+
+     ```sh
+     cf informalize approve <id> proof-sheets --by "<name>"
+     ```
+
+  5. **I7, the annotations and the site.** With the release asset URL you will publish the
+     PDF's exact bytes at (the file need not be up yet):
+
+     ```sh
+     cf informalize overlay <id> --pdf-url <the release asset URL>
+     cf informalize check-site <id>
+     ```
+
+     `overlay` writes the overlay's configuration, the landing page `site/index.html` and the
+     two workflows from `informalize.yaml` — no file of the overlay is edited by hand — exports
+     the annotations with `cf export informal-markers`, syncs and checks the overlay, commits
+     each step, and seeds `.lake/overlay-pdf/` with the canonical PDF so the site builds before
+     the URL is live. Run it where **poppler** is: the export titles each notion with the text
+     the canonical PDF prints inside its boxes, and without `pdftotext` and `pdfinfo` it falls
+     back to the words of the `\fcnotion` with their TeX markup stripped and says so in the
+     export report (`counts.titles_not_printed`). `check-site` runs the companion's own `check_generated.py` and
+     `pdf-overlay/tools/serve.py --build-only`, refuses if either left a tracked file changed,
+     reads the built site back against its receipt and writes `stages/I7.json`. Then look at
+     `site/` in a browser over a loopback static server — the PDF loads, a box opens a card
+     with its declaration, its statement and its link at the commit, the console is clean —
+     and sign:
+
+     ```sh
+     cf informalize approve <id> publish --by "<name>"
+     ```
+
+  6. **The hovers, optional, after step 5.** `cf informalize verso-command <id> --host <host>`
+     needs the annotation bundle step 5 wrote; it prints the lines that build the library's
+     literate HTML with Verso on the host and cut `verso.json` from it. Bring that file back
+     with the printed `rsync` line into `pdf-overlay/verso.json`, then run `cf informalize
+     overlay` and `check-site` again: the overlay commits it, untracked though it is, and the
+     site build publishes the hovers in place of the empty file. Sign the publish approval
+     again afterwards, since it pins the commit before them.
+
+  7. **Publishing, the maintainer's alone.** Create the repository, push, upload the canonical
+     PDF's **exact bytes** as the release asset at the URL the annotations pin, and turn on
+     Pages (workflow artifact; the `pages` workflow step 5 wrote deploys it). Until that URL is
+     live the site builds from the seeded cache, and nothing else does.
+
+`cf informalize status <id>` prints where the id stands — each stage's receipt, the item table,
+each approval (absent, current, or stale and why) — and the command that comes next. Every
+command may be re-run: a stage whose inputs are unchanged writes nothing new.
+
+## 11. What stays manual, permanently
 
 - ssh access and any credential or login on the host;
 - the hosted-agent profile login;
@@ -412,11 +551,14 @@ root, bridge and harvest, with these differences:
   local fleet's journal comes back through `cf harvest <id> --journal <wf dir>`). No command
   ingests a result: `cf ingest` is pipeline stage S0, which pins a PDF (`docs/pipeline.md`), and
   this line once sent a stuck reader to it for results;
-- opening, merging or reporting anything to a repository owner.
+- opening, merging or reporting anything to a repository owner;
+- in the informalize mode (§10): the six approvals of `docs/proposals/informalize.md` §13,
+  the two host jobs started from printed lines, and publishing — the repository, the release
+  asset at the URL the annotations pin, and Pages.
 
 ---
 
-## 11. Sources
+## 12. Sources
 
 | claim | source |
 |---|---|

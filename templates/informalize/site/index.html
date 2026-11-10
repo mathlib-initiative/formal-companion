@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<script>
+  const viewer = new URL("{{ viewer_href }}", window.location.href);
+  viewer.search = window.location.search;
+  viewer.hash = window.location.hash;
+  window.location.replace(viewer.href);
+</script>
+<noscript><meta http-equiv="refresh" content="0;url={{ viewer_href }}"></noscript>
+</head>
+<body>
+{{ link_block }}
+</body>
+</html>

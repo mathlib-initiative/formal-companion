@@ -42,6 +42,408 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+
+- **A maintainable informalization repository from the first init.** Generated
+  projects include concise reader documentation, contribution and maintenance
+  guides, a Makefile, editor settings, and separate tools and tests. Existing
+  project edits are preserved. The PDF viewer becomes the homepage, and Pages
+  waits for reusable Python 3.11/3.13 checks before deploying.
+
+- **The canonical PDF and the overlay by command: `cf informalize pdf-command`,
+  `fetch-pdf`, `overlay` and `check-site`.** Components 6, 7 and 8's runbook section of
+  `docs/proposals/informalize.md` (its sections 9 and 10), the last two stages of the mode
+  and the two the first acceptance run did entirely by hand. **I6**: `pdf-command <id>
+  --host H` writes the output repository's files at HEAD into `pdf/<commit12>/to-host/src/`
+  — from git's objects, never the worktree's — and prints the lines that copy them to the
+  host and start the runtime's new `informal/tools/canonical_pdf.sh --source-commit <sha>`
+  there, detached; that script builds twice from clean, refuses two PDFs with different
+  sha256, runs `extract_markers.py`, `check_items.py --strict` and `proof_sheets.py`, and
+  writes `pdf-receipt.json` (`fccommon.py pdf-receipt`, the third command of the runtime's
+  shared module) and `DONE` with its exit status, last, on a failure too — exit 4 without
+  poppler, after the builds. `fetch-pdf <id> --host H --execute --i-have-consent` brings
+  the PDF, its markers, that receipt and the proof sheets home, checks each against the
+  others, commits `informal/markers.json` and writes `stages/I6.json`, which
+  `approve <id> proof-sheets` pins; its own markers commit moves HEAD, so a second fetch
+  takes the commit before HEAD when the only thing between them is that file, as the
+  exporter does. **I7**: `overlay <id> --pdf-url URL` writes the overlay's configuration
+  from `informalize.yaml` (the text's license, `site` as the output root, no build command,
+  the library's prefix stripped), a generated landing page that already carries the link
+  block `build_site.py` injects — written by that tool's own `link_block`, so the build
+  replaces it in place and the tracked `site/index.html` does not change, which by hand it
+  did — and the Pages and check workflows, then exports with `cf export informal-markers`,
+  syncs and checks the overlay, commits each step, and seeds the PDF cache so the site
+  builds before the release URL is live; a `pdf-overlay/verso.json` the Verso step left is
+  committed with the first step, untracked though it is, since the export reads the
+  repository at a commit. A re-run of the whole command commits nothing: the export's own
+  record of the HEAD it read moves each time it is committed, so the value already there
+  is kept when it is all that changed, and the publish approval stays current.
+  `check-site <id>` runs the companion's own `check_generated.py` and
+  `pdf-overlay/tools/serve.py --build-only`, refuses if either left a tracked file changed,
+  and reads the built site against its receipt — every file at its sha256, the published
+  PDF at the one the annotations state, every region on a page of it, the index link, and a
+  declaration and a destination on every card — then writes `stages/I7.json`, which
+  `approve <id> publish` pins. `references/runbook-server.md` section 10 is the whole run
+  from `init` to publish, and `tests/e2e/informalize_synthetic/driver.py` now goes that far
+  on synthetic inputs, building for real where the machine has TeX and poppler.
+- **`cf informalize apply <id> --run <run>`: a harvested phase goes into the output
+  repository by command.** Component 5b of `docs/proposals/informalize.md` section 8.5.
+  `cf harvest` already brings a phase's own files home under `corpus/<run>/tree/` and says
+  which of them the run wrote; putting them back was a copy by hand, and so was the phase's
+  stage receipt — the first acceptance run's draft phase was refused by the planner for want
+  of a `stages/I4.json` that only the by-hand copy's author knew to write. `apply` copies in
+  the changed paths under `informal/` and only those, commits them as
+  `Informalize <phase> (<run>): <n> files`, and writes `stages/I3.json`, `I4.json` or
+  `I5-<phase>-<run>.json`, whose `runs` carry the run's `run.yaml` and `RECEIPT.json` by
+  sha256 and what it cost. It refuses a repository whose HEAD is not the run's `base_commit`
+  (the contributions were written against text that has moved: plan again), a harvest that is
+  not complete or that found a path no task owns, a `corpus/<run>/tree/` that is not what the
+  receipt records, a written path outside `informal/` and an uncommitted change of the
+  maintainer's to a path it writes — the last two only for a run that writes a file, since
+  an attack run, which writes only its receipt, puts nothing in that a moved HEAD could
+  invalidate; after the items phase it runs `check-items`; and a run already in HEAD is
+  applied again as a no-op.
+  `cf informalize status`'s next step names it after a harvest, and
+  `tests/e2e/informalize_synthetic/driver.py` runs it between its phases instead of copying.
+- **`cf run` starts an informalize phase's spend watchdog.** With agentbox, tend's own budget
+  counts no agent's spend, so the cap `run.yaml` records was enforced by a helper the operator
+  started by hand on the host. The smoke stage now stops any watchdog an earlier launch left on
+  the root, removes the `watchdog.stop` and `watchdog.json` it left (the loop leaves on the
+  stop file, so a stale one would stop the new watchdog at its first check and leave the fleet
+  with no ceiling, and a stale record is what `--status` would report as the spend now), and
+  starts `<tend-root>/bin/watchdog.py --max-cost <the recorded cap>` detached
+  beside `tend run`, with no pilot thresholds, logging to `<remote_root>/watchdog-<run>.log`;
+  `cf run <run> --status` reads its last record, `<tend-root>/watchdog.json`, and the `stop`
+  stage stops it, since it is started without `--parent` and would otherwise poll on after the
+  phase.
+
+### Fixed
+
+- **The text's title was shown as TeX everywhere outside the PDF.** `text.title` is what
+  `informal/main.tex` typesets, so it is written as TeX reads it
+  (`The Seifert--van Kampen theorem, after <the library>`) and the page prints an en dash; but
+  the output repository's `README.md` heading and `informal/STYLE-project.md`, the message
+  of the commit `init` makes, `site/index.html`'s `<title>` and `<h1>`,
+  `pdf-overlay/overlay.config.json`'s `title` -- the viewer's tab and header -- and the
+  `citation.title` on every annotation's source end were given the source, and a reader
+  saw the two hyphens. Each is now given the title as the title page prints it,
+  `informalize.config.printed_title`, and `main.tex` alone is given the source
+  (`project.slots`' `title_tex`). A title is plain text that `main.tex` escapes, so the
+  whole of what the page does to it is the ligatures, and the one table of those is the
+  export's (`annotations.export.boxtext.ligatures`, which reads them in a notion's words
+  too). `cf informalize status` still prints the row `informalize.yaml` holds, for the
+  maintainer who edits that file. Of an existing repository, `cf informalize overlay`
+  rewrites the landing page, the overlay config and the annotations; nothing rewrites
+  `README.md` or `STYLE-project.md`, which are the project's from `init` on.
+- **Poppler flattened the glyphs a notion's title is read from.** The titles a card shows
+  were `pdftotext`'s, which reads a character out of the font's encoding and loses what
+  the page draws: `N` for `ℕ`, `R` for `ℝ`, `Π1 (f )` for `Π₁(f)`, `f ◦γ` for `f ∘ γ`,
+  `the smallest one containing every Hi` for `ℋᵢ`. The one box reader
+  (`check_items.read_box`, rule 9's) now holds pdftotext's crop against the page's own
+  glyphs, which `pdftohtml -xml` gives with their font, size and place. A capital of the
+  AMS double-struck alphabet becomes its Unicode letter (`ℕ`, `ℝ`, the U+1D538 block for
+  the rest), a capital of the math symbol font -- where Computer Modern keeps the
+  calligraphic alphabet -- its Unicode script capital (`ℋ`), and a character of that font
+  that is not the operator the page prints the operator (`∘` for `\circ`). A run the page
+  sets small and low, or small and high, is written in the Unicode subscript or
+  superscript characters for it, so `Π₁(f)` and `ℋᵢ` are written -- the overlay's viewer
+  sets those as real subscript runs, so the card shows what the page shows -- and an `ι`
+  with an `S` under its shoulder stays `ιS`, at full size, and is reported
+  (`counts.titles_scripts_kept`, the lossy `title.script_run`). Three
+  spaces are poppler's and not the page's and are settled by the gap the page leaves: the
+  one at a script run's edge, the one before a closing parenthesis, and the one a binary
+  operator does or does not stand in. Where the glyphs cannot be read -- `pdftohtml` is
+  not on PATH, or what it reads is not what pdftotext cropped, which happens where the two
+  readers order a subscript differently in a box of several lines -- the text is
+  pdftotext's own and is reported (`counts.titles_glyphs_unread`, the lossy
+  `title.flattened_glyphs`, and a warning `cf export`, `cf overlay export` and
+  `cf informalize overlay` each print, since the report itself does not outlive the
+  export those last two run, and a host without `pdftohtml` would otherwise flatten
+  every title in silence). **Rule 9 of `check_items.py` compares this text too**, and
+  what it compares does change: the NFKC of its own `norm` folds a double-struck letter
+  and a script back (`ℕ` to `N`, `₁` to `1`), and the spacing and the operator are left,
+  so 28 of the acceptance run's 86 boxes read differently. Its verdicts do not move,
+  because what rule 9 looks for in a box is an item's head (`Theorem 1.2`), a part's label
+  (`(a)`) and the words of a title that are four letters or more, and none of those is
+  mathematics: the approved PDF passes `check_items --strict` unchanged, with the new
+  reader and without `pdftohtml` both. Nothing is rebuilt: the titles are read at export
+  time from the approved PDF and `markers.json`, as before. On the acceptance run's 54
+  notions, 11 titles change, 3 script runs are kept and no box falls back.
+- **`main.tex`'s introduction printed the theorem's Lean name.** The template `cf
+  informalize init` renders wrote "the theorem `\texttt{<Lean name>}` of the Lean library
+  ...", against the rule the rest of the text keeps: the annotations carry the names, and
+  the page carries mathematics. It now names the theorem as the one that closes the text,
+  as the acceptance run's repository was corrected to by hand, and the `theorem_tex` slot
+  is gone. The rule is now checked where it was not: `fccommon.printed_lean_names` reads a
+  text file as it is typeset (comments gone, the arguments that print nothing blanked, a
+  `\_` read as `_`) and reports every name of `declarations.json` left in it; the gate's
+  rule 2 asks it of each text file a task changes, and `cf informalize check-items` asks it
+  of `informal/main.tex`, which is the maintainer's from `init` on and which no task
+  changes.
+- **A `remote_root` that is not absolute is refused.** Every remote path of a run is built
+  from `hosts.<host>.remote_root` and quoted for the host's shell, so a `~` never expands
+  there: a `remote_root` of `~/informalize-<id>` made a literal directory named `~` in the
+  operator's home on the host and put the whole run inside it. `run.manifest.resolve_host`
+  now refuses anything but an absolute path, once, rather than in each command that embeds
+  it; `cf plan-run`, which read the host entry itself, goes through the same check, so the
+  refusal comes at the plan rather than after run.yaml, the tend config and the prompts have
+  been written with a `~` in them; and `informalize.library.RemoteRoot` (which spelled `~/x` as `"$HOME"/x`
+  for the lines `build-command` prints) refuses it too, so one spelling is right everywhere.
+  `docs/proposals/informalize.md` sections 2, 6.1 and 12 no longer recommend `~`.
+- **`cf informalize scope` named component 5a as missing.** Its next step is
+  `cf plan-informalize <id> --phase items`, which has been built since.
+
+### Changed
+
+- **A notion's card is titled with what the page prints, not with the LaTeX behind it.**
+  The first acceptance run's site showed `$\ball{x}{\rho}$`, `$\incl{S}$`, `$\intr A$` and
+  `$\gamma \ptrans \delta$` on its cards and in its page lists -- the second argument of
+  `\fcnotion`, which is the drafter's source in the project's own notation, where the page
+  prints B(x, ρ), ιS, int A and γ·δ. `cf export informal-markers` now titles each notion
+  with the text the canonical PDF prints inside its boxes: it crops them with poppler at
+  `boxes.res_dpi` and joins the crops in reading order, through the box check's own cropper
+  (`check_items.crop`, which rule 9 already runs over every box, now split from the
+  normalising `crop_text` so there is still one of them). What poppler gives is kept
+  character for character -- Greek, operators, subscripts -- and only its white space is
+  collapsed, a line break closed up and a sentence's comma or full stop that the box's
+  padding caught dropped. An item or part whose `items.json` title holds TeX markup is
+  titled the same way, from the parenthesis its head prints, and a ligature counts as
+  markup: the run's headline theorem was titled `The based Seifert--van Kampen theorem`
+  where page 5 prints an en dash. The titles are read at
+  **export** time from the approved PDF and `markers.json`, so an existing canonical PDF
+  and its proof-sheets approval stay valid and nothing is built again; where poppler is
+  absent, a crop holds no text, or a crop caught a URL the box's padding reached, the title
+  is the words with their markup stripped and each ligature written as the character it
+  prints, and the export report names every title that took it whose words hold markup
+  (`counts.titles_from_pdf`, `counts.titles_not_printed`, the lossy `title.printed_text`).
+  The annotation id is the
+  markers' either way (`notion:<constant>`), so no title re-keys anything. On the
+  acceptance run, 26 titles changed -- 25 of the 54 notions and the headline theorem --
+  and none fell back.
+
+- **The informal text prints no Lean name and no link; a notion is marked instead.**
+  The conventions section used to introduce each notion it fixes as
+  `\href{<doc url>}{\texttt{<Name>}}`, which put Lean identifiers and documentation URLs on
+  a page of mathematics. The maintainer's rule (2026-11-05): Literature Links supplies the
+  name and the link, so the text supplies neither. `fcmarkers.sty` gains
+  `\fcnotion{<Lean constant>}{<the words as printed>}`, which prints the words alone and
+  records a box around them with zref savepos, as an item and a part record theirs; the
+  constant is the marker's argument and reaches no page. `extract_markers.py` fits one box
+  per line the words lie on and writes it to `markers.json`; `check_items.py` holds every
+  constant to `declarations.json` (rule 11) and every box to its ink (rule 9);
+  `proof_sheets.py` draws the notion boxes in green. The gate's rule 2 lints a second time
+  with the comments removed and refuses a monospace font (`\texttt`, `\mathtt`,
+  `\ttfamily`, `\tt`), a `\verb`, a `\href`, a `\url` or a bare URL in any `.tex` or
+  `.sty` file of `informal/` a task writes, and a `\fcnotion` naming a
+  constant `declarations.json` does not hold. `cf export informal-markers` writes one Literature Links passage per notion box,
+  linked to the constant: a declaration of the library at the pinned commit, or a constant
+  of a dependency with the module and commit `references` now carries (below) and its
+  source line on that dependency's git host when `--packages-src` points at a
+  `.lake/packages` directory, else the documentation page.
+- **An informal statement is written as a textbook prints it.** The first informalize text
+  came out painfully literal: every typeclass, index type and side condition spelled out in
+  every item ("let $I$ be an index type, ... suppose that every point $x$ of $S$ has some
+  $U_i$ as a neighborhood"), because the rules asked for the signature rather than for the
+  mathematics, and the attackers were rewarded for making statements longer. The runtime's
+  `STYLE.md` now binds two halves of one task -- "exactly the Lean" and "in a
+  mathematician's words" -- with the conventions section carrying everything the items would
+  otherwise repeat, and the attack and judge briefs rule severity on *meaning*: `wrong` or
+  `imprecise` only where a competent reader could take the text to state other mathematics,
+  everything else `style`, and a `style` fix is shorter or more standard, never longer.
+  Faithfulness is unchanged and stated harder: a standard term may carry a hypothesis only
+  when it says exactly that hypothesis (no "open cover" where the Lean has neighborhoods, no
+  "unique" where it has existence). `"hypotheses"` in `items.json` is the binders that state
+  mathematics, not the typeclass, universe and index binders the conventions fix once, so
+  "carries every hypothesis" and "repeats none of the bookkeeping" are no longer two rules
+  pulling against each other. The items, conventions, draft, judge, edit, worker and
+  reviewer briefs, and sections 5.4, 8.2 and 8.4 of the proposal, say the same thing.
+- **`declarations.json` says where each definition is documented.** `cf informalize scope`
+  now writes `source_url` on every entry (its line in the library at the pinned commit) and
+  a `references` list: every constant from outside the library that a member's *type* names,
+  with the module the dependency dump recorded for it, for the libraries the Lean
+  documentation site holds the URL of its page, and the package, repository and commit the
+  library's `lake-manifest.json` pins that dependency at. The conventions task marks each
+  notion it fixes with one of these constants, and the annotation export turns the marker
+  into a card pointing at the definition itself. The module came from
+  nowhere before: the probe indexes the library's own modules only, and the dump's
+  `referenced` table was left in the workspace. A text that already has an approved item
+  table gets the links by running the stage again, which re-keys the file: `items.json`
+  pins it by sha, so the maintainer re-stamps `library.declarations_sha256` with the sha
+  the stage prints and approves the table again. Nothing the table says changes.
+
+### Fixed
+
+- **A hypothesis macro no longer eats the space after it.** `\hypCoverTwo and` printed
+  "cover $X$and" in the first informalize PDF: TeX drops the space after a control word, and
+  `\@ifstar` drops one before the token it looks at. `\fcdefhyp` now ends the words it
+  defines with `\xspace`, which puts the space back before a word and adds none before
+  punctuation; `xspace.sty` joins `tex_packages`, which the build checks with kpsewhich.
+- **`DumpDeps` records a theorem's proof again.** On newer toolchains `ConstantInfo.value?`
+  leaves theorems out unless it is passed `allowOpaque`, so every theorem's `value_deps` came
+  out empty. That blocked `cf informalize fetch-library`, and the dump missed every edge from a
+  proof (the first one was the mode's first target library, at Lean v4.36.0-rc2). The
+  template now matches definitions and theorems directly, which works on old and new
+  toolchains alike.
+
+### Added
+
+- **An informal companion's cards can show the library's own hovers.** `cf export
+  informal-markers` cuts each card's snippet out of `library/src/`, so a card shows the
+  declaration as a text file spells it: no colour, no hover, no link to a definition. The
+  overlay has had the other kind since the Verso work -- a committed `pdf-overlay/verso.json`
+  cut by `tools/verso_extract.py --pages` from a Verso build of the commit the cards pin,
+  made elsewhere (`docs/overlay.md` section 5) -- but nothing in the informalize mode made
+  that build. `cf informalize verso-command <id> --host H [--verso-rev REV] [--min-free-gb
+  60] [--lean-threads N]` now does, in the shape of `build-command`: it writes
+  `informalize/<id>/verso/to-host/`
+  (the drivers, among them the overlay's own `verso_extract.py` byte for byte, the same
+  one-line `library.tsv` stage I1 read, and `verso-command.sh`) and prints the lines that
+  copy them and the output repository's annotation bundle to the host, start the job there
+  detached, and bring the file back to be committed; it runs nothing, and its default
+  revision is the tag of the library's own toolchain -- for a *released* version only, since
+  no Verso tag answers to a nightly or a pr-release and `vnightly-2026-01-01` would be
+  printed as though one did. On the host,
+  `scripts/informalize/verso_host.sh` works in a copy of I1's checkout, never in I1's tree,
+  because the Verso require edits the lakefile -- and it writes that require *before* the
+  library's first one, since Lake lets the last require of a shared dependency win and a
+  Verso appended at the end moves the pins the library was built against; `verso_host.py
+  moved` stops the run when any of them moved, so the hovers are of the tree the cards pin
+  or there are none. Then `lake build`, `lake build :literateHtml` and `verso_extract.py
+  --pages` over the pages, against the bundle. The copy is a second whole built library, so
+  the script reads `MIN_FREE_GB` as the universe driver does, measures the checkout before
+  copying it and stops above the floor rather than fill the filesystem that also holds I1's
+  tree; it raises the open-file limit *before* `lake exe cache get`, which is what Mathlib's
+  cache unpacker needs it for; and it takes I1's own `library_host.lock` for the copy alone,
+  opened for reading, so the tree it copies is never one a concurrent `library_host.sh` is
+  still writing and nothing is written in `$ATLAS_ROOT` even so.
+  `docs/proposals/informalize.md` section 10 is
+  the step, component 9 of its section 11, and `tests/test_informalize_verso.py` holds the
+  command, the script and its Python half to it.
+- **The overlay viewer's PDF text can be selected and copied.** The page was a canvas and
+  nothing else, so a reader could read a statement on it but not quote it. Every rendered page
+  now carries PDF.js's own text layer -- the vendored build's `TextLayer`, which the viewer
+  gives a container of its own between the canvas and the region boxes -- and `viewer.css`
+  carries the rules its spans are written for, since only the build's two JavaScript files are
+  vendored; `runtime/THIRD_PARTY.md` names those rules as following PDF.js's own text layer
+  stylesheet, under the licence already shipped beside it. The text is copied as the PDF spells it (`disableNormalization`). The boxes stay
+  the one thing on the page that takes a pointer, so clicking a box still opens its card, the
+  hover, the keyboard and the zoom are untouched, and a selection started off a box runs
+  through the boxes as through any other text; the SVG the boxes live in no longer swallows
+  the pointer over the rest of the page. A page whose text cannot be read renders without a
+  layer and nothing else changes. `templates/overlay/tests/text-layer.test.mjs` runs the real
+  `TextLayer` over a synthetic PDF in a small DOM shim and pins every custom property and
+  rotation it writes against `viewer.css`; `docs/overlay.md` section 4 is the contract.
+- **The informalize mode in the documents a reader starts from** (component 8 of
+  `docs/proposals/informalize.md`): an `Informalization` section, a "When to use this"
+  bullet and the command index entries in `SKILL.md`, a tool row and the write rule in
+  `README.md`, what is built, tested, not run and not implemented in `docs/status.md`, and
+  a trigger eval, `write-up-from-lean`, for the one question the mode answers that nothing
+  else here does. `SKILL.md`'s frontmatter description gained an informalize clause, since
+  the description is the only thing a router reads; it is under the 1,024-character limit
+  because "reads repositories" and a few other words came out, the item-kind list and
+  "lecture notes" staying. That trade is **unmeasured** -- nobody has run
+  `evals/trigger.json` with and without it, which `evals/README.md` now records as the
+  second open question. SKILL.md must stay under 500 lines (`tests/test_rf_docs.py`), so
+  the room for the new section came out of the locate program's restatement of judgment
+  rules that `references/locate-documents.md` §3 and §4 and `references/vocabulary.md`
+  §1.11 hold; no rule changed. `tests/test_informalize_docs.py` holds all of it to the
+  CLI.
+- **`cf export informal-markers`** (the exporter of component 7 of
+  `docs/proposals/informalize.md`, its section 10): an informalization companion's PDF, box
+  by box, as one annotation document, so the existing overlay export turns it into
+  Literature Links annotations. It reads the output repository at a pinned commit -- the
+  four files `informal/informalize.json`, `items.json`, `declarations.json` and
+  `markers.json` -- the canonical PDF those markers were measured on and the library's
+  source for the snippets, and refuses a PDF with another sha256, an `informal/` that
+  changed since the markers' `source_commit`, or a `--library-src` that does not hold a key
+  declaration at the keyword line `declarations.json` gives (the item table's own check,
+  since nothing else pins that directory to the library's commit). The document's
+  `companion` is the **library**
+  at its own commit, since every Lean end is made from it: one item per part and per item
+  without parts (`ids.item_label_id`, one location per box), one link per `\leanref` the
+  build recorded there with the role and relation `items.json` gives it, a snippet cut by
+  `adapters.leansnippets` and a destination at the declaration's keyword line on the
+  library's git host. Two changes in `scripts/overlay/` come with it: `overlay.export`
+  records `export.commit` as the checkout's HEAD and, for a convention whose companion is
+  another repository, `export.lean` `{repo, commit}` -- which of the two a convention is
+  decides that, so an export of the second kind whose report does not name the commit it
+  read is refused rather than recording the library's; and `shards.section_of` puts an item
+  whose `section` is one number into that folder, where it went to `other/`. `cf informalize
+  overlay`, which runs the export and writes the site, is the rest of component 7 and is
+  not implemented yet: until then the overlay's own `init`, `export`, `sync` and `check` are
+  run by name and the config's fields are set by hand (`docs/exporters.md` section 8).
+- **`cf run` and `cf harvest` carry an informalize phase** (part of component 5b of
+  `docs/proposals/informalize.md`, its sections 8.1 and 8.5): the existing commands, not a
+  second path. The transfer sends the run's `repo/` into the entrypoint, where `tasks/`
+  beside it is its first commit (the run's `data/` stays out, so the tree is the base
+  commit's), and `--include-sources` sends `library/src/` read-only to
+  `<remote_root>/library-src/<id>-<commit12>/` under the before/after tree digest a
+  companion repo travels with; the verify stage runs `verify_informal.py --self-check`, and
+  the staged tend config is checked against that gate. The harvest brings the files of the
+  tasks' owned paths home beside the documents, into `corpus/<run>/tree/`, with the host's
+  own sha256 as the expectation -- a path that was listed and did not land, or landed with
+  another sha256, makes the receipt incomplete, and so does an entrypoint holding none of
+  them -- records which of them the run wrote against `gate.json`'s `base_files`, and
+  re-runs the run's own staged gate with `--findings` over what landed (`--root` the
+  planned `repo/`, or `tree/` for the items and conventions phases; a draft task writes no
+  document to re-read at home, so that gate block is a pass with a note). It also reads the
+  entrypoint's own change set -- its first commit against `HEAD` -- so a path changed on
+  the host that no task owns is `informalize.unowned` and the harvest is not complete. A
+  phase that writes no findings document is harvested from the entrypoint alone. `corpus/<run>/tree/` holds no finding: the receipt's listing leaves it
+  out (`harvest.files.NON_FINDING_DIRS`).
+- **`cf plan-informalize`** (component 5a of `docs/proposals/informalize.md`, its section 8):
+  one tend run per fleet phase (`items`, `conventions`, `draft`, `attack`, `judge`, `edit`),
+  planned from the output repository's HEAD and, for `judge` and `edit`, a harvested
+  `--from-run`; its gate, `scripts/gate/verify_informal.py`, runs out of tree with the
+  runtime beside it as `tex/` and nine rules: the task's owned paths, the build with the
+  gate's own `build_pdf.sh` and a lint against forged `.aux` records, `check_items.py
+  --aux-only --strict`, the item table, the hypotheses, the attack, ruling and edit
+  documents, and no run of 12 words copied from the library's docstrings. The prompts, the
+  tend config and the task file are templates (`templates/prompts/informalize-*.md.tmpl`,
+  `templates/tend/config-informalize.yaml.tmpl`, `templates/tasks/informalize.yaml.tmpl`).
+  The agentbox bridge gains a second switch for this gate (a read-only reviewer git, a
+  `--findings` gate entry, the tamper guard), `attempt_cap.py` an informalize form, and
+  `verify_findings.py` the orchestrator lookup both gates use. The item table's rules moved
+  to the runtime's `tools/fcitems.py`, which `informalize.itemtable` imports.
+  `tests/e2e/informalize_synthetic/driver.py` runs every phase on a fake library with the
+  staged gate run as the host runs it.
+- **`cf informalize build-command | fetch-library | scope`** (component 4 of
+  `docs/proposals/informalize.md`, its section 6): the Lean side, with no Lean on the
+  operator's machine. `build-command` copies the host drivers into `library/to-host/` and
+  prints the lines that start `scripts/informalize/library_host.sh` on the host, which runs
+  the universe driver on one library line, the probe's canary on the library's toolchain (in
+  the module system's form when a module of the library uses it) and DumpDeps, and collects
+  the results with `git archive` of the source's `.lean` files and the sha256 of the drivers it
+  ran; `fetch-library` brings them back under consent from the host folder
+  `hosts.<host>.remote_root`, which must be `informalize-<id>`, and checks them (the drivers
+  against `to-host/`, HEAD, a whole index through the new `corpus.ingest.check_index`, the
+  canary, the dump and its proof bodies, the archive, the license files against a table of
+  SPDX fingerprints) before they replace the last fetch, and records the commit's time for the
+  PDF build; `scope` writes the theorem's exact closure over DumpDeps' type and value
+  dependencies (a constant two modules realized is one) and `informal/declarations.json`. The universe line gains `LIBRARY_CACHE` (default 1, today's
+  behaviour; 0 skips `<library>/scripts/lake-cache-get.sh`), and the disk floor of a
+  one-library build is `--min-free-gb` (default 60), not the driver's 450.
+- **`cf informalize init | sync | status | check-items | approve | reference-checklist`**
+  (component 3 of `docs/proposals/informalize.md`): `informalize/<id>/informalize.yaml`, the
+  output repository `informalize/<id>/repo/` with the runtime, the project files and the text's
+  `LICENSE` (one text per open license, `templates/informalize/licenses/`), `sync --check`
+  against `informal/GENERATED.json`, the item table's rules and its check against
+  `declarations.json` and the library's source, the items approval that renumbers the table
+  before the first draft and freezes the ids after it, the reference checklist and its approval,
+  stage receipts and approvals pinned by sha256, the six enums in `cflib.vocab` and the item id
+  `cflib.items.INFORMAL_ITEM_ID`, and JSON Schemas of `informalize.yaml` and `items.json` for a
+  reader. SKILL.md rule 10 and its three copies gain a second exception: `cf informalize` writes
+  the repository it creates, and only that one.
+- **The informalize mode's LaTeX runtime and project templates** (`templates/informalize/`,
+  component 2 of `docs/proposals/informalize.md`): the marker package `fcmarkers.sty`, the
+  drafting rules, a reproducible build into a directory of its own, the boxes of every item
+  and part fitted to the ink of a render, the checks of a build against `items.json`,
+  `declarations.json` and `hypotheses.json`, and proof sheets. `tests/test_informalize_runtime.py`
+  builds a synthetic document with them, and CI's `informalize-tex` job runs it with TeX.
+- **A specification for the informalize mode** (`docs/proposals/informalize.md`), not yet
+  built: from a Lean library at a commit and one theorem, an item table, an informal LaTeX text
+  written and checked by a fleet, a reproducible PDF with a box per item and part, Literature
+  Links annotations and a published overlay; `tests/test_informalize_spec.py` holds it to the
+  code it names.
 - **An overlay may publish an openly licensed PDF** (`docs/overlay.md` rule 4 and section 3), so
   its built site works from a static host under a project path, such as
   `https://<owner>.github.io/<repository>/` on GitHub Pages, where the `/__` route at the root of
@@ -317,6 +719,12 @@ release has something to say.
   stages the three only when `stage(audited=True)`, which no planner passes yet.
 
 ### Changed
+- **`cf informalize status`'s next step reaches the writing phases.** It stopped at the
+  conventions phase, from before `cf plan-informalize` was built. With the I4 receipt
+  written it now names `--phase draft` and the sections whose files are still empty, and
+  `--phase attack` once every section with a version-1 item is drafted. It stops there:
+  `cf informalize apply` (component 5b of `docs/proposals/informalize.md`) writes no
+  receipt yet, so a harvested writing phase leaves nothing else to read.
 - The overlay reads Literature Links 1.0.1 at its tag `v1.0.1`, commit `789af9a`. The vendored
   copy differs from 1.0.0 in `__version__` and the schema's `$id` alone, and accepts and rejects
   what it did. 1.0.1's specification lets a `lean` end's `version` name a release tag, which a
