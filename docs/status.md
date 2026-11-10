@@ -67,9 +67,7 @@ and `lint` are designed and documented. The audit reports findings only.
 ## PDF overlay
 
 **Built and tested.** `cf overlay init`, `export`, `sync` and `check`; the runtime
-tools; the viewer. `templates/overlay/tests/` holds 174 tests under Node, with a fake
-DOM and a fake PDF.js (and, for the text layer, the vendored PDF.js itself over a
-synthetic PDF), and six Python modules test the generator
+tools; the viewer. `templates/overlay/tests/` tests the viewer under Node, and six Python modules test the generator
 (`tests/test_overlay_*.py`). All run in CI. CI tests the parts separately:
 `tests/test_export.py` runs the real exporters on synthetic companions, and
 `tests/test_overlay_cli.py` runs `cf overlay` with a stand-in for the export child.
@@ -95,10 +93,10 @@ where the private inputs are present (`docs/exporters.md` section 5). Those test
 without them.
 
 **Limits.** The `docstring-tags` exporter writes no PDF URL, so
-`--convention docstring-tags` is refused. `cf overlay export` writes no proof steps. The
-viewer stops in Safari 17.4. PR #50 records it in Chromium 152 and Firefox 159, with one
-comment in its files changed since, and no other browser has been driven. JPEG 2000 figures draw as empty
-frames. [Generating an overlay](generating-an-overlay.md) has each of these.
+`--convention docstring-tags` is refused. `cf overlay export` writes no proof steps.
+PR #54 records the viewer in Safari 17.4, Chrome 154 and Firefox 159.
+JPEG 2000 and JBIG2 images can draw as empty frames.
+[Generating an overlay](generating-an-overlay.md) has each of these.
 
 ## Locate
 

@@ -147,28 +147,16 @@ so proof steps belong to a companion whose annotations come from that producer.
 
 ## Browsers
 
-PR #50 records this viewer in Chromium 152 and Firefox 159 against a private companion,
-with one comment in its files changed since, and it has also been driven in Chromium
-against a synthetic one. It stops in Safari 17.4. The vendored PDF.js 6.2.108 reads
-`Iterator.prototype` when it loads, and that browser's engine has no `Iterator` global:
-under the JavaScriptCore shell of macOS 14.4, importing `pdf.min.mjs` throws
-`ReferenceError: Can't find variable: Iterator`. JPEG 2000 figures draw as empty frames,
-with the warning `JpxError: OpenJPEG failed to initialize`, because the vendored PDF.js
-has no OpenJPEG decoder beside it. Commit `75fa8aa` records that Firefox
-on macOS draws a box for some script characters after a letter, which is why titles set
-scripts as markup. The tests of `templates/overlay/tests/` run under Node with a fake
-DOM and a fake PDF.js — except `pdfjs-build.test.mjs` and `text-layer.test.mjs`, which
-load the vendored PDF.js itself, the second running it over a synthetic PDF in a DOM
-shim — so they cannot see a browser's limits.
+PR #54 tested the viewer in Safari 17.4, Chrome 154 and Firefox 159. The
+vendored legacy build of PDF.js supplies the `Iterator` builtin that
+the default build requires and Safari 17.4 lacks. JPEG 2000 and JBIG2 images
+can draw as empty frames because the required WebAssembly decoders are absent.
 
-The **text layer** has been checked that way and not yet in a browser: under Node, with
-the viewer and PDF.js a `cf overlay sync` had copied into a built site, every page of a
-six-page PDF came out as positioned spans whose text matched `pdftotext` character for
-character (the layer keeps the hyphen of a hyphenated line break, which `pdftotext`
-joins). What a shim cannot show is how a span sits over its glyphs, since the vertical
-offset uses the browser's own font ascent, nor where a drag that starts on a region box
-anchors its selection, which is the browser's own call: check a selection against the
-page in a browser before trusting it on a new companion.
+The Node suite tests the viewer with a fake DOM. The tests in
+`pdfjs-build.test.mjs` load the vendored PDF.js with the newer builtins
+removed to check the compatibility fix. The text-layer suite renders a synthetic
+PDF in a DOM shim. Check text alignment and drag selection in a browser when
+testing a new companion.
 
 ## Checking it in CI
 
