@@ -21,7 +21,10 @@ it, with their hovers (`verso_extract.py`). For a site with no Verso pages
 it is the companion's committed `pdf-overlay/verso.json`, cut from a Verso
 build of the commit its cards pin made elsewhere, when there is one, and
 else empty; the receipt says which. It never runs the build:
-`serve.py --build` does that first.
+`serve.py --build` does that first. A config whose `pdf.publish` names an open
+license (section 1 rule 4's exception) also publishes the PDF, the cached file
+`serve.py` fetched, verified again, at `<mount>/<file_name>`; with none, no PDF
+reaches the site.
 """
 
 from __future__ import annotations
@@ -66,13 +69,18 @@ LINK_CLASS = "formal-companion-overlay-link"
 BODY_END = re.compile(r"</body\s*>", re.IGNORECASE)
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
+#: `pdf.publish.license`: the open licenses under which the PDF may be published
+#: with the site (section 3).
+OPEN_LICENSES = ("Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT")
+PUBLISHED_FILE_NAME = re.compile(r"\.pdf\Z")
 
 CONFIG_KEYS = {
     "schema", "schema_version", "source_id", "title", "lede", "back_link",
     "display", "storage_key", "pdf", "site", "build", "serve",
 }
 REQUIRED_CONFIG_KEYS = {"schema", "schema_version", "source_id", "title", "pdf", "site"}
-PDF_KEYS = {"file_name", "cache_dir", "route"}
+PDF_KEYS = {"file_name", "cache_dir", "route", "publish"}
+PUBLISH_KEYS = {"license"}
 SITE_KEYS = {"output_root", "index", "mount", "link_text"}
 BUILD_KEYS = {"commands"}
 SERVE_KEYS = {"host", "port"}
@@ -101,6 +109,9 @@ class Config:
     index: str
     mount: str
     link_text: str
+    file_name: str = ""
+    cache_dir: str = DEFAULT_CACHE_DIR
+    publish_license: str = ""  # "" unless `pdf.publish` opts in to publishing the PDF
 
 
 def fail(message: str) -> NoReturn:
@@ -252,11 +263,22 @@ def load_config(overlay: Path) -> Config:
     file_name = nonempty_string(pdf["file_name"], f"{CONFIG_NAME}.pdf.file_name")
     if not FILE_NAME.fullmatch(file_name):
         fail(f"{CONFIG_NAME}.pdf.file_name: expected one plain file name: {file_name!r}")
-    relative_subpath(pdf.get("cache_dir", DEFAULT_CACHE_DIR), f"{CONFIG_NAME}.pdf.cache_dir")
+    cache_dir = relative_subpath(pdf.get("cache_dir", DEFAULT_CACHE_DIR),
+                                 f"{CONFIG_NAME}.pdf.cache_dir")
     route = nonempty_string(pdf.get("route", f"/__overlay_pdf__/{file_name}"),
                             f"{CONFIG_NAME}.pdf.route")
     if not route.startswith("/__") or ".." in route or route.endswith("/"):
         fail(f"{CONFIG_NAME}.pdf.route: must start with /__, name a file and hold no ..")
+    publish_license = ""
+    if "publish" in pdf:
+        publish = exact_keys(pdf["publish"], PUBLISH_KEYS, PUBLISH_KEYS, f"{CONFIG_NAME}.pdf.publish")
+        publish_license = publish["license"]
+        if not isinstance(publish_license, str) or publish_license not in OPEN_LICENSES:
+            fail(f"{CONFIG_NAME}.pdf.publish.license: expected one of {', '.join(OPEN_LICENSES)}, "
+                 f"got {publish_license!r}")
+        if not PUBLISHED_FILE_NAME.search(file_name):
+            fail(f"{CONFIG_NAME}.pdf.file_name: a published PDF's file name ends in .pdf: "
+                 f"{file_name!r}")
 
     site = exact_keys(value["site"], SITE_KEYS, set(), f"{CONFIG_NAME}.site")
     output_root = relative_subpath(site.get("output_root", DEFAULT_OUTPUT_ROOT),
@@ -294,6 +316,9 @@ def load_config(overlay: Path) -> Config:
         index=index,
         mount=mount,
         link_text=link_text,
+        file_name=file_name,
+        cache_dir=cache_dir,
+        publish_license=publish_license,
     )
 
 
@@ -360,6 +385,33 @@ def collect_runtime(overlay: Path, bundle: str) -> dict[str, bytes]:
     if not any(name.startswith("viewer/") for name in contents):
         fail("the generated runtime holds no viewer file to publish")
     return contents
+
+
+def published_pdf(overlay: Path, config: Config) -> bytes:
+    """The PDF a config that publishes it puts beside the viewer: the file `serve.py` cached,
+    with the sha256 and `bytes` of the records' PDF end, a `%PDF-` signature and a final `%%EOF`."""
+    try:
+        source = overlay_annotations.pdf_source(overlay, config.source_id)
+    except overlay_annotations.AnnotationError as error:
+        fail(str(error))
+    label = f"pdf.publish: {config.cache_dir}/{config.file_name}"
+    path = overlay.parent.joinpath(*PurePosixPath(config.cache_dir).parts) / config.file_name
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        fail(f"{label} does not exist; `python3 {overlay.name}/tools/serve.py --build-only` "
+             f"fetches and verifies it, then runs this tool")
+    except OSError as error:                                 # pragma: no cover
+        fail(f"{label}: cannot inspect {path}: {error}")
+    raw = require_regular(path, label).read_bytes()
+    size = overlay_annotations.extension(source).get("bytes")
+    if isinstance(size, int) and not isinstance(size, bool) and len(raw) != size:
+        fail(f"{label}: {len(raw)} bytes; the records' PDF end says {size}")
+    if not raw.startswith(b"%PDF-") or b"%%EOF" not in raw[-1024:]:
+        fail(f"{label}: not a PDF (no %PDF- signature or no final %%EOF)")
+    if sha256(raw) != source.get("sha256"):
+        fail(f"{label}: sha256 is {sha256(raw)}; the records' PDF end says {source.get('sha256')}")
+    return raw
 
 
 def link_href(config: Config) -> str:
@@ -640,6 +692,9 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
         fail(f"the generated runtime already has a {verso_extract.FILE_NAME}, which this tool writes")
     verso, verso_record = verso_file(overlay, output_root, entries)
     contents[verso_extract.FILE_NAME] = verso_extract.dumps(verso)
+    if config.publish_license:
+        # beside overlay.config.json, where the viewer fetches it: `../<file_name>`
+        contents[config.file_name] = published_pdf(overlay, config)
 
     index_parts = PurePosixPath(config.index).parts
     current = output_root

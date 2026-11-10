@@ -24,10 +24,10 @@ It reports, one line per problem, and exits 1 when there is one:
   package `cf overlay sync` shipped in `tools/literature_links/`;
 * `overlay.config.json` satisfies section 3 -- the same rules as the skill's
   `scripts/overlay/config.py` and as the `overlay-config-v1.schema.json` in
-  the `schema/` directory beside this one.  The four patterns below are those
-  files' patterns, and the skill's `tests/test_overlay_config.py` fails when
-  one of the strings differs or when the three disagree on any config in its
-  table;
+  the `schema/` directory beside this one.  The five patterns and the license
+  list below are those files', and the skill's `tests/test_overlay_config.py`
+  fails when one of the strings differs or when the three disagree on any
+  config in its table;
 * the annotation directory `GENERATED.json`'s `annotations` block names
   holds only `<section>/[<item>/]<name>.json` files and their
   `_defaults.json`, each as a recorded export writes it, as many annotations
@@ -72,16 +72,18 @@ CONFIG_KEYS = {
     "display", "storage_key", "pdf", "site", "build", "serve",
 }
 REQUIRED_CONFIG_KEYS = {"schema", "schema_version", "source_id", "title", "pdf", "site"}
-PDF_KEYS = {"file_name", "cache_dir", "route"}
+PDF_KEYS = {"file_name", "cache_dir", "route", "publish"}
 REQUIRED_PDF_KEYS = {"file_name"}
+PUBLISH_KEYS = {"license"}
 SITE_KEYS = {"output_root", "index", "mount", "link_text"}
 BUILD_KEYS = {"commands"}
 SERVE_KEYS = {"host", "port"}
 BACK_LINK_KEYS = {"href", "text"}
 DISPLAY_KEYS = {"strip_prefix", "minimal"}
 
-#: The four patterns, verbatim from the skill's scripts/overlay/config.py and
-#: from the overlay-config-v1 schema in the directory beside this one.
+#: The five patterns and the license list, verbatim from the skill's
+#: scripts/overlay/config.py and from the overlay-config-v1 schema in the
+#: directory beside this one.
 FILE_NAME_PATTERN = r"^[A-Za-z0-9_][A-Za-z0-9._-]*$"
 ROUTE_PATTERN = r"^/__[A-Za-z0-9._~/-]*[A-Za-z0-9._~-]$"
 RELATIVE_PATH_PATTERN = r"^[^/\x00-\x1f\\][^\x00-\x1f\\]*$"
@@ -90,6 +92,8 @@ LOOPBACK_PATTERN = (r"^(127\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
                     r"(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){2}|::1)$")
 PORT_MIN = 1
 PORT_MAX = 65535
+OPEN_LICENSES = ("Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT")
+PUBLISHED_FILE_NAME_PATTERN = r"\.pdf$"
 
 DEFAULT_CACHE_DIR = ".lake/overlay-pdf"
 DEFAULT_OUTPUT_ROOT = ".lake/build/literate-html"
@@ -103,6 +107,7 @@ _ROUTE = re.compile(ROUTE_PATTERN)
 _RELATIVE = re.compile(RELATIVE_PATH_PATTERN)
 _REFUSED = tuple(re.compile(p) for p in RELATIVE_PATH_REFUSED)
 _LOOPBACK = re.compile(LOOPBACK_PATTERN)
+_PUBLISHED_FILE_NAME = re.compile(PUBLISHED_FILE_NAME_PATTERN)
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _VERSION = re.compile(r'^__version__ = "([^"]+)"$', re.M)
 
@@ -202,7 +207,7 @@ def _relative(value: Any, label: str, out: list[str]) -> None:
     if not isinstance(value, str) or not value:
         out.append(f"{label}: expected a nonempty relative path")
         return
-    if not _RELATIVE.search(value) or any(p.search(value) for p in _REFUSED) \
+    if not _RELATIVE.fullmatch(value) or any(p.search(value) for p in _REFUSED) \
             or str(PurePosixPath(value)) != value:
         out.append(f"{label}: path must be relative, normalised and traversal-free: "
                    f"{value!r}")
@@ -247,7 +252,7 @@ def config_problems(value: Any, label: str = CONFIG_NAME) -> list[str]:
         pdf = _keys(value["pdf"], PDF_KEYS, REQUIRED_PDF_KEYS, f"{label}.pdf", out)
         if "file_name" in pdf:
             file_name = _string(pdf["file_name"], f"{label}.pdf.file_name", out)
-            if file_name and not _FILE_NAME.search(file_name):
+            if file_name and not _FILE_NAME.fullmatch(file_name):
                 out.append(f"{label}.pdf.file_name: expected one plain file name: "
                            f"{file_name!r}")
                 file_name = ""
@@ -256,9 +261,19 @@ def config_problems(value: Any, label: str = CONFIG_NAME) -> list[str]:
         route = pdf.get("route", f"/__overlay_pdf__/{file_name}" if file_name else "")
         if not isinstance(route, str) or not route:
             out.append(f"{label}.pdf.route: expected a nonempty string")
-        elif not _ROUTE.search(route) or ".." in route:
+        elif not _ROUTE.fullmatch(route) or ".." in route:
             out.append(f"{label}.pdf.route: must start with /__, name a file and "
                        f"hold no ..: {route!r}")
+        if "publish" in pdf:
+            publish = _keys(pdf["publish"], PUBLISH_KEYS, PUBLISH_KEYS,
+                            f"{label}.pdf.publish", out)
+            if file_name and not _PUBLISHED_FILE_NAME.search(file_name):
+                out.append(f"{label}.pdf.file_name: a published PDF's file name ends in "
+                           f".pdf: {file_name!r}")
+            found = publish.get("license")
+            if "license" in publish and not (isinstance(found, str) and found in OPEN_LICENSES):
+                out.append(f"{label}.pdf.publish.license: expected one of "
+                           f"{', '.join(OPEN_LICENSES)}, got {found!r}")
 
     if "site" in value:
         site = _keys(value["site"], SITE_KEYS, set(), f"{label}.site", out)
@@ -289,7 +304,7 @@ def config_problems(value: Any, label: str = CONFIG_NAME) -> list[str]:
         serve = _keys(value["serve"], SERVE_KEYS, set(), f"{label}.serve", out)
         if "host" in serve:
             host = _string(serve["host"], f"{label}.serve.host", out)
-            if host and not (_LOOPBACK.search(host) and _is_loopback(host)):
+            if host and not (_LOOPBACK.fullmatch(host) and _is_loopback(host)):
                 out.append(f"{label}.serve.host: expected a loopback address "
                            f"(127.x.y.z or ::1), got {host!r}")
         if "port" in serve:

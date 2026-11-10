@@ -47,10 +47,21 @@ proxy is **not** `author_site`, whatever its URL looks like.
 `licence.redistribute` is `false` for every entry and `Registry.validate()`
 reports an entry that says otherwise as a problem. Nothing this skill fetches
 is re-served, committed, attached to an issue, or copied to a host that did not
-already have it — with one documented exception, which is not redistribution:
-`cf run` transfers the prepared source text to the **audit host the operator
-named and consented to**, because the gate must read it there. That transfer is
-recorded in `run.yaml` with the consent.
+already have it — with two documented exceptions. The first is not
+redistribution: `cf run` transfers the prepared source text to the **audit host
+the operator named and consented to**, because the gate must read it there. That
+transfer is recorded in `run.yaml` with the consent.
+
+The second is a companion's own opt-in: an overlay whose `overlay.config.json`
+names an open license in `pdf.publish` (`docs/overlay.md` rule 4). Its
+`serve.py --build-only` fetches the PDF and `build_site.py` copies it, verified,
+into that companion's built site only, to be hosted with it. It is for a PDF
+whose own license allows redistribution, and the tools take the license on
+trust, so a person checks it against the PDF's own notice. The registry plays no
+part. The overlay never reads it, `licence_class` is not consulted, and
+`licence.redistribute` stays `false`, because the skill's own commands still
+re-serve nothing. The config key is spelled `license`, as SPDX spells it; the
+registry's field is `licence`.
 
 ## 4. Quotation inside the audit
 
@@ -101,7 +112,8 @@ What a class does **not** change:
   not: section 1 is a rule about this repository, not only about copyright;
 - nothing is **redistributed** — `licence.redistribute` stays `false` for every
   entry and every family. Quoting a capped span with attribution is quotation;
-  copying an article is redistribution, and the skill does not do it;
+  copying an article is redistribution, and the skill does not do it (an
+  overlay's `pdf.publish` is a companion's opt-in, section 3);
 - **fetching** is section 2's business (`licence.fetch`), not the class's. The
   one fetcher a web family uses is a named network exception in `CLAUDE.md`
   §3: `scripts/sources/wikinet.py`, which `cf sourceset fetch`,

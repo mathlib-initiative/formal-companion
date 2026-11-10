@@ -193,7 +193,8 @@ SOURCE_REFERENCE = "reference"
 SOURCE_ROLES = frozenset({SOURCE_AUDITED, SOURCE_REFERENCE})
 
 #: What a registry licence note permits. `none` means a download is refused even
-#: with --download; nothing is EVER redistributed, whatever this says.
+#: with --download; nothing is EVER redistributed, whatever this says (an
+#: overlay's `pdf.publish` is a companion's opt-in, not this: POLICY.md section 3).
 LICENCE_FETCH = frozenset({"none", "author_site", "open"})
 
 #: What a source's licence lets an EXPORTED record quote (POLICY.md section 4.1,

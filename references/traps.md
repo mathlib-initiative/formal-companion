@@ -117,7 +117,8 @@ for a whole campaign — from which `cf quotes hydrate` recovers the sentence on
 already holds that edition, and nowhere else. The
 registry holds metadata and URLs only, which is what makes *it* committable. A download happens
 only with `--download` **and** a licence note saying the author publishes the file himself, and
-nothing is ever redistributed. The gate reads the text from a path outside every repo and **fails
+nothing is redistributed beyond the two exceptions of `POLICY.md` §3. The gate reads the text
+from a path outside every repo and **fails
 closed** when it is absent — which presents as a run failure, not as a missing file, so check that
 first.
 *Evidence:* the harvested corpus's own README; `tao-measure-lean/docs/HANDOFF.md` §7 ("DO NOT DELETE");

@@ -27,13 +27,16 @@
       <a id="back-link" class="back-link" hidden></a>
       <span class="topbar-sep" aria-hidden="true"></span>
       <h1 id="page-heading">Source and formalization overlay</h1>
+      <button id="toggle-reading" class="reading-toggle" type="button"
+              aria-controls="overlay details" aria-expanded="true"
+              title="Hide annotation boxes and the Lean panel" disabled>Read PDF</button>
       <button id="toggle-faithfulness" class="switch" type="button" aria-pressed="false" hidden>Show faithfulness</button>
       <details id="status-chip" class="status-chip">
         <summary aria-labelledby="status">
           <span id="status-glyph" class="status-glyph" aria-hidden="true"></span>
           <span id="status" class="status-text" role="status" aria-live="polite">Loading…</span>
         </summary>
-        <p class="status-pop">
+        <p id="status-note" class="status-pop">
           The PDF is served only on loopback from a local cache. This page checks its SHA-256
           against the one the annotations pin before PDF.js renders it. It is never uploaded
           or published.

@@ -32,7 +32,8 @@ to a repo that may be shared, and it is a hard rule, not a convention:
   own site, and only alongside a `licence.note` saying so;
 - `licence.redistribute` is `false` for every entry, and `Registry.validate()`
   reports an entry that says otherwise as a problem. Nothing this skill fetches
-  is ever re-served, committed or copied to a host that did not already have it.
+  is ever re-served, committed or copied to a host that did not already have it,
+  beyond the two exceptions `POLICY.md` section 3 documents.
 
 `POLICY.md` is the whole rule, including what you assert by adding an entry and
 what happens if a rights holder objects. The mechanical half is a command:

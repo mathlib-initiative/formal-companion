@@ -19,7 +19,8 @@
  * `href` is used only when a card's page resolves to an `https:` URL or a
  * page of this site, and a token's only when it is a page of this site; the
  * hover card is placed through CSSOM, never a style attribute; the PDF is
- * requested only from `config.pdf.route`; PDF.js runs with
+ * requested only from `pdf.route`, or, when `pdf.publish` names an open
+ * license, from `../<file_name>` beside the config; PDF.js runs with
  * `isEvalSupported: false`.
  */
 import {
@@ -47,6 +48,7 @@ import {
   pageSummaryText,
   paginateCards,
   parseBundle,
+  pdfFetchUrl,
   preferredItemId,
   quadToViewport,
   readConfig,
@@ -154,36 +156,39 @@ export async function loadVerso(fetchImpl = globalThis.fetch, url = VERSO_URL) {
 }
 
 /**
- * Fetch the PDF from the configured loopback route and verify its bytes against
- * the sha256 its subject ends state before anything renders them.
+ * Fetch the PDF from the configured loopback route, or from beside the config
+ * when it is published, and verify its bytes against the sha256 its subject
+ * ends state before anything renders them.
  */
 export async function loadPdfBytes(config, index, fetchImpl = globalThis.fetch,
-                                   cryptoProvider = globalThis.crypto) {
+                                   cryptoProvider = globalThis.crypto, pageUrl = globalThis.location?.href) {
   if (typeof fetchImpl !== "function") {
-    throw new Error("Fetch is unavailable; the verified loopback PDF cannot be loaded.");
+    throw new Error("Fetch is unavailable; the verified PDF cannot be loaded.");
   }
-  const response = await fetchImpl(config.pdfRoute, {
+  // An error names the PDF as the reader knows it: on loopback, or published with the site.
+  const what = config.pdfLicense ? "published PDF" : "loopback PDF";
+  const response = await fetchImpl(pdfFetchUrl(config, pageUrl), {
     cache: "no-store",
     credentials: "same-origin",
   });
   if (!response?.ok) {
     throw new Error(
-      `Unable to load the verified loopback PDF (${response?.status ?? "no response"}).`,
+      `Unable to load the verified ${what} (${response?.status ?? "no response"}).`,
     );
   }
   const mediaType = response.headers?.get?.("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
   if (mediaType !== PDF_MEDIA_TYPE) {
-    throw new Error(`The loopback PDF response has unexpected media type ${mediaType || "missing"}.`);
+    throw new Error(`The ${what} response has unexpected media type ${mediaType || "missing"}.`);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const declared = index.bytes;
   if (Number.isInteger(declared) && bytes.byteLength !== declared) {
-    throw new Error(`The loopback PDF is ${bytes.byteLength} bytes; the source record says ${declared}.`);
+    throw new Error(`The ${what} is ${bytes.byteLength} bytes; the source record says ${declared}.`);
   }
   const verification = await verifyPdfBytes(bytes, index.sha256, cryptoProvider);
   if (!verification.ok) {
     throw new Error(
-      `Loopback PDF SHA-256 is ${verification.actual}; expected ${verification.expected}.`,
+      `${what[0].toUpperCase()}${what.slice(1)} SHA-256 is ${verification.actual}; expected ${verification.expected}.`,
     );
   }
   return { bytes, verification };
@@ -299,9 +304,9 @@ export async function bootstrapViewer({
   const ui = Object.fromEntries(
     [
       "back-link", "page-heading", "page-lede", "keys",
-      "error", "status", "status-glyph", "status-chip", "notice", "workspace",
+      "error", "status", "status-glyph", "status-chip", "status-note", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
-      "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness",
+      "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness", "toggle-reading",
       "page-scroller", "page-stage", "pdf-canvas", "overlay", "region-bar", "region-peek",
       "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
@@ -326,6 +331,7 @@ export async function bootstrapViewer({
     pageOrigin: "",
     pdfDocument: null,
     region: null,
+    readingMode: false,
     renderEpoch: 0,
     renderTask: null,
     rotation: 0,
@@ -407,6 +413,11 @@ export async function bootstrapViewer({
     ui["page-lede"].hidden = !config.lede;
     // `display.minimal`: the toolbar buttons name their own shortcuts.
     ui.keys.hidden = config.minimal;
+    // The shell says the PDF never leaves loopback; a published one did, under its license.
+    if (config.pdfLicense) {
+      ui["status-note"].textContent = `The PDF is published with this site under ${config.pdfLicense}. `
+        + "This page checks its SHA-256 against the one the annotations pin before PDF.js renders it.";
+    }
     // With no back link the top bar starts with the title; the stylesheet drops the divider too.
     const back = config.backLink;
     ui["back-link"].hidden = !back;
@@ -1419,7 +1430,7 @@ export async function bootstrapViewer({
 
   function updateBar() {
     const box = state.region ? state.boxes.get(state.region.id) : null;
-    ui["region-bar"].hidden = !box;
+    ui["region-bar"].hidden = state.readingMode || !box;
     if (box) {
       ui["region-bar"].style.top = `${box.y}px`;
       ui["region-bar"].style.height = `${box.height}px`;
@@ -1432,7 +1443,7 @@ export async function bootstrapViewer({
 
   function showPeek(region) {
     const box = state.boxes.get(region.id);
-    if (!box || state.region?.id === region.id) {
+    if (state.readingMode || !box || state.region?.id === region.id) {
       hidePeek();
       return;
     }
@@ -1616,7 +1627,7 @@ export async function bootstrapViewer({
     ui["page-stage"].hidden = false;
     hidePeek();
     renderOverlay(displayed, viewport);
-    if (state.region) {
+    if (state.region && !state.readingMode) {
       // A zoom or a rotation keeps the selected passage in view.
       scrollRegionIntoView(state.region);
     }
@@ -1665,6 +1676,28 @@ export async function bootstrapViewer({
     await renderPage();
   }
 
+  /** Read the PDF alone, retaining the page, zoom and selected passage. */
+  function showReadingMode(shown) {
+    state.readingMode = shown;
+    setClass(ui.workspace, "is-reading", shown);
+    ui.details.hidden = shown;
+    // SVG has no HTMLElement.hidden setter: write the attribute for [hidden].
+    if (shown) ui.overlay.setAttribute("hidden", "");
+    else ui.overlay.removeAttribute("hidden");
+    ui["toggle-reading"].textContent = shown ? "Show links" : "Read PDF";
+    ui["toggle-reading"].setAttribute("aria-expanded", String(!shown));
+    ui["toggle-reading"].title = shown
+      ? "Show annotation boxes and the Lean panel (Esc)"
+      : "Hide annotation boxes and the Lean panel";
+    ui["page-scroller"].setAttribute("aria-label", shown
+      ? "Rendered PDF page" : "Rendered PDF page with selectable source regions");
+    hidePeek();
+    hideHover();
+    setHot(null);
+    updateBar();
+  }
+
+  ui["toggle-reading"].disabled = true;
   // A refusal is an error message on the page, never a blank page: the two data
   // files are loaded inside this guard so the shell always says what went wrong.
   try {
@@ -1697,7 +1730,7 @@ export async function bootstrapViewer({
   }
   clearError();
   try {
-    const { bytes } = await loadPdfBytes(state.config, state.index, fetchImpl, cryptoProvider);
+    const { bytes } = await loadPdfBytes(state.config, state.index, fetchImpl, cryptoProvider, pageUrl);
     const pdfjs = await pdfjsLoader();
     pdfjs.GlobalWorkerOptions.workerSrc = new URL(
       "../vendor/pdfjs/pdf.worker.min.mjs",
@@ -1720,6 +1753,7 @@ export async function bootstrapViewer({
     ui.workspace.hidden = false;
     selectRegion(null);
     await renderPage();
+    ui["toggle-reading"].disabled = false;
   } catch (error) {
     ui.workspace.hidden = true;
     setStatus("bad", "PDF not verified");
@@ -1732,6 +1766,7 @@ export async function bootstrapViewer({
   ui["zoom-out"].addEventListener("click", () => changeZoom(state.zoom - 10));
   ui["zoom-in"].addEventListener("click", () => changeZoom(state.zoom + 10));
   ui["rotate-right"].addEventListener("click", () => rotate(90));
+  ui["toggle-reading"].addEventListener("click", () => showReadingMode(!state.readingMode));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
   ui["back-to-page"].addEventListener("click", backToPage);
   ui["note-toggle"].addEventListener("click", () => {
@@ -1819,7 +1854,10 @@ export async function bootstrapViewer({
     else if (event.key.toLowerCase() === "r") rotate(90);
     else if (event.key === "Escape") {
       // A card its token's scroll has hidden is not one to close: Escape leaves the item.
-      if (hover.token && !ui["hover-card"].hidden) hideHover();
+      if (state.readingMode) {
+        showReadingMode(false);
+        focusQuietly(ui["toggle-reading"]);
+      } else if (hover.token && !ui["hover-card"].hidden) hideHover();
       else if (state.selected && ui.details.contains?.(documentRef.activeElement)) backToPage();
       else selectRegion(null);
     }

@@ -224,6 +224,11 @@ class Companion:
                         encoding="utf-8")
         return path
 
+    def publish(self, license: str = "CC-BY-4.0") -> Path:
+        """The config with its PDF published under ``license`` (section 3's `pdf.publish`)."""
+        pdf = dict(self.config_value()["pdf"], publish={"license": license})
+        return self.write_config(pdf=pdf)
+
     def write_raw_config(self, text: str) -> Path:
         path = self.overlay / "overlay.config.json"
         path.write_text(text, encoding="utf-8")
@@ -379,6 +384,41 @@ class TestTheConfigIsTheContract(OverlayToolsTestCase):
                     pdf={"file_name": "notes.pdf", "route": route})
                 with self.assertRaises(SERVE.OverlayError):
                     self.companion.config()
+
+    def test_a_published_pdf_moves_the_route_beside_the_config_in_serve(self):
+        self.companion.publish("CC-BY-SA-4.0")
+        config = self.companion.config()
+        self.assertEqual(config.publish_license, "CC-BY-SA-4.0")
+        self.assertEqual(config.published_path, "pdf-overlay/notes.pdf")
+        self.assertEqual(config.route, "/pdf-overlay/notes.pdf")
+        self.assertEqual(config.route_prefix, "/__", "the mount's other files stay servable")
+        built = BUILD.load_config(self.companion.overlay)
+        self.assertEqual((built.publish_license, built.file_name, built.cache_dir),
+                         ("CC-BY-SA-4.0", "notes.pdf", ".lake/overlay-pdf"))
+
+    def test_with_no_publish_nothing_about_the_route_changes(self):
+        config = self.companion.config()
+        self.assertEqual((config.publish_license, config.published_path), ("", ""))
+        self.assertEqual((config.route, config.route_prefix),
+                         ("/__overlay_pdf__/notes.pdf", "/__overlay_pdf__/"))
+        self.assertEqual(BUILD.load_config(self.companion.overlay).publish_license, "")
+
+    def test_publishing_needs_an_open_license_and_a_pdf_file_name_in_both_tools(self):
+        cases = (
+            ({"file_name": "notes.pdf", "publish": {}}, r"missing keys \['license'\]"),
+            ({"file_name": "notes.pdf", "publish": {"license": "CC-BY-NC-4.0"}},
+             r"pdf\.publish\.license: expected one of Apache-2\.0, .*'CC-BY-NC-4\.0'"),
+            ({"file_name": "notes.pdf", "publish": {"license": None}}, r"pdf\.publish\.license"),
+            ({"file_name": "notes.pdf", "publish": "MIT"}, r"pdf\.publish: expected an object"),
+            ({"file_name": "notes.djvu", "publish": {"license": "MIT"}},
+             r"pdf\.file_name: a published PDF's file name ends in \.pdf"),
+        )
+        for pdf, message in cases:
+            self.companion.write_config(pdf=pdf)
+            for module, error in ((SERVE, SERVE.OverlayError), (BUILD, BUILD.BuildError)):
+                with self.subTest(pdf=pdf, tool=module.__name__):
+                    with self.assertRaisesRegex(error, message):
+                        module.load_config(self.companion.overlay)
 
     def test_paths_must_stay_inside_the_companion(self):
         cases = (
@@ -821,6 +861,54 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertNotEqual((mount / "receipt.json").read_text(encoding="utf-8"), "{}\n")
         self.assertEqual(list(self.companion.site.glob(".pdf-overlay.*")), [])
 
+    def test_without_publish_no_pdf_reaches_the_site_even_with_one_cached(self):
+        self.companion.write_cache()
+        self.companion.write_site()
+        BUILD.build_site(self.companion.overlay)
+        self.assertNotIn("notes.pdf", self.published())
+        self.assertEqual(list(self.companion.site.rglob("*.pdf")), [])
+
+    def test_a_published_pdf_is_verified_and_placed_beside_the_config(self):
+        self.companion.publish()
+        self.companion.write_cache()
+        self.companion.write_site()
+        summary = BUILD.build_site(self.companion.overlay)
+        published = self.published()
+        self.assertEqual(published["notes.pdf"], digest(FIXTURE_PDF))
+        self.assertEqual(published["overlay.config.json"],
+                         digest((self.companion.overlay / "overlay.config.json").read_bytes()),
+                         "the PDF sits beside the config the viewer fetches it next to")
+        self.assertEqual([path.relative_to(self.companion.site).as_posix()
+                          for path in self.companion.site.rglob("*.pdf")], ["pdf-overlay/notes.pdf"])
+        receipt = json.loads((self.companion.site / "pdf-overlay" / "receipt.json").read_text(encoding="utf-8"))
+        self.assertIn({"bytes": len(FIXTURE_PDF), "path": "notes.pdf", "sha256": digest(FIXTURE_PDF)},
+                      receipt["files"])
+        self.assertEqual(summary["files"], len(published) - 1, "every file but the receipt")
+        SERVE.assert_site_servable(self.companion.site, self.companion.config().published_path)
+        self.assertEqual(BUILD.build_site(self.companion.overlay), summary, "a second run is the same")
+
+    def test_a_published_pdf_that_is_missing_or_does_not_verify_is_refused(self):
+        self.companion.publish()
+        self.companion.write_site()
+        with self.assertRaisesRegex(BUILD.BuildError,
+                                    r"pdf\.publish: \.lake/overlay-pdf/notes\.pdf does not exist; "
+                                    r"`python3 pdf-overlay/tools/serve\.py --build-only` fetches"):
+            BUILD.build_site(self.companion.overlay)
+        for raw, message in ((FIXTURE_PDF[:-1] + b"X", r"sha256 is [0-9a-f]{64}; the records' PDF end says"),
+                             (FIXTURE_PDF + b"\n", r"\d+ bytes; the records' PDF end says \d+"),
+                             (b"plain" + FIXTURE_PDF[5:], r"not a PDF")):
+            with self.subTest(message=message):
+                self.companion.write_cache(raw)
+                with self.assertRaisesRegex(BUILD.BuildError, message):
+                    BUILD.build_site(self.companion.overlay)
+        self.assertFalse((self.companion.site / "pdf-overlay").exists(), "nothing was published")
+        self.companion.write_cache()
+        self.companion.cache_path.unlink()
+        self.companion.cache_path.symlink_to(self.base / "elsewhere.pdf")
+        (self.base / "elsewhere.pdf").write_bytes(FIXTURE_PDF)
+        with self.assertRaisesRegex(BUILD.BuildError, "ordinary nonsymlink file"):
+            BUILD.build_site(self.companion.overlay)
+
     def test_a_file_the_bundle_does_not_hold_is_not_published(self):
         self.companion.write_site()
         (self.companion.root / FILE).write_bytes(overlay_shards.annotation_bytes(
@@ -1221,6 +1309,39 @@ class TestTheLoopbackServer(OverlayToolsTestCase):
         with self.assertRaisesRegex(SERVE.OverlayError, "symlink"):
             SERVE.assert_site_servable(self.companion.site)
 
+    def test_a_published_pdf_is_served_beside_the_config_and_the_mount_still_is(self):
+        self.companion.publish()
+        base, config = self.serving()
+        mount = self.companion.site / "pdf-overlay"
+        (mount / "viewer").mkdir(parents=True)
+        (mount / "viewer" / "index.html").write_text("<p>viewer</p>", encoding="utf-8")
+        (mount / "notes.pdf").write_bytes(FIXTURE_PDF[:-1] + b"X")
+        with urllib.request.urlopen(base + "/pdf-overlay/notes.pdf", timeout=10) as response:
+            self.assertEqual(response.headers.get_content_type(), "application/pdf")
+            self.assertEqual(response.read(), FIXTURE_PDF, "the verified cache, not the site's copy")
+        with urllib.request.urlopen(base + "/pdf-overlay/viewer/index.html", timeout=10) as response:
+            self.assertIn(b"viewer", response.read())
+        for path in ("/__overlay_pdf__/notes.pdf", "/pdf-overlay/notes.pdf?x=1", "/pdf-overlay/other.pdf"):
+            with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as bad:
+                urllib.request.urlopen(base + path, timeout=10)
+            self.assertEqual(bad.exception.code, 404)
+            bad.exception.close()
+        SERVE.assert_site_servable(self.companion.site, config.published_path)
+        with self.assertRaisesRegex(SERVE.OverlayError, "contains a PDF"):
+            SERVE.assert_site_servable(self.companion.site)
+        (self.companion.site / "leak.pdf").write_bytes(FIXTURE_PDF)
+        with self.assertRaisesRegex(SERVE.OverlayError, "contains a PDF.*leak\\.pdf"):
+            SERVE.assert_site_servable(self.companion.site, config.published_path)
+
+    def test_a_published_pdf_under_a_mount_with_sub_delimiters_is_served(self):
+        value = self.companion.config_value()
+        self.companion.write_config(pdf=dict(value["pdf"], publish={"license": "MIT"}),
+                                    site=dict(value["site"], mount="a+b(c)"))
+        base, _config = self.serving()
+        for path in ("/a+b(c)/notes.pdf", "/a%2Bb%28c%29/notes.pdf"):
+            with self.subTest(path=path), urllib.request.urlopen(base + path, timeout=10) as response:
+                self.assertEqual(response.read(), FIXTURE_PDF)
+
     def test_a_busy_port_is_reported_and_nothing_else_runs(self):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
@@ -1251,6 +1372,44 @@ class TestTheToolsFromTheirOwnPath(OverlayToolsTestCase):
         self.assertEqual(index.count(BUILD.LINK_START), 1)
         self.assertTrue((self.companion.site / "pdf-overlay" / "receipt.json").is_file())
         self.assertEqual(list(self.companion.site.rglob("*.pdf")), [])
+
+    def test_build_only_publishes_an_openly_licensed_pdf_with_the_site(self):
+        self.companion.publish("CC-BY-4.0")
+        self.companion.write_cache()
+        self.companion.fake_build_tool()
+        result = self.companion.run_tool("serve", "--build-only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PASS overlay build complete; the PDF is published at pdf-overlay/notes.pdf "
+                      "under CC-BY-4.0", result.stdout)
+        self.assertEqual((self.companion.site / "pdf-overlay" / "notes.pdf").read_bytes(), FIXTURE_PDF)
+        self.assertEqual(list(self.companion.site.rglob("*.pdf")),
+                         [self.companion.site / "pdf-overlay" / "notes.pdf"])
+
+    def test_build_only_refuses_a_pdf_in_the_site_that_is_not_the_published_one(self):
+        value = self.companion.config_value()
+        self.companion.fake_build_tool()
+        self.companion.write_config(pdf=dict(value["pdf"], cache_dir=".lake/build/literate-html/cache"))
+        cache = self.companion.site / "cache" / "notes.pdf"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(FIXTURE_PDF)
+        result = self.companion.run_tool("serve", "--build-only")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("the site contains a PDF", result.stderr)
+        self.assertIn("cache/notes.pdf", result.stderr)
+        self.assertNotIn("PASS", result.stdout)
+
+    def test_build_only_refuses_a_pdf_left_under_an_old_mount(self):
+        value = self.companion.config_value()
+        self.companion.publish()
+        self.companion.write_cache()
+        self.companion.fake_build_tool()
+        self.assertEqual(self.companion.run_tool("serve", "--build-only").returncode, 0)
+        self.companion.write_config(site=dict(value["site"], mount="overlay2"))
+        result = self.companion.run_tool("serve", "--build-only")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("the site contains a PDF", result.stderr)
+        self.assertIn("pdf-overlay/notes.pdf", result.stderr)
+        self.assertNotIn("PASS", result.stdout)
 
     def test_a_tool_run_from_another_directory_still_finds_its_overlay(self):
         self.companion.write_cache()
