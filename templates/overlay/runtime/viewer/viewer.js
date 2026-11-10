@@ -1291,15 +1291,14 @@ export async function bootstrapViewer({
       enclosing.append(link);
       if (context.lines) enclosing.append(` · ${linesText(context.lines).toLowerCase()}`);
       li.append(enclosing);
-      if (!repeatsHeading(item, context.conclusion)) {
-        li.append(proofText("p", "proof-conclusion", context.conclusion));
-      }
-      if (context.explanation) li.append(proofText("p", "proof-explanation", context.explanation));
     } else if (!repeatsHeading(item, card.fullName)) li.append(name);
     li.append(...card.ranges.flatMap(rangeNodes));
-    if (context && (context.notation.length || context.bookkeeping)) {
+    const conclusion = context && !repeatsHeading(item, context.conclusion) ? context.conclusion : "";
+    if (context && (conclusion || context.explanation || context.notation.length || context.bookkeeping)) {
       const details = make("details", "proof-details");
       details.append(make("summary", "", "Reading the Lean notation"));
+      if (conclusion) details.append(proofText("p", "proof-conclusion", conclusion));
+      if (context.explanation) details.append(proofText("p", "proof-explanation", context.explanation));
       if (context.notation.length) {
         const list = make("dl", "proof-notation");
         for (const row of context.notation) {

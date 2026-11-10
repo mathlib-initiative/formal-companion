@@ -571,9 +571,9 @@ Proof annotations can also carry an authored explanation of the correspondence:
   The enclosing-source link reuses the excerpt's validated destination with the
   enclosing line range. Use a source-file destination for these contexts.
 
-The viewer shows the enclosing declaration and mathematical explanation above
-the unchanged numbered excerpt. Notation and bookkeeping are under "Reading
-the Lean notation". In a `chain`, object ends are in logical dependency order;
+The viewer shows the enclosing declaration above the numbered excerpt. The
+mathematical explanation, notation, and bookkeeping are under the collapsed
+"Reading the Lean notation" section. In a `chain`, object ends are in logical dependency order;
 the complete list of links appears above one selected excerpt, initially the
 first. Every excerpt retains
 its own source link and exact-snippet Verso hovers. Explanations accept inline

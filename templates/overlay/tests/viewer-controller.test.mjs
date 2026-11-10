@@ -1894,9 +1894,11 @@ test("proof guides: ordered helper chain retains exact excerpts and enclosing-so
     end.extensions[NAMESPACE].proof_context = {
       declaration: index ? "bound" : "double", lines: index ? [5, 10] : [18, 45],
       conclusion: index ? "Apply the bound." : "Combine the terms.",
-      explanation: "Use `previous_fact` here.",
-      notation: [{ math: "The local value", lean: "locVal" }],
-      bookkeeping: "The endpoints are already equal.",
+      ...(index === 0 ? {
+        explanation: "Use `previous_fact` here.",
+        notation: [{ math: "The local value", lean: "locVal" }],
+        bookkeeping: "The endpoints are already equal.",
+      } : {}),
     };
   });
   const { documentRef, result } = await start({ sections, config: makeConfig(MINIMAL) });
@@ -1915,7 +1917,14 @@ test("proof guides: ordered helper chain retains exact excerpts and enclosing-so
   assert.equal(textOf(excerpt.children[0].children.find(n => n.tagName === "PRE")), "theorem bound");
   assert.deepEqual(result.state.selected.cards.map(c => c.proofContext.href),
     ["https://example.org/pinned/Proof.lean#L18-L45", "https://example.org/pinned/Proof.lean#L5-L10"]);
-  assert.match(textOf(first), /Reading the Lean notation.*locVal.*endpoints are already equal/s);
+  const notes = first.children.find(node => node.tagName === "DETAILS");
+  assert.ok(notes && !notes.open);
+  assert.match(textOf(notes), /Reading the Lean notation.*Combine the terms.*previous_fact.*locVal.*endpoints are already equal/s);
+  assert.ok(!first.children.some(node => node.classList.contains("proof-conclusion")
+    || node.classList.contains("proof-explanation")));
+  const secondNotes = excerpt.children[0].children.find(node => node.tagName === "DETAILS");
+  assert.ok(secondNotes && !secondNotes.open);
+  assert.match(textOf(secondNotes), /Reading the Lean notation.*Apply the bound/s);
   assert.equal(el(documentRef, "key-more").hidden, true);
 });
 
@@ -1932,7 +1941,7 @@ test("proof guides: a conclusion already stated by the heading is omitted withou
   await openStep(documentRef, "a");
   assert.equal(itemTitle(documentRef), "Unfold the product");
   const card = el(documentRef, "key-list").children[0];
-  assert.ok(!card.children.some(node => node.classList.contains("proof-conclusion")));
+  assert.doesNotMatch(textOf(card), /Unfold the product/);
   assert.ok(card.children.some(node => node.tagName === "PRE"));
   assert.match(textOf(card), /Reading the Lean notation.*endpoint types/s);
 });
