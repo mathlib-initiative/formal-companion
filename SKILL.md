@@ -209,6 +209,8 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
 
 ## Informalization
 
+Read `references/informalization-quality.md` before outlining the account.
+
 The reverse direction (`docs/proposals/informalize.md`): from a Lean library at a
 pinned commit and one theorem, **write the source** — the items of the theorem's
 dependency closure, an informal LaTeX text a fleet attacks against the Lean, and
@@ -467,7 +469,6 @@ decls)`.
 ## References
 
 Read the reference whose trigger applies, rather than loading the whole list.
-For informal mathematical writing, first read `references/informalization-quality.md`.
 
 - `references/traps.md` — the trap → fix index. Read **before your first run on
   a new book**: the anchor edition is not the bundled edition, offset

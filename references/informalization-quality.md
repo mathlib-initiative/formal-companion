@@ -19,6 +19,8 @@ notation list into the arguments that need its notation. Place specialized
 machinery near its first substantial use, rather than interrupting the main
 argument with an abstract preliminary section used much later. State a result
 before its proof, and use earlier results instead of proving them again.
+Combine results that express one universal property when this makes the proof
+easier to follow. An immediate specialization usually needs only a sentence.
 
 ## Introduce objects where they are used
 
@@ -75,6 +77,12 @@ steps such as subdivision, comparison through a common refinement, or descent
 to a quotient; suppress routine bookkeeping. Cite a previously established
 construction rather than verifying its elementary laws again.
 
+Use a diagram when compatibility is a commuting square or an argument pastes
+several squares. Label the arrows and say which composites the diagram
+equates. For a repeated geometric step, show a small instance with its shared
+edge or boundary labeled. Cite displayed equations that the proof uses by
+their numbers.
+
 ## Let annotations follow the exposition
 
 Link a notion at its first useful occurrence in ordinary prose or in a
@@ -92,7 +100,12 @@ Link a selected proof sentence or displayed equation to the specific Lean
 range that establishes it. A box around an entire proof does not provide
 step correspondence. Keep linked hypotheses and notation consistent, and
 verify the viewer's code highlighting and hovers for proof ranges as well as
-for statement cards.
+for statement cards. Check the excerpt and its enclosing declaration against
+the pinned revision. When the prose compresses several helper lemmas, link
+the relevant ranges in mathematical order and distinguish proving a helper
+from applying it. Give each step a descriptive title. Keep any necessary
+notation explanation brief and in the expandable Lean notes. Use the
+existing Literature Links fields for the correspondence and its provenance.
 
 ## Review the whole document before delivery
 
@@ -105,7 +118,8 @@ hypothesis and the exact meaning of retained statements.
 Render and inspect every PDF page. Check section boundaries, headings,
 short isolated paragraphs, broken words, displayed equations and annotation
 placement. Fix the prose or grouping that causes awkward layout before using
-manual spacing or page breaks. A successful compiler or marker check does
+manual spacing or page breaks. Test cross-references and any viewer link in
+the rendered PDF overlay. A successful compiler or marker check does
 not establish readable typesetting.
 
 The final review should answer:

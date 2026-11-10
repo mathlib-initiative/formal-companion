@@ -161,16 +161,13 @@ against the lines the pilot's got wrong. Those builds, and the fleet phases that
 skip without TeX, and I6 and I7 skip without poppler; CI's `informalize-tex` job runs
 them with `CF_REQUIRE_TEX=1`.
 
-**Published example.** [The Seifert–van Kampen theorem, after TauCeti](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/tree/v1)
-is based on TauCeti at `37f5e9dce5ac83d2825198ac72d7f5d64eb26c85`. The library
-was built and probed, and the items, conventions, draft, attack, judge and edit phases
-ran on the host. The [published viewer](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/pdf-overlay/viewer/index.html)
-has 25 numbered items and 54 notions across five PDF pages, linked by 86 Literature
-Links annotations, with 32 highlighted statements and 234 hovers. The
-[v1 release](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti/releases/tag/v1) holds the canonical PDF;
-its source, annotations, generated-file manifest and build workflows are public.
-This records one real theorem through publication. The phase receipts remain in the
-operator's workspace.
+**Published example.** The Seifert–van Kampen account went through all six
+informalization phases. Its [published viewer](https://mathlib-initiative.github.io/seifert-van-kampen-tauceti/)
+links statements and individual proof steps to TauCeti at
+`37f5e9dce5ac83d2825198ac72d7f5d64eb26c85`. The
+[companion repository](https://github.com/mathlib-initiative/seifert-van-kampen-tauceti)
+holds its source, annotations, generated-file manifest and build workflows.
+The phase receipts remain in the operator's workspace.
 
 **Not implemented.** Nothing of section 11; the optional later work it names (blueprint
 `\lean{}` and `\label{}` from the marker package, so that the audit's blueprint adapter
