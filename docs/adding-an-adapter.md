@@ -1,8 +1,9 @@
 # Adding an adapter: teaching the skill a new companion convention
 
 An **adapter** is how one repository convention becomes rows of a statement
-table. The three that ship read a docstring tag, an attribution table and a
-leanblueprint `.tex` tree; a fourth convention is a new file under
+table. The four that ship read a docstring tag, an attribution table, a
+leanblueprint `.tex` tree and a Markdown roadmap that cites lines of a TeX
+manuscript; a fifth convention is a new file under
 `scripts/adapters/` and no change to the core. `CLAUDE.md` §6 is the contract;
 this is the walkthrough, against a fixture you can generate in ten seconds.
 

@@ -14,6 +14,8 @@ paragraphs, a labelled environment, a comment, and a page number.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 #: The manuscript.  SOURCE_LINES[n - 1] is line n.
 SOURCE_LINES = [
     r"\documentclass{article}",                              # 1
@@ -258,3 +260,13 @@ def repository_files(tex_sha256: str | None) -> dict[str, str]:
             "Withdrawn", lean="Pebbles.weigh_le", origin="cited", statement="retracted",
             sources=[f"{lines}#pebbles"]),
     }
+
+
+def write_repository(root, files: dict) -> None:
+    """Write ``files`` (path in the checkout -> text, None to leave one out) under ``root``."""
+    for rel, text in files.items():
+        if text is None:
+            continue
+        path = Path(root) / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")

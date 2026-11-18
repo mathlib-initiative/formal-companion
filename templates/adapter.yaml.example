@@ -11,6 +11,9 @@ commit: {{ commit }}
 #                       from the Lean (measure_theory pdf-overlay data)
 # blueprint_tex      -- a leanblueprint manuscript: \lean{} / \leanok inside the
 #                       statement environments of blueprint/**/*.tex
+# roadmap_locators   -- a Markdown roadmap: pages under blueprint/roadmap/ name their
+#                       declarations in a `lean:` front matter and cite locator
+#                       sections that give line ranges of one TeX manuscript
 # ledger_nodes       -- a source-node -> formalization ledger; needs an item-level
 #                       curation pass (`cf curate`, not implemented in v1) first,
 #                       because its granularity is node, not item
@@ -94,6 +97,11 @@ lean_scan:
 # `cf onboard` prints which one it used; the two do not mix in one table.
 blueprint:
   locator: auto
+
+# roadmap_locators only: where the roadmap is, and the manuscript when the
+# locator files do not name a file at the repo's root.  `blueprint.locator`
+# above applies to this kind too.
+#   roadmap: {blueprint: blueprint, tex: paper/main.tex}
 
 # anchor: docstring (page in the docstring) | ledger (page in an export)
 #       | none (item label only, e.g. teorth)

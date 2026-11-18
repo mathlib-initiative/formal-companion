@@ -227,7 +227,8 @@ one page is exactly the defect class this audit exists to find.
   `cflib.discovery.detect_scores` is the ranking loop over
   `adapters.api.registry()`, and `cf onboard` takes the highest, refusing below
   `MIN_ADAPTER_CONFIDENCE` (0.5) with one "looked for / found" line per kind.
-  Implemented: `docstring_tags`, `attribution_table`, `blueprint_tex`.
+  Implemented: `docstring_tags`, `attribution_table`, `blueprint_tex`,
+  `roadmap_locators`.
 - **The sources.** Seven repo signals (`references/onboarding-contract.md` §0)
   plus whatever the adapter itself claims — a leanblueprint's manuscript IS its
   `.tex` tree, so its adapter claims it. One sha is one source: two claims on

@@ -10,6 +10,9 @@ three kinds; two ship in version one:
                         statements cut from the Lean (measure_theory's overlay data).
 ``blueprint_tex``       a leanblueprint manuscript: ``\\lean{}`` / ``\\leanok``
                         inside the statement environments of blueprint/**/*.tex.
+``roadmap_locators``    a Markdown roadmap: pages under blueprint/roadmap/ name
+                        their declarations and cite line ranges of one TeX
+                        manuscript.
 ``ledger_nodes``        a source-node ledger, usable only after an item-level
                         curation pass (``granularity: node``) -- not
                         implemented in version one.

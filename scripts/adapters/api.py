@@ -66,7 +66,7 @@ def registry() -> dict[str, type["Adapter"]]:
     already populated -- so ``registry()`` reported a different set depending on
     what had been imported first.  Re-importing a loaded module is a dict lookup.
     """
-    from . import attribution_table, blueprint_tex, docstring_tags  # noqa: F401
+    from . import attribution_table, blueprint_tex, docstring_tags, roadmap_locators  # noqa: F401
 
     return dict(_REGISTRY)
 
