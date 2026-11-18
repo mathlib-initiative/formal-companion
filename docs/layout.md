@@ -75,7 +75,7 @@ scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, rou
                   stages S0 ingest and S1 inventory)
 scripts/annotations/
                   the skill's tooling around the legacy format (not a stage):
-                  the two companion exporters behind `cf export`, the tag review
+                  the companion exporters behind `cf export`, the tag review
                   behind `cf review-tags` (docs/exporters.md) and sync_format.py,
                   which vendors a release; the legacy format itself (schema,
                   checker, id rules) is vendor/formal_companion_annotations/

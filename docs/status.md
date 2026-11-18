@@ -92,6 +92,15 @@ reference documents for `measure_theory` at `2cd263a` and `tao-measure-lean` at 
 where the private inputs are present (`docs/exporters.md` section 5). Those tests skip
 without them.
 
+**The `roadmap-locators` export** (`docs/exporters.md` section 9) is tested on a synthetic
+companion (`tests/test_texplace.py`, `tests/test_export_roadmap_locators.py`); the tests
+that run poppler, `cf overlay export` among them, skip without it. It was run by hand once,
+on a public companion with a 148-page manuscript and a roadmap of 701 pages: 136 passages
+in 141 boxes, no edge on ink, six pairs of boxes crossing where the locators' own line
+ranges overlap, and `cf overlay export`, `sync` and `check` passing on 1,608 annotations.
+Two pages of that overlay were looked at in the viewer. The pull request that
+added the export records that run. No companion carries an overlay generated this way.
+
 **Limits.** The `docstring-tags` exporter writes no PDF URL, so
 `--convention docstring-tags` is refused. `cf overlay export` writes no proof steps.
 PR #54 records the viewer in Safari 17.4, Chrome 154 and Firefox 159.
