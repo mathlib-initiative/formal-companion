@@ -300,6 +300,22 @@ def report_warnings(counts: dict) -> list[str]:
         out.append(f"{len(differs)} snippet(s) were cut at a line the document does not give for "
                    f"the declaration, so the source read may not be the pinned one: "
                    + ", ".join(differs[:5]) + (", …" if len(differs) > 5 else ""))
+    for key, what in (("declarations_unresolved", "name(s) a page links are declared in no tracked "
+                                                  "Lean file, and link nothing"),
+                      ("declarations_ambiguous", "name(s) a page links are declared in two Lean "
+                                                 "files, and link nothing"),
+                      ("sections_naming_no_lines", "cited locator section(s) name no line range "
+                                                   "and no label, and are no passage"),
+                      ("passages_unplaced", "line range(s) could not be found on the PDF, and have "
+                                            "no box"),
+                      ("box_edges_on_ink", "box(es) have an edge that crosses ink, where no blank "
+                                           "row was within reach")):
+        named = counts.get(key) or []
+        if named:
+            out.append(f"{len(named)} {what}: " + ", ".join(named[:5]) + (", …" if len(named) > 5 else ""))
+    if counts.get("box_edges_checked") is False:
+        out.append("no box edge was held against the rendered page (poppler's pdftoppm is not on "
+                   "PATH), so an edge may cross ink")
     return out
 
 

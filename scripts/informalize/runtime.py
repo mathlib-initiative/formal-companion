@@ -95,6 +95,8 @@ FCCOMMON_MODULE = "informalize_runtime_fccommon"
 FCITEMS_MODULE = "informalize_runtime_fcitems"
 #: and its check_items.py, whose `crop` is the one reader of the text inside a box
 CHECK_ITEMS_MODULE = "informalize_runtime_check_items"
+#: and its extract_markers.py, whose `PageInk` is the one reader of a rendered page's ink
+EXTRACT_MARKERS_MODULE = "informalize_runtime_extract_markers"
 
 
 def _tool_module(name: str, file_name: str, siblings: dict | None = None):
@@ -150,6 +152,13 @@ def check_items():
     prints inside one box of `markers.json`, which rule 9 of the box check and the export
     of the boxes (`annotations.export.boxtext`) read through one box reader."""
     return _tool_module(CHECK_ITEMS_MODULE, "check_items.py", {"fccommon": fccommon()})
+
+
+def extract_markers():
+    """The runtime's own `tools/extract_markers.py`, for its `PageInk`: the pixel rows of a
+    rendered page that hold ink, which the boxes of `markers.json` are fitted to and which
+    `annotations.export.texplace` holds its own box edges against, through one ink reader."""
+    return _tool_module(EXTRACT_MARKERS_MODULE, "extract_markers.py", {"fccommon": fccommon()})
 
 
 def config_document(cfg: dict, previous: dict | None) -> dict:

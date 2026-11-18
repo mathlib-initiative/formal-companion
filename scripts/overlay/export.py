@@ -52,7 +52,7 @@ __all__ = ["CONVENTIONS", "ExportResult", "export", "run_cf_export"]
 #: The `cf export` subcommands that write an annotation document.  `site-pages`
 #: writes a page manifest, which is an INPUT to one of these, not a document;
 #: `tests/test_overlay_cli.py` pins this set against the live `cf export` tree.
-CONVENTIONS = ("attribution-table", "docstring-tags", "informal-markers")
+CONVENTIONS = ("attribution-table", "docstring-tags", "informal-markers", "roadmap-locators")
 
 #: The conventions whose document's `companion` is a repository OTHER than the
 #: checkout exported, so the export's own commit comes from the report

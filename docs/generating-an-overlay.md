@@ -64,6 +64,7 @@ and it is copied only into a built site whose config publishes it (`pdf.publish`
 | Curation sits under `pdf-overlay/`, the exporter's default | `cf overlay sync` stops with `holds a file no previous GENERATED.json listed` | Keep it elsewhere, and name it with `--data-dir` and `--official-source`, after `--` |
 | `--convention docstring-tags` | `carries no url` | Nothing at this commit: that exporter writes no PDF URL, and the overlay needs one to fetch and verify the PDF |
 | `--convention informal-markers`, `--library-src` at another commit of the library | `line <n> of <file> holds no ... keyword outside a comment` | Point `--library-src` at `informalize/<id>/library/src`, which `cf informalize fetch-library` unpacks at the commit `informalize.json` names |
+| `--convention roadmap-locators`, a PDF typeset from another revision of the TeX file | `it is not read as that file's PDF` | The PDF typeset from the TeX file the locators read, after `--pdf`, or that TeX file after `--tex`; both go after `--` |
 
 Everything after a bare `--` goes to `cf export` unchanged, and
 `cf export attribution-table --help` lists those flags.

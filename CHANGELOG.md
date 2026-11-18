@@ -43,6 +43,30 @@ release has something to say.
 
 ### Added
 
+- **`cf export roadmap-locators`: a Markdown roadmap that cites lines of a TeX manuscript,
+  boxed on the manuscript's PDF.** A fourth convention of `cf export`, and of `cf overlay
+  export`, for a companion whose attribution is not a table or a docstring tag but pages:
+  each page under `blueprint/roadmap/` names its declarations in a `lean:` front matter and
+  cites sections of locator files under `blueprint/sources/`, and each section gives line
+  ranges, or a label, of one TeX file (`docs/exporters.md` section 9). Such a companion had
+  no export, so its overlay was written by scripts of its own. The export makes one passage
+  per cited section, links each page's declarations to it (`key` for a page that is `origin:
+  cited` with its statement formalized, `support` otherwise, and no relation), resolves the
+  names in the checkout's Lean with `adapters.leanparse` and cuts their statements with
+  `adapters.leansnippets`. The boxes are new code, `annotations.export.texplace`: it aligns
+  the prose words of the TeX file with the words of the PDF's text layer, gives each passage
+  the rows its first and last matched words are on, gives a row two passages meet on to
+  exactly one of them, shares out the rows of a displayed formula by the source lines on
+  either side, and puts every edge in the white space between rows, held against the page as
+  `pdftoppm` renders it through the informalize runtime's own `PageInk`
+  (`informalize.runtime.extract_markers`). Passages of the same rows share one location, and
+  a box that encloses another is drawn wider. It refuses a PDF that prints less than half of
+  the cited lines' words, and a TeX file whose sha256 is not the one the locators give. It
+  reads no SyncTeX: the forward search answers for a paragraph's last line with the next
+  paragraph's first, so boxes read from it overlapped their neighbours and cut through text.
+  The report names every edge left on ink, every pair of boxes that cross without nesting,
+  and every name or passage it could not link or place.
+
 - **A maintainable informalization repository from the first init.** Generated
   projects include concise reader documentation, contribution and maintenance
   guides, a Makefile, editor settings, and separate tools and tests. Existing

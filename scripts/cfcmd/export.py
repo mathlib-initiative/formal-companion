@@ -16,6 +16,8 @@ writes the document in canonical form beside a report of what did not fit.
     cf export informal-markers <output repository> --commit <sha> --pdf <the canonical PDF> \\
         --pdf-url <its release URL> --library-src <the library's source> --out <doc.json> \\
         [--source-title <the text's title>] [--items-approved]
+    cf export roadmap-locators <checkout> --commit <sha> --pdf <the manuscript's PDF> \\
+        --pdf-url <its URL> --out <doc.json> [--blueprint blueprint] [--tex <the TeX file>]
     cf export site-pages <rendered site> --out <pages.json> [--source-id ID] [--title T] \\
         [--path P] [--rendered-at TIME] [--exclude GLOB]...
     cf export literature-links --run <locate run> [--challenge-run <run>]... --set-id <id> \\
@@ -108,6 +110,24 @@ def register(subparsers) -> None:
     im.add_argument("--items-approved", action="store_true",
                     help="the items approval pins this items.json, so the links are recorded as "
                          "confirmed by a person")
+    rl = sub.add_parser("roadmap-locators",
+                        help="a Markdown roadmap whose pages name declarations and cite line ranges "
+                             "of a TeX manuscript: the passages boxed on the manuscript's PDF")
+    _common_arguments(rl)
+    # a declaration's page is a blob view of the companion's git host:
+    # `roadmap_locators.SITE`, which a test pins against this default
+    rl.set_defaults(site_name="other")
+    rl.add_argument("--pdf", type=Path, required=True, metavar="FILE",
+                    help="the PDF typeset from the TeX file the locators read")
+    rl.add_argument("--pdf-url", required=True, metavar="URL",
+                    help="the https URL that PDF is published at; the overlay fetches it and "
+                         "verifies its sha256")
+    rl.add_argument("--blueprint", metavar="DIR",
+                    help="the directory that holds roadmap/ and sources/, relative to the checkout "
+                         "(default: blueprint)")
+    rl.add_argument("--tex", metavar="FILE",
+                    help="the TeX file the locators' line numbers are of, relative to the checkout "
+                         "(default: the name the locator files give, at the checkout root)")
     sp = sub.add_parser("site-pages",
                         help="write a rendered literate site's page manifest, the file docstring-tags "
                              "--site-pages reads")
@@ -205,6 +225,13 @@ def run(args) -> int:
                                                   library_src=args.library_src,
                                                   packages_src=args.packages_src,
                                                   items_approved=args.items_approved, **options)
+        elif args.export_command == "roadmap-locators":
+            from annotations.export import roadmap_locators
+            if not args.pdf.is_file():
+                raise CfError(f"--pdf: {args.pdf} is not a file")
+            doc, report = roadmap_locators.export(checkout, args.commit, pdf=args.pdf,
+                                                  pdf_url=args.pdf_url, blueprint=args.blueprint,
+                                                  tex=args.tex, **options)
         else:
             from annotations.export import docstring_tags
             for flag in ("pdf", "xref", "site_pages"):

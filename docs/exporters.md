@@ -23,14 +23,17 @@ coverage note is dropped and reported rather than written.
 
 **Contents**: 1 attribution-table · 2 docstring-tags · 3 what is lossy · 4 the
 tag review · 5 reproducing the references · 6 deliberate differences · 7 the
-locate record set · 8 informal-markers
+locate record set · 8 informal-markers · 9 roadmap-locators
 
 `cf export literature-links` is the one export that is not a companion's: it
 needs a workspace and writes a locate run's sealed record set (section 7).
 `cf export informal-markers` (section 8) reads a companion the skill wrote
 itself, an informalization companion's output repository, and is the one
 export whose `companion` is another repository than the checkout: the Lean
-library its text is about.
+library its text is about. `cf export roadmap-locators` (section 9) reads a
+companion whose attribution is a roadmap of Markdown pages citing line ranges
+of a TeX manuscript, and is the one export that finds its boxes itself, on the
+manuscript's PDF.
 
 ## 1. `cf export attribution-table`
 
@@ -497,3 +500,98 @@ exits 1. A declaration the Lean file `declarations.json` names for it does not
 hold keeps its link and its destination and gets no snippet, counted in
 `counts.snippets_unlocated`, which `cf overlay export` prints as a warning;
 so is `counts.snippets_line_differs`.
+
+## 9. `cf export roadmap-locators`
+
+```sh
+cf export roadmap-locators <checkout> --commit <sha> --pdf <the manuscript's PDF> \
+    --pdf-url <the URL it is published at> --out <doc.json> \
+    [--blueprint <dir>] [--tex <the TeX file>] [--source-id <id>] [--source-title <title>] \
+    [--page-offset <n>] [--name <name>] [--repo-id host/org/name]
+```
+
+The convention is a companion that formalizes a manuscript it holds as TeX,
+and says where each statement comes from in two kinds of Markdown file under
+one directory (`--blueprint`, default `blueprint`):
+
+- a **page**, `<blueprint>/roadmap/**/*.md` (a `README.md` is not one), whose
+  front matter names its declarations in `lean:`, comma separated, with
+  `origin:` and `statement:` beside it, and whose `## Sources` section links
+  to sections of the locator files;
+- a **locator file**, `<blueprint>/sources/*.md`, whose text before its first
+  `##` heading says which TeX file it reads: `Line ranges refer to
+  `<file>.tex`` (or `Line numbers`), after which each section gives `lines
+  93-121` in its first sentence, or a file whose `locators are the TeX
+  labels`, after which each section names a `\label`. A `SHA-256` of 64 hex
+  digits in that text, in backticks, pins the TeX file's bytes.
+
+| input | becomes |
+|---|---|
+| each locator section a page cites, when it names lines | one **passage** item: `id_source: declared`, its id `<file>:<heading>` (the file's name without `.md` and without a closing `-locators`, the heading lower-cased with `-` for each run of other characters), its `title` the heading, its `section` the number of the `\section` its first line is in |
+| a section's first paragraph | the lines of the passage: the ranges after `line` or `lines` up to the paragraph's first colon, outside parentheses (`lines 93-121: the six inputs (lines 93-108), …` is the range 93-121), `and` and commas joining several; with none there, the ranges of the whole paragraph outside parentheses; with none, a backticked `\label` the TeX file has once, which is the lines of the innermost environment that holds it; with none, the ranges of the whole section. In a file of labels only the label is read. `counts.spans_read_from` says how many were read each way |
+| a page's `lean:` names, for each section it cites | one link each, `key` when the page says `origin: cited` and `statement: formalized` and `support` otherwise, with **no relation**: a page says which declarations formalize it, not how each stands to the manuscript's sentence. Where two pages link one declaration to one passage the `key` link stands. A page with `statement: retracted` links nothing |
+| the tracked `.lean` files | one declaration record per linked name, found by `adapters.leanparse` (which tracks namespaces), with its statement cut by the rules of `adapters.leansnippets` as a snippet and its line on the companion's git host as a destination: `https://<repo>/blob/<commit>/<path>`, fragment `L<line>`, site kind `other`. Its `module` is its path from the first directory that has `<directory>.lean` beside it, which is where Lake keeps a library's root file |
+| the TeX file and `--pdf` | one location per box (below) |
+| `--pdf` and `--pdf-url` | the one `kind: pdf` source, named through the registry by its sha256, or by `--source-id`, `--source-title` and `--page-offset` |
+
+The TeX file is the one the locator files name, at the checkout's root, or
+`--tex`, a path in the checkout; all the locator files that read one must read
+the same one. Where they give its SHA-256 and the file's differs, the export
+is refused: line numbers of one revision say nothing of another.
+
+**The boxes** (`annotations.export.texplace`). Nothing in the PDF names a
+source line, so a passage is found by what it prints. The prose words of the
+TeX file (comments, mathematics and control sequences blanked, each word kept
+on its line) are aligned with the words of the PDF's text layer (`pdftotext
+-bbox-layout`): four-word runs that occur once in each say where to look, and
+`difflib` aligns the words around them. The first and last word matched inside
+a passage give its first and last typeset rows. Rows that print no matched
+word, such as a displayed formula, are divided between the passages on either
+side in the proportion of the source lines with content each has there. A row
+that holds the end of one passage and the start of the next goes to the one
+that has more of it, by a rule both passages compute alike, so two neighbours
+share a row only when one of them has no other. On each page a box runs from
+the passage's first row to its last, across the text block. Its top and
+bottom edges are halfway between rows, then moved onto a blank pixel row of
+the page as `pdftoppm` renders it, read by the informalize runtime's `PageInk`
+at its default resolution and gray level. Passages with the same rows share
+one location, which lists them all. A box that encloses another is drawn 3pt
+wider on each side for each level, so their edges do not coincide.
+
+The export **refuses** a PDF that prints less than half of the words of the
+cited lines (`counts.word_agreement`): it is not that TeX file's PDF. It
+reads no SyncTeX and reruns no build. SyncTeX's forward search answers for
+the last line of a paragraph with the first line of the next one, so an
+extent read from it reaches into its neighbour.
+
+The report's counts say what happened: `spans_placed_by` (`words`, or
+`neighbours` for a passage none of whose own words matched, placed between
+the matched words on either side of it), `boxes`, `box_edges_checked`,
+`box_edges_on_ink` (each box an edge of which still crosses ink, because no
+blank row was within 3.5pt of it; the edge is then on the row with the least),
+and `boxes_crossing` (each pair of boxes on a page that overlap without one
+enclosing the other, which is what two sections whose line ranges overlap
+give). `cf export` and `cf overlay export` print as warnings
+`declarations_unresolved`, `declarations_ambiguous`,
+`sections_naming_no_lines`, `passages_unplaced`, `box_edges_on_ink` and, when
+`pdftoppm` is not on PATH, that no edge was held against the page.
+
+Lossy: `passage.no_lines` (a cited section that names no line and no label,
+such as one about a saved artifact, is no passage), `passage.unplaced` (a line
+range that could not be found gets no box), `link.unresolved` (a name no
+tracked Lean file declares where the text parser reads it: a structure's
+field, a declaration a command generates, one that is gone), `link.ambiguous`
+(a name two tracked files declare), `link.private` and `item.title` (a
+heading holding a URL). Bent: `source.tex_unpinned` (no locator file gives the
+TeX file's SHA-256) and `location.edges_unchecked`. Problems, which exit 1: a
+`## Sources` link to a section its locator file does not have, and a `lean:`
+entry that is no declaration name.
+
+What it does not do. It links one repository: a manuscript formalized in two
+repositories is two exports, and the viewer has no way to say which
+repository a card is of. It reads words as ASCII letters, so a passage in
+another script, or one that is mathematics alone between two that are, is not
+placed. Pages that cite only files which read no TeX file are counted
+(`links_to_files_that_read_no_tex`) and linked to nothing. A passage is as
+coarse as its locator section. There is no audit adapter for this convention,
+so `cf onboard` does not read such a companion.
