@@ -593,5 +593,6 @@ repository a card is of. It reads words as ASCII letters, so a passage in
 another script, or one that is mathematics alone between two that are, is not
 placed. Pages that cite only files which read no TeX file are counted
 (`links_to_files_that_read_no_tex`) and linked to nothing. A passage is as
-coarse as its locator section. There is no audit adapter for this convention,
-so `cf onboard` does not read such a companion.
+coarse as its locator section. The audit reads the same convention through
+the `roadmap_locators` adapter (`references/onboarding-contract.md` §1), which
+shares these reading rules and keeps only the passages that are statements.

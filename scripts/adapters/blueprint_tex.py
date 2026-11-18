@@ -383,6 +383,7 @@ class BlueprintTexAdapter(Adapter):
                     "text": self._statement_text(body),
                     "file": rel,
                     "line": text.count("\n", 0, m.start()) + 1,
+                    "end_line": text.count("\n", 0, m.end()) + 1,
                 })
         return out, declarations, rejects
 

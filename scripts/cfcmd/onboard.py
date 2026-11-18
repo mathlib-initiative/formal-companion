@@ -51,6 +51,8 @@ DEFAULTS = {
     "attribution_table": {"glob": "attribution/*.json", "anchor": "ledger", "granularity": "item"},
     # A blueprint has no printed pages to anchor to: its manuscript IS the .tex.
     "blueprint_tex": {"glob": "blueprint/**/*.tex", "anchor": "none", "granularity": "item"},
+    # The manuscript is the .tex the locators read; what is scanned is the roadmap's pages.
+    "roadmap_locators": {"glob": "blueprint/roadmap/**/*.md", "anchor": "none", "granularity": "item"},
     "ledger_nodes": {"glob": "source-formalization-ledger.json", "anchor": "ledger", "granularity": "node"},
     "custom": {"glob": "", "anchor": "none", "granularity": "item"},
 }

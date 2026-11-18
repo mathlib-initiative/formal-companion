@@ -101,6 +101,15 @@ ranges overlap, and `cf overlay export`, `sync` and `check` passing on 1,608 ann
 Two pages of that overlay were looked at in the viewer. The pull request that
 added the export records that run. No companion carries an overlay generated this way.
 
+**The `roadmap_locators` adapter** (`references/onboarding-contract.md` section 1) is tested
+on the same synthetic companion (`tests/test_roadmap_adapter.py`), `cf onboard` on it
+included. It was run by hand once, through `dry_run` and `extract`, on the public companion
+above: detection 0.78 (337 of 651 pages with a `lean:` field cite the manuscript), 70
+statement environments, 11 of them with rows, 40 rows over 35 declarations, locator
+`number`, and 338 of 363 cited passages no statement. `cf onboard` refused that repository
+on account of a PDF it holds (the completeness rule, before any adapter runs), so no audit
+of it is recorded.
+
 **Limits.** The `docstring-tags` exporter writes no PDF URL, so
 `--convention docstring-tags` is refused. `cf overlay export` writes no proof steps.
 PR #54 records the viewer in Safari 17.4, Chrome 154 and Firefox 159.

@@ -206,7 +206,7 @@ copied into `workspace.yaml` the same way, and listed by `cf status` under
 
 ## 1. A statement-table adapter
 
-The adapter turns a repo at a pinned commit into `statements.jsonl`. Four
+The adapter turns a repo at a pinned commit into `statements.jsonl`. Five
 kinds, and every row carries `source_id` + `source_sha`, because an item is the
 pair `(source_id, item)`.
 
@@ -357,6 +357,73 @@ Four things to know before onboarding one:
   wrote — there is no other document these bytes could be mistaken for, they are
   the ones this adapter's own glob just matched — and they still apply,
   unchanged, to a PDF or text an operator named with `--source`.
+
+### `roadmap_locators`
+
+A companion that holds its manuscript as one TeX file and writes the
+item→declaration map in Markdown: a roadmap **page**
+(`blueprint/roadmap/**/*.md`) names its declarations in a `lean:` front matter
+and links, under `## Sources`, to sections of **locator files**
+(`blueprint/sources/*.md`), and a locator section gives line ranges, or a
+label, of the TeX file its file's header names. `docs/exporters.md` §9 is the
+same convention read for an overlay, and the reading rules are shared. Config:
+
+```yaml
+adapter: roadmap_locators
+glob: "blueprint/roadmap/**/*.md"
+blueprint: {locator: auto}
+roadmap: {blueprint: blueprint, tex: paper/main.tex}   # both optional
+anchor: none
+```
+
+Detection: pages with a `lean:` field that cite a locator file reading a TeX
+file, scored `0.6 + 0.35 × (those pages / all pages with a lean: field)`,
+capped at 0.95, and 0 when there is none or when the locator files read more
+than one TeX file — a companion is of one manuscript.
+
+It is `blueprint_tex` with the declarations taken from elsewhere, so everything
+that section says of the item, of `anchor: none` and of the manuscript
+registering itself as the source holds here, and a `\lean{}` in the TeX file is
+not read. What differs:
+
+- **Which pages give rows.** A page with `origin: cited` and `statement:
+  formalized`: its statement is the source's and it claims the Lean states it.
+  A page of any other origin (a bridge between two statements, background)
+  cites the manuscript too and states something else; `dry_run` counts those
+  (`pages_not_cited`) and attributes nothing to them.
+- **Which statement a page is of.** One whose environment a cited passage
+  takes in whole, or lies wholly inside. A passage that only touches an
+  environment, or is running text or part of a proof, is counted
+  (`passages`, `passages_outside_statements`) and gives no row: the audit
+  compares a declaration with a statement. On a roadmap that follows proofs
+  line by line this is most of the passages, which is the convention, not a
+  defect of the table.
+- **`proof: formalized` is the proof claim.** A statement with no citing page
+  that says so is a row with `sorry: true`, `sorry_class: gap`, as a
+  leanblueprint statement without `\leanok` in its proof is. A definition has
+  no proof to claim.
+- **An appendix makes the table label-keyed.** A statement after `\appendix`
+  is numbered with a letter, which the item grammar does not read, so it is
+  keyed on its label; and since the table is keyed on numbers or on labels and
+  never both, a companion with a row for an appendix statement is keyed on
+  labels throughout. `dry_run` says which (`locator`).
+- **The manuscript is the file the locators name**, at the repository's root,
+  or `roadmap.tex`; a name that is no file of the repository is an error that
+  says so. The claim's edition is `manuscript` and its title the file's
+  `\title`.
+- **The key covers the roadmap.** `key_inputs` fingerprints the TeX file and,
+  separately, every Markdown file under `roadmap/` and `sources/`, so editing a
+  page re-extracts without moving the `source_sha` of the rows.
+
+What it does not do. `cf onboard` prepares every source discovery finds
+before any adapter extracts, so a companion whose repository also holds a PDF
+the item grammar reads poorly is refused on that PDF's account (`... of the
+slots this source's own numbering counts`), and the override the refusal names
+(`cf sources set <id> completeness_ok=true`) needs a workspace row that a
+refused onboarding does not leave. Such a companion is read through the
+adapter (`dry_run`, `extract`) and not yet through `cf onboard`; the rule is
+onboarding's and holds for every kind. `\section*` counts as a section, as in
+`blueprint_tex`.
 
 ### `ledger_nodes` (deferred in v1)
 

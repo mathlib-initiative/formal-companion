@@ -165,6 +165,57 @@ def source_links(text: str) -> list[str]:
     return re.findall(r"\]\(([^)\s]+)\)", match.group(1)) if match else []
 
 
+def read_locator(text: str) -> dict:
+    """One locator file: the TeX file its header says it reads, how, and its sections.
+
+    ``tex`` is None for a file that reads no TeX file; ``labels_only`` says its
+    sections name labels and not lines; ``sha256`` lists every SHA-256 the
+    header gives for the TeX file; ``sections`` maps each ``##`` heading, as
+    links to it are compared, to the heading and its text.
+    """
+    parts = re.split(r"^## (.+)$", text, flags=re.M)
+    header = parts[0]
+    lines = _LINES_HEADER.search(header)
+    labels = None if lines else _LABELS_HEADER.search(header)
+    tex = (lines or labels).group(1) if (lines or labels) else None
+    return {"tex": tex, "labels_only": bool(labels), "sha256": _SHA.findall(header) if tex else [],
+            "sections": {_key(parts[i]): (parts[i].strip(), parts[i + 1]) for i in range(1, len(parts), 2)}}
+
+
+def cited_sections(rel: str, text: str, locators: dict[str, dict]) -> tuple[list[tuple[str, str]], int, list[str]]:
+    """The locator sections a page's ``## Sources`` cites, among the locator files given.
+
+    Returns the ``(locator file, section)`` pairs that are of a file reading a
+    TeX file, each once and in the page's order; how many links went to a
+    locator file that reads none; and the links that name a section its file
+    does not have.  A link to anything else is not the convention's.
+    """
+    found: list[tuple[str, str]] = []
+    no_tex = 0
+    dangling: list[str] = []
+    for target in source_links(text):
+        path, _, anchor = target.partition("#")
+        if "://" in path or not path.endswith(".md"):
+            continue
+        parts: list[str] = []
+        for part in PurePosixPath(rel).parent.joinpath(path).parts:
+            if part == "..":
+                if parts:
+                    parts.pop()
+            elif part != ".":
+                parts.append(part)
+        locator = locators.get("/".join(parts))
+        if locator is None:
+            continue
+        if locator["tex"] is None:
+            no_tex += 1
+        elif _key(anchor) not in locator["sections"]:
+            dangling.append(f"{rel}: {target}")
+        elif ("/".join(parts), _key(anchor)) not in found:
+            found.append(("/".join(parts), _key(anchor)))
+    return found, no_tex, dangling
+
+
 def module_of(rel: str, tracked: frozenset[str]) -> str:
     """The module a tracked Lean file is, read from where its library's root file stands.
 
@@ -226,18 +277,11 @@ class _Export:
         named: dict[str, list[str]] = collections.defaultdict(list)
         pinned: dict[str, list[str]] = collections.defaultdict(list)
         for rel in files:
-            parts = re.split(r"^## (.+)$", self.text(rel), flags=re.M)
-            header = parts[0]
-            lines = _LINES_HEADER.search(header)
-            labels = None if lines else _LABELS_HEADER.search(header)
-            tex = (lines or labels).group(1) if (lines or labels) else None
-            if tex:
-                named[tex].append(rel)
-                for sha in _SHA.findall(header):
+            locator = self.locators[rel] = read_locator(self.text(rel))
+            if locator["tex"]:
+                named[locator["tex"]].append(rel)
+                for sha in locator["sha256"]:
                     pinned[sha].append(rel)
-            self.locators[rel] = {"tex": tex, "labels_only": bool(labels),
-                                  "sections": {_key(parts[i]): (parts[i].strip(), parts[i + 1])
-                                               for i in range(1, len(parts), 2)}}
         if not named:
             raise ExportError(f"no locator file under {self.blueprint}/{SOURCES}/ says which TeX file it reads",
                               hint="its header says `Line ranges refer to `<file>.tex`` or that its "
@@ -293,24 +337,9 @@ class _Export:
                 names = [n for n in names if n not in bad]
             role = "key" if (meta.get("origin") == ORIGIN_KEY
                              and meta.get("statement") == STATEMENT_FORMALIZED) else "support"
-            sections = []
-            for target in source_links(text):
-                path, _, anchor = target.partition("#")
-                if "://" in path or not path.endswith(".md"):
-                    continue
-                locator = PurePosixPath(rel).parent.joinpath(path)
-                resolved = "/".join(self._normal(locator.parts))
-                found = self.locators.get(resolved)
-                if found is None:
-                    continue
-                if found["tex"] is None:
-                    tally["links_to_files_that_read_no_tex"] += 1
-                    continue
-                if _key(anchor) not in found["sections"]:
-                    dangling.append(f"{rel}: {target}")
-                    continue
-                if (resolved, _key(anchor)) not in sections:
-                    sections.append((resolved, _key(anchor)))
+            sections, no_tex, astray = cited_sections(rel, text, self.locators)
+            tally["links_to_files_that_read_no_tex"] += no_tex
+            dangling += astray
             if not sections:
                 tally["pages_citing_no_passage"] += 1
                 continue
@@ -327,17 +356,6 @@ class _Export:
         if dangling:
             self.report.problem(f"{len(dangling)} link(s) name a section its locator file does not have: "
                                 + "; ".join(dangling[:3]))
-
-    @staticmethod
-    def _normal(parts: tuple[str, ...]) -> list[str]:
-        out: list[str] = []
-        for part in parts:
-            if part == "..":
-                if out:
-                    out.pop()
-            elif part != ".":
-                out.append(part)
-        return out
 
     # -- the passages and their boxes ----------------------------------------------------
     def place(self) -> None:

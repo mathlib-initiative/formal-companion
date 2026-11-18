@@ -43,6 +43,21 @@ release has something to say.
 
 ### Added
 
+- **Adapter kind `roadmap_locators`: `cf onboard` reads a companion whose attribution is a
+  Markdown roadmap.** The convention `cf export roadmap-locators` boxes on a PDF had no
+  statement table: pages under `blueprint/roadmap/` name declarations in a `lean:` front
+  matter and cite locator sections giving line ranges of one TeX manuscript. The new kind is
+  `blueprint_tex` with the declarations taken from those pages. A page with `origin: cited`
+  and `statement: formalized` gives its declarations to each statement environment a passage
+  it cites takes in whole or lies inside; `proof: formalized` is the proof claim; a passage
+  that is running text or part of a proof gives no row and is counted
+  (`passages_outside_statements`). The manuscript is claimed as the source, with its
+  `\title`, and the key covers the roadmap's files. A statement after `\appendix` is keyed
+  on its label, which makes such a table label-keyed throughout. The export and the adapter
+  share one reading of locator files and `## Sources` links
+  (`annotations.export.roadmap_locators.read_locator`, `cited_sections`). Not done: a
+  repository that also holds a PDF the item grammar reads poorly is still refused by
+  `cf onboard` before the adapter runs (`references/onboarding-contract.md` section 1).
 - **`cf export roadmap-locators`: a Markdown roadmap that cites lines of a TeX manuscript,
   boxed on the manuscript's PDF.** A fourth convention of `cf export`, and of `cf overlay
   export`, for a companion whose attribution is not a table or a docstring tag but pages:

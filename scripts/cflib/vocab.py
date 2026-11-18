@@ -233,7 +233,7 @@ OFFSET_METHODS = frozenset({"running_head_mode", "declared", "manual", "registry
 
 # --- adapter kinds and policies (Stage 0 contract)
 ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex",
-                           "ledger_nodes", "custom"})
+                           "roadmap_locators", "ledger_nodes", "custom"})
 
 #: Adapter kinds v1 actually IMPLEMENTS.  ``ADAPTER_KINDS`` is the vocabulary --
 #: what an adapter.yaml may legally say -- and it is deliberately wider, because
@@ -242,7 +242,8 @@ ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex
 #: BEFORE it writes anything; otherwise it registered a companion nothing could
 #: parse and the next ``cf extract`` failed for the whole workspace.
 #: ``tests/test_cflib`` asserts this equals ``adapters.api.registry()``.
-IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex"})
+IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex",
+                                       "roadmap_locators"})
 GRANULARITIES = frozenset({"item", "node"})
 
 #: Which artifact OF THE COMPANION a statement row was read from.  A companion
