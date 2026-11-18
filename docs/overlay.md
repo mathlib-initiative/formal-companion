@@ -202,7 +202,11 @@ From the records alone it builds:
   id, its items in the extension's `region_items` order; a click opens the
   first item with a card;
 - items: one per record `id`, labeled by its subject ends' `title`, with
-  the record extension's `coverage`, else `status`, as its coverage word,
+  the record extension's `coverage`, else `status`, as its coverage word
+  (an item whose records name neither is worded by its links in the page
+  index and the peek, `Key declaration` or `No key declaration`, and the
+  legend calls a solid region `Formalized` only when every item drawn solid
+  says so itself, else `Key declaration`: a key link is not a status),
   `note` as its coverage note, the record extension's `locator` (its
   `text`, else its printed and physical pages, less the segment that repeats
   the label and cut at the first `;` or ` / `, on one line) and `verdicts` (each one line: kind, summary and resolution,
@@ -214,7 +218,12 @@ From the records alone it builds:
   declaration), named by `location.declaration`, else the end's `title`,
   else the extension's declaration `id`, with the end extension's snippet,
   destination resolution and fallback label, declaration kind and flags, and
-  declaration verdict. A
+  declaration verdict. Where an item has two cards of one name whose ends
+  name different repositories (`uri`), as a source formalized in two
+  repositories gives, each card says which it is of: the last two parts of
+  the address, which on a git host are the owner and the name, or the address
+  in full when two end alike. A card whose name no other repository's card
+  shares says nothing, a minimal overlay included. A
   card links to its rendered page only when its end's extension has a
   `destination`: `<site root>/<location.module as a path>/index.html`, plus
   the declaration's anchor (its name with each `.` as `___`) when the

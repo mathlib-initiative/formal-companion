@@ -481,6 +481,42 @@ test("index: a row lights its region, a region lights its row and shows a peek, 
   assert.doesNotMatch(polygon.className, /\bis-hot\b/, "and is not lit by its own hover");
 });
 
+test("index: without a status a key-linked passage is a key declaration, in its row and in the legend", async () => {
+  const sections = makeSections(PDF_SHA256);
+  for (const record of Object.values(sections).flat().filter((entry) => entry.id === "item:theorem-1.1")) {
+    delete record.status;
+    delete record.extensions?.[NAMESPACE]?.coverage;
+  }
+  const { documentRef } = await start({ sections });
+  await turnTo(documentRef, 2);
+  const [row] = indexRows(documentRef);
+  assert.deepEqual([row.children[0].className, row.children[0].title], ["swatch mini formalized", "Key declaration"]);
+  assert.deepEqual(el(documentRef, "legend").children.map(textOf), ["Key declaration", "Partial", "No key declaration"]);
+  const said = await start();
+  await turnTo(said.documentRef, 2);
+  assert.deepEqual(el(said.documentRef, "legend").children.map(textOf), ["Formalized", "Partial", "No key declaration"]);
+});
+
+test("item: a declaration linked from two repositories is two cards that say which", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const twin = structuredClone(linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg"));
+  Object.assign(twin.object[0], { uri: "https://git.example.invalid/another-owner/notes-companion",
+                                  version: "2".repeat(40) });
+  sections[1].push(twin);
+  for (const config of [makeConfig(), makeConfig(MINIMAL)]) {
+    const { documentRef, result } = await start({ config, sections });
+    await selectPageRegion(documentRef, result.state, "loc:0001");
+    const tags = keyCards(documentRef).map(([eyebrow]) => eyebrow.children[0].children
+      .filter((node) => node.className === "tag is-repository").map(textOf));
+    assert.deepEqual(tags, [["an-owner/notes-companion"], ["another-owner/notes-companion"]],
+                     "in a minimal overlay too: it says which link this is");
+  }
+  const alone = await start();
+  await selectPageRegion(alone.documentRef, alone.result.state, "loc:0001");
+  assert.deepEqual(keyCards(alone.documentRef)[0][0].children[0].children
+    .filter((node) => node.className === "tag is-repository"), []);
+});
+
 test("index: a row's mark is the region's swatch, and its name stays on one line", async () => {
   const { documentRef } = await start();
   await turnTo(documentRef, 2);
