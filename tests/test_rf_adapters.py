@@ -765,6 +765,27 @@ class TestBlueprintTexAdapter(unittest.TestCase):
             self.assertIsNone(row["page_anchor"])
             self.assertEqual(row["anchor_source"], "none")
 
+    def test_a_counter_reset_by_section_starts_again_at_each_section(self):
+        """An article numbers within sections: the first theorem of section 2 is 2.1."""
+        repo = tmpdir("cf-rf-adapters-bp5-") / "paperrepo"
+        (repo / "blueprint" / "src").mkdir(parents=True)
+        (repo / "blueprint" / "src" / "content.tex").write_text(
+            "\\newtheorem{theorem}{Theorem}[section]\n\\newtheorem{lemma}[theorem]{Lemma}\n"
+            "\\section{Widgets}\n"
+            "\\begin{theorem}\\label{t:a}\\lean{Widget.a} A first claim.\\end{theorem}\n"
+            "\\begin{lemma}\\label{l:b}\\lean{Widget.b} A second claim.\\end{lemma}\n"
+            "\\section{Gadgets}\n"
+            "\\begin{theorem}\\label{t:c}\\lean{Gadget.c} A third claim.\\end{theorem}\n"
+            "\\begin{lemma}\\label{l:d}\\lean{Gadget.d} A fourth claim.\\end{lemma}\n",
+            encoding="utf-8")
+        adapter = adapters_api.from_config({
+            "adapter": "blueprint_tex", "name": "paper", "repo": str(repo),
+            "sources": {"default": "s"}})
+        rows = list(adapter.extract(sources={"s": SHA}))
+        self.assertEqual({r["item_raw"]: r["item"] for r in rows},
+                         {"t:a": "Theorem 1.1", "l:b": "Lemma 1.2", "t:c": "Theorem 2.1", "l:d": "Lemma 2.2"})
+        self.assertEqual(adapter.dry_run(sources={"s": SHA})["locator"], "number")
+
     def test_newtheorem_shares_the_counter_and_the_reset(self):
         table = newtheorems(MACROS)
         self.assertEqual(table["lemma"]["counter"], "theorem")
