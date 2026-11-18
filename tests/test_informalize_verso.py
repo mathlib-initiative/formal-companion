@@ -458,6 +458,9 @@ class TestStepOneOnTheHost(TestVersoCommand):
     def drive(self, *, free: str = "9999G", floor: str = "60",
               hold_i1_lock: bool = False) -> subprocess.CompletedProcess:
         """verso-command's two rsyncs as a local copy, then the printed line's job."""
+        have_flock = shutil.which("flock") is not None
+        if hold_i1_lock and not have_flock:
+            self.skipTest("flock(1) is not on PATH (it is util-linux's), and this test holds a real lock")
         self.verso()
         to_host = self.paths.informalize_verso_to_host(ID)
         shutil.copytree(to_host / "drivers", self.host / "verso" / "drivers")
@@ -480,6 +483,11 @@ class TestStepOneOnTheHost(TestVersoCommand):
         for tool, target in (("python3", sys.executable), ("git", shutil.which("git")),
                              ("bash", self.bash)):
             (bindir / tool).symlink_to(target)
+        if not have_flock:
+            # The host has flock(1) and a Mac does not.  A run that contends for no lock
+            # takes the stand-in tests/test_informalize_library.py gives its own driver.
+            (bindir / "flock").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (bindir / "flock").chmod(0o755)
         env = {"HOME": str(home), "USER": "tester", "PATH": f"{bindir}:/usr/bin:/bin",
                "ATLAS_ROOT": str(atlas), "VERSO_ROOT": str(self.host / "verso"),
                "VERSO_REV": "v4.34.0", "MIN_FREE_GB": floor, "LEAN_THREADS": "2"}
