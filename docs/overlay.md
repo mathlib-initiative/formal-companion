@@ -46,7 +46,10 @@ annotation document format of `vendor/formal_companion_annotations/`;
    PDF into the built site at `<mount>/<file_name>`, so the site may be served
    from anywhere, GitHub Pages included (`POLICY.md` section 3). It is still
    never committed, as long as `site.output_root` stays git-ignored, as the
-   default under `.lake/` is.
+   default under `.lake/` is. `pdf.remote` (section 3) is not a second
+   exception, since nothing is copied or served then either: the reader's
+   browser fetches the PDF from the address the records' PDF end names, a
+   host that already had it, and the viewer verifies it as always.
 5. **One exception to "never write to a companion repo".** `cf overlay init`,
    `export` and `sync`, run by a person by name, write
    `<companion>/pdf-overlay/` and (`export`) `<companion>/annotations/`, and
@@ -146,6 +149,21 @@ route at the root of the domain would not. `pdf.route` is then not used. Deploy
 the site as a Pages workflow artifact: a site deployed from a branch would commit
 the PDF, and its Jekyll build drops any path part that starts with `_`.
 
+`pdf.remote: true` is the way to show, from a public site, a PDF that states no
+open license but sits at a public address. The site then holds no PDF. The
+viewer fetches it, in the reader's browser, from the `uri` of the records' PDF
+end, with no credentials and no referrer, and checks its sha256 (and `bytes`)
+before PDF.js sees it. That address is held to what `serve.py` holds one it
+fetches to (HTTPS, no credentials, no fragment, no port other than 443), and
+its host must allow cross-origin reads, or the browser refuses the response and
+the page says the PDF could not be loaded. The viewer's page allows requests
+to its own origin only, so `build_site.py` writes the built page with that one
+host added to its `connect-src`; the committed page is unchanged. `pdf.route`
+is then not used by the built site, `pdf.remote` and `pdf.publish` together
+are refused, and `false` is the same as absent. What a reader's browser sends
+that host is one request for the PDF; say so where the overlay is linked from
+if it matters.
+
 ## 4. The viewer (`runtime/viewer/`)
 
 At start-up it fetches `../overlay.config.json`, then `../GENERATED.json`,
@@ -157,8 +175,11 @@ resolves a relative reference against the file that holds the annotation; the
 rendered pages are under the same site root. It keeps the subject ends that
 are PDF ends with the config's `source_id`; they must all state one sha256.
 It fetches the PDF from `pdf.route`, or, when `pdf.publish` names an open
-license, from `../<file_name>`, and checks it against that sha256 (and
-`bytes`) before PDF.js sees it; the status note then names the license.
+license, from `../<file_name>`, or, with `pdf.remote`, from that end's `uri`
+(a response typed as a PDF or as a byte stream), and checks it against that
+sha256 (and `bytes`) before PDF.js sees it; the status note then names the
+license, or says the PDF is fetched from the address its annotations name and
+that the site holds no copy.
 
 The top bar's **Read PDF** button (or **L**) hides the annotation regions, their margin
 mark and previews, any open Lean hover, and the counterparts panel. The PDF
@@ -327,7 +348,10 @@ bytecode writing off.
   extension's `alternate_urls`, over HTTPS only; its `sha256` and the
   extension's `bytes`. Acquire, verify, cache, optionally build, serve on
   loopback. With `pdf.publish` the PDF is served at `/<mount>/<file_name>`
-  rather than at `pdf.route`, and that one PDF may be in the site. Before it
+  rather than at `pdf.route`, and that one PDF may be in the site. With
+  `pdf.remote` it does all it does without: the PDF is still acquired and
+  verified, which shows the address serves those bytes, and the route is
+  served though the built viewer does not ask it. Before it
   serves, and before `--build-only` passes, it refuses a site that holds any
   other PDF or a symlink.
 - **`build_site.py`**: publish `viewer/`, `vendor/`, `overlay.config.json`,
@@ -391,7 +415,13 @@ bytecode writing off.
   `committed` (with the build commit) or `none`. With `pdf.publish` it also
   publishes the cached PDF at `<mount>/<file_name>`, after checking it against
   the records' sha256 and `bytes` (`serve.py --build-only` fetches it first),
-  and the receipt lists it; with none, no PDF reaches the site.
+  and the receipt lists it; with none, no PDF reaches the site. With
+  `pdf.remote` no PDF reaches it either, and the built `viewer/index.html`
+  differs from the committed one in one place: `https://<host>` of the PDF
+  end's `uri` follows `'self'` in its `connect-src`. The receipt names that
+  origin (`remote_pdf_origin`), and an address the rules above refuse, or a
+  page without exactly one `connect-src 'self';`, stops the build before it
+  writes. It needs no cached PDF, so it runs where nothing was fetched.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
   sha256, and nothing else in `pdf-overlay/` but the bundle and a committed
   `verso.json` in the form `--pages` writes, of a commit the cards pin, with

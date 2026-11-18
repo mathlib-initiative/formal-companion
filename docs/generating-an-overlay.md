@@ -17,7 +17,8 @@ committed in the companion, never from an audit workspace. [docs/overlay.md](ove
 is the contract, and [docs/exporters.md](exporters.md) says what the exporter reads.
 
 **Contents**: the steps · what export needs · reading the overlay · publishing an
-openly licensed PDF · what the viewer shows · proof steps · browsers · checking it in CI
+openly licensed PDF · a PDF with no open license on a public site · what the viewer
+shows · proof steps · browsers · checking it in CI
 
 ## The steps
 
@@ -118,6 +119,27 @@ viewer fetches the PDF from beside its config, so it works under a project path 
 as `https://<owner>.github.io/<repository>/`. Keep `site.output_root` git-ignored, as
 the default is, and the PDF is still never committed. A site deployed from a branch
 would commit it, and its Jekyll build drops any path part that starts with `_`.
+
+## A PDF with no open license on a public site
+
+A PDF that states no open license cannot be published, and it need not be when it
+already sits at a public address. Add to the `pdf` block of `overlay.config.json`:
+
+```json
+"remote": true
+```
+
+The site then holds no PDF. The viewer fetches it in the reader's browser from the
+address the annotations' PDF end names (its `uri`), with no credentials and no
+referrer, and verifies its sha256 before showing it. Two things must hold. The address
+is HTTPS with no credentials, fragment or port. And its host allows cross-origin
+reads, which a browser enforces: a host that does not send
+`Access-Control-Allow-Origin` gives a page that says the PDF could not be loaded. In
+the Pages workflow, `python3 pdf-overlay/tools/build_site.py` is enough once the site
+is built: it fetches nothing, copies no PDF, and lets the built viewer page fetch from
+that one host (`docs/overlay.md` section 3). Pin the address to a revision where the
+host has them, so the bytes the annotations hash are the bytes it serves. `remote` and
+`publish` together are refused.
 
 ## What the viewer shows
 

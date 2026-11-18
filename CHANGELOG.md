@@ -67,6 +67,21 @@ release has something to say.
   The report names every edge left on ink, every pair of boxes that cross without nesting,
   and every name or passage it could not link or place.
 
+- **`pdf.remote`: a PDF with no open license, shown from a public site that holds no copy
+  of it.** An overlay left loopback only with `pdf.publish`, which copies the PDF into the
+  site and so needs an open license the PDF states; a manuscript that states none could be
+  read with its links on one machine only, though anyone can fetch it from its own address.
+  With `"remote": true` in the config's `pdf` block the viewer fetches the PDF in the
+  reader's browser from the `uri` of the records' PDF end, with no credentials and no
+  referrer, accepts it typed as a PDF or as a byte stream, and verifies its sha256 and
+  `bytes` before PDF.js sees it, as it does on loopback. Nothing is copied: `build_site.py`
+  publishes no PDF and needs none cached. The viewer's page allows requests to its own
+  origin only, so the built page, and not the committed one, gets that one host added to
+  its `connect-src`, and the receipt names it (`remote_pdf_origin`). The address is held to
+  what `serve.py` holds one it fetches to; its host must allow cross-origin reads; `remote`
+  beside `publish` is refused by every reader of the config. `POLICY.md` section 3 says why
+  this is not redistribution (`docs/overlay.md` sections 1, 3, 4 and 5,
+  `docs/generating-an-overlay.md`).
 - **A maintainable informalization repository from the first init.** Generated
   projects include concise reader documentation, contribution and maintenance
   guides, a Makefile, editor settings, and separate tools and tests. Existing

@@ -193,6 +193,12 @@ TABLE: tuple[tuple[str, dict, bool], ...] = (
     ("a file name with a directory", with_("pdf.file_name", "pdfs/notes.pdf"), False),
     ("a file name with a leading dot", with_("pdf.file_name", ".notes.pdf"), False),
     ("a file name with a space", with_("pdf.file_name", "my notes.pdf"), False),
+    ("a PDF fetched from its own address", with_("pdf.remote", True), True),
+    ("remote said to be off", with_("pdf.remote", False), True),
+    ("remote off beside publish", published(remote=False), True),
+    ("remote that is not true or false", with_("pdf.remote", "yes"), False),
+    ("remote that is 1", with_("pdf.remote", 1), False),
+    ("remote and publish together", published(remote=True), False),
     ("a file name with a final newline", with_("pdf.file_name", "notes.pdf\n"), False),
     ("a published file name with a final newline", with_("pdf", {
         "file_name": "notes.pdf\n", "publish": {"license": "MIT"}}), False),
@@ -370,6 +376,14 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
         self.assertEqual(overlay_config.parse(published("CC0-1.0")).publish_license, "CC0-1.0")
         self.assertEqual(overlay_config.parse(published()).route, "/__overlay_pdf__/notes.pdf",
                          "the route keeps its default; a published PDF does not use it")
+
+    def test_the_pdf_is_fetched_from_its_address_only_when_the_config_says_so(self):
+        self.assertIs(overlay_config.parse(minimal()).remote, False)
+        self.assertIs(overlay_config.parse(with_("pdf.remote", True)).remote, True)
+        self.assertEqual(overlay_config.parse(with_("pdf.remote", True)).publish_license, "")
+        found = overlay_config.problems(published(remote=True))
+        self.assertEqual(len(found), 1, found)
+        self.assertRegex(found[0], r"pdf: remote and publish are two ways to show one PDF")
 
     def test_minimal_is_off_unless_the_config_says_so(self):
         self.assertIs(overlay_config.parse(minimal()).minimal, False)

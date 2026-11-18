@@ -61,10 +61,15 @@
           "properties": {
             "license": {"enum": ["Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT"]}
           }
+        },
+        "remote": {
+          "description": "Opt in to the viewer fetching the PDF, in the reader's browser, from the address the records' PDF end names (its uri: HTTPS, on a host that allows cross-origin reads), checked against the records' sha256 as always. No site holds a copy, and the built viewer page alone may fetch from that one host. For a PDF that states no open license but sits at a public address. Not together with publish. Default false.",
+          "type": "boolean"
         }
       },
       "if": {"required": ["publish"]},
-      "then": {"properties": {"file_name": {"pattern": "\\.pdf$"}}}
+      "then": {"properties": {"file_name": {"pattern": "\\.pdf$"}}},
+      "not": {"required": ["publish", "remote"], "properties": {"remote": {"const": true}}}
     },
     "site": {
       "type": "object",

@@ -345,7 +345,7 @@ export function readConfig(raw) {
   if (!title) {
     fail("overlay.config.json names no title.");
   }
-  const { pdfLicense, pdfUrl } = readPdf(isObject(raw.pdf) ? raw.pdf : {});
+  const { pdfLicense, pdfRemote, pdfUrl } = readPdf(isObject(raw.pdf) ? raw.pdf : {});
   // No back_link, or one whose href is refused, is no back link: the top bar starts with the title.
   const back = isObject(raw.back_link) ? raw.back_link : {};
   const backHref = safeBackLinkHref(back.href);
@@ -356,6 +356,7 @@ export function readConfig(raw) {
     backLink: backHref && backText ? { href: backHref, text: backText } : null,
     lede: text(raw.lede),
     pdfLicense,
+    pdfRemote,
     pdfUrl,
     // build_site.py publishes the annotation files at the site root, the same
     // place relative to the built pages as in the repository; it is this far up.
@@ -371,16 +372,28 @@ export function readConfig(raw) {
 /**
  * Where the PDF is fetched from, relative to the viewer page: `pdf.route` on
  * loopback, or, when `pdf.publish` names an open license, `../<file_name>`,
- * beside `overlay.config.json` in the built site.
+ * beside `overlay.config.json` in the built site. With `pdf.remote` it is
+ * neither: the address is the one the records' PDF end names, which
+ * `pdfFetchUrl` reads once the records are in.
  */
 function readPdf(pdf) {
+  if (pdf.remote !== undefined && typeof pdf.remote !== "boolean") {
+    fail(`overlay.config.json has pdf.remote ${JSON.stringify(pdf.remote)}; it is true or false.`);
+  }
+  if (pdf.remote === true) {
+    if (pdf.publish !== undefined) {
+      fail("overlay.config.json has both pdf.remote and pdf.publish; they are two ways to show "
+           + "one PDF.");
+    }
+    return { pdfLicense: null, pdfRemote: true, pdfUrl: null };
+  }
   if (pdf.publish === undefined) {
     const route = text(pdf.route);
     if (!route.startsWith(ROUTE_PREFIX) || route.includes("..")) {
       fail(`overlay.config.json has pdf.route ${JSON.stringify(route)}; a route starts with `
            + `"${ROUTE_PREFIX}" and carries no "..".`);
     }
-    return { pdfLicense: null, pdfUrl: route };
+    return { pdfLicense: null, pdfRemote: false, pdfUrl: route };
   }
   const license = isObject(pdf.publish) ? pdf.publish.license : undefined;
   if (!OPEN_LICENSES.includes(license)) {
@@ -391,12 +404,38 @@ function readPdf(pdf) {
     fail(`overlay.config.json has pdf.file_name ${JSON.stringify(pdf.file_name ?? null)}; `
          + "a published PDF is one plain file name ending in .pdf.");
   }
-  return { pdfLicense: license, pdfUrl: `../${pdf.file_name}` };
+  return { pdfLicense: license, pdfRemote: false, pdfUrl: `../${pdf.file_name}` };
 }
 
-/** The absolute URL the viewer fetches the PDF from, resolved against its own page. */
-export function pdfFetchUrl(config, pageUrl) {
+/**
+ * The absolute URL the viewer fetches the PDF from: resolved against its own
+ * page, or, with `pdf.remote`, the `uri` of `source`, the records' PDF end.
+ */
+export function pdfFetchUrl(config, pageUrl, source) {
+  if (config.pdfRemote) {
+    return remotePdfUrl(source);
+  }
   return new URL(config.pdfUrl, pageUrl).href;
+}
+
+/**
+ * The address a remote PDF is fetched from, held to what the tools hold one
+ * they fetch to: HTTPS, no credentials, no fragment, no port other than 443.
+ */
+function remotePdfUrl(source) {
+  const uri = text(isObject(source) ? source.uri : "");
+  let url = null;
+  try {
+    url = new URL(uri);
+  } catch {
+    // A relative reference, or no address at all: refused below.
+  }
+  if (!url || url.protocol !== "https:" || url.username || url.password || url.hash
+      || (url.port && url.port !== "443")) {
+    fail(`pdf.remote needs the PDF end's uri to be an HTTPS address with no credentials, fragment `
+         + `or port; it is ${JSON.stringify(uri)}.`);
+  }
+  return url.href;
 }
 
 // --- the bundle -------------------------------------------------------------

@@ -117,7 +117,8 @@ and, beside it, the declarations that formalize the item. It works from
 which live in the companion's `annotations/`. The PDF is never committed: the tools fetch
 it over HTTPS, verify its sha256, cache it under `.lake/` and serve it on loopback only. A
 PDF under an open license may instead be published with the site (`pdf.publish`), so the
-overlay also works from GitHub Pages.
+overlay also works from GitHub Pages; one with no open license that sits at a public
+address is fetched from there by the reader's browser (`pdf.remote`), and no site holds it.
 
 [Generating an overlay](docs/generating-an-overlay.md) has the steps to create one, and the
 browser limits. In a companion that has one, this builds its Verso site with `lake` and

@@ -81,7 +81,7 @@ CONFIG_KEYS = {
     "display", "storage_key", "pdf", "site", "build", "serve",
 }
 REQUIRED_CONFIG_KEYS = {"schema", "schema_version", "source_id", "title", "pdf", "site"}
-PDF_KEYS = {"file_name", "cache_dir", "route", "publish"}
+PDF_KEYS = {"file_name", "cache_dir", "route", "publish", "remote"}
 PUBLISH_KEYS = {"license"}
 SITE_KEYS = {"output_root", "index", "mount", "link_text"}
 BUILD_KEYS = {"commands"}
@@ -135,6 +135,7 @@ class Config:
     host: str
     port: int
     publish_license: str = ""
+    remote: bool = False  # `pdf.remote`: the built viewer fetches the PDF from its own address
 
     @property
     def published_path(self) -> str:
@@ -399,6 +400,11 @@ def load_config(overlay: Path) -> Config:
             or route.endswith("/"):
         fail(f"{CONFIG_NAME}.pdf.route: must start with /__, name a file and hold no ..")
     publish_license = publish_license_of(pdf, file_name)
+    remote = pdf.get("remote", False)
+    if not isinstance(remote, bool):
+        fail(f"{CONFIG_NAME}.pdf.remote: expected true or false")
+    if remote and publish_license:
+        fail(f"{CONFIG_NAME}.pdf: remote and publish are two ways to show one PDF; name one")
 
     site = exact_keys(value["site"], SITE_KEYS, set(), f"{CONFIG_NAME}.site")
     output_root = relative_subpath(site.get("output_root", DEFAULT_OUTPUT_ROOT),
@@ -439,6 +445,7 @@ def load_config(overlay: Path) -> Config:
         host=host,
         port=port,
         publish_license=publish_license,
+        remote=remote,
     )
 
 
@@ -1124,7 +1131,9 @@ def execute(arguments: argparse.Namespace, overlay: Path) -> int:
                 # the site goes up as it is, so hold it to what serving would
                 assert_site_servable(site_root, config.published_path)
                 where = (f"is published at {config.published_path} under {config.publish_license}"
-                         if config.publish_license else "stayed out of the site")
+                         if config.publish_license
+                         else "stayed out of the site; the viewer fetches it from its own address"
+                         if config.remote else "stayed out of the site")
                 print(f"PASS overlay build complete; the PDF {where}")
                 return 0
             assert server is not None

@@ -24,7 +24,9 @@ else empty; the receipt says which. It never runs the build:
 `serve.py --build` does that first. A config whose `pdf.publish` names an open
 license (section 1 rule 4's exception) also publishes the PDF, the cached file
 `serve.py` fetched, verified again, at `<mount>/<file_name>`; with none, no PDF
-reaches the site.
+reaches the site. A config with `pdf.remote` publishes no PDF either: the built
+viewer page, and only the built one, may fetch from the host of the address the
+records' PDF end names, which is added to its Content-Security-Policy.
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ import shutil
 import stat
 import sys
 from typing import Any, NoReturn
+import urllib.parse
 
 # The siblings are imported from the companion's tree: never leave bytecode there.
 sys.dont_write_bytecode = True
@@ -73,13 +76,18 @@ FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
 #: with the site (section 3).
 OPEN_LICENSES = ("Apache-2.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "MIT")
 PUBLISHED_FILE_NAME = re.compile(r"\.pdf\Z")
+#: `pdf.remote`: the viewer's page, the one rule of its Content-Security-Policy that says
+#: where it may fetch from, and the host names that may be added to it.
+SHELL_PATH = "viewer/index.html"
+CONNECT_SELF = b"connect-src 'self';"
+REMOTE_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
 
 CONFIG_KEYS = {
     "schema", "schema_version", "source_id", "title", "lede", "back_link",
     "display", "storage_key", "pdf", "site", "build", "serve",
 }
 REQUIRED_CONFIG_KEYS = {"schema", "schema_version", "source_id", "title", "pdf", "site"}
-PDF_KEYS = {"file_name", "cache_dir", "route", "publish"}
+PDF_KEYS = {"file_name", "cache_dir", "route", "publish", "remote"}
 PUBLISH_KEYS = {"license"}
 SITE_KEYS = {"output_root", "index", "mount", "link_text"}
 BUILD_KEYS = {"commands"}
@@ -112,6 +120,7 @@ class Config:
     file_name: str = ""
     cache_dir: str = DEFAULT_CACHE_DIR
     publish_license: str = ""  # "" unless `pdf.publish` opts in to publishing the PDF
+    remote: bool = False       # `pdf.remote`: the viewer fetches the PDF from its own address
 
 
 def fail(message: str) -> NoReturn:
@@ -279,6 +288,11 @@ def load_config(overlay: Path) -> Config:
         if not PUBLISHED_FILE_NAME.search(file_name):
             fail(f"{CONFIG_NAME}.pdf.file_name: a published PDF's file name ends in .pdf: "
                  f"{file_name!r}")
+    remote = pdf.get("remote", False)
+    if not isinstance(remote, bool):
+        fail(f"{CONFIG_NAME}.pdf.remote: expected true or false")
+    if remote and publish_license:
+        fail(f"{CONFIG_NAME}.pdf: remote and publish are two ways to show one PDF; name one")
 
     site = exact_keys(value["site"], SITE_KEYS, set(), f"{CONFIG_NAME}.site")
     output_root = relative_subpath(site.get("output_root", DEFAULT_OUTPUT_ROOT),
@@ -319,6 +333,7 @@ def load_config(overlay: Path) -> Config:
         file_name=file_name,
         cache_dir=cache_dir,
         publish_license=publish_license,
+        remote=remote,
     )
 
 
@@ -414,6 +429,47 @@ def published_pdf(overlay: Path, config: Config) -> bytes:
     return raw
 
 
+def remote_origin(overlay: Path, config: Config) -> str:
+    """`https://<host>` of the address a remote PDF is fetched from: the `uri` of the records'
+    PDF end.
+
+    The address is held to what `serve.py` holds one it fetches to: HTTPS, no
+    credentials, no fragment, no port other than 443.  The host goes into the
+    page's Content-Security-Policy, so it is a plain lower-case ASCII name.
+    """
+    try:
+        source = overlay_annotations.pdf_source(overlay, config.source_id)
+    except overlay_annotations.AnnotationError as error:
+        fail(str(error))
+    label = "pdf.remote: the uri of the records' PDF end"
+    uri = source.get("uri")
+    if not isinstance(uri, str) or not uri \
+            or any(character.isspace() or ord(character) < 0x20 for character in uri):
+        fail(f"{label} is not one HTTPS address: {uri!r}")
+    try:
+        parsed = urllib.parse.urlsplit(uri)
+        port = parsed.port
+    except ValueError as error:
+        fail(f"{label} is not a URL: {error}")
+    host = parsed.hostname or ""
+    if parsed.scheme != "https" or not REMOTE_HOST.fullmatch(host) \
+            or parsed.username is not None or parsed.password is not None \
+            or parsed.fragment or port not in {None, 443}:
+        fail(f"{label} must be an HTTPS address with a plain host name and no credentials, "
+             f"fragment or port: {uri!r}")
+    return f"https://{host}"
+
+
+def remote_shell(raw: bytes, origin: str) -> bytes:
+    """The viewer's page with `origin` added to where it may fetch from, and nothing else
+    changed.  The committed page is not touched: it stays the generic one `cf overlay sync`
+    copied, and only the built site's copy names a host."""
+    if raw.count(CONNECT_SELF) != 1:
+        fail(f"{SHELL_PATH}: expected one `connect-src 'self';` in its Content-Security-Policy; "
+             f"re-run `cf overlay sync`")
+    return raw.replace(CONNECT_SELF, CONNECT_SELF[:-1] + b" " + origin.encode("ascii") + b";")
+
+
 def link_href(config: Config) -> str:
     """The viewer's href as the site index must spell it."""
     target = posixpath.join(config.mount, "viewer", "index.html")
@@ -494,10 +550,13 @@ def verso_file(overlay: Path, output_root: Path, entries: list) -> tuple[dict[st
 
 def receipt_value(config: Config, contents: dict[str, bytes], href: str,
                   index_raw: bytes, directory: str, annotations: dict[str, bytes],
-                  verso: dict[str, Any]) -> dict[str, Any]:
+                  verso: dict[str, Any], remote: str = "") -> dict[str, Any]:
     """Every file this run wrote, by sha256, and where `verso.json` came from: the contract's
-    `receipt.json`."""
+    `receipt.json`.  With `pdf.remote` it also names the origin the built viewer page may
+    fetch the PDF from (`remote_pdf_origin`), which is why that page's sha256 is not the
+    generated one's."""
     return {
+        **({"remote_pdf_origin": remote} if remote else {}),
         "annotations": {
             "directory": directory,
             "files": [{"bytes": len(raw), "path": name, "sha256": sha256(raw)}
@@ -695,6 +754,13 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
     if config.publish_license:
         # beside overlay.config.json, where the viewer fetches it: `../<file_name>`
         contents[config.file_name] = published_pdf(overlay, config)
+    remote = ""
+    if config.remote:
+        # the built page alone may fetch from the PDF's own host; no PDF is copied
+        remote = remote_origin(overlay, config)
+        if SHELL_PATH not in contents:
+            fail(f"the generated runtime has no {SHELL_PATH}; re-run `cf overlay sync`")
+        contents[SHELL_PATH] = remote_shell(contents[SHELL_PATH], remote)
 
     index_parts = PurePosixPath(config.index).parts
     current = output_root
@@ -708,7 +774,7 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
     href = link_href(config)
     final_index = linked_index(index_path.read_bytes(), href, config.link_text)
     receipt_raw = canonical_json(receipt_value(config, contents, href, final_index, directory, annotations,
-                                               verso_record))
+                                               verso_record, remote))
     token = token_factory()
     if not re.fullmatch(r"[0-9a-f]{16}", token):
         fail("temporary token provider did not return 16 lowercase hex digits")
@@ -736,6 +802,7 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
         "mount": config.mount,
         "output_root": config.output_root,
         "receipt_sha256": sha256(receipt_raw),
+        **({"remote_pdf_origin": remote} if remote else {}),
         "verso": verso_record,
     }
 
