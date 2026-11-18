@@ -54,14 +54,17 @@ import {
   readVerso,
   regionCoverage,
   regionVerdict,
+  repositoryName,
   resolutionText,
   reviewFooter,
   safeBackLinkHref,
   safeHttpsUrl,
   sha256Hex,
   sharedRole,
+  solidWord,
   siteHref,
   splitCards,
+  standingWord,
   siteRootFor,
   splitName,
   stepCards,
@@ -1096,4 +1099,71 @@ test("titles: braced scripts preserve capitals, brackets and nested script conte
   for (const literal of ["x_S", "x^Q", "x_{}", "x_{S", "a < b", "<img src=x>"]) {
     assert.deepEqual(scriptRuns(literal), [["text", literal]]);
   }
+});
+
+// --- two repositories, and items with no status -------------------------------
+
+const OTHER_REPOSITORY = "https://git.example.invalid/another-owner/notes-companion";
+
+/** The fixture with the theorem's key declaration linked from a second repository too. */
+function twoRepositories(uri = OTHER_REPOSITORY) {
+  const sections = makeSections(PDF_SHA256);
+  const twin = structuredClone(linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg"));
+  Object.assign(twin.object[0], { uri, version: "2".repeat(40) });
+  sections[1].push(twin);
+  return sections;
+}
+
+test("cards: a repository is named as its owner and name", () => {
+  assert.equal(repositoryName("https://git.example.invalid/an-owner/notes-companion"), "an-owner/notes-companion");
+  assert.equal(repositoryName("https://git.example.invalid/an-owner/notes-companion.git/"), "an-owner/notes-companion");
+  assert.equal(repositoryName("https://git.example.invalid/group/sub/name"), "sub/name");
+  assert.equal(repositoryName(".."), "..", "a checkout beside the annotations is itself");
+  assert.equal(repositoryName(""), "");
+});
+
+test("cards: in an overlay of one repository no card names it", () => {
+  const { index } = fixture();
+  for (const item of index.items.values()) {
+    assert.deepEqual(item.cards.map((card) => card.repository).filter(Boolean), [], item.id);
+  }
+});
+
+test("cards: two cards of one name from two repositories each say which they are of", () => {
+  const cards = cardsOf(fixture(twoRepositories()).index, "item:theorem-1.1");
+  const keys = cards.filter((card) => card.role === "key");
+  assert.deepEqual(keys.map((card) => [card.fullName, card.repository]),
+                   [["Notes.Box.volume_nonneg", "an-owner/notes-companion"],
+                    ["Notes.Box.volume_nonneg", "another-owner/notes-companion"]]);
+  assert.equal(new Set(cards.map((card) => card.id)).size, cards.length, "and their ids differ");
+  assert.deepEqual(cards.filter((card) => card.role !== "key").map((card) => card.repository), ["", "", "", ""],
+                   "a card whose name no other repository shares says nothing");
+});
+
+test("cards: two repositories whose addresses end alike are named in full", () => {
+  const elsewhere = "https://other.example.invalid/an-owner/notes-companion";
+  const keys = cardsOf(fixture(twoRepositories(elsewhere)).index, "item:theorem-1.1")
+    .filter((card) => card.role === "key");
+  assert.deepEqual(keys.map((card) => card.repository).sort(),
+                   ["https://git.example.invalid/an-owner/notes-companion", elsewhere]);
+});
+
+test("standing: an item with no status is worded by what its links show, never as formalized", () => {
+  const { index } = fixture();
+  assert.equal(standingWord(index.items.get("item:theorem-1.1")), "Formalized");
+  assert.equal(standingWord(index.items.get("item:definition-2.1")), coverageWord("support_only"));
+  assert.equal(standingWord({ cards: [{ role: "key" }], coverage: "" }), "Key declaration");
+  assert.equal(standingWord({ cards: [{ role: "support" }], coverage: "" }), "No key declaration");
+  assert.equal(standingWord(null), "No key declaration");
+});
+
+test("standing: the legend says Formalized only when every solid region's item says so", () => {
+  const { index } = fixture();
+  assert.equal(solidWord(index.items.values()), "Formalized");
+  assert.equal(solidWord([]), "Formalized");
+  const said = { cards: [{ role: "key" }], coverage: "formalized" };
+  const unsaid = { cards: [{ role: "key" }], coverage: "" };
+  assert.equal(solidWord([said, { cards: [], coverage: "" }, { cards: [], coverage: "partial" }]), "Formalized");
+  assert.equal(solidWord([said, unsaid]), "Key declaration", "a key link with no status is not a claim of formalization");
+  assert.equal(solidWord([{ ...unsaid, kind: "proof_step" }]), "Formalized", "a proof step draws no region of its own");
 });

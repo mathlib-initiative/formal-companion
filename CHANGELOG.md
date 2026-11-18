@@ -142,6 +142,19 @@ release has something to say.
 
 ### Fixed
 
+- **The viewer called a passage "Formalized" that no record said was, and showed two
+  repositories' cards of one declaration as look-alikes.** A region is drawn solid when its
+  item has a key card, whatever its records' `status`, and the legend's word for solid was
+  always "Formalized"; in the page index and the peek the same item read "No key
+  declaration", since that was the word for any item with no status. Now an item with no
+  status is worded by its links, "Key declaration" or "No key declaration", and the legend
+  says "Formalized" only when every item drawn solid says so itself. An overlay whose records
+  all carry a status reads as it did. And where an item has two cards of one name from two
+  repositories, as a source formalized in two repositories gives, each card now names its
+  repository (owner and name) and has an id of its own; a producer had to write the
+  repository into `declaration.kind` to tell them apart. A card whose name no other
+  repository shares is unchanged (`docs/overlay.md` section 4).
+
 - **The text's title was shown as TeX everywhere outside the PDF.** `text.title` is what
   `informal/main.tex` typesets, so it is written as TeX reads it
   (`The Seifert--van Kampen theorem, after <the library>`) and the page prints an en dash; but

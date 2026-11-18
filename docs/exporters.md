@@ -588,8 +588,9 @@ TeX file's SHA-256) and `location.edges_unchecked`. Problems, which exit 1: a
 entry that is no declaration name.
 
 What it does not do. It links one repository: a manuscript formalized in two
-repositories is two exports, and the viewer has no way to say which
-repository a card is of. It reads words as ASCII letters, so a passage in
+repositories is two exports, and nothing merges them; where one overlay holds
+the records of both, the viewer names the repository on each card of a name
+they share (`docs/overlay.md` section 4). It reads words as ASCII letters, so a passage in
 another script, or one that is mathematics alone between two that are, is not
 placed. Pages that cite only files which read no TeX file are counted
 (`links_to_files_that_read_no_tex`) and linked to nothing. A passage is as

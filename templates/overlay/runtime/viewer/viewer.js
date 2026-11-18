@@ -62,6 +62,8 @@ import {
   readAnnotationsBlock,
   readVerso,
   regionCoverage,
+  solidWord,
+  standingWord,
   regionVerdict,
   reviewFooter,
   safeHttpsUrl,
@@ -966,7 +968,7 @@ export async function bootstrapViewer({
       row.dataset.itemId = item.id;
       // The same mark as the region's outline and the legend: solid, dashed or dotted.
       const mark = make("span", `swatch mini ${regionCoverage(item)}`);
-      mark.title = coverageWord(item.coverage) || "No key declaration";
+      mark.title = standingWord(item);
       row.append(mark);
       const cell = make("span", "index-label");
       const label = makeTitle("span", "index-title", labelParts(item.label).title);
@@ -993,8 +995,7 @@ export async function bootstrapViewer({
       } else if (relation) {
         right.textContent = relation;
       } else {
-        right.textContent = item.cards.length ? coverageWord(item.coverage) || "No key declaration"
-          : "No declaration linked";
+        right.textContent = item.cards.length ? standingWord(item) : "No declaration linked";
       }
       if (lead && relation) {
         right.append(make("span", "more", ` ${relation}`));
@@ -1025,7 +1026,7 @@ export async function bootstrapViewer({
       ui["page-index"].append(li);
     }
     ui.legend.replaceChildren(
-      legendEntry("swatch formalized", "Formalized"),
+      legendEntry("swatch formalized", solidWord(state.index?.items.values() ?? [])),
       legendEntry("swatch partial", "Partial"),
       legendEntry("swatch quiet", "No key declaration"),
     );
@@ -1243,6 +1244,10 @@ export async function bootstrapViewer({
     for (const badge of state.config.minimal ? [] : card.badges) {
       left.append(make("span", badge.startsWith("sorry") ? "tag is-sorry" : "tag", badge));
     }
+    if (card.repository) {
+      // which of two look-alike links this is: kept in a minimal overlay, like where a link goes
+      left.append(make("span", "tag is-repository", card.repository));
+    }
     row.append(left, sourceLink(card));
     return row;
   }
@@ -1406,7 +1411,7 @@ export async function bootstrapViewer({
     }
     const fallback = card.href && card.resolution === "fallback";
     const where = fallback ? card.fallbackLabel || "module page" : card.href ? "" : "No rendered page";
-    row.title = [card.fullName, ...card.badges, where].filter(Boolean).join("\n");
+    row.title = [card.fullName, card.repository, ...card.badges, where].filter(Boolean).join("\n");
     const name = nameNode(card.name, "related-name", previous);
     const tag = make("span", "related-tag");
     if (state.faithfulness && card.verdict) {
@@ -1418,7 +1423,7 @@ export async function bootstrapViewer({
     const role = card.role === shared ? "" : card.role;
     // A minimal overlay drops the role and kind words, never where the link goes.
     const words = [state.config.minimal ? "" : role, state.config.minimal || card.kind === role ? "" : card.kind,
-                   fallback ? "module page" : "", card.href ? "" : "no page"];
+                   card.repository, fallback ? "module page" : "", card.href ? "" : "no page"];
     tag.append(words.filter(Boolean).join(" · "));
     if (!state.config.minimal && card.badges.some((badge) => badge.startsWith("sorry"))) {
       tag.append(make("span", "tag is-sorry", "sorry"));
@@ -1590,7 +1595,7 @@ export async function bootstrapViewer({
       peek.append(make("span", "peek-more", relation));
     } else {
       peek.append(make("span", "peek-more",
-                       item.cards.length ? coverageWord(item.coverage) || "No key declaration" : "No declaration linked"));
+                       item.cards.length ? standingWord(item) : "No declaration linked"));
     }
     peek.hidden = false;
     const stageWidth = Number.parseFloat(ui["page-stage"].style.width) || 0;
