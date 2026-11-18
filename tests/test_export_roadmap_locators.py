@@ -408,6 +408,24 @@ class TestWhatItBendsAndReports(unittest.TestCase):
         roles = {l["role"] for l in document["links"] if l["item"] == "notes:weighing"}
         self.assertEqual(roles, {"key"})                     # the cited page's link outranks the bridge's
 
+    def test_an_irreducible_def_and_an_alias_are_declarations(self):
+        more = ("namespace Pebbles\n\nirreducible_def pile : Nat :=\n  3\n\n"
+                "alias heavy := weigh_le\n\nend Pebbles\n")
+        page = fx.page("A pile", lean="Pebbles.pile, Pebbles.heavy", origin="cited",
+                       sources=["../../sources/notes-locators.md#weighing"])
+        document, report = Fixture(scratch(self), files={
+            "Pebbles/More.lean": more, "blueprint/roadmap/heaps/pile.md": page}).export()
+        declarations = {d["id"]: d for d in document["declarations"]}
+        self.assertEqual((declarations["Pebbles.pile"]["kind"], declarations["Pebbles.pile"]["line"]),
+                         ("irreducible_def", 3))
+        self.assertEqual((declarations["Pebbles.heavy"]["kind"], declarations["Pebbles.heavy"]["line"]),
+                         ("alias", 6))
+        snippets = {s["declaration"]: s["text"] for s in document["snippets"]}
+        self.assertEqual(snippets["Pebbles.pile"], "irreducible_def pile : Nat :=\n  3")
+        self.assertEqual(snippets["Pebbles.heavy"], "alias heavy := weigh_le")
+        self.assertEqual(report.counts["declarations_unresolved"], ["Pebbles.Heap.weights", "Pebbles.gone"])
+        self.assertEqual([str(p) for p in check(document).problems], [])
+
     def test_a_name_two_files_declare_links_nothing(self):
         second = "namespace Pebbles\ntheorem weigh_le : True := trivial\nend Pebbles\n"
         document, report = Fixture(scratch(self), files={"Pebbles/Again.lean": second}).export()

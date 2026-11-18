@@ -72,6 +72,11 @@ _LINES = re.compile(r"\blines?\s+(" + _RANGE + r"(?:(?:\s*,\s*|\s*,?\s+and\s+)" 
 _LABEL = re.compile(r"`([A-Za-z]+:[A-Za-z0-9:._-]+)`")
 #: A Lean name as a page writes it: dotted components of letters, digits and the marks a name may end in.
 _NAME = re.compile(r"[^\W\d][\w'!?]*(?:\.[\w'!?«»]+)*\Z")
+#: The keywords a linked name may be declared with: the parser's own, and the two Mathlib
+#: adds that the annotation format has a kind for.
+DECL_KINDS = (*leanparse.DEFAULT_DECL_KINDS, "irreducible_def", "alias")
+#: The kinds whose declaration is its own content, shown whole.
+_DEFINITIONS = leansnippets.DEFINITION_KEYWORDS | {"irreducible_def", "alias"}
 
 
 def _key(text: str) -> str:
@@ -420,7 +425,8 @@ class _Export:
     def resolve(self) -> None:
         """Every linked name in the tracked Lean files: its file, line, kind and statement.
 
-        The names are read by `adapters.leanparse`, which tracks namespaces, and
+        The names are read by `adapters.leanparse`, which tracks namespaces, with
+        Mathlib's ``irreducible_def`` and ``alias`` beside its own keywords, and
         the statement is cut where it found the declaration by the rules of
         `adapters.leansnippets`: a theorem through the ``:=`` of its proof, a
         definition whole.
@@ -440,7 +446,7 @@ class _Export:
                 continue
             if not last_parts.intersection(re.findall(r"[^\W\d][\w'!?]*", text)):
                 continue
-            for decl in leanparse.parse_file(path, rel):
+            for decl in leanparse.parse_file(path, rel, DECL_KINDS):
                 if not decl.anonymous and decl.full_name in wanted:
                     found[decl.full_name].append(decl)
                     texts[rel] = text
@@ -462,7 +468,7 @@ class _Export:
             lines = texts[decl.file].split("\n")
             code = leansnippets.code_line_starts(lines)
             at = decl.line - 1
-            if decl.kind in leansnippets.DEFINITION_KEYWORDS:
+            if decl.kind in _DEFINITIONS:
                 snippet = leansnippets.definition_text(lines, at, code)
             else:
                 snippet = leansnippets.statement_text(lines, at, leansnippets.declaration_end(lines, at, code))
