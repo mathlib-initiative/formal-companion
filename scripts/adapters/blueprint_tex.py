@@ -349,6 +349,12 @@ class BlueprintTexAdapter(Adapter):
                     continue
                 if what == "section":
                     section += 1
+                    # A counter `\newtheorem` resets by section starts again here, as
+                    # LaTeX's does.  Without this an article's "Theorem 2.1" was keyed
+                    # "Theorem 2.3", a number the manuscript prints on nothing.
+                    for body_of in declarations.values():
+                        if body_of.get("reset") == "section":
+                            counters[body_of["counter"]] = 0
                     continue
                 env = m.group("env")
                 body = m.group("body")

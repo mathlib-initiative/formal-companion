@@ -158,6 +158,15 @@ release has something to say.
   maintainer who edits that file. Of an existing repository, `cf informalize overlay`
   rewrites the landing page, the overlay config and the annotations; nothing rewrites
   `README.md` or `STYLE-project.md`, which are the project's from `init` on.
+- **A leanblueprint whose theorems number within sections was keyed on numbers its
+  manuscript does not print.** `adapters/blueprint_tex.py` reads the preamble's
+  `\newtheorem{theorem}{Theorem}[section]` and writes each item as LaTeX numbers it, but it
+  restarted a counter only at a `\chapter`. In an article, where the counter restarts at
+  each `\section`, the first theorem of section 2 was written `Theorem 2.3` after two
+  statements in section 1, and every later stage joins on that key. The counter now
+  restarts at each section when its `\newtheorem` says so. A blueprint that numbers by
+  chapter, which is what the shipped fixtures and both known projects do, is unchanged.
+
 - **Poppler flattened the glyphs a notion's title is read from.** The titles a card shows
   were `pdftotext`'s, which reads a character out of the font's encoding and loses what
   the page draws: `N` for `ℕ`, `R` for `ℝ`, `Π1 (f )` for `Π₁(f)`, `f ◦γ` for `f ∘ γ`,
