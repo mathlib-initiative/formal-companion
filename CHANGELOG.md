@@ -52,8 +52,8 @@ release has something to say.
   no export, so its overlay was written by scripts of its own. The export makes one passage
   per cited section, links each page's declarations to it (`key` for a page that is `origin:
   cited` with its statement formalized, `support` otherwise, and no relation), resolves the
-  names in the checkout's Lean with `adapters.leanparse` and cuts their statements with
-  `adapters.leansnippets`. The boxes are new code, `annotations.export.texplace`: it aligns
+  names in the checkout's Lean with `adapters.leanparse` (Mathlib's `irreducible_def` and
+  `alias` beside its own keywords) and cuts their statements with `adapters.leansnippets`. The boxes are new code, `annotations.export.texplace`: it aligns
   the prose words of the TeX file with the words of the PDF's text layer, gives each passage
   the rows its first and last matched words are on, gives a row two passages meet on to
   exactly one of them, shares out the rows of a displayed formula by the source lines on
