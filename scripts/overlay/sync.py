@@ -715,10 +715,13 @@ def link_problems(path: str, record: dict) -> list[str]:
 
 
 def overlay_problems(companion: str | Path, source_id: str) -> list[str]:
-    """The overlay's rules beyond Literature Links: one PDF the config names, its pages, the links."""
+    """The overlay's rules beyond Literature Links: one PDF the config names, its pages, the links, and
+    a key declaration for every item a record calls formalized (`check_generated.py`'s own rule)."""
     out: list[str] = []
     sources: dict[str, dict] = {}
-    for path, record in read_annotations(companion).records.items():
+    records = read_annotations(companion).records
+    out += _check_generated().overlay_annotations.key_problems(records)
+    for path, record in records.items():
         out += link_problems(path, record)
         for end in _ends(record, "subject"):
             ext = _extension(end)
@@ -762,16 +765,22 @@ def inputs_problems(companion: str | Path, record: dict) -> list[str]:
     return out
 
 
-def _verso_problems(overlay: Path) -> list[str]:
-    """What `check_generated.py` says of a committed `verso.json`, from that tool's own function, so the
-    two cannot differ. The tool is this checkout's: a companion's copy of it is never run."""
+def _check_generated():
+    """This checkout's `check_generated.py`, and through it the runtime's `overlay_annotations`, so a rule
+    both readers apply is one function. A companion's copy of the tool is never run."""
     path = runtime_root() / "tools" / "check_generated.py"
     spec = importlib.util.spec_from_file_location("overlay_check_generated", path)
     if spec is None or spec.loader is None:                  # pragma: no cover
         raise CfError(f"{path} cannot be imported", hint="this is not a formal-companion checkout")
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
-    return tool.verso_problems(overlay)
+    return tool
+
+
+def _verso_problems(overlay: Path) -> list[str]:
+    """What `check_generated.py` says of a committed `verso.json`, from that tool's own function, so the
+    two cannot differ."""
+    return _check_generated().verso_problems(overlay)
 
 
 def check(companion: str | Path) -> list[str]:

@@ -35,7 +35,8 @@ It reports, one line per problem, and exits 1 when there is one:
   `literature_links` scan reads them with no problem; the bundle beside it
   has its recorded sha256 and holds exactly the records that scan reads,
   defaults applied (each one it does not hold is named); at least one record
-  is of the PDF the config's `source_id` names;
+  is of the PDF the config's `source_id` names; no item a record calls
+  formalized lacks a record that links a `key` declaration;
 * every curation input the export read still has the sha256 recorded for it,
   so a companion that changed its curation and did not re-export fails here.
 """
@@ -491,6 +492,7 @@ def annotations_problems(overlay: Path, source_id: str | None) -> list[str]:
                                                    for r in records.values()):
         out.append(f"no annotation is a record of the PDF {source_id!r}, which "
                    f"{CONFIG_NAME} names")
+    out += overlay_annotations.key_problems(records)
     out += inputs_problems(root, block.get("inputs"), exported="export" in block)
     return out
 

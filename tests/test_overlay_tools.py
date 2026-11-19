@@ -71,6 +71,7 @@ def load_tool(name: str):
 SERVE = load_tool("serve")
 BUILD = load_tool("build_site")
 CHECK = load_tool("check_generated")
+ANNOTATIONS = load_tool("overlay_annotations")
 
 #: A synthetic PDF: the signature and the terminal marker the tools check, and
 #: nothing of anybody's book.
@@ -563,6 +564,71 @@ class TestThePdfIdentityComesFromTheDocument(OverlayToolsTestCase):
         (self.companion.overlay / BUNDLE).write_bytes(b"{}\n")
         with self.assertRaisesRegex(SERVE.OverlayError, f"{BUNDLE}: sha256"):
             self.companion.record()
+
+
+class TestAFormalizedItemLinksAKeyDeclaration(unittest.TestCase):
+    """Section 7: `formalized` says a key declaration states the item; the readers hold an item to it."""
+
+    @staticmethod
+    def record(item: str | None, role: str | None, *, status: str | None = "formalized",
+               coverage: str | None = None) -> dict:
+        value: dict = {"subject": [{"type": "pdf", "uri": PDF_URL}],
+                       "object": [{"type": "lean", "uri": "https://lean.example.test/notes", "role": role}]
+                       if role else []}
+        if item is not None:
+            value["id"] = item
+        if status is not None:
+            value["status"] = status
+        if coverage is not None:
+            value["extensions"] = {NAMESPACE: {"coverage": coverage}}
+        return value
+
+    def test_an_item_whose_records_link_only_support_declarations_is_named_once(self):
+        found = ANNOTATIONS.key_problems({
+            "annotations/1/eq-1.5/support__A.json": self.record("eq-1.5", "support"),
+            "annotations/1/eq-1.5/support__B.json": self.record("eq-1.5", "support"),
+            "annotations/1/eq-1.5/support__C.json": self.record("eq-1.5", "support", status=None)})
+        self.assertEqual(found, ["annotations/1/eq-1.5/support__A.json: 'eq-1.5' is formalized, but none of "
+                                 "its 3 record(s) links a key declaration; link the declaration that states it "
+                                 "with role `key`, or give it a status that claims none (`partial`)"])
+
+    def test_one_key_link_among_the_items_records_is_enough(self):
+        self.assertEqual(ANNOTATIONS.key_problems({
+            "a/support.json": self.record("lemma-1", "support"),
+            "a/key.json": self.record("lemma-1", "key", status=None)}), [])
+
+    def test_the_extensions_coverage_claims_it_as_the_status_does(self):
+        self.assertEqual(len(ANNOTATIONS.key_problems({
+            "a.json": self.record("lemma-1", "support", status=None, coverage="formalized")})), 1)
+
+    def test_an_item_that_claims_no_key_declaration_passes(self):
+        for status in ("partial", "not_formalized", None):
+            with self.subTest(status=status):
+                self.assertEqual(ANNOTATIONS.key_problems({
+                    "a.json": self.record("lemma-1", "support", status=status),
+                    "b.json": self.record("lemma-1", None, status=status)}), [])
+
+    def test_a_record_with_no_id_is_its_own_item(self):
+        found = ANNOTATIONS.key_problems({"a.json": self.record(None, "support"),
+                                          "b.json": self.record(None, "key")})
+        self.assertEqual(len(found), 1)
+        self.assertTrue(found[0].startswith("a.json: its item is formalized"))
+
+    def test_check_generated_reports_it_for_the_files_on_disk(self):
+        companion = Companion(Path(self.enterContext(tempfile.TemporaryDirectory())))
+        support = {"type": "lean", "uri": "https://lean.example.test/notes", "role": "support",
+                   "location": {"declaration": "Notes.helper", "module": "Notes"}}
+        companion.write_document(objects=[support])
+        path = companion.root / FILE
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotIn("status", record)
+        self.assertFalse([line for line in CHECK.annotations_problems(companion.overlay, SOURCE_ID)
+                          if "key declaration" in line], "no status claims a key declaration")
+        record["status"] = "formalized"
+        path.write_bytes(overlay_shards.annotation_bytes(record))
+        self.assertIn(f"{FILE}: 'lemma-1.1.1' is formalized, but none of its 1 record(s) links a key declaration; "
+                      "link the declaration that states it with role `key`, or give it a status that claims "
+                      "none (`partial`)", CHECK.annotations_problems(companion.overlay, SOURCE_ID))
 
 
 # ---------------------------------------------------------------------------

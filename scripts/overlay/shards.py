@@ -593,7 +593,13 @@ class _Converter:
     def add(self, item: dict, regions: list[_Region]) -> None:
         """The item's records: one per link, or one that links nothing; each names every region of the item."""
         links = self.links.get(item["id"], [])
-        status = _status(item, any(l["role"] == "key" for l in links))
+        has_key = any(l["role"] == "key" for l in links)
+        if item.get("coverage") == "formalized" and not has_key:
+            # the viewer would call it formalized and say no key declaration states it (section 7)
+            self.out.problems.append(f"{item['id']}: its coverage is formalized, but it links no key "
+                                     "declaration; link the declaration that states it as key, or "
+                                     "change its coverage")
+        status = _status(item, has_key)
         subject = [self.subject_end(item, r) for r in regions]
         base: dict = {"id": item["id"], "kind": item["kind"].lower()}
         if status:

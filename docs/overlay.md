@@ -441,7 +441,8 @@ bytecode writing off.
   it, as many annotations as recorded and every file at the manifest sha256;
   the bundle at its recorded sha256 and equal to the records the shipped
   `literature_links` scan reads (each one that differs, is missing or is
-  extra is named); the scan finding no problem, with a record of the config's
+  extra is named); a key declaration linked by every item a record calls
+  formalized (section 7); the scan finding no problem, with a record of the config's
   PDF; every recorded curation input (at least one when an export is
   recorded) at its recorded sha256, so a stale export fails CI.
 - **`overlay_annotations.py`**: reads `GENERATED.json`'s annotations block,
@@ -478,7 +479,8 @@ cf overlay check <companion>
 - `sync --check` is read-only and includes the scan; `check` adds the config,
   the inputs' hashes and the overlay's rules (one PDF per `source_id`, pages
   within its `physical_page_count`, object ends' `uri` `https:` or relative,
-  and a destination's own `href` `https:` or a path inside the site), and
+  a destination's own `href` `https:` or a path inside the site, and a key
+  declaration for every item a record calls formalized, section 7), and
   says of a committed `verso.json` what `check_generated.py` says, from this
   checkout's copy of that tool: a companion's copy of a tool is never run.
 
@@ -535,7 +537,7 @@ Literature Links 1.0 records:
 | `subject` | one `pdf` end per region of the item, in reading order: `{type: pdf, uri: <official URL>, sha256, citation, identifiers, location, title}`. `citation` is a CSL `book` item (`id` the source id, `title`, `edition`, `URL`, `accessed`, `ISBN`, `DOI`); further ISBNs and an arXiv id go in `identifiers`. `location` is `{page, rect: [x, y, width, height]}` from the `PdfRegionSelector` (`normalized` or `pt`, either origin, CropBox or MediaBox, taken as unrotated); a quad region becomes its bounding box. `title` is the printed label (kind, number, sub-part, title) |
 | `object` | `[{type: lean, uri: <repository>, version: <commit>, location, role}]`: `location` is `{declaration, module}`, or for an anonymous declaration `{module, lines: [<the line it starts on>]}`, or, when the export could not place it on a line, `{profile: "urn:x-formal-companion:unlocated-example:v1", module, id}`; `role` is the link's role. An item that links nothing has `[]`, or, when its coverage is `not_formalized`, the repository at the commit with `relation: noMatch` |
 | `relation` | the link's relation token: `exact` is `exactMatch`, `generalization` `broadMatch`, `special_case` `narrowMatch`, `part` `hasPart`, and `related`, `invocation`, `uses` and `supporting` `relatedMatch`; none for a link with no token or another token |
-| `kind`, `status`, `note` | the item kind lower-cased; the item's coverage as a recommended status (`formalized`, `partial_only` as `partial`, `not_formalized`, and `support_only` as `not_formalized`; `example_only`, `private_only` and `out_of_scope` give none), else `formalized` for an item with a key link; the coverage note |
+| `kind`, `status`, `note` | the item kind lower-cased; the item's coverage as a recommended status (`formalized`, `partial_only` as `partial`, `not_formalized`, and `support_only` as `not_formalized`; `example_only`, `private_only` and `out_of_scope` give none), else `formalized` for an item with a key link; the coverage note. An item whose coverage is `formalized` and that links no key declaration is refused, and nothing is written |
 
 The repository is `https://<companion.repo>`, or for a local checkout the
 companion root relative to the file. A dependency declaration carrying both
@@ -543,6 +545,15 @@ companion root relative to the file. A dependency declaration carrying both
 commit as `version`; its snippet and destination describe that dependency.
 A declaration's line is not written beside its name: it is the declaration's
 first line, and `snippet.line` keeps it.
+
+`formalized` means a key declaration states the item: the viewer's summary of
+the status says so, and it draws the item solid. So an item a record calls
+`formalized`, by its `status` or by its extension's `coverage`, must have a
+record among those that share its `id` whose object end has `role: key`.
+Whoever wrote the files, `cf overlay check` and `check_generated.py` report an
+item that has none, naming its first file. Link the declaration that states it
+as `key`, or give it a status that claims none, such as `partial`; a viewer
+shown such an item says "Formalized" and "No key declaration" at once.
 
 Everything else the viewer needs is under the extension key
 `org.mathlib-initiative.formal-companion.overlay`, on the end it describes or

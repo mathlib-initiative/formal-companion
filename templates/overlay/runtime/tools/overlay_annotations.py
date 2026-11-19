@@ -282,6 +282,39 @@ def pdf_ends(annotation: Any, source_id: str) -> list[dict[str, Any]]:
             and extension(end).get("source_id") == source_id] if isinstance(ends, list) else []
 
 
+#: The coverage that says a key declaration states the item: the viewer's summary of it, and its solid outline.
+FORMALIZED = "formalized"
+
+
+def key_problems(records: dict[str, Any]) -> list[str]:
+    """Each item a record calls formalized while none of the item's records links a `key` declaration.
+
+    An item is the records that share an `id` (the viewer groups them so); a record with none is its
+    own item. A record calls its item formalized by its `status`, or by its extension's `coverage`.
+    The viewer would then draw the item as formalized and say, in the same panel, that no key
+    declaration states it: section 7 of the overlay contract makes `formalized` mean that one does.
+    """
+    items: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for path, record in records.items():
+        if isinstance(record, dict):
+            item = record.get("id") if isinstance(record.get("id"), str) and record.get("id") else f"\0{path}"
+            items.setdefault(item, []).append((path, record))
+    out = []
+    for item, rows in items.items():
+        if not any(record.get("status") == FORMALIZED or extension(record).get("coverage") == FORMALIZED
+                   for _path, record in rows):
+            continue
+        if any(isinstance(end, dict) and end.get("role") == "key"
+               for _path, record in rows for end in (record.get("object") if isinstance(record.get("object"), list) else [])):
+            continue
+        first = min(path for path, _record in rows)
+        name = repr(item) if not item.startswith("\0") else "its item"
+        out.append(f"{first}: {name} is formalized, but none of its {len(rows)} record(s) links a key "
+                   f"declaration; link the declaration that states it with role `key`, or give it a status "
+                   f"that claims none (`partial`)")
+    return sorted(out)
+
+
 def pdf_source(overlay: Path, source_id: str) -> dict[str, Any]:
     """The first subject end, in the bundle, of the PDF the config's `source_id` names."""
     for _path, annotation in read_bundle(overlay):
