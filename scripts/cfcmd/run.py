@@ -25,6 +25,7 @@ network without ``--execute``.
 from __future__ import annotations
 
 import getpass
+import shlex
 from pathlib import Path
 
 from cflib import log
@@ -307,8 +308,12 @@ def _local(workspace, args, data: dict) -> int:
         gate={
             # The local fleet gates on THIS machine, so the command points at the
             # skill's own gate and the run's gate.local.json, never the host copy.
-            "command": (f"python3 {gate_script} --gate-config {gate_config} "
-                        "--findings " + str(scratch) + "/${TASK_ID}.json"),
+            # A worker runs it in a shell, so a space in the clone's path or the
+            # workspace's must stay inside one word; ${TASK_ID} stays outside the
+            # quotes, for that shell to expand.
+            "command": (f"python3 {shlex.quote(str(gate_script))} "
+                        f"--gate-config {shlex.quote(str(gate_config))} "
+                        "--findings " + shlex.quote(str(scratch)) + "/${TASK_ID}.json"),
             "config": str(gate_config),
             # The workflow builds the worker's output enums from these three, so
             # the fleet is constrained by the run's own gate: a hand-written copy

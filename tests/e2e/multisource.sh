@@ -39,7 +39,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The skill is two directories up from tests/e2e: derived, so a checkout
 # anywhere runs, and no path from one machine is baked in.
 SKILL="${CF_SKILL:-$(cd "$HERE/../.." && pwd)}"
-CF="python3 $SKILL/scripts/cf.py"
+# An array, so a space in the checkout's path stays inside one word.
+CF=(python3 "$SKILL/scripts/cf.py")
 
 OFFLINE=""
 WS=""
@@ -132,15 +133,15 @@ echo "  booklet sha $(shasum -a 256 "$PDF" | cut -c1-12)"
 # ---------------------------------------------------------------------------
 step "2. cf init -- a workspace with no sources and no companions"
 rm -rf "$WS"
-run $CF init "$WS" || exit 2
+run "${CF[@]}" init "$WS" || exit 2
 cd "$WS" || exit 2
 check "sources at birth"    "$(ws 'len(w.sources)')"         "0"
 check "companions at birth" "$(ws 'len(w.companion_names())')" "0"
 
 # ---------------------------------------------------------------------------
 step "3. cf onboard -- NO FLAGS AT ALL (R2)"
-run $CF onboard "$TML" $OFFLINE || exit 2
-run $CF onboard "$MT"  $OFFLINE || exit 2
+run "${CF[@]}" onboard "$TML" $OFFLINE || exit 2
+run "${CF[@]}" onboard "$MT"  $OFFLINE || exit 2
 
 step "4. what discovery worked out with nothing typed in"
 check "both companions resolved the SAME source" \
@@ -194,8 +195,8 @@ print("yes" if any(r["item"] == "Exercise 1.3.19" for r in d["items"]) else "no"
 # tag chapter-2 items too, so it comes out [1, 2].  The pinned figures were
 # measured over chapter 1; narrow the scope so the comparison is like for like
 # rather than quietly reporting a different number against the same name.
-run $CF sources set $PUB chapters=1
-run $CF pair || exit 2
+run "${CF[@]}" sources set $PUB chapters=1
+run "${CF[@]}" pair || exit 2
 check "items in scope"             "$(jget "pairs/$PUB/reconciliation.json" items_in_scope)" "411"
 check "differential task universe" "$(jget "pairs/$PUB/reconciliation.json" task_universe)"  "383"
 
@@ -204,22 +205,22 @@ step "6. plan every preset"
 # Both companions' conventions.md are the shipped template, so nothing has been
 # confirmed by an owner: planning over an unconfirmed convention list is refused
 # and the override is recorded in run.yaml.
-$CF plan-run --preset differential-text --run-id x-unconfirmed -q >/dev/null 2>&1
+"${CF[@]}" plan-run --preset differential-text --run-id x-unconfirmed -q >/dev/null 2>&1
 check "plan-run refuses unconfirmed conventions" "$?" "2"
 for P in differential-text differential-pdf differential-gpt; do
-  $CF plan-run --preset "$P" --run-id "p-$P" --conventions-unconfirmed -q >/dev/null \
+  "${CF[@]}" plan-run --preset "$P" --run-id "p-$P" --conventions-unconfirmed -q >/dev/null \
     || FAILED=$((FAILED+1))
   check "plan-run $P" "$(yget "runs/p-$P/run.yaml" tasks.count)" "383"
 done
 for P in attack-vac attack-hunt; do
-  $CF plan-run --preset "$P" --companion tao-measure-lean --run-id "p-$P" \
+  "${CF[@]}" plan-run --preset "$P" --companion tao-measure-lean --run-id "p-$P" \
     --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
   check "plan-run $P" "$(yget "runs/p-$P/run.yaml" tasks.count)" "506"
 done
 # --chapters narrows an ATTACK universe too (it used to be accepted and ignored),
 # and the narrowing is recorded.  No figure is pinned here: the assertion is that
 # the narrowed run is smaller than the full one and not empty.
-$CF plan-run --preset attack-hunt --companion tao-measure-lean --run-id p-ch1 \
+"${CF[@]}" plan-run --preset attack-hunt --companion tao-measure-lean --run-id p-ch1 \
   --chapters 1 --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
 check "plan-run --chapters narrows the attack universe" \
       "$(py 'import sys
@@ -237,7 +238,7 @@ from cflib.yamlio import read_yaml
 print(",".join(str(c) for c in read_yaml("runs/p-ch1/run.yaml")["tasks"]["chapters"]))' "$SKILL/scripts")" "1"
 # the other three presets are gate-only scoring configs, not runnable plans
 for P in differential-legacy attack-legacy mechanical; do
-  $CF plan-run --preset "$P" --run-id "x-$P" -q >/dev/null 2>&1
+  "${CF[@]}" plan-run --preset "$P" --run-id "x-$P" -q >/dev/null 2>&1
   check "plan-run refuses gate-only $P" "$?" "2"
 done
 
@@ -247,7 +248,7 @@ if [ -n "$CORPUS" ] && [ -d "$CORPUS" ]; then
   # A v1 finding records no source.  This workspace holds more than one, so the
   # import REFUSES to guess which edition they read -- that is the gate, not a
   # nuisance, and batch 1 is exactly the corpus that read a different edition.
-  $CF import-corpus --run-id guess --from "$CORPUS/findings" --no-tally -q >/dev/null 2>&1
+  "${CF[@]}" import-corpus --run-id guess --from "$CORPUS/findings" --no-tally -q >/dev/null 2>&1
   check "import refuses to guess the edition" "$?" "2"
 
   # The gate runs on import unless --no-gate, so these go in under the presets
@@ -257,7 +258,7 @@ if [ -n "$CORPUS" ] && [ -d "$CORPUS" ]; then
   # a runnable preset the gate refuses them, which is the gate being right about
   # a legacy corpus, not a reason to import ungated.
   import_one () {  # <run-id> <dir> <mode> <preset> <expected>
-    $CF import-corpus --run-id "$1" --from "$CORPUS/$2" --mode "$3" --preset "$4" \
+    "${CF[@]}" import-corpus --run-id "$1" --from "$CORPUS/$2" --mode "$3" --preset "$4" \
        --source "$PUB" --repos ours,teorth,adam --no-tally -q >/dev/null \
        || FAILED=$((FAILED+1))
     check "import $1" "$(jget "corpus/$1/RECEIPT.json" actual.count)" "$5"
@@ -277,7 +278,7 @@ print(sum(json.load(open(p))["actual"]["count"]
           for p in glob.glob("corpus/batch*/RECEIPT.json")))')" "2672"
 
   step "8. tally -- the pinned finding numbers"
-  run $CF tally -q >/dev/null || FAILED=$((FAILED+1))
+  run "${CF[@]}" tally -q >/dev/null || FAILED=$((FAILED+1))
   check "ours rows"                  "$(tally ours   rows)"               "72"
   check "ours items"                 "$(tally ours   raw.items)"          "40"
   check "ours substantive"           "$(tally ours   raw.substantive)"    "17"
@@ -299,14 +300,14 @@ fi
 
 # ---------------------------------------------------------------------------
 step "9. detect-proxies, route, report"
-run $CF detect-proxies tao-measure-lean -q >/dev/null || FAILED=$((FAILED+1))
+run "${CF[@]}" detect-proxies tao-measure-lean -q >/dev/null || FAILED=$((FAILED+1))
 DC="pairs/$PUB/def-coverage.tao-measure-lean.json"
 check "def-coverage stated"      "$(jget "$DC" stated)"      "32"
 check "def-coverage bridge-only" "$(jget "$DC" bridge_only)" "4"
 check "def-coverage missing"     "$(jget "$DC" missing)"     "0"
 
-run $CF route -q >/dev/null || FAILED=$((FAILED+1))
-run $CF report -q >/dev/null || FAILED=$((FAILED+1))
+run "${CF[@]}" route -q >/dev/null || FAILED=$((FAILED+1))
+run "${CF[@]}" report -q >/dev/null || FAILED=$((FAILED+1))
 check "the handoff opens with a per-source table" \
       "$(py 'import glob
 lines = open(sorted(glob.glob("reports/handoff.*.md"))[0]).read().splitlines()
@@ -320,18 +321,18 @@ print(",".join(sorted(rows)))')" \
       "\`$DRAFT\`,\`$PUB\`"
 
 step "10. the gates still refuse"
-$CF run p-differential-text --host evil.example.com --i-have-consent -q >/dev/null 2>&1
+"${CF[@]}" run p-differential-text --host evil.example.com --i-have-consent -q >/dev/null 2>&1
 check "run refuses a non-allowlisted host" "$?" "2"
-$CF run p-differential-text --host examplebox -q >/dev/null 2>&1
+"${CF[@]}" run p-differential-text --host examplebox -q >/dev/null 2>&1
 check "run refuses a server run without consent" "$?" "2"
 rm -f emitted.json
-$CF route --companion tao-measure-lean --emit-upstream emitted.json -q >/dev/null 2>&1
+"${CF[@]}" route --companion tao-measure-lean --emit-upstream emitted.json -q >/dev/null 2>&1
 check "unchallenged findings are not exported" \
       "$(test -f emitted.json && echo wrote || echo refused)" "refused"
 
 # ---------------------------------------------------------------------------
 step "11. R1 -- a SECOND source, attached to ONE companion"
-run $CF sources add "$PDF" --for tao-measure-lean \
+run "${CF[@]}" sources add "$PDF" --for tao-measure-lean \
     --title "Elementary Notes on Sets" --edition "generated fixture" || FAILED=$((FAILED+1))
 check "a brand-new source is unconfirmed in the workspace overlay" \
       "$(yget registry.yaml "sources.$BOOK.confirmed")" "False"
@@ -343,10 +344,10 @@ check "tao-measure-lean is now audited against TWO sources" \
       "$(ws "len(w.companion('tao-measure-lean').sources)")" "2"
 check "the booklet is audited by exactly ONE companion" \
       "$(ws "len(w.companions_of('$BOOK'))")" "1"
-run $CF status
+run "${CF[@]}" status
 
 step "12. R1 -- one companion means no differential, and cf pair says so"
-run $CF pair || FAILED=$((FAILED+1))
+run "${CF[@]}" pair || FAILED=$((FAILED+1))
 check "still exactly one source with a differential" \
       "$(ws 'len(w.shared_sources(min_companions=2))')" "1"
 check "the booklet got no pairs tree" \
@@ -365,14 +366,14 @@ step "12b. R2/R3 -- a source NOBODY has catalogued, onboarded with no flags"
 # command in that directory could run at all.
 VIRGIN="$WS.virgin"
 rm -rf "$VIRGIN"
-run $CF init "$VIRGIN" --no-git -q || FAILED=$((FAILED+1))
+run "${CF[@]}" init "$VIRGIN" --no-git -q || FAILED=$((FAILED+1))
 ( cd "$VIRGIN" || exit 2
-  $CF onboard "$HERE/notes-a" --no-errata -q >/dev/null 2>&1
+  "${CF[@]}" onboard "$HERE/notes-a" --no-errata -q >/dev/null 2>&1
   echo "$?" > onboard.rc )
 check "onboard of an uncatalogued source succeeds" "$(cat "$VIRGIN/onboard.rc")" "0"
 check "  one PDF is ONE source"  "$(cd "$VIRGIN" && ws 'len(w.sources)')" "1"
 check "  the workspace it wrote still loads" \
-      "$(cd "$VIRGIN" && $CF status -q >/dev/null 2>&1 && echo loads || echo BROKEN)" "loads"
+      "$(cd "$VIRGIN" && "${CF[@]}" status -q >/dev/null 2>&1 && echo loads || echo BROKEN)" "loads"
 check "  the overlay remembers the sha it fingerprinted" \
       "$(yget "$VIRGIN/registry.yaml" "sources.anonymous-elementary-sets.sha256" | cut -c1-8)" \
       "0de15de4"
@@ -384,13 +385,13 @@ check "  and the item kinds it read off the text" \
 check "  still unconfirmed: nobody has checked it" \
       "$(yget "$VIRGIN/registry.yaml" "sources.anonymous-elementary-sets.confirmed")" "False"
 check "  and cf sources remove undoes it" \
-      "$(cd "$VIRGIN" && $CF sources remove anonymous-elementary-sets -q >/dev/null 2>&1 \
+      "$(cd "$VIRGIN" && "${CF[@]}" sources remove anonymous-elementary-sets -q >/dev/null 2>&1 \
          && ws 'len(w.sources)')" "0"
 
 # ---------------------------------------------------------------------------
 step "13. R1 -- two more companions, discovered flaglessly, share the booklet"
-run $CF onboard "$HERE/notes-a" --no-errata || FAILED=$((FAILED+1))
-run $CF onboard "$HERE/notes-b" --no-errata || FAILED=$((FAILED+1))
+run "${CF[@]}" onboard "$HERE/notes-a" --no-errata || FAILED=$((FAILED+1))
+run "${CF[@]}" onboard "$HERE/notes-b" --no-errata || FAILED=$((FAILED+1))
 check "the booklet resolved by SHA to the source already registered" \
       "$(ws 'len(w.sources)')" "3"
 check "companions in the workspace" "$(ws 'len(w.companion_names())')" "4"
@@ -400,7 +401,7 @@ check "TWO sources now carry a differential" \
       "$(ws 'len(w.shared_sources(min_companions=2))')" "2"
 
 step "14. R1 -- cf pair over a workspace with two paired sources"
-run $CF pair || FAILED=$((FAILED+1))
+run "${CF[@]}" pair || FAILED=$((FAILED+1))
 check "the Tao tree is STILL untouched" \
       "$(jget "pairs/$PUB/reconciliation.json" task_universe)" "383"
 check "the booklet now has its own tree" \
@@ -429,7 +430,7 @@ print(",".join(sorted(ids)))')" "$PUB"
 # booklet it has never seen, and gate.json accepted findings against its
 # declarations.  The booklet's own companions are notes-a, notes-b and
 # tao-measure-lean; measure_theory audits the Tao source only.
-$CF plan-run --preset differential-text --source "$BOOK" --run-id p-multi \
+"${CF[@]}" plan-run --preset differential-text --source "$BOOK" --run-id p-multi \
   --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
 check "a differential stages only its own source's companions" \
       "$(yget "runs/p-multi/run.yaml" repos)" "3"
@@ -454,8 +455,8 @@ print(",".join(sorted(
       "notes-a,notes-b,tao-measure-lean"
 
 step "15. R1 -- the finished shape"
-run $CF status
-run $CF sources list
+run "${CF[@]}" status
+run "${CF[@]}" sources list
 
 # ---------------------------------------------------------------------------
 step "16. result"

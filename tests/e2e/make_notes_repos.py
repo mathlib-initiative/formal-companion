@@ -206,8 +206,10 @@ def write(name, root, pdf):
     subprocess.run(["git", "-C", repo, "add", "-A"], check=True, env=env)
     subprocess.run(["git", "-C", repo, "commit", "-qm", "fixture"], check=True, env=env)
     n_lean = sum(1 for _, _, fs in os.walk(repo) for f in fs if f.endswith(".lean"))
+    # a `convention_rename` is a decoy: planted, but not a defect (see PLANTED)
+    n_defects = sum(1 for record in planted if record["class"] != "convention_rename")
     print("%s: %d items, %d .lean files, %d planted defect(s)"
-          % (repo, len(modules), n_lean, len(planted)))
+          % (repo, len(modules), n_lean, n_defects))
     return planted
 
 

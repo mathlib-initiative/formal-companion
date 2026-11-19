@@ -17,6 +17,14 @@ export const meta = {
 // rather than being written by hand, and every counting bias observed so far --
 // they ALL ran toward "cleaner" -- is stated to the verifier.
 
+// The Workflow tool hands `args` over verbatim and cannot read a file. A path, or the
+// file's JSON as one string, reads as undefined below, so the numbers lens and the critic
+// would run over an empty draft with no error, and a result listing no wrong claims looks
+// like a draft that passed.
+if (typeof args === 'string') {
+  throw new Error('args is a string: pass the JSON object in reports/verify-claims.args.json, not the path to it or its text in a string')
+}
+
 const A = args || {}
 const DRAFT = A.draft || ''
 const SOURCES = A.sources || []

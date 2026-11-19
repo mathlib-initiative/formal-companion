@@ -24,7 +24,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The skill is two directories up from tests/e2e -- derived, never a path from
 # the machine this was written on.
 SKILL="${CF_SKILL:-$(cd "$HERE/../.." && pwd)}"
-CF="python3 $SKILL/scripts/cf.py"
+# An array, so a space in the checkout's path stays inside one word.
+CF=(python3 "$SKILL/scripts/cf.py")
 KEY="$HERE/answer-key.json"
 STAGES="$HERE/stages.anonymous-elementary-sets.json"
 
@@ -101,10 +102,10 @@ print(sum(1 for e in d["entries"] if e["expect"] == "defect"))' "$KEY")" "8"
 # ---------------------------------------------------------------------------
 step "2. cf init + cf onboard -- NO FLAGS: the source is discovered"
 rm -rf "$WS"
-run $CF init "$WS" --no-git || exit 2
+run "${CF[@]}" init "$WS" --no-git || exit 2
 cd "$WS" || exit 2
-run $CF onboard "$FIX/notes-a" --no-errata || exit 2
-run $CF onboard "$FIX/notes-b" --no-errata || exit 2
+run "${CF[@]}" onboard "$FIX/notes-a" --no-errata || exit 2
+run "${CF[@]}" onboard "$FIX/notes-b" --no-errata || exit 2
 check "one PDF is ONE source"       "$(yget workspace.yaml sources)" "1"
 check "  fingerprinted by content"  "$(yget registry.yaml "sources.$BOOK.sha256")" "$BOOK_SHA"
 check "  page offset, inferred from the running heads" \
@@ -119,7 +120,7 @@ check "  both with the same adapter" \
 
 # ---------------------------------------------------------------------------
 step "3. cf pair -- the differential universe and the anchors"
-run $CF pair || exit 2
+run "${CF[@]}" pair || exit 2
 check "items in scope"              "$(jget "pairs/$BOOK/reconciliation.json" items_in_scope)" "28"
 check "items both companions formalise" \
       "$(jget "pairs/$BOOK/reconciliation.json" pairs)" "17"
@@ -135,7 +136,7 @@ check "  none of them advisory"     "$(jget "pairs/$BOOK/anchor-check.json" summ
 # ---------------------------------------------------------------------------
 step "4. the model-free detector"
 for R in notes-a notes-b; do
-  run $CF detect-proxies "$R" --stages "$STAGES" -q >/dev/null || FAILED=$((FAILED+1))
+  run "${CF[@]}" detect-proxies "$R" --stages "$STAGES" -q >/dev/null || FAILED=$((FAILED+1))
 done
 for R in notes-a notes-b; do
   check "body proxies found in $R" \
@@ -144,7 +145,7 @@ done
 
 # ---------------------------------------------------------------------------
 step "5. cf score -- precision and recall against the planted defects"
-run $CF score --run detect-notes-a-cheap --run detect-notes-b-cheap \
+run "${CF[@]}" score --run detect-notes-a-cheap --run detect-notes-b-cheap \
     --run "anchor-check-$BOOK" --answer-key "$KEY" || FAILED=$((FAILED+1))
 for FIELD in precision recall f1; do
   check "recorded $FIELD of the free detector" \

@@ -34,6 +34,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
@@ -585,6 +586,45 @@ class TestWhoRefusesOrphanedRulings(unittest.TestCase):
 # 3. a local corpus against the gate the tool prints next
 
 
+def conformant_record(args: dict) -> dict:
+    """A record shaped by ``fleet-local.workflow.js``, which the run's own gate accepts."""
+    gate, source = args["gate"], args["source"]
+    return {
+        "schema_version": gate["schema_version"],
+        "run_id": args["run_id"],
+        "source_id": source["source_id"],
+        "source_sha": source["source_sha"],
+        "item": "Exercise 1.2.4",
+        "book_located": True,
+        "book_passage_quote": BOOK_QUOTE,
+        "matches": [{"concept": "finite additivity",
+                     "decls": [{"repo": "ours", "decl": "foo"}],
+                     "verdict": gate["verdicts"][0]}],
+        "disagreements": [{
+            "concept": "finite additivity",
+            "kind": gate["kinds"][0],
+            "repos_involved": ["ours"],
+            "faithful": [],
+            "unfaithful_decls": ["ours:foo"],
+            "book_quote": BOOK_QUOTE,
+            "reasoning": "the dimension hypothesis is missing",
+            "severity": "high",
+        }],
+        "coverage_notes": "",
+    }
+
+
+def local_gate_config(preset, args: dict) -> dict:
+    """The gate config a planned local run holds, for the source *args* names."""
+    source = args["source"]
+    return presets_mod.gate_config(
+        preset, run_id=args["run_id"],
+        sources={source["source_id"]: {"text": source["text"],
+                                       "sha256": source["source_sha"],
+                                       "page_offset": source["page_offset"]}},
+        repos=["ours"])
+
+
 class TestLocalCorpusPassesItsOwnGate(unittest.TestCase):
     """fleet_local.build() args -> a record shaped by the .js -> write_corpus -> gate."""
 
@@ -618,40 +658,13 @@ class TestLocalCorpusPassesItsOwnGate(unittest.TestCase):
 
     def test_a_conformant_local_record_passes_verify_findings(self):
         args = self._fleet_args()
-        gate, source = args["gate"], args["source"]
-        record = {
-            "schema_version": gate["schema_version"],
-            "run_id": args["run_id"],
-            "source_id": source["source_id"],
-            "source_sha": source["source_sha"],
-            "item": "Exercise 1.2.4",
-            "book_located": True,
-            "book_passage_quote": BOOK_QUOTE,
-            "matches": [{"concept": "finite additivity",
-                         "decls": [{"repo": "ours", "decl": "foo"}],
-                         "verdict": gate["verdicts"][0]}],
-            "disagreements": [{
-                "concept": "finite additivity",
-                "kind": gate["kinds"][0],
-                "repos_involved": ["ours"],
-                "faithful": [],
-                "unfaithful_decls": ["ours:foo"],
-                "book_quote": BOOK_QUOTE,
-                "reasoning": "the dimension hypothesis is missing",
-                "severity": "high",
-            }],
-            "coverage_notes": "",
-        }
+        source = args["source"]
+        record = conformant_record(args)
         dest = scratch(self) / "corpus"
         harvest_journal.write_corpus({record["item"]: record}, {}, dest, args["run_id"],
                                      source_id=source["source_id"],
                                      source_sha=source["source_sha"])
-        config = presets_mod.gate_config(
-            self.ws["preset"], run_id=args["run_id"],
-            sources={source["source_id"]: {"text": source["text"],
-                                           "sha256": source["source_sha"],
-                                           "page_offset": source["page_offset"]}},
-            repos=["ours"])
+        config = local_gate_config(self.ws["preset"], args)
         config_path = scratch(self) / "gate.json"
         config_path.write_text(json.dumps(config, indent=1), encoding="utf-8")
         proc = subprocess.run(
@@ -694,11 +707,13 @@ async function pipeline(items, ...stages) {
 
 const parallel = (thunks) => Promise.all(thunks.map((t) => t()))
 const result = await body(spec.args, agent, pipeline, parallel, (m) => logs.push(String(m)))
+  .catch((err) => { console.error('agents started: ' + calls.length); throw err })
 process.stdout.write(JSON.stringify({ result, calls, logs }))
 """
 
 
-def run_body(case: unittest.TestCase, name: str, args: dict, responses: dict) -> dict:
+def exec_body(case: unittest.TestCase, name: str, args,
+              responses: dict) -> subprocess.CompletedProcess:
     """Execute one workflow body with stubbed runtime globals.
 
     The scripts get no filesystem access and no ``require``, so nothing is
@@ -716,8 +731,13 @@ def run_body(case: unittest.TestCase, name: str, args: dict, responses: dict) ->
     (tmp / "driver.mjs").write_text(DRIVER_JS, encoding="utf-8")
     (tmp / "spec.json").write_text(json.dumps({"args": args, "responses": responses}),
                                    encoding="utf-8")
-    proc = subprocess.run([NODE, str(tmp / "driver.mjs"), str(tmp / "spec.json")],
+    return subprocess.run([NODE, str(tmp / "driver.mjs"), str(tmp / "spec.json")],
                           capture_output=True, text=True, cwd=str(tmp))
+
+
+def run_body(case: unittest.TestCase, name: str, args: dict, responses: dict) -> dict:
+    """``exec_body`` for a run that must finish: its result, calls and logs."""
+    proc = exec_body(case, name, args, responses)
     case.assertEqual(proc.returncode, 0, proc.stderr[-4000:])
     return json.loads(proc.stdout)
 
@@ -781,6 +801,22 @@ class TestFleetLocalBody(unittest.TestCase):
 
     def _run(self, responses: dict, args: dict | None = None) -> dict:
         return run_body(self, "fleet-local", args or FLEET_ARGS, responses)
+
+    def test_a_string_for_args_is_refused(self):
+        """The Workflow tool hands ``args`` over verbatim and cannot read a file.
+
+        A path, or the file's JSON as one string, reached the script as a string, and
+        every read off a string is undefined. So the run logged ``local fleet: 0 items``
+        and ``items done: 0/0`` and finished with no error, and the path is what
+        ``cf run --local`` used to print.
+        """
+        for args in ("/w/runs/demo/fleet-local.args.json", json.dumps(FLEET_ARGS), ""):
+            with self.subTest(args=args[:40]):
+                proc = exec_body(self, "fleet-local", args, {})
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertEqual(proc.stdout, "", "the run must not start")
+                self.assertIn("args is a string", proc.stderr)
+                self.assertIn("fleet-local.args.json", proc.stderr)
 
     def test_verdicts_attach_to_the_disagreement_they_read(self):
         out = self._run({
@@ -991,6 +1027,84 @@ class TestChallengeAndAdjudicateBodies(unittest.TestCase):
         self.assertEqual(out["result"]["missing_lenses"], ["corpus-numbers"])
 
 
+class TestAStringForArgsIsRefused(unittest.TestCase):
+    """``fleet-local``'s refusal, in the three scripts ``cf adjudicate`` and ``cf report`` name.
+
+    The Workflow tool hands ``args`` over verbatim and cannot read a file, and
+    ``const A = args || {}`` reads a string as an object with nothing in it. So a path, or
+    the file's JSON as one string, started ``adjudicate``'s critic and ``verify-claims``'
+    numbers lens and critic over nothing, and finished ``challenge`` over 0 findings, each
+    with no error. The args here are what the commands really wrote.
+    """
+
+    #: the script, the command that writes its args, the agents an empty launch starts
+    SCRIPTS = (
+        ("adjudicate", ("adjudicate", "--companion", "ours", "--emit-args"), ["critic"]),
+        ("challenge", ("adjudicate", "--companion", "ours", "--challenge-only", "--emit-args"), []),
+        ("verify-claims", ("report",), ["verify:numbers-independent", "critic"]),
+    )
+
+    def setUp(self):
+        self.root = make_workspace(self)["root"]
+        corpus = self.root / "corpus" / "hunt"
+        corpus.mkdir(parents=True)
+        (corpus / "exercise-1-2-4.json").write_text(json.dumps({
+            "item": "Exercise 1.2.4", "book_located": True, "source_id": PUBLISHED_ID,
+            "source_sha": PUBLISHED_SHA, "matches": [], "coverage_notes": "",
+            "disagreements": [{"kind": "CONTENT", "severity": "high", "concept": "missing d >= 1",
+                               "unfaithful_decls": ["ours:foo"], "repos_involved": ["ours"],
+                               "faithful": [], "reasoning": "r", "suggested_fix": "s",
+                               "book_quote": BOOK_QUOTE}]}), encoding="utf-8")
+
+    def _emit(self, argv: tuple) -> Path:
+        """The args file a command wrote, read off the line it prints."""
+        rc, out = cf(*argv, "--workspace", str(self.root))
+        self.assertEqual(rc, 0, out)
+        named = re.search(r"args: <the JSON in (.+)> \}\)$", out, re.M)
+        self.assertIsNotNone(named, out)
+        return Path(named.group(1))
+
+    def test_a_string_for_args_is_refused(self):
+        for name, argv, _ in self.SCRIPTS:
+            path = self._emit(argv)
+            # a string carries no companion, so the refusal names the file with a placeholder
+            named = path.relative_to(self.root).as_posix().replace(".ours.", ".<companion>.")
+            for args in (str(path), path.read_text(encoding="utf-8"), ""):
+                with self.subTest(script=name, args=args[:40]):
+                    proc = exec_body(self, name, args, {})
+                    self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                    self.assertEqual(proc.stdout, "", "the run must not start")
+                    self.assertIn("agents started: 0\n", proc.stderr)
+                    self.assertIn("args is a string", proc.stderr)
+                    self.assertIn(named, proc.stderr)
+
+    def test_what_the_command_wrote_still_runs(self):
+        """The whole hand-off: the line names a file, and that file's JSON is a run."""
+        for name, argv, empty in self.SCRIPTS:
+            with self.subTest(script=name):
+                args = json.loads(self._emit(argv).read_text(encoding="utf-8"))
+                self.assertGreater(len(run_body(self, name, args, {})["calls"]), len(empty))
+
+    def test_no_args_and_an_empty_list_or_object_still_finish(self):
+        """Only a string is refused: ``references/workflow-patterns.md`` section 0 rule 2."""
+        for name, _, empty in self.SCRIPTS:
+            for args in (None, [], {}):
+                with self.subTest(script=name, args=args):
+                    run = run_body(self, name, args, {})
+                    self.assertEqual([c["label"] for c in run["calls"]], empty)
+
+    def test_section_0_rule_2_names_the_scripts_that_refuse(self):
+        text = (SKILL_ROOT / "references" / "workflow-patterns.md").read_text(encoding="utf-8")
+        rule = re.search(r"^2\. \*\*All inputs come through `args`.*?^3\. ", text,
+                         re.M | re.S).group(0)
+        refusing = rule.partition(" refuse one")[0]
+        for path in sorted((SKILL_ROOT / "workflows").glob("*.workflow.js")):
+            with self.subTest(script=path.name):
+                proc = exec_body(self, path.name.removesuffix(".workflow.js"), "/w/args.json", {})
+                self.assertIn(f"`{path.name}`", rule)
+                self.assertEqual(f"`{path.name}`" in refusing, "args is a string" in proc.stderr)
+
+
 class TestWorkflowArgsCoverEveryKeyTheScriptsRead(unittest.TestCase):
     """The shape check fleet-local had, for the two scripts that had none.
 
@@ -1077,6 +1191,28 @@ class TestPrintedWorkflowPaths(unittest.TestCase):
         self.assertTrue(printed.is_absolute(), printed)
         self.assertTrue(printed.exists(), printed)
 
+    def test_the_local_fleet_prints_the_args_as_the_json_not_the_path(self):
+        """The spelling the three sibling commands print, and for the same reason."""
+        args_path = Path("/w/runs/demo/fleet-local.args.json")
+        text = fleet_local.instructions(args_path, 3)
+        line = [l for l in text.splitlines() if l.strip().startswith("args:")][0]
+        self.assertEqual(line.split(":", 1)[1].strip(), f"<the JSON in {args_path}>")
+        for sibling in ("adjudicate", "report", "bench"):
+            source = (SCRIPTS / "cfcmd" / f"{sibling}.py").read_text(encoding="utf-8")
+            self.assertIn("args: <the JSON in ", source, sibling)
+
+    def test_following_what_cf_run_local_prints_runs_its_items(self):
+        """The whole hand-off: the line names a file, and that file's JSON is a run."""
+        ws = make_workspace(self)
+        rc, out = cf("run", "demo", "--local", "--workspace", str(ws["root"]))
+        self.assertEqual(rc, 0, out)
+        named = re.search(r"^\s*args:\s+<the JSON in (.+)>$", out, re.M)
+        self.assertIsNotNone(named, out)
+        args = json.loads(Path(named.group(1)).read_text(encoding="utf-8"))
+        run = run_body(self, "fleet-local", args, {})
+        self.assertEqual(run["result"]["summary"]["items_in"], 1)
+        self.assertEqual([c["label"] for c in run["calls"]], ["work:Exercise 1.2.4"])
+
     def test_all_four_workflow_references_resolve_through_one_function(self):
         from cflib.paths import skill_root
         from cfcmd import adjudicate as adjudicate_cmd
@@ -1102,6 +1238,69 @@ class TestPrintedWorkflowPaths(unittest.TestCase):
                      if stacked in (SCRIPTS / name).read_text(encoding="utf-8")]
         self.assertEqual(offenders, [],
                          "use cflib.paths.skill_root() instead: " + ", ".join(offenders))
+
+
+class TestTheGateCommandsFromASpacedPath(unittest.TestCase):
+    """`cf run --local` hands each worker one gate command and prints the operator another.
+
+    Both name the clone's gate and the workspace's files, and neither was quoted. From a
+    clone in `My Clone` both stopped at `can't open file '.../My'`, which a worker told to
+    fix whatever the gate rejects can do nothing with. So both run here as a shell runs
+    them, from a copied clone and a workspace whose paths hold a space.
+    """
+
+    def setUp(self):
+        parent = scratch(self) / "My Folder"
+        parent.mkdir()
+        clone = parent / "My Clone"
+        shutil.copytree(SKILL_ROOT, clone, symlinks=True,
+                        ignore=shutil.ignore_patterns(".git", "__pycache__", "tests"))
+        with mock.patch.dict(os.environ, {"CF_TEST_TMP": str(parent)}):
+            self.ws = make_workspace(self)
+        proc = subprocess.run([sys.executable, str(clone / "scripts" / "cf.py"), "run", "demo",
+                               "--local", "--workspace", str(self.ws["root"])],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.printed = proc.stdout
+        self.args = json.loads((self.ws["run_dir"] / "fleet-local.args.json")
+                               .read_text(encoding="utf-8"))
+        self.record = conformant_record(self.args)
+        (self.ws["run_dir"] / "gate.local.json").write_text(
+            json.dumps(local_gate_config(self.ws["preset"], self.args), indent=1),
+            encoding="utf-8")
+
+    def _shell(self, command: str, **env: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", "-c", command], capture_output=True, text=True,
+                              env={**os.environ, **env})
+
+    def test_the_command_a_worker_self_gates_with_runs(self):
+        task = "Exercise-1-2-4"
+        (self.ws["run_dir"] / "self-gate" / f"{task}.json").write_text(
+            json.dumps(self.record), encoding="utf-8")
+        proc = self._shell(self.args["gate"]["command"], TASK_ID=task)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_the_line_printed_for_after_the_run_runs(self):
+        source = self.args["source"]
+        harvest_journal.write_corpus(
+            {self.record["item"]: self.record}, {}, self.ws["root"] / "corpus" / "demo",
+            self.args["run_id"], source_id=source["source_id"], source_sha=source["source_sha"])
+        line = [l for l in self.printed.splitlines() if "verify_findings.py" in l][0]
+        proc = self._shell(line.strip())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_a_path_with_nothing_to_quote_prints_as_it_always_did(self):
+        ws = make_workspace(self)
+        rc, out = cf("run", "demo", "--local", "--workspace", str(ws["root"]))
+        self.assertEqual(rc, 0, out)
+        args = json.loads((ws["run_dir"] / "fleet-local.args.json").read_text(encoding="utf-8"))
+        run_dir = ws["run_dir"]
+        self.assertEqual(
+            args["gate"]["command"].split(" ", 2)[2],
+            f"--gate-config {run_dir / 'gate.local.json'} "
+            f"--findings {run_dir / 'self-gate'}/${{TASK_ID}}.json")
+        self.assertIn(f"--gate-config {run_dir / 'gate.local.json'} "
+                      f"--root {ws['root'] / 'corpus' / 'demo'} --findings-dir .", out)
 
 
 # ---------------------------------------------------------------------------

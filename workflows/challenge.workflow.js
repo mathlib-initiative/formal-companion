@@ -20,6 +20,13 @@ export const meta = {
 // finding in this pipeline is wrong about 40% of the time, always by calling a
 // house convention a content bug.
 
+// The Workflow tool hands `args` over verbatim and cannot read a file. A path, or the
+// file's JSON as one string, reads as undefined below, so the run would finish over 0
+// findings with no error, which looks like a run with nothing to challenge.
+if (typeof args === 'string') {
+  throw new Error('args is a string: pass the JSON object in ledger/args/challenge.<companion>.json, not the path to it or its text in a string')
+}
+
 const A = args || {}
 const W = A.workspace || {}
 const SOURCES = W.sources || []

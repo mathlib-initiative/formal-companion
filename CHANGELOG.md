@@ -3007,6 +3007,25 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `workflows/adjudicate.workflow.js`, `workflows/challenge.workflow.js` and
+  `workflows/verify-claims.workflow.js` refuse a string for `args`, as
+  `workflows/fleet-local.workflow.js` does. A path or a JSON-encoded string read as an object with
+  nothing in it and the run finished with no error: `adjudicate` started its critic and
+  `verify-claims` its numbers lens and critic over nothing, and `challenge` finished over 0
+  findings. `workflows/locate-label.workflow.js` still takes a string, because a change to it moves
+  the sha256 that `cf bench anchor --emit-args` stamps into its args.
+- `cf run --local` prints `args:   <the JSON in <path>>`, the spelling of `cf adjudicate`,
+  `cf report` and `cf bench`, instead of `args:   <path>`. The Workflow tool hands `args` over
+  verbatim and cannot read a file, so passing what it printed ran
+  `workflows/fleet-local.workflow.js` over 0 items with no error. The script now refuses a string.
+- `tests/e2e/synthetic.sh` and `tests/e2e/multisource.sh` run from a path with a space. They
+  word-split their own `$CF`, so such a clone stopped at `cf init` with `can't open file`. `CF` is
+  an array now, which macOS's bash 3.2 also runs.
+- The two gate commands `cf run --local` builds are shell-quoted: `gate.command`, which a worker
+  self-gates with, and the line it prints for after the run. From a clone or a workspace in a path
+  with a space, both stopped at `can't open file`. A path with nothing to quote prints as before.
+- `tests/e2e/make_notes_repos.py` reports 2 and 6 planted defects, not 2 and 7. It counted the
+  `convention_rename` decoy, which the answer key does not.
 - `cf overlay check` and `check_generated.py` match a config's patterns against the whole
   value, so they refuse a file name, route, path or host that ends in a newline, as the
   schema does. `serve.py` refused such a file name, so `cf overlay check` could pass a

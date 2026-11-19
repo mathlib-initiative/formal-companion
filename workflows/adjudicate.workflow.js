@@ -30,6 +30,14 @@ export const meta = {
 // Inputs are built by `python3 scripts/cf.py adjudicate --companion <name> --emit-args`
 // and contain workspace paths only -- never a session scratchpad path.
 
+// The Workflow tool hands `args` over verbatim and cannot read a file. A path, or the
+// file's JSON as one string, reads as undefined below, so the run would start the
+// completeness critic over nothing and finish over 0 findings with no error, which looks
+// like a run with nothing to adjudicate.
+if (typeof args === 'string') {
+  throw new Error('args is a string: pass the JSON object in ledger/args/adjudicate.<companion>.json, not the path to it or its text in a string')
+}
+
 const A = args || {}
 const W = A.workspace || {}
 const SOURCES = W.sources || []
