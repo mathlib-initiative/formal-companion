@@ -1103,6 +1103,24 @@ class TestCheck(OverlayCase):
         problems = self.hand_written(lambda r: r["subject"][0].pop("sha256"))
         self.assertTrue(any("states no sha256" in line for line in problems), problems)
 
+    def test_the_overlay_rules_hold_a_formalized_item_to_a_key_declaration(self):
+        def support_only(r):
+            r["status"] = "formalized"
+            for end in r["object"]:
+                end["role"] = "support"
+
+        problems = self.hand_written(support_only)
+        self.assertEqual([line for line in problems if "key declaration" in line],
+                         [f"annotations/1.2/r0.json: {overlay_shards.convert(document()).records[0]['id']!r} is "
+                          "formalized, but none of its 1 record(s) links a key declaration; link the declaration "
+                          "that states it with role `key`, or give it a status that claims none (`partial`)"])
+        code, said = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("links a key declaration", said)
+        self.assertEqual(self.hand_written(lambda r: r.update(status="formalized")), [],
+                         "the fixture's own key link satisfies it")
+        self.assertEqual(self.hand_written(lambda r: (support_only(r), r.update(status="partial"))), [])
+
     def test_the_overlay_rules_read_an_extension_that_is_not_an_object_as_none(self):
         def replace(side, value):
             return lambda r: r[side][0]["extensions"].update({overlay_shards.NAMESPACE: value})

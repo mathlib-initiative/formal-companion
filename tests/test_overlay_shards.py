@@ -332,6 +332,22 @@ class TestTheMapping(unittest.TestCase):
             for record in self.records[item]:
                 self.assertNotIn("coverage", ext(record), f"{item}: its status names its class")
 
+    def test_an_item_whose_coverage_is_formalized_must_link_a_key_declaration(self):
+        """The viewer would draw it formalized and say no key declaration states it."""
+        self.assertEqual(self.conversion.problems, [], "the fixture's formalized item links a key declaration")
+        doc = document()
+        doc["links"] = [link for link in doc["links"] if link["id"] != "theorem-1.2.3/key/Notes.Box.mono"]
+        problems = shards.convert(doc).problems
+        self.assertEqual([line for line in problems if "key" in line],
+                         ["theorem-1.2.3: its coverage is formalized, but it links no key declaration; link the "
+                          "declaration that states it as key, or change its coverage"])
+        doc["items"][0]["coverage"] = "partial_only"
+        self.assertFalse([line for line in shards.convert(doc).problems if "key" in line],
+                         "partial claims no key declaration")
+        del doc["items"][0]["coverage"]
+        [record] = [r for r in by_id(shards.convert(doc))["theorem-1.2.3"]]
+        self.assertNotIn("status", record, "with no coverage and no key link, no status is guessed")
+
     def test_a_region_keeps_the_order_its_curation_names_its_items_in(self):
         for record in self.records["remark-1.2.4"] + self.records["equation-1.1"]:
             self.assertEqual(ext(record["subject"][0])["region_items"], ["remark-1.2.4", "equation-1.1"])

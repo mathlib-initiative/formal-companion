@@ -172,6 +172,18 @@ release has something to say.
 
 ### Fixed
 
+- **An item could be called formalized with no key declaration, and the viewer said both.**
+  A record's `status: formalized` (or its extension's `coverage`) is what draws an item solid
+  with the "Formalized" pill, and the viewer's summary of it is "a key declaration states it";
+  the panel's own line comes from the links, so an item whose records link only `support`
+  declarations read "Formalized" and "No key declaration states this passage" at once. Nothing
+  checked that the two agree: `cf overlay export` wrote `formalized` for any item whose coverage
+  said so, and a companion that writes its own annotations could do the same. Now `cf overlay export` refuses an item whose coverage is `formalized` and that
+  links no key declaration, and `cf overlay check` and `check_generated.py` report every item a
+  record calls formalized none of whose records links a `key` declaration, naming its first file.
+  The rule is one function, `overlay_annotations.key_problems`, which `cf overlay check` reaches
+  through this checkout's `check_generated.py` (`docs/overlay.md` section 7).
+
 - **The viewer called a passage "Formalized" that no record said was, and showed two
   repositories' cards of one declaration as look-alikes.** A region is drawn solid when its
   item has a key card, whatever its records' `status`, and the legend's word for solid was
