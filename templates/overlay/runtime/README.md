@@ -33,7 +33,10 @@ loopback at `pdf.route`; it is never committed. A PDF under an open license
 may be published with the site instead: with `pdf.publish` naming its license,
 `build_site.py` also copies the verified PDF to `<site.mount>/<pdf.file_name>`,
 and the built site works from a static host such as GitHub Pages
-(`docs/overlay.md` section 3 in the formal-companion skill).
+(`docs/overlay.md` section 3 in the formal-companion skill). A PDF with no
+open license that sits at a public address is shown from such a host with
+`pdf.remote: true`: no PDF is copied, and the built viewer fetches it from
+that address in the reader's browser and verifies it (the same section).
 
 `build_site.py` copies the viewer and the bundle into
 `<site.output_root>/<site.mount>/` and the annotation files into

@@ -28,7 +28,8 @@ PDF subject ends of the annotations whose overlay extension carries this
 `source_id`, and `bytes`, `alternate_urls` and `physical_page_count` from that
 extension.  What is here is whether the PDF may leave loopback: `pdf.publish`
 names its open license, and only a license in :data:`OPEN_LICENSES` opts in
-(section 1 rule 4).
+(section 1 rule 4).  `pdf.remote` is the other way a public site shows one: the
+viewer fetches it from its own address, and no site holds a copy.
 """
 from __future__ import annotations
 
@@ -67,7 +68,7 @@ CONFIG_KEYS = frozenset({
 })
 REQUIRED_CONFIG_KEYS = frozenset({"schema", "schema_version", "source_id", "title",
                                   "pdf", "site"})
-PDF_KEYS = frozenset({"file_name", "cache_dir", "route", "publish"})
+PDF_KEYS = frozenset({"file_name", "cache_dir", "route", "publish", "remote"})
 REQUIRED_PDF_KEYS = frozenset({"file_name"})
 PUBLISH_KEYS = frozenset({"license"})
 SITE_KEYS = frozenset({"output_root", "index", "mount", "link_text"})
@@ -148,6 +149,7 @@ class Config:
     port: int
     minimal: bool = False
     publish_license: str = ""  # "" unless `pdf.publish` opts in to publishing the PDF
+    remote: bool = False       # `pdf.remote`: the viewer fetches the PDF from its own address
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +316,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
                 out.append(f"{label}.display.minimal: expected true or false")
 
     file_name, cache_dir, route, publish_license = "", DEFAULT_CACHE_DIR, "", ""
+    remote = False
     if "pdf" in value:
         pdf = _keys(value["pdf"], PDF_KEYS, REQUIRED_PDF_KEYS, f"{label}.pdf", out)
         if "file_name" in pdf:
@@ -335,6 +338,14 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
             route = ""
         if "publish" in pdf:
             publish_license = _publish(pdf["publish"], file_name, f"{label}.pdf", out)
+        if "remote" in pdf:
+            if isinstance(pdf["remote"], bool):
+                remote = pdf["remote"]
+            else:
+                out.append(f"{label}.pdf.remote: expected true or false")
+            if remote and "publish" in pdf:
+                out.append(f"{label}.pdf: remote and publish are two ways to show one PDF; "
+                           f"name one")
 
     output_root, index = DEFAULT_OUTPUT_ROOT, DEFAULT_INDEX
     mount, link_text = DEFAULT_MOUNT, title
@@ -380,7 +391,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
         file_name=file_name, cache_dir=cache_dir, route=route, output_root=output_root,
         index=index, mount=mount, link_text=link_text or title,
         build_commands=commands, host=host, port=port, minimal=minimal,
-        publish_license=publish_license,
+        publish_license=publish_license, remote=remote,
     )
 
 

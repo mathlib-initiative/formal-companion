@@ -201,6 +201,55 @@ test("config: a published PDF resolves under a project path, where the route wou
                `${PROJECT_ORIGIN}/notes-companion/tools/pdf-overlay/notes.pdf`, "beside the config at any depth");
 });
 
+/** The address the fixtures' PDF end names, and a config that has the viewer fetch it there. */
+const SOURCE_PDF = "https://notes.example.invalid/elementary-sets.pdf";
+const REMOTE = makeConfig({ pdf: { file_name: "notes.pdf", remote: true } });
+
+test("config: with pdf.remote the PDF is fetched from the address its records name", () => {
+  const config = readConfig(REMOTE);
+  assert.equal(config.pdfRemote, true);
+  assert.equal(config.pdfLicense, null);
+  assert.equal(pdfFetchUrl(config, PROJECT_PAGE_URL, { uri: SOURCE_PDF }), SOURCE_PDF,
+               "whatever page the viewer is on");
+  const off = readConfig(makeConfig({ pdf: { file_name: "notes.pdf", remote: false, route: PDF_ROUTE } }));
+  assert.equal(off.pdfRemote, false);
+  assert.equal(pdfFetchUrl(off, PAGE_URL, { uri: SOURCE_PDF }), `${ORIGIN}${PDF_ROUTE}`,
+               "said to be off, it is the loopback route");
+  assert.equal(readConfig(makeConfig()).pdfRemote, false);
+  assert.equal(readConfig(publishing()).pdfRemote, false);
+});
+
+test("config: pdf.remote is true or false, and not a second way beside pdf.publish", () => {
+  for (const [pdf, pattern] of [
+    [{ file_name: "notes.pdf", remote: "yes" }, /pdf\.remote "yes"; it is true or false/],
+    [{ file_name: "notes.pdf", remote: 1 }, /pdf\.remote 1; it is true or false/],
+    [{ file_name: "notes.pdf", remote: null }, /pdf\.remote null; it is true or false/],
+    [{ file_name: "notes.pdf", publish: { license: "MIT" }, remote: true }, /both pdf\.remote and pdf\.publish/],
+  ]) {
+    assert.throws(() => readConfig(makeConfig({ pdf })), pattern, JSON.stringify(pdf));
+  }
+  const both = readConfig(makeConfig({ pdf: { file_name: "notes.pdf", publish: { license: "MIT" }, remote: false } }));
+  assert.equal(both.pdfLicense, "MIT");
+});
+
+test("config: a remote PDF's address is HTTPS with no credentials, fragment or port", () => {
+  const config = readConfig(REMOTE);
+  for (const uri of [
+    "http://notes.example.invalid/notes.pdf",
+    "https://reader:secret@notes.example.invalid/notes.pdf",
+    "https://notes.example.invalid/notes.pdf#page=2",
+    "https://notes.example.invalid:8443/notes.pdf",
+    "../notes.pdf",
+    "",
+    undefined,
+  ]) {
+    assert.throws(() => pdfFetchUrl(config, PAGE_URL, { uri }), /pdf\.remote needs the PDF end's uri/, String(uri));
+  }
+  assert.throws(() => pdfFetchUrl(config, PAGE_URL, undefined), /pdf\.remote needs the PDF end's uri/);
+  assert.equal(pdfFetchUrl(config, PAGE_URL, { uri: "https://notes.example.invalid:443/notes.pdf" }),
+               "https://notes.example.invalid/notes.pdf", "the default port is no port");
+});
+
 // --- the bundle -------------------------------------------------------------
 
 test("bundle: GENERATED.json's annotations block names it, its sha256 and the file count", async () => {

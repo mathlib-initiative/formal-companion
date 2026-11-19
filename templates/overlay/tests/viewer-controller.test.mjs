@@ -320,6 +320,66 @@ test("pdf: with no pdf.publish the shell's note that the PDF stays on loopback i
   assert.match(SHELL, /<p id="status-note" class="status-pop">\s*The PDF is served only on loopback/);
 });
 
+/** The address the fixtures' PDF end names, and a config that has the viewer fetch it there. */
+const SOURCE_PDF = "https://notes.example.invalid/elementary-sets.pdf";
+const REMOTE = { pdf: { file_name: "notes.pdf", remote: true } };
+
+test("pdf: a remote PDF is fetched from the address its records name, and told nothing", async () => {
+  const { documentRef, fetched, pdfjs } = await start({
+    config: makeConfig(REMOTE), pdfUrl: SOURCE_PDF,
+    // a host that keeps a file for download may call it a byte stream
+    pdf: () => pdfResponse(PDF_BYTES, { contentType: "application/octet-stream" }),
+  });
+  assert.equal(fetched.at(-1).url, SOURCE_PDF);
+  assert.deepEqual(fetched.at(-1).options, { credentials: "omit", referrerPolicy: "no-referrer" });
+  assert.equal(fetched.filter((call) => call.url === PDF_URL).length, 0, "the loopback route is not asked");
+  assert.deepEqual(pdfjs.calls[0].data, PDF_BYTES);
+  assert.equal(el(documentRef, "status").textContent, "Verified PDF");
+  assert.match(el(documentRef, "status-note").textContent,
+               /^The PDF is fetched from the address its annotations name; this site holds no copy of it\./);
+});
+
+test("pdf: a remote PDF is verified as any other, and a page that is no PDF is refused", async () => {
+  const pdfjs = fakePdfjs();
+  const wrong = await start({ config: makeConfig(REMOTE), pdfjs, pdfUrl: SOURCE_PDF,
+                              sections: makeSections(fakeSha256("9")) });
+  assert.equal(pdfjs.calls.length, 0, "PDF.js must not see unverified bytes");
+  assert.match(el(wrong.documentRef, "error").textContent, /^PDF at its source SHA-256 is/);
+  assert.equal(el(wrong.documentRef, "status").textContent, "PDF not verified");
+  for (const [pdf, pattern] of [
+    [() => pdfResponse(PDF_BYTES, { contentType: "text/html" }), /PDF at its source response has unexpected media type text\/html/],
+    [() => pdfResponse(PDF_BYTES, { ok: false, status: 404 }), /PDF at its source \(404\)/],
+    [() => pdfResponse(new TextEncoder().encode("short")), /the source record says \d+/],
+  ]) {
+    const { documentRef } = await start({ config: makeConfig(REMOTE), pdf, pdfUrl: SOURCE_PDF });
+    assert.match(el(documentRef, "error").textContent, pattern);
+    assert.equal(el(documentRef, "workspace").hidden, true);
+  }
+});
+
+test("pdf: only a remote PDF may arrive as a byte stream", async () => {
+  const { documentRef } = await start({
+    pdf: () => pdfResponse(PDF_BYTES, { contentType: "application/octet-stream" }),
+  });
+  assert.match(el(documentRef, "error").textContent, /unexpected media type application\/octet-stream/);
+});
+
+test("pdf: a remote PDF whose records name no HTTPS address is refused before any request for it", async () => {
+  const sections = makeSections(PDF_SHA256);
+  for (const file of Object.values(sections)) {
+    for (const record of file) {
+      for (const end of record.subject ?? []) {
+        if (end.type === "pdf") {
+          end.uri = "notes.pdf";
+        }
+      }
+    }
+  }
+  const { documentRef, fetched } = await start({ config: makeConfig(REMOTE), sections });
+  assert.match(el(documentRef, "error").textContent, /pdf\.remote needs the PDF end's uri/);
+  assert.equal(fetched.some((call) => /\.pdf$/.test(call.url)), false);
+});
+
 // --- the text layer ---------------------------------------------------------
 
 test("text: a rendered page carries PDF.js's text layer, in the viewer's own container", async () => {

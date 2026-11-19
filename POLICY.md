@@ -63,6 +63,13 @@ part. The overlay never reads it, `licence_class` is not consulted, and
 re-serve nothing. The config key is spelled `license`, as SPDX spells it; the
 registry's field is `licence`.
 
+An overlay whose config sets `pdf.remote` is neither exception, because it
+redistributes nothing: no tool copies the PDF and no site of the companion's
+holds it. The reader's own browser fetches it from the address the source's
+record names, a host that already had it, and the viewer checks its sha256
+before showing it. That is a link the page follows for the reader, and the
+host that serves the PDF decides, as it always did, who may read it there.
+
 ## 4. Quotation inside the audit
 
 A finding quotes the source because a faithfulness claim that cannot be checked

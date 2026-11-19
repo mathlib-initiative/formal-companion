@@ -35,6 +35,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from email.message import Message
 from pathlib import Path
@@ -419,6 +420,31 @@ class TestTheConfigIsTheContract(OverlayToolsTestCase):
                 with self.subTest(pdf=pdf, tool=module.__name__):
                     with self.assertRaisesRegex(error, message):
                         module.load_config(self.companion.overlay)
+
+    def test_remote_is_true_or_false_and_not_beside_publish_in_both_tools(self):
+        pdf = self.companion.config_value()["pdf"]
+        self.companion.write_config(pdf=dict(pdf, remote=True))
+        config = self.companion.config()
+        self.assertIs(config.remote, True)
+        self.assertEqual((config.publish_license, config.published_path, config.route),
+                         ("", "", "/__overlay_pdf__/notes.pdf"), "nothing is published and the route stands")
+        self.assertIs(BUILD.load_config(self.companion.overlay).remote, True)
+        self.companion.write_config(pdf=dict(pdf, remote=False, publish={"license": "MIT"}))
+        self.assertEqual((self.companion.config().remote, self.companion.config().publish_license),
+                         (False, "MIT"))
+        self.assertIs(BUILD.load_config(self.companion.overlay).remote, False)
+        self.companion.write_config()
+        self.assertIs(self.companion.config().remote, False)
+        for bad, message in ((dict(pdf, remote="yes"), r"pdf\.remote: expected true or false"),
+                             (dict(pdf, remote=1), r"pdf\.remote: expected true or false"),
+                             (dict(pdf, remote=True, publish={"license": "MIT"}),
+                              r"pdf: remote and publish are two ways to show one PDF")):
+            self.companion.write_config(pdf=bad)
+            for module, error in ((SERVE, SERVE.OverlayError), (BUILD, BUILD.BuildError)):
+                with self.subTest(pdf=bad, tool=module.__name__):
+                    with self.assertRaisesRegex(error, message):
+                        module.load_config(self.companion.overlay)
+            self.assertTrue(CHECK.config_problems(self.companion.config_value(pdf=bad)))
 
     def test_paths_must_stay_inside_the_companion(self):
         cases = (
@@ -886,6 +912,78 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(summary["files"], len(published) - 1, "every file but the receipt")
         SERVE.assert_site_servable(self.companion.site, self.companion.config().published_path)
         self.assertEqual(BUILD.build_site(self.companion.overlay), summary, "a second run is the same")
+
+    # -- pdf.remote: the built page may fetch from the PDF's own host -------
+    SHELL = SKILL / "templates" / "overlay" / "runtime" / "viewer" / "index.html"
+
+    def remote(self) -> bytes:
+        """The config with `pdf.remote` and the shipped viewer page, whose policy is what changes."""
+        self.companion.write_config(pdf=dict(self.companion.config_value()["pdf"], remote=True))
+        return self.shipped_shell()
+
+    def shipped_shell(self) -> bytes:
+        shutil.copy2(self.SHELL, self.companion.overlay / "viewer" / "index.html")
+        return self.SHELL.read_bytes()
+
+    def built_shell(self) -> bytes:
+        return (self.companion.site / "pdf-overlay" / "viewer" / "index.html").read_bytes()
+
+    def receipt(self) -> dict:
+        return json.loads((self.companion.site / "pdf-overlay" / "receipt.json").read_text(encoding="utf-8"))
+
+    def test_a_remote_pdf_adds_its_host_to_the_built_page_and_copies_no_pdf(self):
+        committed = self.remote()
+        self.companion.write_cache()
+        self.companion.write_site()
+        summary = BUILD.build_site(self.companion.overlay)
+        origin = "https://" + urllib.parse.urlsplit(PDF_URL).hostname
+        built = self.built_shell()
+        self.assertEqual(built.count(b"connect-src"), 1)
+        self.assertIn(f"connect-src 'self' {origin};".encode(), built)
+        self.assertEqual(built.replace(f" {origin};".encode(), b";"), committed, "nothing else differs")
+        self.assertEqual((self.companion.overlay / "viewer" / "index.html").read_bytes(), committed,
+                         "the committed page stays the generic one")
+        self.assertEqual(list(self.companion.site.rglob("*.pdf")), [], "no PDF is copied")
+        self.assertEqual((summary["remote_pdf_origin"], self.receipt()["remote_pdf_origin"]), (origin, origin))
+        self.assertIn({"bytes": len(built), "path": "viewer/index.html", "sha256": digest(built)},
+                      self.receipt()["files"])
+        SERVE.assert_site_servable(self.companion.site)
+        self.assertEqual(BUILD.build_site(self.companion.overlay), summary, "a second run is the same")
+
+    def test_without_remote_the_built_page_is_the_committed_one(self):
+        committed = self.shipped_shell()
+        self.companion.write_site()
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(self.built_shell(), committed)
+        self.assertNotIn("remote_pdf_origin", summary)
+        self.assertNotIn("remote_pdf_origin", self.receipt())
+
+    def test_a_remote_pdf_needs_an_https_address_of_its_own(self):
+        self.remote()
+        self.companion.write_site()
+        refused = r"pdf\.remote: the uri of the records' PDF end must be an HTTPS address"
+        for url, message in (("http://notes.example.test/notes.pdf", refused),
+                             ("https://reader:secret@notes.example.test/notes.pdf", refused),
+                             ("https://notes.example.test:8443/notes.pdf", refused),
+                             ("https://notes.example.test/notes.pdf#page=2", refused),
+                             ("https://notes.example.test:port/notes.pdf", r"pdf\.remote: .* is not a URL"),
+                             (None, refused)):                       # no address: a relative reference
+            with self.subTest(url=url):
+                self.companion.write_document(url=url)
+                with self.assertRaisesRegex(BUILD.BuildError, message):
+                    BUILD.build_site(self.companion.overlay)
+        self.assertFalse((self.companion.site / "pdf-overlay").exists(), "nothing was published")
+        self.companion.write_document(url="https://NOTES.example.test:443/notes.pdf")
+        self.assertEqual(BUILD.build_site(self.companion.overlay)["remote_pdf_origin"],
+                         "https://notes.example.test")
+
+    def test_a_remote_pdf_needs_a_page_whose_policy_it_can_extend(self):
+        self.companion.write_config(pdf=dict(self.companion.config_value()["pdf"], remote=True))
+        self.companion.write_site()
+        with self.assertRaisesRegex(BUILD.BuildError,
+                                    r"viewer/index\.html: expected one `connect-src 'self';` .*`cf overlay sync`"):
+            BUILD.build_site(self.companion.overlay)
+        self.assertFalse((self.companion.site / "pdf-overlay").exists(), "nothing was published")
 
     def test_a_published_pdf_that_is_missing_or_does_not_verify_is_refused(self):
         self.companion.publish()
